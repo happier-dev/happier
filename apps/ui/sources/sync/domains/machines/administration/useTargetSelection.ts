@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type {
     MachineAdministrationTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import {
     areServerProfileIdentifiersEquivalent,
@@ -13,7 +13,7 @@ import { readMachineInventoryStatus } from '@/sync/domains/machines/machineInven
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ServerMachineInventorySnapshotV1 } from '@/sync/domains/machines/machineInventorySnapshots';
-import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { resolveFleetMachineAvailability } from './fleetUnion';
 import {
@@ -26,15 +26,13 @@ import {
     useActiveServerAccountScope,
 } from '@/sync/store/hooks';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
+import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { clearMachineAdministrationTargetObservation, readMachineAdministrationTargetObservation,
+import { readMachineAdministrationTargetObservation,
     rememberMachineAdministrationTargetObservation, useMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 
-import {
-    clearMachineAdministrationTargetPreference,
-    setMachineAdministrationTargetPreference,
-} from './selectionPreferences';
 import {
     areMachineAdministrationInventoriesKnown,
     isMachineAdministrationCandidateExplicitlySelectable,
@@ -46,10 +44,11 @@ import {
 import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
     buildMachineAdministrationTargetPickerRows,
+    readMachineAdministrationTargetFacts,
     type MachineAdministrationCandidateInventoryRowV1,
 } from './targetState';
-
 import { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readMachineAdministrationTargetPreference } from './selectionPreferences';
 export { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
 
 export type MachineAdministrationExecutionTargetOptions = Readonly<{
@@ -125,6 +124,8 @@ export type MachineAdministrationTargetSelectionV1 = Readonly<{
 }>;
 
 export type MachineAdministrationTargetSelectionOptions = Readonly<{
+    /** Account-owned input keeps both machine choices and execution in its original Home/Account. */
+    accountScope?: ServerAccountScope;
     /** Explicit navigation intent. Unknown targets stay selected and unavailable until admitted. */
     initialTarget?: MachineAdministrationTargetV1 | null;
     /** Defer detailed inventory and execution while the consuming surface is idle. */
@@ -152,30 +153,44 @@ export function useMachineAdministrationTargetPickerRows(): readonly MachineAdmi
 
 /** Inventory owns content; the shared presence owner advances only changed availability facts. */
 function useMachineAdministrationInventoryRows(snapshots: readonly ServerMachineInventorySnapshotV1[]): readonly MachineAdministrationTargetPickerRowV1[] {
-    const rows = React.useMemo(
-        () => buildMachineAdministrationCandidateInventoryRowsFromSnapshots({ snapshots }),
-        [snapshots],
-    );
+    // Keep the resource receipt demanded even when its last choice disappears.
+    // The shared list borrows this same loader; it does not issue another census.
+    const managedHomes = React.useMemo(() => snapshots.flatMap(snapshot => snapshot.kind === 'resolved' ? [snapshot.profileId] : []), [snapshots]);
+    const { machinesByEnrolledMachineIdByServerId } = useManagedMachineInventory(managedHomes);
+    // Carry the incumbent projection into its next input instead of rebuilding unchanged members.
+    const retainedProjection = React.useRef<{
+        snapshots: readonly ServerMachineInventorySnapshotV1[];
+        rows: readonly MachineAdministrationTargetPickerRowV1[];
+    } | null>(null);
+    const projection = React.useMemo(() => {
+        const current = { snapshots, rows: buildMachineAdministrationCandidateInventoryRowsFromSnapshots({
+            snapshots, managedMachinesByServerId: machinesByEnrolledMachineIdByServerId,
+            previous: retainedProjection.current ?? undefined,
+        }) };
+        retainedProjection.current = current;
+        return current;
+    }, [snapshots, machinesByEnrolledMachineIdByServerId]);
     const targets = React.useMemo(() => snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
         ? [{ serverId: snapshot.profileId, machineIds: snapshot.machines.map(machine => machine.id) }] : []), [snapshots]);
-    const readMachines = React.useCallback(() => rows.map(row => row.machine), [rows]);
+    const readMachines = React.useCallback(() => projection.rows.map(row => row.machine), [projection]);
     const readSnapshot = React.useMemo(() => {
         const scopes = new Map(snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
             ? [[snapshot.profileId, createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId)] as const] : []));
-        let current = rows;
         return (nowMs: number) => {
             const resolveScopeId = captureServerProfileScopeResolver();
             let changed = false;
-            const next = current.map(row => {
+            const next = projection.rows.map(row => {
+                // Presence cannot resurrect a resource the managed owner says is absent.
+                if (row.candidate.availability === 'missing') return row;
                 const availability = resolveFleetMachineAvailability(scopes.get(row.serverId), row.machine, nowMs, resolveScopeId);
                 if (availability === row.candidate.availability) return row;
                 changed = true;
                 return Object.freeze({ ...row, candidate: Object.freeze({ ...row.candidate, availability }) });
             });
-            if (changed) current = Object.freeze(next);
-            return current;
+            if (changed) projection.rows = Object.freeze(next);
+            return projection.rows;
         };
-    }, [rows, snapshots]);
+    }, [projection, snapshots]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets);
 }
 
@@ -192,19 +207,21 @@ export function useMachineAdministrationTargetSelection(
     const explicitSelection = options.explicitSelection ?? 'live';
     const selections = useSetting('machineAdministrationTargetsLocalV1');
     const expectedSettingsScope = useAccountSettingsScope();
+    const writeSetting = useSettingActionWriter();
     const automaticTarget = useMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey);
     const activeAccountScope = useActiveServerAccountScope();
-    const initialTarget = options.initialTarget ?? null;
-    const initialTargetKey = options.initialTarget === undefined ? undefined : JSON.stringify(initialTarget);
-    // Consuming a route changes the rendered target even when its preference write is a no-op.
-    const [initialTargetIntentState, setInitialTargetIntentState] = React.useState({ key: initialTargetKey, applied: false });
+    const requestedInitialTarget = options.initialTarget ?? null;
+    const initialTargetKey = options.initialTarget === undefined ? undefined : JSON.stringify(requestedInitialTarget);
+    // A route overrides this presentation until the person explicitly changes the target.
+    const [initialTargetIntentState, setInitialTargetIntentState] = React.useState({ key: initialTargetKey, applied: false, target: requestedInitialTarget });
     let currentInitialTargetIntent = initialTargetIntentState;
     if (currentInitialTargetIntent.key !== initialTargetKey) {
-        currentInitialTargetIntent = { key: initialTargetKey, applied: false };
+        currentInitialTargetIntent = { key: initialTargetKey, applied: false, target: requestedInitialTarget };
         setInitialTargetIntentState(currentInitialTargetIntent);
     }
     const initialTargetIntent = React.useRef(currentInitialTargetIntent);
     initialTargetIntent.current = currentInitialTargetIntent;
+    const initialTarget = currentInitialTargetIntent.target;
     const releaseInitialTarget = React.useCallback(() => {
         const current = initialTargetIntent.current;
         if (current.key !== initialTargetKey || initialTargetKey === undefined || current.applied) return;
@@ -213,7 +230,7 @@ export function useMachineAdministrationTargetSelection(
         setInitialTargetIntentState(released);
     }, [initialTargetKey]);
     const initialTargetPending = initialTargetKey !== undefined && !initialTargetIntent.current.applied;
-    const storedTarget = initialTargetPending ? initialTarget : selections[selectionKey] ?? automaticTarget;
+    const storedTarget = initialTargetPending ? initialTarget : readMachineAdministrationTargetPreference(selections, selectionKey) ?? automaticTarget;
     const selectionRevisionRef = React.useRef<MachineAdministrationSelectionRevisionState>({
         selectionKey,
         target: storedTarget,
@@ -228,13 +245,23 @@ export function useMachineAdministrationTargetSelection(
         target: storedTarget,
         activeAccountServerId: activeAccountScope?.serverId,
     });
-    const snapshots = useAllProfileMachineInventorySnapshots(enabled);
+    const accountScope = options.accountScope;
+    const inventorySelection = React.useMemo(() => accountScope ? { scope: accountScope, machineId: null } : undefined,
+        [accountScope?.serverId, accountScope?.accountId]);
+    const inventorySnapshots = useAllProfileMachineInventorySnapshots(enabled, inventorySelection,
+        selectionKey === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers ? readMachineAdministrationTargetFacts : undefined);
+    const snapshots = React.useMemo(() => accountScope ? inventorySnapshots.filter(snapshot => snapshot.kind === 'resolved'
+        && snapshot.accountId === accountScope.accountId
+        && areServerProfileIdentifiersEquivalent(snapshot.profileId, accountScope.serverId)) : inventorySnapshots,
+    [inventorySnapshots, accountScope?.serverId, accountScope?.accountId]);
     const bindings = useServerCredentialAccountScopeBindings(snapshots.flatMap(snapshot => snapshot.kind === 'resolved' ? [snapshot.profileId] : []));
     const resolveScopedTarget = React.useCallback((target: MachineAdministrationTargetV1 | null, options?: MachineAdministrationExecutionTargetOptions) => {
         const binding = [...bindings.values()].find(value => value.isCurrent()
-            && target && areServerProfileIdentifiersEquivalent(value.serverId, target.serverIdentityId));
+            && target && areServerProfileIdentifiersEquivalent(value.serverId, target.serverIdentityId)
+            && (!accountScope || value.scope.accountId === accountScope.accountId
+                && areServerProfileIdentifiersEquivalent(value.scope.serverId, accountScope.serverId)));
         return resolveFreshMachineAdministrationExecutionTarget(target, { ...options, accountScope: binding?.scope ?? null });
-    }, [bindings]);
+    }, [bindings, accountScope?.serverId, accountScope?.accountId]);
     const inventoryRows = useMachineAdministrationInventoryRows(snapshots);
     const pickerRows = React.useMemo(() => buildMachineAdministrationTargetPickerRows(inventoryRows), [inventoryRows]);
     const candidates = React.useMemo(
@@ -249,12 +276,11 @@ export function useMachineAdministrationTargetSelection(
         allowSoleCandidate,
         readInventoryStatus: (serverIdentityId) => readMachineInventoryStatus(snapshots, serverIdentityId),
     }), [allowSoleCandidate, candidates, snapshots, storedTarget]);
-
     React.useEffect(() => {
         if (storedTarget || !allowSoleCandidate || targetState.kind !== 'online') return;
         const current = storage.getState();
         if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
-        if (current.settings.machineAdministrationTargetsLocalV1[selectionKey]) return;
+        if (readMachineAdministrationTargetPreference(current.settings.machineAdministrationTargetsLocalV1, selectionKey)) return;
         rememberMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey, targetState.target);
     }, [allowSoleCandidate, expectedSettingsScope, selectionKey, storedTarget, targetState]);
 
@@ -266,27 +292,26 @@ export function useMachineAdministrationTargetSelection(
         if (!candidate || !isMachineAdministrationCandidateExplicitlySelectable(candidate, explicitSelection)) return;
         const current = storage.getState();
         if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
-        releaseInitialTarget();
-        getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: setMachineAdministrationTargetPreference(
-            current.settings.machineAdministrationTargetsLocalV1, selectionKey, candidate.target,
-        ) }, { expectedSettingsScope, source: 'ui' });
-    }, [candidates, expectedSettingsScope, explicitSelection, releaseInitialTarget, selectionKey]);
+        const operation = writeSetting({ anchor: 'machines.administrationTarget', key: selectionKey }, candidate.target)
+            .then(result => { if (result.ok) releaseInitialTarget(); });
+        fireAndForget(operation, { tag: 'administration.target.select' });
+        return operation;
+    }, [candidates, expectedSettingsScope, explicitSelection, releaseInitialTarget, selectionKey, writeSetting]);
 
     const clearTarget = React.useCallback(() => {
         const current = storage.getState();
         if (!expectedSettingsScope || !areAccountSettingsScopesEqual(expectedSettingsScope, current.settingsScope)) return;
-        releaseInitialTarget();
-        clearMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey);
-        getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: clearMachineAdministrationTargetPreference(
-            current.settings.machineAdministrationTargetsLocalV1, selectionKey,
-        ) }, { expectedSettingsScope, source: 'ui' });
-    }, [expectedSettingsScope, releaseInitialTarget, selectionKey]);
+        const operation = writeSetting({ anchor: 'machines.administrationTarget', key: selectionKey }, null)
+            .then(result => { if (result.ok) releaseInitialTarget(); });
+        fireAndForget(operation, { tag: 'administration.target.clear' });
+        return operation;
+    }, [expectedSettingsScope, releaseInitialTarget, selectionKey, writeSetting]);
 
     const resolveExecutionTarget = React.useCallback((options?: MachineAdministrationExecutionTargetOptions) => {
         if (!enabled) return null;
         if (initialTargetIntent.current.key !== initialTargetKey) return null;
         const target = initialTargetKey !== undefined && !initialTargetIntent.current.applied
-            ? initialTarget : storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey]
+            ? initialTarget : readMachineAdministrationTargetPreference(storage.getState().settings.machineAdministrationTargetsLocalV1, selectionKey)
                 ?? readMachineAdministrationTargetObservation(expectedSettingsScope, selectionKey);
         selectionRevisionRef.current = advanceMachineAdministrationSelectionRevision(
             selectionRevisionRef.current,

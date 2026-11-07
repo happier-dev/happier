@@ -1,12 +1,16 @@
 import { MachineAdministrationTargetV1Schema } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { resolveFleetMachineAvailability } from './fleetUnion';
+import { isManagedMachineResourceAbsent } from '@/components/settings/machines/managed/managedMachineResource';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { formatMachineDisplayNameParts, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 import type {
     ServerMachineInventorySnapshotV1,
 } from '@/sync/domains/machines/machineInventorySnapshots';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
+import type { MachineInventoryFactsSelector } from '@/sync/domains/machines/useMachineInventorySnapshots';
 
 import type { MachineAdministrationCandidateV1 } from './targetSelection';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -14,6 +18,16 @@ import { captureServerProfileScopeResolver, type ProfileScopeResolver } from '@/
 import { isMachineVisibleForLaunchSelection } from '../identity/filterVisibleMachines';
 import { compareMachineListOrder } from '../machineListOrder';
 import { isMachineAdministrationCandidateSelectable } from './targetSelection';
+
+/** Target-only surfaces read labels and eligibility, rather than Machine content revisions. */
+export const readMachineAdministrationTargetFacts: MachineInventoryFactsSelector = (machine, scope, nowMs) => {
+    const availability = resolveFleetMachineAvailability(scope, machine, nowMs);
+    return [machine.id, machine.kind, machine.metadata === null, machine.metadata?.displayName, machine.metadata?.host,
+        machine.metadata?.platform, machine.isShared, machine.availability?.kind,
+        machine.availability?.kind === 'locked' ? machine.availability.reason : null,
+        readMachineInventoryRowReadiness(machine), availability, machine.replacedByMachineId,
+        availability === 'online' ? null : machine.updatedAt];
+};
 
 /**
  * One Administration candidate together with the device-local routing row
@@ -29,11 +43,11 @@ export type MachineAdministrationCandidateInventoryRowV1<
     machine: TMachine;
 }>;
 
-/** Choices omit removed identities; the full candidate inventory still explains a retained selection. */
+/** Choices omit removed identities/resources; the full inventory still explains a retained selection. */
 export function buildMachineAdministrationTargetPickerRows(
     rows: readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[],
 ): readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[] {
-    return Object.freeze(rows.filter(row => isMachineVisibleForLaunchSelection(row.machine))
+    return Object.freeze(rows.filter(row => isMachineVisibleForLaunchSelection(row.machine) && row.candidate.availability !== 'missing')
         .sort((left, right) => compareMachineListOrder(
             isMachineAdministrationCandidateSelectable(left.candidate), left.candidate.displayName,
             isMachineAdministrationCandidateSelectable(right.candidate), right.candidate.displayName,
@@ -70,9 +84,23 @@ function compareInventoryRows<TMachine extends Machine | MachineDisplayRenderabl
  */
 export function buildMachineAdministrationCandidateInventoryRowsFromSnapshots(params: Readonly<{
     snapshots: readonly ServerMachineInventorySnapshotV1[];
+    /** Account-scoped enrollment index supplied by the managed inventory owner. */
+    managedMachinesByServerId?: Readonly<Record<string, Readonly<Record<string, ManagedMachineV1>>>>;
     nowMs?: number;
+    previous?: Readonly<{
+        snapshots: readonly ServerMachineInventorySnapshotV1[];
+        rows: readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[];
+    }>;
 }>): readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[] {
     const rows: MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[] = [];
+    const previousSnapshots = new Map(params.previous?.snapshots.flatMap(snapshot => snapshot.kind === 'resolved'
+        ? [[snapshot.serverIdentityId, snapshot] as const] : []));
+    const previousRowsByHome = new Map<string, Map<string, MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>>>();
+    for (const row of params.previous?.rows ?? []) {
+        let homeRows = previousRowsByHome.get(row.candidate.target.serverIdentityId);
+        if (!homeRows) previousRowsByHome.set(row.candidate.target.serverIdentityId, homeRows = new Map());
+        homeRows.set(row.candidate.target.machineId, row);
+    }
     let capturedScopeResolver: ProfileScopeResolver | undefined;
     const resolveScopeId: ProfileScopeResolver = id => {
         capturedScopeResolver ??= captureServerProfileScopeResolver();
@@ -88,7 +116,9 @@ export function buildMachineAdministrationCandidateInventoryRowsFromSnapshots(pa
             });
             if (!parsedTarget.success) continue;
             const machineNameParts = displayNameParts.get(machine.id)!;
-            const availability = resolveFleetMachineAvailability(createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId), machine, params.nowMs, resolveScopeId);
+            const managed = params.managedMachinesByServerId?.[snapshot.profileId]?.[machine.id];
+            const availability = managed && isManagedMachineResourceAbsent(managed) ? 'missing'
+                : resolveFleetMachineAvailability(createServerAccountScope(snapshot.serverIdentityId, snapshot.accountId), machine, params.nowMs, resolveScopeId);
             const replacementTarget = availability === 'replaced'
                 ? buildReplacementTarget(snapshot.serverIdentityId, machine)
                 : undefined;
@@ -102,6 +132,21 @@ export function buildMachineAdministrationCandidateInventoryRowsFromSnapshots(pa
                 observedAt: Number.isFinite(machine.updatedAt) ? machine.updatedAt : null,
                 ...(replacementTarget ? { replacementTarget } : {}),
             });
+            const previousSnapshot = previousSnapshots.get(snapshot.serverIdentityId);
+            const previous = previousSnapshot?.accountId === snapshot.accountId
+                ? previousRowsByHome.get(snapshot.serverIdentityId)?.get(machine.id) : undefined;
+            if (previous && previous.machine === machine && previous.serverId === snapshot.profileId
+                && previous.serverName === snapshot.serverName
+                && previous.candidate.displayName === candidate.displayName
+                && previous.candidate.displayNameParts?.name === candidate.displayNameParts?.name
+                && previous.candidate.displayNameParts?.hint === candidate.displayNameParts?.hint
+                && previous.candidate.availability === candidate.availability
+                && previous.candidate.observation === candidate.observation
+                && previous.candidate.observedAt === candidate.observedAt
+                && previous.candidate.replacementTarget?.machineId === candidate.replacementTarget?.machineId) {
+                rows.push(previous);
+                continue;
+            }
             rows.push(Object.freeze({
                 candidate,
                 serverId: snapshot.profileId,
@@ -110,7 +155,9 @@ export function buildMachineAdministrationCandidateInventoryRowsFromSnapshots(pa
             }));
         }
     }
-    return Object.freeze(rows.sort(compareInventoryRows));
+    rows.sort(compareInventoryRows);
+    return params.previous?.rows.length === rows.length && rows.every((row, index) => row === params.previous?.rows[index])
+        ? params.previous.rows : Object.freeze(rows);
 }
 
 export function buildMachineAdministrationCandidatesFromSnapshots(params: Readonly<{

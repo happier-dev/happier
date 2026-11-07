@@ -5,7 +5,36 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { storage } from '@/sync/domains/state/storageStore';
-import { readMachineAdministrationTargetObservation, rememberMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
+import { clearMachineAdministrationTargetObservation, readMachineAdministrationTargetObservation, rememberMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
+
+/** The declared Settings Action commits one explicit choice through this device-local owner. */
+export function persistMachineAdministrationTargetSelection(params: Readonly<{
+    selectionKey: string;
+    target: MachineAdministrationTargetV1 | null;
+    expectedSettingsScope: AccountSettingsScope;
+}>): boolean {
+    const current = storage.getState();
+    if (!areAccountSettingsScopesEqual(params.expectedSettingsScope, current.settingsScope)) return false;
+    const targets = current.settings.machineAdministrationTargetsLocalV1;
+    const next = params.target === null
+        ? clearMachineAdministrationTargetPreference(targets, params.selectionKey)
+        : setMachineAdministrationTargetPreference(targets, params.selectionKey, params.target);
+    if (params.target === null && params.selectionKey !== MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines) {
+        clearMachineAdministrationTargetObservation(params.expectedSettingsScope, params.selectionKey);
+    }
+    getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: next }, {
+        expectedSettingsScope: params.expectedSettingsScope, source: 'ui',
+    });
+    return true;
+}
+
+export function readMachineAdministrationTargetSelection(scope: AccountSettingsScope, selectionKey: string):
+    Readonly<{ available: true; target: MachineAdministrationTargetV1 | null }> | Readonly<{ available: false }> {
+    const current = storage.getState();
+    return areAccountSettingsScopesEqual(scope, current.settingsScope)
+        ? { available: true, target: readMachineAdministrationTargetPreference(current.settings.machineAdministrationTargetsLocalV1, selectionKey) }
+        : { available: false };
+}
 
 /** Admit fresh operation custody, but remember only the answering device's Machine. */
 export async function persistPluginMachineExecutionOriginSelection(params: Readonly<{
@@ -45,6 +74,19 @@ export const MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 = Object.freeze({
     managedMachines: 'machines.managed',
 } as const);
 
+// The unreleased machines.managed carrier contained navigation history. Keep
+// new deliberate defaults distinct so import-before-removal never consumes one.
+function targetPreferenceStorageKey(key: string): string {
+    return key === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines ? 'machines.managed.default' : key;
+}
+
+export function readMachineAdministrationTargetPreference(
+    current: MachineAdministrationTargetsV1,
+    key: string,
+): MachineAdministrationTargetV1 | null {
+    return current[targetPreferenceStorageKey(key)] ?? null;
+}
+
 /**
  * Builds one device-local named-entry proposal. Validation remains domain-owned.
  */
@@ -55,7 +97,7 @@ export function setMachineAdministrationTargetPreference(
 ): MachineAdministrationTargetsV1 {
     return MachineAdministrationTargetsV1Schema.parse({
         ...current,
-        [key]: target,
+        [targetPreferenceStorageKey(key)]: target,
     });
 }
 
@@ -64,7 +106,7 @@ export function clearMachineAdministrationTargetPreference(
     key: string,
 ): MachineAdministrationTargetsV1 {
     const targets = { ...current };
-    delete targets[key];
+    delete targets[targetPreferenceStorageKey(key)];
     return MachineAdministrationTargetsV1Schema.parse(targets);
 }
 

@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, createRenderCommitCounter, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -34,6 +34,68 @@ afterEach(async () => {
 });
 
 describe('machine administration target demand', () => {
+    it('drops a confirmed-absent managed enrollment from choices while retaining its saved missing selection', async () => {
+        const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
+        const { createDeferred, flushHookEffects } = await import('@/dev/testkit');
+        const { useManagedMachineInventory } = await import('@/components/settings/machines/managed/useManagedMachineInventory');
+        const { useMachineAdministrationTargetPickerRows } = await import('./useTargetSelection');
+        const previous = storage.getState();
+        const home = await network.addHome('https://administration-absent.example.test', 'absence-owner', {
+            serverIdentityId: 'srv_picker_absent',
+        });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const target = { serverIdentityId: 'srv_picker_absent', machineId: 'managed-enrollment' };
+        const machines = [target.machineId, 'ordinary-offline'].map(id => createMachineFixture({ id, active: false }));
+        const resource = ManagedMachineV1Schema.parse({
+            id: 'managed-resource', homeId: target.serverIdentityId, custodianAccountId: home.accountId,
+            enrolledMachineId: target.machineId,
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' },
+            allocation: 'confirmed-absent', creationState: 'active', desired: 'delete', desiredWhen: 'now',
+            intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 1, availability: 'absent' },
+        });
+        const census = createDeferred<Response>();
+        let reads = 0;
+        network.setHttpResponder(async input => {
+            if (new URL(String(input)).pathname !== '/v1/machines/managed/actions/list') return null;
+            reads += 1;
+            return census.promise;
+        });
+        try {
+            const scope = { serverId: home.id, accountId: home.accountId };
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: { providers: target } } }));
+            storage.getState().applyMachines(machines, true, { sourceServerId: home.id });
+            storage.getState().markMachineListSettled(home.id);
+            const hook = await renderHook(() => ({
+                managed: useManagedMachineInventory([home.id]),
+                selection: useMachineAdministrationTargetSelection('providers'),
+                choices: useMachineAdministrationTargetPickerRows(),
+            }));
+            try {
+                expect(hook.getCurrent().selection.pickerRows.map(row => row.machine.id)).toContain(target.machineId);
+                census.resolve(Response.json({ machines: [resource] }));
+                await flushHookEffects({ cycles: 30 });
+                expect(hook.getCurrent().managed.entries[target.serverIdentityId]?.status).toBe('ready');
+                for (const rows of [hook.getCurrent().selection.pickerRows, hook.getCurrent().choices]) {
+                    expect(rows.map(row => row.machine.id)).toEqual(['ordinary-offline']);
+                }
+                expect(hook.getCurrent().selection.state).toMatchObject({ kind: 'missing', target,
+                    snapshot: { availability: 'missing' } });
+                // Fresh enrollment presence cannot override the resource owner's absence receipt.
+                await act(async () => storage.getState().applyMachines([
+                    { ...machines[0]!, active: true, activeAt: Date.now(), updatedAt: Date.now() },
+                ], false, { sourceServerId: home.id }));
+                expect(hook.getCurrent().selection.state).toMatchObject({ kind: 'missing', target });
+                expect(hook.getCurrent().selection.pickerRows.map(row => row.machine.id)).toEqual(['ordinary-offline']);
+                expect(storage.getState().settings.machineAdministrationTargetsLocalV1.providers).toEqual(target);
+                expect(reads).toBe(1);
+            } finally { census.resolve(Response.json({ machines: [resource] })); await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(home.id); }
+    });
+
     it('offers 137-Machine census choices online first by name, retains a removed selection and does no sorting on offline heartbeats', async () => {
         const { createElement } = await import('react');
         const { t } = await import('@/text');
@@ -109,33 +171,216 @@ describe('machine administration target demand', () => {
             } finally { await hook.unmount(); }
         } finally { storage.setState(previous); await removeServerProfile(home.id); }
     });
-    it.each(['select', 'clear'] as const)('remembers %s navigation past an unavailable route with Settings writes Off', async (intent) => {
+    it('keeps Providers quiet for unrelated Machine metadata and Session arrivals while labels and eligibility stay live', async () => {
+        const { useProviderSettingsTarget } = await import('@/providers/hooks/targetMachine');
+        const previous = storage.getState();
+        const home = await network.addHome('https://providers-target-facts.example.test', 'providers-target-owner', {
+            serverIdentityId: 'srv_providers_target_facts',
+        });
+        const scope = { serverId: home.id, accountId: home.accountId };
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        let machine = createMachineFixture({ id: 'provider-target', activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Provider target' } });
+        const target = { serverIdentityId: 'srv_providers_target_facts', machineId: machine.id };
+        try {
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: { providers: target } } }));
+            storage.getState().applyMachines([machine], true, { sourceServerId: home.id });
+            storage.getState().markMachineListSettled(home.id);
+            const counter = createRenderCommitCounter();
+            const hook = await renderHook(() => {
+                useRenderCommitCounter(counter);
+                return useProviderSettingsTarget();
+            });
+            try {
+                await vi.waitFor(() => expect(hook.getCurrent().machineId).toBe(machine.id));
+                const baseline = hook.getCurrent();
+                counter.reset();
+                for (let index = 1; index <= 10; index += 1) {
+                    machine = { ...machine, metadataVersion: machine.metadataVersion + 1,
+                        updatedAt: machine.updatedAt + 1,
+                        metadata: { ...machine.metadata!, happyCliVersion: `unrelated-${index}` } };
+                    await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: home.id }));
+                }
+                const machineCounts = counter.read();
+                counter.reset();
+                for (let index = 1; index <= 10; index += 1) {
+                    await act(async () => storage.getState().applySessions([createSessionFixture({
+                        id: 'providers-unrelated-session', seq: index, updatedAt: index,
+                    })]));
+                }
+                expect({ machine: machineCounts, session: counter.read() }).toEqual({
+                    machine: { renders: 0, commits: 0 }, session: { renders: 0, commits: 0 },
+                });
+                expect(hook.getCurrent()).toBe(baseline);
+                machine = { ...machine, metadataVersion: machine.metadataVersion + 1,
+                    metadata: { ...machine.metadata!, displayName: 'Renamed provider target' } };
+                await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: home.id }));
+                expect(counter.read().renders).toBe(1);
+                expect(hook.getCurrent().machineRows[0]?.displayName).toBe('Renamed provider target');
+                expect(hook.getCurrent().resolveCurrentTarget()).toEqual({ machineId: machine.id, serverId: home.id });
+                counter.reset();
+                machine = { ...machine, revokedAt: Date.now() };
+                await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: home.id }));
+                expect(counter.read().renders).toBe(1);
+                expect(hook.getCurrent().machineRows).toEqual([]);
+                expect(hook.getCurrent().resolveCurrentTarget()).toBeNull();
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(home.id); }
+    });
+    it('keeps an exact source Account selection inside its Home and retires it on Account replacement', async () => {
         const syncRuntime = await import('@/sync/syncEngine');
         const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');
         requiredSync.registerSyncRuntime(syncRuntime);
         const previous = storage.getState();
-        const serverUrl = 'https://administration-route-recovery.example.test';
-        await upsertServerProfile({ serverUrl, name: 'Route recovery' });
-        const profile = await setServerProfileIdentityForUrl(serverUrl, 'srv_route_recovery');
-        if (!profile) throw new Error('Test profile was not created');
-        const scope = { serverId: profile.id, accountId: 'route-recovery-account' };
-        await network.addHome(serverUrl, scope.accountId);
+        const sourceUrl = 'https://administration-source-account.example.test';
+        const source = await network.addHome(sourceUrl, 'source-owner', { serverIdentityId: 'srv_source_account' });
+        const other = await network.addHome('https://administration-foreign-account.example.test', 'foreign-owner', {
+            serverIdentityId: 'srv_foreign_account',
+        });
+        const accountScope = { serverId: source.id, accountId: source.accountId };
+        const sourceTarget = { serverIdentityId: 'srv_source_account', machineId: 'source-machine' };
+        const foreignTarget = { serverIdentityId: 'srv_foreign_account', machineId: 'foreign-machine' };
+        const sourceMachine = createMachineFixture({ id: sourceTarget.machineId, activeAt: Date.now() });
+        const foreignMachine = createMachineFixture({ id: foreignTarget.machineId, activeAt: Date.now() });
+        await setActiveServerId(other.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        try {
+            storage.setState(state => ({ profileScope: { serverId: other.id, accountId: other.accountId },
+                settingsScope: { serverId: other.id, accountId: other.accountId }, machines: { [foreignMachine.id]: foreignMachine },
+                machineListByServerId: { [source.id]: [sourceMachine], [other.id]: [foreignMachine] },
+                machineListStatusByServerId: { [source.id]: 'idle', [other.id]: 'idle' },
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: { plugins: foreignTarget } } }));
+            const hook = await renderHook(() => useMachineAdministrationTargetSelection('plugins', { accountScope }));
+            try {
+                await vi.waitFor(() => expect(hook.getCurrent().pickerRows.map(row => row.candidate.target)).toEqual([sourceTarget]));
+                expect(hook.getCurrent().selectedTarget).toEqual(foreignTarget);
+                expect(hook.getCurrent().canExecute).toBe(false);
+                expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
+                await act(async () => storage.setState(state => ({ settings: { ...state.settings,
+                    machineAdministrationTargetsLocalV1: {} } })));
+                await vi.waitFor(() => expect(hook.getCurrent().selectedTarget).toEqual(sourceTarget));
+                expect(hook.getCurrent().resolveExecutionTarget()?.target).toEqual(sourceTarget);
+                await act(async () => network.setAccount(sourceUrl, 'replacement-owner'));
+                // A live machine in the same Home cannot lend a replacement Account authority
+                // over a template captured from the original Account.
+                await act(async () => storage.setState({ machineListByServerId: {
+                    [source.id]: [sourceMachine], [other.id]: [foreignMachine],
+                }, machineListStatusByServerId: { [source.id]: 'idle', [other.id]: 'idle' } }));
+                await vi.waitFor(() => expect(hook.getCurrent().pickerRows).toEqual([]));
+                expect(hook.getCurrent().canExecute).toBe(false);
+                expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
+            } finally { await hook.unmount(); }
+        } finally {
+            storage.setState(previous);
+            await removeServerProfile(source.id);
+            await removeServerProfile(other.id);
+        }
+    });
+
+    it('keeps the real Plugins target consumer settled across 196 Machine arrivals', async () => {
+        const syncRuntime = await import('@/sync/syncEngine');
+        const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');
+        requiredSync.registerSyncRuntime(syncRuntime);
+        const { usePluginsAdministrationTarget } = await import('@/components/settings/plugins/model/usePluginsAdministrationTarget');
+        const previous = storage.getState();
+        const url = 'https://plugins-hydration-consumer.example.test';
+        await upsertServerProfile({ serverUrl: url, name: 'Hydration consumer' });
+        const profile = await setServerProfileIdentityForUrl(url, 'srv_hydration_consumer');
+        if (!profile) throw new Error('Expected Home');
+        const scope = { serverId: profile.id, accountId: 'hydration-consumer-account' };
+        await network.addHome(url, scope.accountId);
         await setActiveServerId(profile.id);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const target = { serverIdentityId: profile.serverIdentityId!, machineId: 'hydration-0' };
+        const rows = Array.from({ length: 196 }, (_, index) => createMachineFixture({ id: `hydration-${index}`,
+            activeAt: Date.now(), metadata: null, availability: undefined }));
+        try {
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: {
+                    [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins]: target,
+                } } }));
+            storage.getState().applyMachines(rows, true, { sourceServerId: profile.id });
+            storage.getState().markMachineListSettled(profile.id);
+            const renders = createRenderCommitCounter();
+            const hook = await renderHook(() => {
+                useRenderCommitCounter(renders);
+                return usePluginsAdministrationTarget({ enabled: false });
+            });
+            try {
+                expect(hook.getCurrent().administration.selection.selectedTarget).toEqual(target);
+                await vi.waitFor(() => expect(hook.getCurrent().capabilitiesAccountId).toBe(scope.accountId));
+                renders.reset();
+                for (const row of rows) {
+                    await act(async () => storage.getState().applyMachines([{ ...row,
+                        metadata: createMachineFixture().metadata, availability: { kind: 'available' },
+                    }], false, { sourceServerId: profile.id }));
+                }
+                expect(hook.getCurrent().administration.selection.selectedTarget).toEqual(target);
+                expect(hook.getCurrent().administration.selection.pickerRows).toHaveLength(rows.length);
+                expect(hook.getCurrent().daemonTransportOnline).toBe(true);
+                expect(renders.read().renders).toBe(renders.read().commits);
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(profile.id); }
+    });
+
+    it('remembers a sole automatic target as navigation state without notifying Settings consumers', async () => {
+        const syncRuntime = await import('@/sync/syncEngine');
+        const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');
+        requiredSync.registerSyncRuntime(syncRuntime);
+        const previous = storage.getState();
+        const url = 'https://administration-automatic-memory.example.test';
+        await upsertServerProfile({ serverUrl: url, name: 'Automatic target' });
+        const profile = await setServerProfileIdentityForUrl(url, 'srv_automatic_memory');
+        if (!profile) throw new Error('Expected Home');
+        const scope = { serverId: profile.id, accountId: 'automatic-target-account' };
+        await network.addHome(url, scope.accountId);
+        await setActiveServerId(profile.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        try {
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                machineListByServerId: { [profile.id]: [createMachineFixture({ id: 'sole-machine', activeAt: Date.now() })] },
+                machineListStatusByServerId: { [profile.id]: 'idle' },
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: {} } }));
+            const settings = storage.getState().settings;
+            const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents'));
+            const target = { serverIdentityId: 'srv_automatic_memory', machineId: 'sole-machine' };
+            expect(hook.getCurrent().selectedTarget).toEqual(target);
+            expect(hook.getCurrent().resolveExecutionTarget()?.target).toEqual(target);
+            expect(storage.getState().settings).toBe(settings);
+            await hook.unmount();
+            const restored = await renderHook(() => useMachineAdministrationTargetSelection('agents', { allowSoleCandidate: false }));
+            expect(restored.getCurrent().selectedTarget).toEqual(target);
+            await restored.unmount();
+        } finally { storage.setState(previous); await removeServerProfile(profile.id); }
+    });
+    it.each(['select', 'clear'] as const)('admits explicit %s through Settings Actions before changing an unavailable route', async (intent) => {
+        const previous = storage.getState();
         const saved = { serverIdentityId: 'srv_route_recovery', machineId: 'chosen-machine' };
         const requested = { serverIdentityId: 'srv_route_recovery', machineId: 'missing-machine' };
+        const { createSecretSettingsTestHarness } = await import('@/components/settings/secrets/secretSettingsTestHarness');
+        const account = await createSecretSettingsTestHarness({ accountId: 'route-recovery-account', serverIdentityId: saved.serverIdentityId,
+            settings: settingsParse({ machineAdministrationTargetsLocalV1: { agents: saved },
+                actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) });
+        const scope = account.scope;
         try {
-            storage.setState(state => ({ profile: { ...state.profile, id: scope.accountId }, profileScope: scope, settingsScope: scope,
-                machineListByServerId: { [profile.id]: [createMachineFixture({ id: saved.machineId, activeAt: Date.now() }),
+            storage.setState({
+                settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: { agents: saved } },
+                machineListByServerId: { [scope.serverId]: [createMachineFixture({ id: saved.machineId, activeAt: Date.now() }),
                     createMachineFixture({ id: 'other-machine', activeAt: Date.now() })] },
-                machineListStatusByServerId: { [profile.id]: 'idle' },
-                settings: settingsParse({ ...state.settings, machineAdministrationTargetsLocalV1: { agents: saved },
-                    actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
+                machineListStatusByServerId: { [scope.serverId]: 'idle' },
+            });
             const hook = await renderHook(() => useMachineAdministrationTargetSelection('agents', { initialTarget: requested }));
             expect(hook.getCurrent().selectedTarget).toEqual(requested);
             expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
             await act(async () => hook.getCurrent().selectTarget({ ...saved, serverIdentityId: 'srv_wrong_home' }));
             expect(hook.getCurrent().selectedTarget).toEqual(requested);
+            await act(async () => intent === 'select' ? hook.getCurrent().selectTarget(saved) : hook.getCurrent().clearTarget());
+            expect(hook.getCurrent().selectedTarget).toEqual(requested);
+            expect(storage.getState().settings.machineAdministrationTargetsLocalV1.agents).toEqual(saved);
+            await act(async () => account.replaceSettings(settingsParse({ ...account.persistedSettings,
+                actionsSettingsV1: { v: 1 } })));
             await act(async () => intent === 'select' ? hook.getCurrent().selectTarget(saved) : hook.getCurrent().clearTarget());
             await vi.waitFor(() => expect(hook.getCurrent().selectedTarget).toEqual(intent === 'select' ? saved : null));
             if (intent === 'select') {
@@ -144,8 +389,29 @@ describe('machine administration target demand', () => {
                 expect(hook.getCurrent().state.kind).toBe('unselected');
                 expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
             }
+            if (intent === 'select') {
+                const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+                const execute = createFrontDoorActionExecute();
+                for (const surface of ['agent', 'cli'] as const) {
+                    const input = { anchor: 'machines.administrationTarget', key: `parity.${surface}`, value: saved };
+                    const context = { surface, authority: 'account_automation', serverId: scope.serverId, expectedAccountId: scope.accountId } as const;
+                    await act(async () => {
+                        expect(await execute('settings.set', input, context)).toMatchObject({ ok: true });
+                    });
+                    expect(storage.getState().settings.machineAdministrationTargetsLocalV1[input.key]).toEqual(saved);
+                    expect(storage.getState().settings.machineAdministrationTargetsLocalV1.agents).toEqual(saved);
+                    expect(await execute('settings.get', { anchor: input.anchor, key: input.key }, context))
+                        .toMatchObject({ ok: true, result: { value: saved } });
+                    expect(await execute('settings.get', { anchor: input.anchor, key: input.key, includeVersion: true }, context))
+                        .toMatchObject({ ok: false, errorCode: 'setting_conditional_mutation_unsupported' });
+                    await act(async () => {
+                        expect(await execute('settings.set', { ...input, value: null }, context)).toMatchObject({ ok: true });
+                    });
+                    expect(storage.getState().settings.machineAdministrationTargetsLocalV1[input.key]).toBeUndefined();
+                }
+            }
             await hook.unmount();
-        } finally { storage.setState(previous); await removeServerProfile(profile.id); }
+        } finally { standardCleanup(); await account.dispose(); storage.setState(previous); }
     });
     it('uses an available route target transiently and persists only an explicit selection', async () => {
         const previous = storage.getState();
