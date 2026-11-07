@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { listWorkflowProducerOptions, resolveWorkflowReferenceScopeFacts, type WorkflowReferenceConsumer } from '@/sync/domains/workflows/workflowAuthoring';
+import { listWorkflowProducerOptions, resolveWorkflowReferenceScopeFacts, type WorkflowProducerOption, type WorkflowReferenceConsumer } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
@@ -24,6 +24,7 @@ export type WorkflowConditionValueOption = Readonly<{
   facts: WorkflowConditionValueFacts;
   /** Choosing it opens the path field beside the picker, for a value nothing declares. */
   opensPath?: boolean;
+  unavailableReason?: WorkflowProducerOption['unavailableReason'];
 }>;
 
 const UNKNOWN: WorkflowConditionValueFacts = { type: 'unknown' };
@@ -149,6 +150,7 @@ export function listWorkflowConditionValueOptions(
   draft: WorkflowEditorDraft,
   consumerBlockId: string,
   consumer?: WorkflowReferenceConsumer,
+  presentation?: Readonly<{ includeUnavailable?: boolean }>,
 ): readonly WorkflowConditionValueOption[] {
   const options: WorkflowConditionValueOption[] = [];
   const push = (
@@ -171,6 +173,7 @@ export function listWorkflowConditionValueOptions(
     draft,
     consumerBlockId,
     consumer,
+    presentation,
   );
   // Two blocks can share a label ("Agent step"): the number the document shows them under tells them apart.
   const ordinals = listWorkflowBlockOrdinalsV1(draft.blocks);
@@ -192,6 +195,14 @@ export function listWorkflowConditionValueOptions(
         ? `${label} · ${formatWorkflowReferenceScopeLabel(producer.scope)}`
         : label;
     const source = { blockId: producer.blockId, scope: producer.scope };
+    if (producer.unavailableReason !== undefined) {
+      const reference: WorkflowValueReference = { kind: 'result', producer: source, path: [] };
+      options.push({
+        id: JSON.stringify(reference), title: label, category, reference,
+        facts: UNKNOWN, typeLabel: null, unavailableReason: producer.unavailableReason,
+      });
+      continue;
+    }
     const contract = producer.isBranch
       ? null
       : resultContractOf(draft, producer.blockId);
@@ -245,7 +256,7 @@ export function listWorkflowConditionValueOptions(
       );
   }
   for (const producer of producers) {
-    if (producer.isBranch || producer.scope.kind === 'previous_iteration')
+    if (producer.unavailableReason !== undefined || producer.isBranch || producer.scope.kind === 'previous_iteration')
       continue;
     const source = { blockId: producer.blockId, scope: producer.scope };
     push(

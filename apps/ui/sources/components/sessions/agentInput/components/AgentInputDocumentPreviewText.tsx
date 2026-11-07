@@ -50,7 +50,8 @@ export function AgentInputInlineReferenceChip(
       style={[
         styles.chip,
         { backgroundColor: referenceChipFill(theme.colors.input.text) },
-        props.reference.unavailable ? styles.unavailable : null,
+        props.reference.unavailable || props.reference.state === 'unavailable' || props.reference.state === 'removed'
+          ? styles.unavailable : null,
       ]}
     >
       {` ${props.reference.label} `}

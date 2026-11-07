@@ -451,6 +451,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
     /** Selects the step so its inputs can be edited (pressing them at rest). */
     onEdit?: () => void;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
+    onRemoveInput?: (index: number) => void;
     /** A reader's fact that ends the footer line (05's "Open conversation"). */
     footerAccessory?: React.ReactNode;
     testIDPrefix: string;
@@ -481,7 +482,7 @@ export function WorkflowStepDataEditor(props: Readonly<{
                     onChange={(value) => props.onChangeInput(props.step.input.map((current, candidate) => (
                         candidate === index ? value : current
                     )))}
-                    onRemove={() => props.onChangeInput(props.step.input.filter((_current, candidate) => candidate !== index))}
+                    onRemove={props.onRemoveInput ? () => props.onRemoveInput?.(index) : undefined}
                     // Rows are addressed by their step, exactly as the loop editors
                     // address theirs; the bare editor prefix gave every step's first
                     // input the same identity.

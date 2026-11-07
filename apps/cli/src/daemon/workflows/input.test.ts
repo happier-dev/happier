@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationConversationOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { WorkflowValueReferenceSchema } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { parseWorkflowDocumentJsonV1, serializeWorkflowDocumentJsonV1 } from '@happier-dev/protocol/workflows/workflowDocumentV1';
+import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import type { WorkflowCondition } from '@happier-dev/protocol/workflows';
 import type { JsonValue } from '@happier-dev/protocol';
 import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
@@ -331,6 +333,36 @@ describe('workflow input materialization', () => {
       { token: '@analysis', reference: { kind: 'input', name: 'topic' }, value: 'typed value' },
     ]);
     expect(materialized.references).toEqual([fileMention, unknownMention]);
+  });
+
+  it('resolves result and input tokens after the saved workflow serializer round-trip', async () => {
+    const references = ['Analysis', 'Topic'].map((label, index) => {
+      const reference = { kind: 'happier.workflowInput', ref: `workflowInput:${index}`, label };
+      return { ...reference, token: formatInlineReferenceTokenV1(reference) };
+    });
+    const document = parseWorkflowDocumentJsonV1(serializeWorkflowDocumentJsonV1({
+      kind: 'happier.workflow', version: 1,
+      definition: {
+        defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+        inputs: [{ name: 'topic', valueType: 'string', required: true }],
+        blocks: [
+          { kind: 'step', id: 'analyze', document: { text: 'Analyze' }, input: [], result: { kind: 'text' } },
+          { kind: 'step', id: 'review', document: { text: `Review ${references[0]!.token} for ${references[1]!.token}`, references }, input: [
+            { kind: 'result', producer: { blockId: 'analyze', scope: { kind: 'current' } }, path: [] },
+            { kind: 'input', name: 'topic' },
+          ], result: { kind: 'text' } },
+        ],
+      },
+    }));
+    const step = document.definition.blocks[1]!;
+    if (step.kind !== 'step') throw new Error('expected review step');
+    expect(step.document.references).toEqual(references);
+    const materialized = await materializeWorkflowStepInput({ document: step.document, references: step.input, runtime });
+    expect(promptValues(materialized.text)).toEqual([
+      { token: 'Analysis', reference: step.input[0], value: { verdict: { passed: false }, text: 'analysis' } },
+      { token: 'Topic', reference: step.input[1], value: 'typed value' },
+    ]);
+    expect(materialized.references).toEqual([]);
   });
 
   it('reads origin context independently of conversation and condition fields at evaluation time', async () => {

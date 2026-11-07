@@ -7,15 +7,32 @@ import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixture
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
 import { DaemonWorkspaceFileListResponseSchema } from '@happier-dev/protocol/machines/workspaceFiles';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 const machineCalls: Array<Readonly<{ method: string; input: unknown; targetId: string }>> = [];
 installAgentInputCommonModuleMocks();
+// File reads use the authenticated Action HTTP boundary; the composer, policy,
+// requester custody and materialization below it remain real.
+const workspaceFiles = await createExternalActionAccountHttpBoundary({
+    serverUrl: 'https://session-pane.test', serverIdentityId: 'srv_session_pane',
+    accountId: 'account-a', machineId: 'machine-9', tokenEpoch: 0,
+    actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles,
+    execute: (input, context) => {
+        machineCalls.push({ method: getActionSpec(FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles).bindings!.rpcMethod!,
+            input, targetId: context.target.machineId });
+        return DaemonWorkspaceFileListResponseSchema.parse({ ok: true, paths: ['src/index.ts'], truncated: false });
+    },
+});
 const { installSessionPaneRuntimeTestHarness } = await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
 const runtime = installSessionPaneRuntimeTestHarness({
-    request: async (url, init) => createPlainMachineReadHttpResponseFixture(new URL(String(url)).pathname, init, 'account-a'),
+    credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
+    request: async (url, init) => await workspaceFiles.handle(new URL(String(url)), init)
+        ?? createPlainMachineReadHttpResponseFixture(new URL(String(url)).pathname, init, 'account-a'),
     rpc: async (method, input, targetId) => {
     machineCalls.push({ method, input, targetId });
-    if (method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST) return DaemonWorkspaceFileListResponseSchema.parse({ ok: true, paths: ['src/index.ts'], truncated: false });
     return {};
 } });
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -31,6 +48,19 @@ async function renderScreen(element: React.ReactElement) {
 }
 
 describe('ScopedAuthoringComposer', () => {
+    it('offers host-owned references without a Machine or a daemon reference catalog', async () => {
+        const custody = (await import('@/components/sessions/authoring/authoringComposerCustody'))
+            .createWorkflowAuthoringComposerCustody('workflow-local-results').entryFor('review');
+        const result = { kind: 'composerReference' as const, key: 'prior', text: '@analysis',
+            group: 'Step results', structuredInput: { kind: 'happier.workflowInput', ref: 'workflowInput:0', label: 'Analysis' } };
+        const screen = await renderScreen(<ScopedAuthoringComposer custody={custody}
+            scope={{ kind: 'machine', machineId: null, serverId: runtime.serverId }}
+            document={{ text: 'Review', references: [], attachments: [] }} attachmentsEnabled
+            placeholder="Describe the step" additionalSuggestions={() => [result]} />);
+        const resolve = screen.findByType<typeof AgentInput>(AgentInput).props.autocompleteSuggestions;
+        if (!resolve) throw new Error('Expected the real composer suggestion entry point');
+        await expect(resolve('@', new AbortController().signal)).resolves.toContainEqual(result);
+    });
     it('keeps duplicate-token ranges and staged content when its portable projection echoes back', async () => {
         const custody = (await import(
             '@/components/sessions/authoring/authoringComposerCustody'

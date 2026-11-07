@@ -44,6 +44,7 @@ import { useWorkflowStepOptionsChip } from './WorkflowStepOptionsChip';
 import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
+import { createWorkflowPromptSuggestions, resolveWorkflowPromptReferenceStates } from './workflowPromptSuggestions';
 
 /**
  * One repeatable authored step (07 S7, 04 §4.3): a stable ordinal, a prompt-derived label,
@@ -63,6 +64,8 @@ type WorkflowStepPromptFieldProps = Readonly<{
     composerScope: AuthoringComposerScope;
     testID: string;
     document: WorkflowStep['document'];
+    additionalSuggestions: React.ComponentProps<typeof ScopedAuthoringComposer>['additionalSuggestions'];
+    referenceStates?: React.ComponentProps<typeof ScopedAuthoringComposer>['referenceStates'];
     accessibilityLabel: string;
     editable: boolean;
     onChangeDocument: (document: ScopedAuthoringDocument) => void;
@@ -125,6 +128,8 @@ const WorkflowStepPromptField = React.memo(React.forwardRef<
                 custody={props.custody}
                 scope={props.composerScope}
                 document={props.document}
+                additionalSuggestions={props.additionalSuggestions}
+                referenceStates={props.referenceStates}
                 onChangeDocument={props.editable ? props.onChangeDocument : undefined}
                 onBlur={props.editable ? props.onCommitDocument : undefined}
                 attachmentsEnabled
@@ -170,6 +175,7 @@ export function WorkflowStepEditor(props: Readonly<{
     /** Opens Step options, anchored beside this step's Customize control. */
     onCustomize: (anchorRef: React.RefObject<View | null>) => void;
     onChangeInput: (input: readonly WorkflowValueReference[]) => void;
+    onRemoveInput?: (index: number) => void;
     /**
      * Writes one of the step's own engine fields through the draft owner; `undefined` deletes it
      * so the step inherits the workflow default again (04 §5.2).
@@ -210,8 +216,14 @@ export function WorkflowStepEditor(props: Readonly<{
     const custody = props.composerCustody.entryFor(step.id);
     // The prompt's handlers close over the current document through a ref, so
     // they stay referentially stable while the whole draft changes underneath.
-    const latestRef = React.useRef({ step, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit });
-    latestRef.current = { step, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit };
+    const latestRef = React.useRef({ step, draft: props.draft, onChangeInput: props.onChangeInput, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit });
+    latestRef.current = { step, draft: props.draft, onChangeInput: props.onChangeInput, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit };
+    const additionalSuggestions = React.useCallback((query: string) => createWorkflowPromptSuggestions({
+        draft: latestRef.current.draft,
+        step: latestRef.current.step,
+        query,
+        onChangeInput: latestRef.current.onChangeInput,
+    }), []);
     // The composer publishes its portable document through the protocol's
     // read-only projection of the same values the saved definition owns, so the
     // authored document is rebuilt here through the canonical value schema.
@@ -288,6 +300,7 @@ export function WorkflowStepEditor(props: Readonly<{
     const composerChips = React.useMemo(() => [stepOptionsChip], [stepOptionsChip]);
     const promptFrameRef = React.useRef<View>(null);
     const issues = workflowIssuesForBlock(validation, step.id, props.draft);
+    const referenceStates = resolveWorkflowPromptReferenceStates(step, issues);
     const displayName = workflowBlockReferenceLabel(step);
     const accessibilityLabel = t('workflows.a11y.stepContext', {
         block: displayName,
@@ -332,6 +345,8 @@ export function WorkflowStepEditor(props: Readonly<{
                         composerScope={props.composerScope}
                         testID={`${testIDPrefix}-step-${step.id}-prompt`}
                         document={step.document}
+                        additionalSuggestions={additionalSuggestions}
+                        referenceStates={referenceStates}
                         accessibilityLabel={accessibilityLabel}
                         editable={editable}
                         onChangeDocument={handleChangeDocument}
@@ -362,6 +377,7 @@ export function WorkflowStepEditor(props: Readonly<{
                 onEdit={onSelect}
                 {...(!editable && props.slots?.footer ? { footerAccessory: props.slots.footer } : {})}
                 onChangeInput={props.onChangeInput}
+                onRemoveInput={props.onRemoveInput}
                 testIDPrefix={testIDPrefix}
             />
 

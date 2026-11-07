@@ -1497,6 +1497,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const { invokeWorkflowAuthoringAction } = await import('@/sync/ops/actions/workflowAuthoringAction');
         const { buildWorkflowDefinitionCandidate } = await import('@/sync/domains/workflows/workflowAuthoring');
         const { serializeWorkflowDocumentJsonV1, parseWorkflowDocumentJsonV1 } = await import('@happier-dev/protocol/workflows/workflowDocumentV1');
+        const { formatInlineReferenceTokenV1 } = await import('@happier-dev/protocol/runtime/input/inlineReferenceTokenV1');
         const executor = createActionExecutor({ workflowAuthoringAction: invokeWorkflowAuthoringAction,
             isActionApprovalRequired: () => false } as unknown as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
@@ -1507,12 +1508,13 @@ describe('WorkflowEditorHostScreen composition', () => {
         const snapshot = await executor.execute('workflow.authoring.draft.get', address, context);
         if (!snapshot.ok) throw new Error(snapshot.error);
         const revision = (snapshot.result as { drafts: Array<{ draftRevision: number }> }).drafts[0]!.draftRevision;
+        const references = ['Analysis', 'Topic'].map((label, index) => {
+            const reference = { kind: 'happier.workflowInput', ref: `workflowInput:${index}`, label };
+            return { ...reference, token: formatInlineReferenceTokenV1(reference) };
+        });
         const step = {
             kind: 'step', id: 'token-review',
-            document: { text: 'Review @analysis for @topic', references: [
-                { kind: 'happier.workflowInput', ref: 'workflowInput:0', token: '@analysis', label: '@analysis' },
-                { kind: 'happier.workflowInput', ref: 'workflowInput:1', token: '@topic', label: '@topic' },
-            ], attachments: [] },
+            document: { text: `Review ${references[0]!.token} for ${references[1]!.token}`, references, attachments: [] },
             input: [
                 { kind: 'result', producer: { blockId: original.blocks[0]!.id, scope: { kind: 'current' } }, path: [] },
                 { kind: 'input', name: 'topic' },

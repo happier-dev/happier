@@ -18,13 +18,14 @@ import {
 export function projectAuthoringDocumentPreview(
     document: Readonly<{ text: string; references: readonly MentionRefV1[] }>,
     exact?: Readonly<{ text: string; structuredInputMentions: readonly ComposerStructuredInputMention[] }> | null,
+    referenceStates?: ReadonlyMap<string, NonNullable<AgentInputDocumentPreviewReference['state']>>,
 ): Readonly<{ text: string; references: readonly AgentInputDocumentPreviewReference[] }> {
     const text = exact?.text ?? document.text;
     const mentions = exact?.structuredInputMentions ?? composerStructuredMentionsFromReferences({
         references: placePositionlessComposerReferences({ text, references: document.references }),
         existing: [],
     });
-    return { text, references: projectComposerDocumentPreviewReferences(text, mentions) };
+    return { text, references: projectComposerDocumentPreviewReferences(text, mentions, referenceStates) };
 }
 
 /**
@@ -34,12 +35,14 @@ export function projectAuthoringDocumentPreview(
 export function projectComposerDocumentPreviewReferences(
     text: string,
     mentions: readonly ComposerStructuredInputMention[],
+    referenceStates?: ReadonlyMap<string, NonNullable<AgentInputDocumentPreviewReference['state']>>,
 ): readonly AgentInputDocumentPreviewReference[] {
     return composerReferencesFromStructuredMentions({ text, mentions }).map((reference) => ({
         start: reference.start,
         end: reference.end,
         ref: reference.ref,
         label: resolveComposerReferenceChipLabel(reference),
+        ...(referenceStates?.has(reference.ref) ? { state: referenceStates.get(reference.ref) } : {}),
         ...(parseMentionRefV1(reference.ref) === null ? { unavailable: true } : {}),
     }));
 }

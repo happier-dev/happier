@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { WorkflowStarterExampleSelection } from '@happier-dev/protocol/workflows/builtins/examples';
+import { removeWorkflowStepInputV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
 import { Platform, View } from 'react-native';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
@@ -940,6 +941,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
                   ),
                 )
               }
+              onRemoveInput={(index) => onChange(updateWorkflowBlock(readDraft(), block.id,
+                (current) => current.kind === 'step' ? removeWorkflowStepInputV1(current, index) : current))}
               onChangeExecutionField={(field, value) =>
                 onChange(
                   setWorkflowStepExecutionField(
@@ -1205,6 +1208,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
                               ),
                             )
                           }
+                          onRemoveInput={(index) => onChange(updateWorkflowBlock(readDraft(), evaluator.id,
+                            (current) => current.kind === 'step' ? removeWorkflowStepInputV1(current, index) : current))}
                           {...(registerPromptRef === undefined
                             ? {}
                             : { registerPromptRef })}

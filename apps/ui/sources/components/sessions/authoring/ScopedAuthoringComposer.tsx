@@ -18,6 +18,7 @@ import {
     type ComposerSuggestionKindId,
 } from '@/components/autocomplete/composerSuggestionKinds';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AgentInput } from '@/components/sessions/agentInput';
 import {
@@ -111,6 +112,9 @@ export type ScopedAuthoringComposerProps = Readonly<{
         custody: AuthoringComposerCustodyEntry;
         scope: AuthoringComposerScope;
         document: ScopedAuthoringDocument;
+        /** References owned by the host document, independent of its Machine's catalog. */
+        additionalSuggestions?: (query: string) => readonly AutocompleteSuggestion[];
+        referenceStates?: React.ComponentProps<typeof AgentInput>['referenceStates'];
         onChangeDocument?: (document: ScopedAuthoringDocument) => void;
         attachmentsEnabled: boolean;
         editable?: boolean;
@@ -226,10 +230,11 @@ ScopedAuthoringComposer.displayName = 'ScopedAuthoringComposer';
 function projectAuthoringComposerPreviewDocument(
     custody: AuthoringComposerCustodyEntry,
     document: ScopedAuthoringDocument,
+    referenceStates?: ScopedAuthoringComposerProps['referenceStates'],
 ): Readonly<{ text: string; references: readonly AgentInputDocumentPreviewReference[] }> {
     const retained = custody.readDocument();
     const exact = retained !== null && pluginJsonValuesEqual(projectPortableAuthoringDocument(retained), document) ? retained : null;
-    return projectAuthoringDocumentPreview(document, exact);
+    return projectAuthoringDocumentPreview(document, exact, referenceStates);
 }
 
 /**
@@ -462,15 +467,17 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
     const suggestionKinds = sessionId === null
         ? NEW_SESSION_COMPOSER_SUGGESTION_KINDS
         : SESSION_AUTHORING_SUGGESTION_KINDS;
-    const resolveSuggestions = React.useCallback((query: string, signal: AbortSignal) => {
+    const resolveSuggestions = React.useCallback(async (query: string, signal: AbortSignal) => {
+        const local = props.additionalSuggestions?.(query) ?? [];
         if (sessionId !== null) {
-            return resolveSessionComposerSuggestions(sessionId, query, {
+            const suggestions = await resolveSessionComposerSuggestions(sessionId, query, {
                 kinds: SESSION_AUTHORING_SUGGESTION_KINDS,
                 signal,
                 composerReferenceHost: referenceHost,
             });
+            return [...local, ...suggestions];
         }
-        return getSuggestions(null, query, {
+        const suggestions = await getSuggestions(null, query, {
             kinds: NEW_SESSION_COMPOSER_SUGGESTION_KINDS,
             serverId,
             workspace: resolveNewSessionFileSuggestionScope({
@@ -482,7 +489,9 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
             signal,
             composerReferenceHost: referenceHost,
         });
+        return [...local, ...suggestions];
     }, [
+        props.additionalSuggestions,
         machineFileScope?.directory,
         machineFileScope?.machineHomeDir,
         machineFileScope?.machineId,
@@ -530,7 +539,7 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
     }), [custodySelection, props.custody]);
 
     if (!editing) {
-        const preview = projectAuthoringComposerPreviewDocument(props.custody, props.document);
+        const preview = projectAuthoringComposerPreviewDocument(props.custody, props.document, props.referenceStates);
         const engineLabel = context?.engineLabel ?? context?.agentLabel;
         const engineOptions = context?.agentPickerOptions ?? [];
         const engineOptionId = resolveAgentInputEngineOptionId({
@@ -557,6 +566,7 @@ const ScopedAuthoringComposerOwner = React.forwardRef<
                 value={current.text}
                 onChangeText={editable ? (text) => documentOwner.replaceDocument({ ...documentOwner.read().document, text }) : undefined}
                 structuredInputMentions={current.structuredInputMentions as readonly ComposerStructuredInputMention[]}
+                referenceStates={props.referenceStates}
                 onStructuredInputMentionsChange={editable ? (mentions) => documentOwner.replaceDocument({
                     ...documentOwner.read().document,
                     structuredInputMentions: mentions,

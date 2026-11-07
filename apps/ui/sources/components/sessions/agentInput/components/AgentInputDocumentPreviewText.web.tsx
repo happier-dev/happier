@@ -75,7 +75,8 @@ export function AgentInputInlineReferenceChip(
         end: reference.end,
         kind: '',
         label: reference.label,
-        ...(reference.unavailable ? { state: 'unavailable' as const } : {}),
+        ...(reference.state ? { state: reference.state }
+          : reference.unavailable ? { state: 'unavailable' as const } : {}),
       }}
       selected={false}
     />

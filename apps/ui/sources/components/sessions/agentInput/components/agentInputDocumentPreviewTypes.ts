@@ -1,9 +1,12 @@
+import type { ComposerEditorReference } from '@/components/ui/forms/composerEditor/composerEditorTypes';
+
 /** One placed inline reference of a document picture: its exact range in the text and what its chip reads. */
 export type AgentInputDocumentPreviewReference = Readonly<{
   start: number;
   end: number;
   ref: string;
   label: string;
+  state?: ComposerEditorReference['state'];
   /** A reference whose identity no longer parses reads as unavailable, as in the live field. */
   unavailable?: boolean;
 }>;

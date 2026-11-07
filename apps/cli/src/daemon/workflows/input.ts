@@ -5,7 +5,8 @@ import { WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/
 import type { WorkflowSessionContextV1, WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowCondition, WorkflowDefinitionV1, WorkflowStepComposerDocument, WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationConversationOccurrenceEvidenceV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
-import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { readWorkflowStepInputIndexV1 } from '@happier-dev/protocol/workflows/workflowComposerDocumentV1';
 import type { DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { compactWorkflowPromptContext, projectWorkflowPromptContext, renderWorkflowPromptContext } from './workflowPromptContext';
 
@@ -374,9 +375,8 @@ export async function materializeWorkflowStepInput(params: Readonly<{
   const tokens = new Map<number, string>();
   for (const mention of params.document.references) {
     if (mention.kind !== MENTION_KIND_V1.workflowInput) continue;
-    const opaque = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.workflowInput, mention.ref);
-    if (opaque === null || !/^\d+$/.test(opaque)) continue;
-    const index = Number(opaque);
+    const index = readWorkflowStepInputIndexV1(mention.ref);
+    if (index === null) continue;
     if (!tokens.has(index)) tokens.set(index, mention.token);
   }
   const resolvedInputs: { token?: string; reference: WorkflowValueReference; value: WorkflowJsonValue }[] = [];

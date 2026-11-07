@@ -35,7 +35,8 @@ import { createWorkflowResultFieldLocator, walkWorkflowBlocks } from './workflow
 import { readWorkflowClosedResultFieldNames } from './workflowResultFieldsV1.js';
 import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { WorkflowRoleV1Schema } from '../prompts/roles/rolesV1.js';
-import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '../runtime/input/mentionRefV1.js';
+import { MENTION_KIND_V1 } from '../runtime/input/mentionRefV1.js';
+import { readWorkflowStepInputIndexV1 } from './workflowComposerDocumentV1.js';
 import { parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { resolveBuiltinWorkflowDefinitionV1 } from './builtins/catalog.js';
 import { projectActionWorkflowSelectionInputV1, readActionWorkflowTargetInputFieldV1 } from '../actions/executor/agentStartAdmission.js';
@@ -720,10 +721,9 @@ function validateStep(
   });
   step.document.references.forEach((mention, index) => {
     if (mention.kind !== MENTION_KIND_V1.workflowInput) return;
-    const opaque = readMentionRefOpaqueForKindV1(MENTION_KIND_V1.workflowInput, mention.ref);
-    const bindingIndex = opaque !== null && /^\d+$/.test(opaque) ? Number(opaque) : NaN;
+    const bindingIndex = readWorkflowStepInputIndexV1(mention.ref);
     const tokenPath = joinPath(path, 'document', 'references', index, 'ref');
-    if (!Number.isSafeInteger(bindingIndex) || bindingIndex >= step.input.length) {
+    if (bindingIndex === null || bindingIndex >= step.input.length) {
       state.issues.push(issue('invalid_input', tokenPath, 'This token has no Workflow input binding.', step.id));
       return;
     }
