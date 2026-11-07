@@ -1500,6 +1500,45 @@ describe('ApprovalDetailScreen', () => {
     expect(await reasonOf('executor_failed')).toBe('approvals.failureNoReason');
   });
 
+  it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
+    await prepareApprovalFixture();
+    const request = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+      actionId: 'machines.setup.apply', summary: 'Set up Machine',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+        serverId: account.serverId, accountId: 'account-1', machineId: 'machine-target',
+        actionId: 'machines.setup.apply', requestId: 'setup-review' },
+      actionArgs: { homeId: account.serverId, machineId: 'machine-target', targets: [{
+        homeId: account.serverId, machineId: 'machine-target', desiredRevision: 0,
+        sources: [{ kind: 'direct', setup: {} }], recipePlans: [], exclusions: [],
+      }] },
+    });
+    const { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } =
+      await import('@happier-dev/protocol/approvals/approvalExecutionFailure');
+    const failure = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+      details: { code: 'target_unavailable', reason: 'target_binding_mismatch' },
+      failureCause: { phase: 'workflow.run.start', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null },
+    } as const;
+    const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 3 });
+    const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    expect(readApprovalExecutionFailure(settled)).toMatchObject(failure);
+    currentArtifact = { id: 'setup-refusal', fixtureHomeKey: 'local-A',
+      header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    const { formatWorkflowProblemMessage } = await import('@/components/workflows/presentation/workflowProblemPresentation');
+    const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
+    const reason = formatWorkflowProblemMessage(new WorkflowActionError({ rawCode: failure.errorCode,
+      message: failure.error, failure }));
+    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe(reason);
+    const { assertApprovalExecutionSucceeded, presentApprovalFailure } =
+      await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
+    let caught: unknown;
+    try { assertApprovalExecutionSucceeded(execution); } catch (error) { caught = error; }
+    expect(presentApprovalFailure(caught)).toEqual({ reason, code: 'target_unavailable' });
+  });
+
   it('presents a recorded template deploy refusal from its typed execution failure without a decision reason', async () => {
     await prepareApprovalFixture();
     // The Home Artifact read is the boundary: this is the CLI-origin record the page receives.

@@ -159,6 +159,8 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { MCP_REQUESTER_SDK_FIXTURE_KEY, startMcpRequesterParent } from '@/agent/runtime/session/loop/runHostSessionRuntime.mcpRequester.testkit';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
+import { prepareWorkflowRunStartV1, WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows';
+import { projectAcceptedWorkflowRunTarget } from '../../../../ui/sources/components/workflows/run/projectAcceptedWorkflowRunTarget';
 import { makeShareEligibleForTest } from '../../../../server/sources/testkit/shareEligibility.testkit';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineAdmission, setMachineAccessGrantInTx } from '../../../../server/sources/app/machines/machineAccess';
@@ -235,7 +237,9 @@ describe('managed catalog original Account transport', () => {
     { mode: 'plain', installFails: false, surface: 'pat', kind: 'copy-software', denied: 'missing-apply-grant' },
     { mode: 'plain', installFails: false, surface: 'pat', kind: 'software' },
     { mode: 'plain', installFails: true, surface: 'pat', kind: 'software' },
+    { mode: 'plain', installFails: true, surface: 'pat', kind: 'software', rerunSetup: true },
     { mode: 'e2ee', installFails: true, surface: 'pat', kind: 'software', protectedPat: true },
+    { mode: 'e2ee', installFails: true, surface: 'pat', kind: 'software', protectedPat: true, rerunSetup: true },
     { mode: 'plain', installFails: false, surface: 'pat', kind: 'identity' },
     { mode: 'plain', installFails: false, surface: 'pat', kind: 'pat-setup' },
     { mode: 'e2ee', installFails: false, surface: 'pat', kind: 'pat-setup', protectedPat: true },
@@ -328,7 +332,7 @@ describe('managed catalog original Account transport', () => {
       ...('adminAccessDisabled' in scenario ? { adminAccessMode: 'none' } : {}),
       accountId: machineCustodian.id, machineId, homeId, token: userToken, installedToken, serverHttpBaseUrl: serverUrl,
       sessionStartup: { trackedSessions,
-        useRealSessionSpawn: realRunner || kind === 'copy' || kind === 'copy-software' || kind === 'spawn' || sharedSpawn || kind === 'plan'
+        useRealSessionSpawn: realRunner || 'rerunSetup' in scenario || kind === 'copy' || kind === 'copy-software' || kind === 'spawn' || sharedSpawn || kind === 'plan'
           || kind === 'pat-setup' && 'reviewedSetupChild' in scenario,
         startup: {
           ...(realRunner ? { onHappySessionWebhook: createOnHappySessionWebhook({
@@ -701,8 +705,7 @@ describe('managed catalog original Account transport', () => {
             : { principalAccountId: binding.accountId, principalId: binding.principalId, credentialId: binding.credentialId }),
         });
       }
-      const result = await software.receiveDispatch({ actionId: admitted.actionId, envelope: admitted.envelope,
-        authorization: admitted.executionAuthorization, authority: admitted.principal.authority });
+      const result = await software.receiveDispatch(admitted);
       const binding = admitted.executionAuthorization.binding;
       const responseMaterial = isReviewedMachineSetupCodecV1(binding)
         ? openManagedControllerActionCodecV1({ authorization: admitted.executionAuthorization, machineId,
@@ -739,6 +742,13 @@ describe('managed catalog original Account transport', () => {
       } });
     }
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+    if ('rerunSetup' in scenario) {
+      home.answer(uiServerId, 'POST /v1/machines/read-batch', { select: async (value, request) => {
+        const response = await app.inject({ method: 'POST', url: '/v1/machines/read-batch',
+          headers: Object.fromEntries(new Headers(request.init?.headers).entries()), payload: value });
+        return { status: response.statusCode, body: response.json() };
+      } });
+    }
     const { setRuntimeFetch, resetRuntimeFetch } = await import('../../../../ui/sources/utils/system/runtimeFetch');
     const nativeFetch = globalThis.fetch;
     const fetchHome = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -768,7 +778,7 @@ describe('managed catalog original Account transport', () => {
         void workflowWake.catch(() => {});
       }
       if (sharedSpawn) await software.client.refreshProviderBrokerIngressAdvertisement(featurePayload);
-      if (realRunner || (surface === 'agent' || surface === 'pat') && (kind === 'copy' || kind === 'copy-software') || sharedSpawn || kind === 'plan'
+      if (realRunner || 'rerunSetup' in scenario || (surface === 'agent' || surface === 'pat') && (kind === 'copy' || kind === 'copy-software') || sharedSpawn || kind === 'plan'
         || kind === 'pat-setup' && 'reviewedSetupChild' in scenario) {
         // The loopback Machine socket retains the native publication in its
         // testkit. Materialize that exact snapshot in Home for spawn preflight.
@@ -1806,6 +1816,38 @@ describe('managed catalog original Account transport', () => {
               },
             } } } });
           await software.setInstallerFailure(false);
+          if ('rerunSetup' in scenario) {
+            const originalRunId = admittedRunIds[0]!;
+            const original = await ui.execute('workflow.run.get', { runId: originalRunId }, context);
+            expect(original, JSON.stringify(original)).toMatchObject({ ok: true });
+            if (!original.ok) throw new Error(original.errorCode);
+            const prior = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(original.result);
+            expect(prior.run).toMatchObject({ state: 'failed', machineId });
+            if (!prior.definition || !prior.acceptedContext) throw new Error('Accepted Setup unavailable');
+            const { project, definition: _definition, originSessionId, ...start } = prepareWorkflowRunStartV1({ definition: prior.definition,
+              acceptedContext: prior.acceptedContext, replay: { runId: originalRunId } });
+            if (!project) throw new Error('Accepted Setup target unavailable');
+            const runId = crypto.randomUUID();
+            const started = await ui.executeConfirmed('workflow.run.start', { ...start, runId }, {
+              ...context, defaultSessionMachineId: machineId,
+              ...(originSessionId ? { defaultSessionId: originSessionId } : {}), externalActionTarget: { kind: 'machine', machineId,
+                project: projectAcceptedWorkflowRunTarget(project) },
+            });
+            expect(started, JSON.stringify({ started, refusals: httpOutcomes.filter(outcome => outcome.status >= 400) }))
+              .toMatchObject({ ok: true, result: { run: { id: runId, machineId } } });
+            await automationWorker!.catchUp();
+            await software.waitForWorkflowCoordinator();
+            // The current finite Setup owner spends this Run's admitted leaf;
+            // it does not compose another Run beneath the person's new Run.
+            const completed = await ui.execute('workflow.run.get', { runId }, context);
+            expect(completed, JSON.stringify(completed)).toMatchObject({ ok: true,
+              result: { run: { id: runId, machineId, state: 'succeeded' } } });
+            expect(admittedRunIds).toHaveLength(2);
+            expect(await software.readInstalled()).toMatchObject({ installed: true, effects: ['apt-get'] });
+            expect(await db.automationRun.findUniqueOrThrow({ where: { id: originalRunId } }))
+              .toMatchObject({ state: 'failed' });
+            return;
+          }
           retryInstallerGate = new Promise<void>(resolve => { releaseRetryInstaller = resolve; });
           workflowAdmitted = new Promise<void>(resolve => { signalWorkflowAdmitted = resolve; });
           const retryWorkflowWake = workflowAdmitted.then(() => automationWorker!.catchUp());

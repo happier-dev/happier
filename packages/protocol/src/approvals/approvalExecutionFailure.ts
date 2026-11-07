@@ -2,7 +2,9 @@ import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 import { ActionFailureCauseV1Schema, AccountActionHttpFailureDetailsV1Schema, ClientActionFailureDetailsV1Schema, ClientActionRpcFailureCodeV1Schema } from '../actions/actionExecutionResult.js';
 import * as z from 'zod/mini';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
-import { ActionIdSchema, isPluginDevLoopActionIdV1 } from '../actions/actionIds.js';
+import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1 } from '../actions/actionIds.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import { isFilesystemActionId } from '../actions/filesystemActionFamily.js';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '../actions/projectActionFamily.js';
 import {
@@ -73,6 +75,18 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: ApprovalRequestV2;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
+  if (input.request.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+    || WorkflowActionIdV1Schema.safeParse(input.request.actionId).success) {
+    const workflow = (storedRead ? createStoredReadSchema(WorkflowActionFailureV1Schema) : WorkflowActionFailureV1Schema)
+      .safeParse({ ok: false, errorCode: input.failure.errorCode, error: input.failure.error,
+        ...(input.failure.details === undefined ? {} : { details: input.failure.details }),
+        ...(input.failure.failureCause === undefined ? {} : { failureCause: input.failure.failureCause }) });
+    if (workflow.success && 'details' in workflow.data && workflow.data.details !== undefined) {
+      const schema = getActionSpec(input.request.actionId).inputSchema;
+      const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+      return args.success ? { ...input.failure, details: workflow.data.details } : null;
+    }
+  }
   if (isDeploymentActionIdV1(input.request.actionId)) {
     const schema = DeploymentActionInputSchemasV1[input.request.actionId];
     const recovery = DeploymentFailureRecoveryV1Schema.safeParse(input.failure.details);

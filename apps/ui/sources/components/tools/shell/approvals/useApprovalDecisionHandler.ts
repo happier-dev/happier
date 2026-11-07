@@ -29,6 +29,9 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 
 export { resolveApprovalReplayRoute };
 
@@ -67,6 +70,15 @@ export function presentApprovalFailure(
     if (code === 'conflict') return { reason: t('approvals.conflictFailure'), code: null };
     // The approved plugin change never reached the Machine's plugin service; the code stays in Technical details.
     if (code === 'plugin_change_daemon_unavailable') return { reason: t('approvals.pluginChangeDaemonUnavailable'), code };
+    if (typeof error === 'object' && error !== null && 'details' in error) {
+        const workflow = WorkflowActionFailureV1Schema.safeParse({ ok: false, errorCode: code, error: code,
+            details: error.details });
+        if (workflow.success && 'details' in workflow.data && workflow.data.details !== undefined) {
+            return { reason: formatWorkflowProblemMessage(new WorkflowActionError({
+                rawCode: workflow.data.errorCode, message: workflow.data.error, failure: workflow.data,
+            })), code: workflow.data.errorCode };
+        }
+    }
     // Only a confirmed no-effect refusal may promise that nothing changed.
     const transient = readTransientAvailabilityFailure(code);
     if (transient && !(error instanceof ApprovalExecutionError)) {
@@ -86,7 +98,7 @@ export function presentApprovalFailure(
  * A settled request whose approved effect failed. The decision was saved, so a bare machine code never
  * reads as "failed to update approval": it reads as an unrecorded reason, with the code in Technical details.
  */
-export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: string; error?: string }>): ReturnType<typeof presentApprovalFailure> {
+export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: string; error?: string; details?: unknown }>): ReturnType<typeof presentApprovalFailure> {
     return presentApprovalFailure(failure, failure.error || failure.errorCode || t('approvals.failureNoReason'), t('approvals.failureNoReason'));
 }
 
@@ -106,6 +118,8 @@ export class ApprovalExecutionError extends HappyError {
     constructor(execution: ApprovalExecutionV1) {
         super(execution.error ?? 'approval_execution_failed', false, {
             code: execution.errorCode ?? 'approval_execution_failed',
+            details: execution.details,
+            failureCause: execution.failureCause,
         });
         Object.setPrototypeOf(this, ApprovalExecutionError.prototype);
     }

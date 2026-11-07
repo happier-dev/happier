@@ -1,10 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createUiApprovalRequest, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { ApprovalRequestSchema, ApprovalRequestV2Schema, API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ApprovalExecutionV1Schema, ApprovalRequestSchema, ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
@@ -12,9 +15,23 @@ import { HappyError } from '@/utils/errors/errors';
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { captureActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-const { presentApprovalFailure, useApprovalDecisionHandler } = await import('./useApprovalDecisionHandler');
+const { assertApprovalExecutionSucceeded, presentApprovalFailure, presentRecordedApprovalFailure, useApprovalDecisionHandler } = await import('./useApprovalDecisionHandler');
 
 describe('built-in approval decisions through the canonical owner', () => {
+    it('presents the typed Workflow reason for both recorded and live approval failures', async () => {
+        const failure = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            details: { code: 'target_unavailable', reason: 'target_binding_mismatch' } } as const;
+        const { formatWorkflowProblemMessage } = await import('@/components/workflows/presentation/workflowProblemPresentation');
+        const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
+        const expected = { reason: formatWorkflowProblemMessage(new WorkflowActionError({
+            rawCode: failure.errorCode, message: failure.error, failure,
+        })), code: failure.errorCode };
+        expect(presentRecordedApprovalFailure(failure)).toEqual(expected);
+        let caught: unknown;
+        try { assertApprovalExecutionSucceeded(ApprovalExecutionV1Schema.parse({ ...failure, executedAtMs: 3 })); }
+        catch (error) { caught = error; }
+        expect(presentApprovalFailure(caught)).toEqual(expected);
+    });
     it.each([
         ['runtime_action_disabled', 'runtime_action_disabled:browser:browser_automation_runtime_provisioning'],
         ['target_unavailable', 'target_unavailable'],
@@ -28,8 +45,13 @@ describe('built-in approval decisions through the canonical owner', () => {
         // Typed copy that already names the problem carries no code to show.
         expect(presentApprovalFailure({ errorCode: 'approval_stale', error: 'x' }, 'x')).toEqual({ reason: t('approvals.staleFailure'), code: null });
     });
+    it('reads an approved change that met a newer revision as unapplied, in words, for a recorded request and a live decision', () => {
+        // The executor's English diagnostic is not the product copy, and the stale basis is not a failure of the action.
+        const failure = { errorCode: 'conflict', error: 'Reviewed Session metadata revision changed' };
+        expect(presentRecordedApprovalFailure(failure)).toEqual({ reason: t('approvals.conflictFailure'), code: null });
+        expect(presentApprovalFailure(failure, failure.error)).toEqual({ reason: t('approvals.conflictFailure'), code: null });
+    });
     it.each([
-        'database_connection_unavailable',
         'database_transaction_conflict_exhausted',
         'project_requester_home_unavailable',
     ])('reads the transient availability failure %s as a busy server that changed nothing, keeping the code for details', (errorCode) => {
@@ -37,6 +59,16 @@ describe('built-in approval decisions through the canonical owner', () => {
             .toEqual({ reason: t('approvals.transientFailure'), code: errorCode });
         expect(presentApprovalFailure(new HappyError('transport detail', false, { code: errorCode })))
             .toEqual({ reason: t('approvals.transientFailure'), code: errorCode });
+        expect(presentRecordedApprovalFailure({ errorCode, error: errorCode }))
+            .toEqual({ reason: t('approvals.transientFailure'), code: errorCode });
+    });
+    it('keeps connection loss uncertain for plain, recorded, and decision-executor failures', () => {
+        const errorCode = 'database_connection_unavailable';
+        const expected = { reason: t('errors.scmOutcomeUnknown'), code: errorCode };
+        expect(presentApprovalFailure({ errorCode })).toEqual(expected);
+        expect(presentRecordedApprovalFailure({ errorCode, error: errorCode })).toEqual(expected);
+        expect(presentApprovalFailure(new HappyError('private transport detail', false, { code: errorCode })))
+            .toEqual(expected);
     });
     it('retains the exact typed failure code in the shared decision failure presentation', () => {
         expect(presentApprovalFailure(new HappyError('private transport detail', false,
@@ -130,9 +162,14 @@ describe('built-in approval decisions through the canonical owner', () => {
             if (parsed?.family !== 'built_in') throw new Error('Expected built-in approval');
             const hook = await renderHook(() => useApprovalDecisionHandler(artifact, parsed.request, '', serverId));
             try {
-                const failure: unknown = await hook.getCurrent()('approve').catch((error: unknown) => error);
+                const onExecution = vi.fn();
+                const failure: unknown = await hook.getCurrent()('approve', { onExecution }).catch((error: unknown) => error);
                 expect(failure).toMatchObject({ code: 'team_archived' });
                 expect(presentApprovalFailure(failure).code).toBe('team_archived');
+                expect(onExecution).toHaveBeenCalledOnce();
+                expect(onExecution).toHaveBeenCalledWith(expect.objectContaining({
+                    ok: false, errorCode: 'team_archived', effectAttempted: true,
+                }));
                 expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).toMatchObject({
                     status: 'failed', decision: { kind: 'approve' }, execution: { ok: false, errorCode: 'team_archived' },
                 });
