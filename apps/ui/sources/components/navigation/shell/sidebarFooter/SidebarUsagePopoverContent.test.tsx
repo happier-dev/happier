@@ -77,17 +77,34 @@ async function renderContent() {
     const { useRouter } = await import('expo-router');
     const usage = buildUsageSummary({ live: buildUsageSummaryCache(state.summaries), saved: null, accountsWithoutUsage: state.withoutUsage });
     function ContentFixture() {
-        const handlers = useUsagePopoverHandlers({ close: () => {}, router: useRouter() });
+        const router = useRouter();
+        rendered.router = router as unknown as { push: (href: unknown) => unknown };
+        const handlers = useUsagePopoverHandlers({ close: () => { rendered.closed += 1; }, router });
         return <SidebarUsagePopoverView usage={usage}
             facts={{ accountsNeedingSignIn: state.needingSignIn, keysWithoutLimits: state.keysWithoutLimits, accounts: state.accounts }}
             privacy={{ hidden: false, setHidden: () => {}, present: input => presentConnectedAccountIdentity({
                 hidden: false, label: input.label ?? null, labelKind: input.labelKind,
                 email: input.email ?? null, accountId: input.accountId ?? null,
             }) }}
-            onOpenConnectedServices={handlers.openConnectedServices} onSignInAgain={handlers.signInAgain} />;
+            onOpenConnectedServices={handlers.openConnectedServices} onOpenUsage={handlers.openUsage} onSignInAgain={handlers.signInAgain} />;
     }
     return renderScreen(<ContentFixture />);
 }
+
+const rendered: { router: { push: (href: unknown) => unknown } | null; closed: number } = { router: null, closed: 0 };
+
+describe('the Usage popover header', () => {
+    it('opens the Usage page from its chart and Credentials from its gear, closing the popover first', async () => {
+        state.summaries = [summary('claude:a', 'Work', 40)];
+        rendered.closed = 0;
+        const screen = await renderContent();
+        await screen.pressByTestIdAsync('sidebar-usage-open-usage');
+        expect(rendered.router!.push).toHaveBeenLastCalledWith('/settings/usage');
+        await screen.pressByTestIdAsync('sidebar-usage-open-connected-services');
+        expect(rendered.router!.push).toHaveBeenLastCalledWith('/settings/connected-services');
+        expect(rendered.closed).toBe(2);
+    });
+});
 
 describe('SidebarUsagePopoverContent', () => {
     it('shows every account with what is left in each window, and an account with nothing to show', async () => {
@@ -243,7 +260,7 @@ describe('SidebarUsagePopoverContent', () => {
                     }}
                     session={options.session}
                     refresh={options.refresh}
-                    onOpenConnectedServices={() => {}}
+                    onOpenConnectedServices={() => {}} onOpenUsage={() => {}}
                 />,
             );
         }

@@ -176,6 +176,7 @@ export function SessionUsagePopoverContent(props: Readonly<{
             refresh={data.refresh}
             session={session}
             onOpenConnectedServices={handlers.openConnectedServices}
+            onOpenUsage={handlers.openUsage}
             onSignInAgain={handlers.signInAgain}
         />
     );

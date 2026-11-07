@@ -25,6 +25,7 @@ import { useCollectionFilterSettingsCommand } from '@/components/settings/sessio
 import { collectionSpaceSettingRefs } from '@/components/settings/session/collectionSpaceSettings';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import type { SessionListConditionCopy } from './sessionListConditionFields';
+import { buildSessionListFacets } from './sessionListFacets';
 
 /** The collapsed control's name for a scope ("My work"). Shared with any surface that edits a Sessions filter. */
 export function readSessionListScopeLabel(scope: SessionListScopeV1): string {
@@ -230,6 +231,8 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
         openFilter,
     });
     const actionController = { ...controller, coverage: props.filterResult?.coverage ?? 'unavailable' as const };
+    // The common filters live in the title menu, one press each (lab `spfield`).
+    const facets = React.useMemo(() => buildSessionListFacets(controller), [controller]);
     const controllerRef = React.useRef(actionController);
     React.useLayoutEffect(() => { controllerRef.current = actionController; });
     React.useEffect(() => registerSessionListScopeActionOwner(() => controllerRef.current),
@@ -337,6 +340,7 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
                 onSetSpacesEnabled={setSpacesEnabled}
                 modified={controller.isSpaceModified}
                 onSelectSpace={(spaceId) => { void spaceNavigation.selectSpace(spaceId); }}
+                facets={facets}
                 onOpenFilter={openFilter}
                 onSaveAs={spaceChrome.openSaveAs}
                 onSaveChanges={spaceChrome.saveChanges}

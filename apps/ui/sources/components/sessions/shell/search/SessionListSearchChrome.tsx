@@ -34,7 +34,7 @@ export type SessionListSearchChromeProps = Readonly<{
     overlays?: React.ReactNode;
     /** The header's bottom edge, where the filter and the save form hang. */
     anchorRef?: React.RefObject<View | null>;
-    /** Find's filter button beside the search field (badge = active conditions). */
+    /** The funnel that ends Find's field and opens the filters; what is on is said by the token line. */
     filterButton?: Readonly<{ activeCount: number; open: boolean; onPress(): void }>;
     /** Phone paging between spaces on the title and strip (lab `clspaces:swipe`). */
     spaceSwipe?: Readonly<{ canPrevious: boolean; canNext: boolean; previousLabel: string | null; nextLabel: string | null; onCommit(direction: -1 | 1): void }>;
@@ -277,7 +277,7 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                 </View>
             ) : null}
             {searchIsOpen ? (
-                <Animated.View style={[{ opacity: fieldOpacity }, props.filterButton ? styles.searchChromeFindRow : null]}>
+                <Animated.View style={{ opacity: fieldOpacity }}>
                     <CompactSearchField
                         testID="session-list-search-input"
                         accessibilityLabel={t('sessionsList.searchSessions')}
@@ -313,17 +313,18 @@ export const SessionListSearchChrome = React.memo(function SessionListSearchChro
                                     iconName="x"
                                     onPress={handleCloseSearch}
                                 />
+                                {/* The funnel ends the field (lab `spfield` B): the filters open from what they narrow. */}
+                                {props.filterButton ? (
+                                    <CollectionFilterButton
+                                        testID="session-list-filter-open"
+                                        activeCount={props.filterButton.activeCount}
+                                        open={props.filterButton.open}
+                                        onPress={props.filterButton.onPress}
+                                    />
+                                ) : null}
                             </>
                         )}
                     />
-                    {props.filterButton ? (
-                        <CollectionFilterButton
-                            testID="session-list-filter-open"
-                            activeCount={props.filterButton.activeCount}
-                            open={props.filterButton.open}
-                            onPress={props.filterButton.onPress}
-                        />
-                    ) : null}
                 </Animated.View>
             ) : null}
             {spaceChrome ? props.filterTokens : null}

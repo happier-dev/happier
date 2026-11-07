@@ -148,14 +148,6 @@ export function useSettingsColumnFilter<Field extends string>(
   React.useEffect(() => registerSettingsColumnFilterScopeActionOwner(() => actionOwner.current), []);
   const readHeldFacts = React.useCallback(() => facts, [facts]);
 
-  // Status is the one facet every Settings column shares. Each status the column holds is a one-press chip, unless a
-  // control on the page already states it or every row shares one, where a chip could narrow nothing.
-  const statedFieldsKey = input.statedFields?.join('|');
-  const quickFilters = React.useMemo(() => {
-    const status = bindings.fields?.status;
-    if (!status || status.valueOptions.length < 2 || statedFieldsKey?.split('|').includes('status')) return undefined;
-    return status.valueOptions.map((option) => ({ fieldId: 'status', value: option.value, label: option.label ?? String(option.value) }));
-  }, [bindings, statedFieldsKey]);
   const header = useCollectionConditionHeader({
     testIDPrefix: input.testIDPrefix,
     registry: adapter.registry,
@@ -166,7 +158,6 @@ export function useSettingsColumnFilter<Field extends string>(
     result: projection.result,
     readHeldFacts,
     ...(input.statedFields ? { statedFields: input.statedFields } : {}),
-    ...(quickFilters ? { quickFilters } : {}),
   });
 
   const keys = active ? projection.keys : null;
@@ -192,7 +183,6 @@ export function useSettingsColumnFilter<Field extends string>(
     /** Goes on the column's search field, so the editor opens under that field. */
     searchAnchorRef: header.searchAnchorRef,
     tokenRow: header.tokenRow,
-    quickFilterChips: header.quickFilterChips,
     /** What the conditions say, in the words of their values ("nl2, Built in"), for a "nothing matches" line. */
     conditionWords: header.tokens.map((token) => token.valueLabel).join(', '),
     editorOverlay: header.editorOverlay,

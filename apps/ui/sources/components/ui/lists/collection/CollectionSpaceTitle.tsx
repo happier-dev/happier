@@ -11,6 +11,7 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import type { SelectionListFilter } from '@/components/ui/selectionList';
 import { KeyboardShortcutLabelsContext } from '@/keyboard/shortcutLabels';
 import { t } from '@/text';
 
@@ -24,14 +25,16 @@ const SAVE_CHANGES_ITEM = 'save-changes';
 const EDIT_ITEM = 'edit';
 const MANAGE_ITEM = 'manage';
 const SHOW_SPACES_ITEM = 'show-spaces';
+const FACET_ITEM_PREFIX = 'facet:';
 
 type ShortcutId = keyof React.ContextType<typeof KeyboardShortcutLabelsContext>;
 
 /**
  * A saved-space list's title (Sessions, Workflows, Discussions — R9): it names the selected space and its
- * chevron opens one menu (lab `clfilter`, title chevron ruling): every space with its shortcut, then
+ * chevron opens one menu (lab `clfilter`, title chevron ruling; lab `spfield` facets): every space with its
+ * shortcut, then the list's common filters, each one press to turn on or off with the menu staying open, then
  * Filter…, Save as space… or Edit space…, then Show spaces (this list's switch) and Manage spaces (that
- * entity's Settings → Spaces page). With spaces off the menu keeps Filter… and the way back.
+ * entity's Settings → Spaces page). With spaces off the menu keeps the filters and the way back.
  */
 export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   props: Readonly<{
@@ -47,6 +50,8 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
     spaces: readonly CollectionSpacesStripItem[];
     /** The list's digit shortcuts, when it has them: `${prefix}${ordinal}` for the first nine spaces. */
     spaceShortcutPrefix?: string;
+    /** The list's common filters (`useCollectionConditionHeader` `facetToggles`): one press each, in place. */
+    facets?: readonly SelectionListFilter[];
     /** The list's Filter… shortcut, when it has one. */
     filterShortcutId?: ShortcutId;
     selectedSpaceId: string;
@@ -91,6 +96,13 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
           category: 'spaces',
         };
       }),
+      ...(props.facets ?? []).map((facet): DropdownMenuItem => ({
+        id: `${FACET_ITEM_PREFIX}${facet.id}`,
+        testID: `${props.testIDPrefix}-menu-facet:${facet.id}`,
+        title: facet.label,
+        checked: facet.selected === true,
+        category: 'filters',
+      })),
       {
         id: FILTER_ITEM,
         testID: `${props.testIDPrefix}-menu-filter`,
@@ -140,6 +152,7 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
     ],
     [
       iconColor,
+      props.facets,
       props.filterShortcutId,
       props.modified,
       props.spacesEnabled,
@@ -154,6 +167,10 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
   const handleSelect = React.useCallback(
     (itemId: string) => {
       if (selection.selectItem(itemId)) return;
+      if (itemId.startsWith(FACET_ITEM_PREFIX)) {
+        props.facets?.find((facet) => `${FACET_ITEM_PREFIX}${facet.id}` === itemId)?.onToggle?.();
+        return;
+      }
       selection.onOpenChange(false);
       if (itemId === FILTER_ITEM) props.onOpenFilter();
       else if (itemId === SAVE_AS_ITEM) props.onSaveAs();
@@ -171,6 +188,9 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
       onOpenChange={selection.onOpenChange}
       items={items}
       onSelect={handleSelect}
+      // A filter toggles in place, so a second one is one more press, not a reopened menu; every other choice
+      // closes the menu itself in `handleSelect` (a space through the saved-view selection).
+      closeOnSelect={false}
       variant="slim"
       search={false}
       separateCategories

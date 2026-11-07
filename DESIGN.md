@@ -652,10 +652,12 @@ live in the page-presentation owners in code.
 - **Overflow is "…".** Every overflow trigger is the glyph alone, with "More" as its accessible name, on
   tabs, toolbars, rows and plugin pages. Words stay only where every neighbour has words: a phone's labelled
   tab bar, which follows the person's labels setting.
-- **One filter pattern.** Common filters stand inline and take one press: chips for values that can combine,
-  a segmented control for a short either-or. Only the long tail sits behind a menu, the shared condition
-  editor. A filter's state has one home: a chip that says it is on takes the place of its token. Chips offer
-  values that exist as filter facts; a chip never counts or filters by anything its list cannot back.
+- **One filter pattern.** Filters live with the search they narrow: a funnel ends the search field and opens
+  the shared filter form (anchored under the field, a sheet on a phone). No chips stand under a list at rest.
+  What is on is said once, as removable tokens on one quiet line under the field, drawn only while something
+  is on. A saved-space list's title menu offers its common filters in place, one press each. A short either-or
+  that is the whole filter (a scope) may stay a segmented control in the row. A filter only offers values that
+  exist as filter facts; it never counts or filters by anything its list cannot back.
 - **Sections read before their controls.** A sentence-case section title with its explanation above
   the rows, then one card sheet. Row dividers use the divider ink and run from the rows' text edge
   (past the leading column when the section reserves one) to the sheet's trailing edge; the last row

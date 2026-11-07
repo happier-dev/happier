@@ -41,17 +41,16 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 /**
- * Conditions on top of a space, as removable tokens under the strip (lab `clfilter:filter`), with Save as
- * space at the end: what narrows the list is always in sight and one tap from gone. Every saved-space list
- * (Sessions, Workflows, Discussions) draws this one row.
+ * Conditions on top of a space, as removable tokens on one quiet line under the field or strip (lab
+ * `clfilter:filter`, `spfield` B), with Save as space at the end: what narrows the list is always in sight and
+ * one tap from gone. It is drawn only while something is on. Every saved-space list (Sessions, Workflows,
+ * Discussions) and every Settings column draws this one line.
  */
 export const CollectionConditionTokens = React.memo(function CollectionConditionTokens(
   props: Readonly<{
     /** `<prefix>-chips`, `<prefix>-token:<id>`, `<prefix>-tokens-save`. */
     testIDPrefix: string;
     tokens: readonly CollectionConditionToken[];
-    /** The list's one-press chips, leading the row: what it narrows by most, then what else is on. */
-    quickFilters?: readonly SelectionListFilter[];
     onRemove: (id: string) => void;
     /** Saved-space lists offer Save as space at the end of the row. */
     onSave?: () => void;
@@ -71,7 +70,6 @@ export const CollectionConditionTokens = React.memo(function CollectionCondition
   );
   return (
     <View testID={`${testIDPrefix}-chips`} style={styles.row}>
-      {props.quickFilters?.map((filter) => <SelectionListFilterChip key={filter.id} filter={filter} />)}
       {filters.map((filter) => <SelectionListFilterChip key={filter.id} filter={filter} />)}
       {props.onSave ? <HappierPressable
         testID={`${testIDPrefix}-tokens-save`}

@@ -81,3 +81,32 @@ describe('built-in controlled space selection', () => {
         await vi.waitFor(() => expect(screen.findByTestId('space-menu:b')).not.toBeNull());
     });
 });
+
+describe('the list\'s common filters in the title menu', () => {
+    function FacetHost() {
+        const [needsYou, setNeedsYou] = React.useState(false);
+        return <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+            <CollectionSpaceTitle scope="account-a" testIDPrefix="space" entityKind="sessionWork" label="My work"
+                spaces={[{ ...base, id: 'a', name: 'My work' }]} spacesEnabled onSetSpacesEnabled={() => {}}
+                selectedSpaceId="a" modified={needsYou} onSelectSpace={() => {}}
+                facets={[
+                    { id: 'needs-you', label: 'Needs you', valueLabel: 'Needs you', selected: needsYou, onToggle: () => setNeedsYou((on) => !on) },
+                    { id: 'failed', label: 'Failed', valueLabel: 'Failed', selected: false, onToggle: () => {} },
+                ]}
+                onOpenFilter={() => {}} onSaveAs={() => {}} onSaveChanges={() => {}} onEdit={() => {}} />
+        </HappierUiPlatformProvider>;
+    }
+
+    it('toggles a common filter in one press from the menu, which stays open for the next one', async () => {
+        const screen = await renderScreen(<FacetHost />);
+        await screen.pressByTestIdAsync('space-title');
+        await vi.waitFor(() => expect(screen.findByTestId('space-menu-facet:needs-you')).not.toBeNull());
+        expect(menuIds(screen)).toEqual(expect.arrayContaining(['space-menu-facet:needs-you', 'space-menu-facet:failed', 'space-menu-filter']));
+        await screen.pressByTestIdAsync('space-menu-facet:needs-you');
+        // Still open, and the row now says the filter is on.
+        await vi.waitFor(() => expect(screen.findByTestId('space-menu-save-as')).not.toBeNull());
+        expect(screen.findByTestId('space-menu-facet:needs-you')).not.toBeNull();
+        expect(screen.tree.findAll((node) => node.props.testID === 'space-menu-facet:needs-you'
+            && (node.props.accessibilityState?.checked === true || node.props['aria-checked'] === true)).length).toBeGreaterThan(0);
+    });
+});

@@ -46,6 +46,10 @@ export function useWorkflowLibrarySpaceHeader(
 ) {
   const focusEligible = usePluginSurfaceFocusEligibility();
   const bindings = React.useMemo(buildWorkflowConditionBindings, []);
+  // The field's own choices, in its own words: a Workflow is running or was triggered, one press away in the title menu.
+  const facets = React.useMemo(() => (bindings.fields?.view?.valueOptions ?? []).map((option) => ({
+    fieldId: 'view', value: option.value, label: option.label ?? String(option.value),
+  })), [bindings]);
   const { rows, summaries } = libraryView;
   const readHeldFacts = React.useCallback(function* () {
     const seen = new Set<string>();
@@ -78,6 +82,7 @@ export function useWorkflowLibrarySpaceHeader(
     },
     registry: workflowListFilterFieldsV1,
     bindings,
+    facets,
     ...(libraryView.spacesReady ? { readHeldFacts } : {}),
     result: libraryView.filterResult,
     defaultIcon: WORKFLOW_SPACE_ICON,

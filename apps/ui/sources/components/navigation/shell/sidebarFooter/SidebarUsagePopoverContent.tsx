@@ -138,6 +138,7 @@ export function SidebarUsagePopoverContent(props: SidebarFooterPopoverContentPro
             privacy={data.privacy}
             refresh={data.refresh}
             onOpenConnectedServices={handlers.openConnectedServices}
+            onOpenUsage={handlers.openUsage}
             onSignInAgain={handlers.signInAgain}
         />
     );
@@ -193,13 +194,18 @@ export function useUsagePopoverData(): Readonly<{
     return { usage, facts, privacy, refresh };
 }
 
-/** Opening Connected services and signing an account in again close the popover first. */
+/** Opening the Usage page or Credentials, and signing an account in again, close the popover first. */
 export function useUsagePopoverHandlers(params: Readonly<{ close: () => void; router: ReturnType<typeof useRouter> }>) {
     const { close, router } = params;
     const openConnectedServices = React.useCallback(() => {
         close();
         const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.connectedServices as never));
         if (result !== true) fireAndForget(result, { tag: 'UsagePopover.openConnectedServices' });
+    }, [close, router]);
+    const openUsage = React.useCallback(() => {
+        close();
+        const result = runGuardedNavigation(() => router.push(SETTINGS_ROUTES.usage as never));
+        if (result !== true) fireAndForget(result, { tag: 'UsagePopover.openUsage' });
     }, [close, router]);
     const signInAgain = React.useCallback((account: ConnectedServiceAccountNeedingSignIn) => {
         close();
@@ -210,7 +216,7 @@ export function useUsagePopoverHandlers(params: Readonly<{ close: () => void; ro
             accountId: account.ref.accountId,
         });
     }, [close]);
-    return { openConnectedServices, signInAgain };
+    return { openConnectedServices, openUsage, signInAgain };
 }
 
 /**
@@ -224,7 +230,10 @@ export function SidebarUsagePopoverView(props: Readonly<{
     privacy: UsagePopoverPrivacy;
     session?: UsagePopoverSession | null;
     refresh?: UsagePopoverRefresh;
+    /** The header's gear: Credentials, where every account here is managed. */
     onOpenConnectedServices: () => void;
+    /** The header's chart: the Usage page, the whole picture behind this preview. */
+    onOpenUsage: () => void;
     onSignInAgain?: (account: ConnectedServiceAccountNeedingSignIn) => void;
 }>) {
     const { theme } = useUnistyles();
@@ -311,24 +320,14 @@ export function SidebarUsagePopoverView(props: Readonly<{
         body = withDividers([...accounts.map(renderAccount), ...facts.accountsNeedingSignIn.map(renderSignedOut)]);
     }
 
-    const footer = scoped ? {
-        id: 'all-accounts',
-        testID: 'usage-popover-all-accounts',
-        label: t('sidebarFooter.usageAllAccounts'),
-        icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} />,
-        note: Math.max(0, total - (sessionAccount || sessionSignedOut ? 1 : 0)),
-        onPress: () => setWidened(true),
-    } : {
-        id: 'connected-services',
-        testID: 'sidebar-usage-open-connected-services',
-        label: t('settings.connectedServices'),
-        icon: <Icon name="key" size={16} color={theme.colors.text.secondary} />,
-        note: null,
-        onPress: props.onOpenConnectedServices,
-    };
-    const footNote = footer.note !== null
-        ? (footer.note > 0 ? t('sidebarFooter.usageMoreAccounts', { count: footer.note }) : null)
-        : facts.keysWithoutLimits > 0 ? t('sidebarFooter.usageKeysWithoutLimits', { count: facts.keysWithoutLimits }) : null;
+    // Scoped to a session, the one row widens to every account. Otherwise the header's gear opens Credentials, so no
+    // row repeats it; keys that report no limits are said on a quiet line instead.
+    const moreAccounts = scoped ? Math.max(0, total - (sessionAccount || sessionSignedOut ? 1 : 0)) : 0;
+    const footNote = scoped
+        ? (moreAccounts > 0 ? t('sidebarFooter.usageMoreAccounts', { count: moreAccounts }) : null)
+        : null;
+    const keysNote = !scoped && facts.keysWithoutLimits > 0
+        ? t('sidebarFooter.usageKeysWithoutLimits', { count: facts.keysWithoutLimits }) : null;
 
     return (
         <View testID="sidebar-usage-popover-content">
@@ -354,6 +353,24 @@ export function SidebarUsagePopoverView(props: Readonly<{
                         hidden={privacy.hidden}
                         onChange={privacy.setHidden}
                     />
+                    {/* Where this preview leads: the Usage page, then Credentials (lab `spfield` usage). */}
+                    <View style={styles.headerRule} />
+                    <IconButton
+                        testID="sidebar-usage-open-usage"
+                        iconName="chart-bar"
+                        variant="plain"
+                        accessibilityLabel={t('settings.usage')}
+                        tooltip={t('settings.usage')}
+                        onPress={props.onOpenUsage}
+                    />
+                    <IconButton
+                        testID="sidebar-usage-open-connected-services"
+                        iconName="gear"
+                        variant="plain"
+                        accessibilityLabel={t('settings.connectedServices')}
+                        tooltip={t('settings.connectedServices')}
+                        onPress={props.onOpenConnectedServices}
+                    />
                 </View>
             </View>
             {refreshError ? (
@@ -369,13 +386,14 @@ export function SidebarUsagePopoverView(props: Readonly<{
                     <Text style={styles.nextMoveText}>{session.nextMove}</Text>
                 </View>
             ) : null}
-            <ActionListSection
+            {keysNote ? <Text testID="sidebar-usage-footnote" style={styles.scopeLine}>{keysNote}</Text> : null}
+            {scoped ? <ActionListSection
                 separatorAbove
                 actions={[{
-                    id: footer.id,
-                    testID: footer.testID,
-                    label: footer.label,
-                    icon: footer.icon,
+                    id: 'all-accounts',
+                    testID: 'usage-popover-all-accounts',
+                    label: t('sidebarFooter.usageAllAccounts'),
+                    icon: <Icon name="stack" size={16} color={theme.colors.text.secondary} />,
                     right: (
                         <View style={styles.footRight}>
                             {footNote ? (
@@ -384,9 +402,9 @@ export function SidebarUsagePopoverView(props: Readonly<{
                             <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
                         </View>
                     ),
-                    onPress: footer.onPress,
+                    onPress: () => setWidened(true),
                 }]}
-            />
+            /> : null}
         </View>
     );
 }
@@ -569,6 +587,12 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
+    },
+    /** Between the popover's own controls and the pages it leads to. */
+    headerRule: {
+        width: StyleSheet.hairlineWidth,
+        height: theme.space.s16,
+        backgroundColor: theme.colors.border.default,
     },
     status: {
         ...Typography.variant('body'),

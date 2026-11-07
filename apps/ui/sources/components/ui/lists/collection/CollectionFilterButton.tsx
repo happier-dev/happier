@@ -3,13 +3,13 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { t } from '@/text';
 
 /**
- * A saved-space list's filter button (lab `clfilter:filter`): the funnel that opens the condition editor,
- * with the shared count badge while conditions narrow the list beyond its space. Sessions puts it beside
- * Find; Workflows and Discussions in their header actions.
+ * A list's filter button (lab `clfilter:filter`, `spfield` B): the funnel that opens the condition editor. It
+ * ends the list's search field where there is one (Sessions' Find, a Settings column's search, the Store), else
+ * it stands in the header actions (Workflows, Discussions). What is on is said by the token line under it, so
+ * the funnel draws no count; its name still says how many.
  */
 export const CollectionFilterButton = React.memo(function CollectionFilterButton(
   props: Readonly<{
@@ -46,9 +46,6 @@ export const CollectionFilterButton = React.memo(function CollectionFilterButton
       ]}
     >
       <Icon name="funnel-simple" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-      {props.activeCount > 0 ? (
-        <TabBadge variant="count" tone="neutral" value={props.activeCount} style={{ top: -1, right: -2 }} />
-      ) : null}
     </HappierPressable>
   );
 });

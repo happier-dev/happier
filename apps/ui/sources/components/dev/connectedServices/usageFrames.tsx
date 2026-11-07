@@ -127,6 +127,7 @@ function UsageFrame(props: Readonly<{ scope: 'rail' | 'session'; phone: boolean 
                 privacy={fixture.privacy}
                 session={fixture.session}
                 onOpenConnectedServices={noop}
+                onOpenUsage={noop}
                 onSignInAgain={noop}
             />
         </View>

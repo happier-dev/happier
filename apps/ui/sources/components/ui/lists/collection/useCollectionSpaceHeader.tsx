@@ -68,6 +68,8 @@ export function useCollectionSpaceHeader<
     defaultName: string;
     view: CollectionSpaceHeaderView<K>;
     registry: EntityFilterRegistryV1<CollectionFilterMapV1[K], Facts>;
+    /** What people filter this list by most, one press each in the title menu (`useCollectionConditionHeader`). */
+    facets?: readonly Readonly<{ fieldId: string; value: JsonValue; label: string }>[];
     bindings: CollectionConditionBindings;
     result?: EntityListFilterResultV1;
     readHeldFacts?: () => Iterable<Facts>;
@@ -95,6 +97,7 @@ export function useCollectionSpaceHeader<
     ...(input.readHeldFacts ? { readHeldFacts: input.readHeldFacts } : {}),
     anchorRef,
     onSaveAsSpace: () => openSaveAsRef.current(),
+    ...(input.facets ? { facets: input.facets } : {}),
   });
   const model = conditions.model;
   const summary = React.useMemo(
@@ -212,6 +215,7 @@ export function useCollectionSpaceHeader<
       onSetSpacesEnabled={setSpacesEnabled}
       modified={modified}
       onSelectSpace={select}
+      facets={conditions.facetToggles}
       onOpenFilter={conditions.openEditor}
       onSaveAs={openSaveAs}
       onSaveChanges={saveChanges}

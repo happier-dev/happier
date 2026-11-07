@@ -327,6 +327,10 @@ function DiscussionsListReady(props: Readonly<{
         }
     }, [active.items, archived.items, attention]);
     const setFilters = React.useCallback((next: DiscussionListFilterV1) => update({ filters: next }), [update]);
+    const discussionFacets = React.useMemo(() => [
+        { fieldId: 'attention', value: true, label: t('session.collaboration.discussion.home.needsYou') },
+        { fieldId: 'unreadOnly', value: true, label: t('session.collaboration.discussion.home.filterUnread') },
+    ], [conditionBindings]);
     const spaceHeader = useCollectionSpaceHeader({
         entityKind: 'discussion',
         keyboardEnabled: column && !anchorSessionId && focused && focusEligible,
@@ -337,6 +341,7 @@ function DiscussionsListReady(props: Readonly<{
             spacesReady: view.spacesReady, spaceSettingsScope: view.spaceSettingsScope, filters, setFilters },
         registry: discussionListFilterFieldsV1,
         bindings: conditionBindings,
+        facets: discussionFacets,
         ...(column && view.bound && view.spacesReady ? { readHeldFacts } : {}),
         result: projection.filterResult,
         defaultIcon: DISCUSSION_SPACE_ICON,
