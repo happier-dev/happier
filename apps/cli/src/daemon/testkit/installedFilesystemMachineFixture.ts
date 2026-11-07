@@ -11,6 +11,9 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
  * No saved exact Home descriptor is needed when the connection holds its Home. */
 export async function createInstalledFilesystemMachineFixture(options: Readonly<{
     accountSettings?: Readonly<Record<string, unknown>>;
+    credentials?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['credentials'];
+    readAdditionalHttpResponse?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['readAdditionalHttpResponse'];
+    machineEncryption?: Readonly<{ encryptionKey: Uint8Array; encryptionVariant: 'dataKey' }>;
     boundSessionId?: string;
     directTransferExport?: Parameters<ApiMachineClient['setRPCHandlers']>[0]['directTransferExport'];
     agentIsolation?: ApiMachineClientLifecycleDependencies['agentIsolation'];
@@ -19,6 +22,8 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
     const homeServerIdentityId = 'srv_filesystem_held_owner';
     const f = await createProjectSessionRuntimeFixture({ serverId: 'filesystem-profile',
         homeServerIdentityId, serverUrl: 'https://session-home.test',
+        ...(options.credentials ? { credentials: options.credentials } : {}),
+        ...(options.readAdditionalHttpResponse ? { readAdditionalHttpResponse: options.readAdditionalHttpResponse } : {}),
         ...(options.boundSessionId ? { boundSessionId: options.boundSessionId } : {}),
         ...(options.accountSettings ? { accountSettings: options.accountSettings } : {}) });
     let heldHome: string | null = homeServerIdentityId;
@@ -35,7 +40,8 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
         return { status: ok && f.isHomeCurrent() ? 200 : 403,
             data: ok && f.isHomeCurrent() ? { v: 1, ok: true } : { error: 'access_denied' } };
     });
-    const machine = new ApiMachineClient(f.bootstrap.credentials.token, { id: 'machine', encryptionMode: 'plain',
+    const machine = new ApiMachineClient(f.bootstrap.credentials.token, { id: 'machine',
+        ...(options.machineEncryption ? { encryptionMode: 'e2ee' as const, ...options.machineEncryption } : { encryptionMode: 'plain' as const }),
         metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined,
         { resolveCurrentServerIdentityId: () => heldHome,
             ...(options.createProjectFiniteRuntime ? { createProjectFiniteRuntime: options.createProjectFiniteRuntime } : {}),
@@ -61,6 +67,6 @@ export async function createInstalledFilesystemMachineFixture(options: Readonly<
             ...(ingress.sessionActionOrigin ? { sessionActionOrigin: ingress.sessionActionOrigin } : {}),
             ...(ingress.callerInputAuthorization ? { callerInputAuthorization: ingress.callerInputAuthorization } : {}),
             machineAdmission: { actorAccountId: ingress.actorAccountId ?? 'requester', custodianAccountId: 'requester',
-                machineId: 'machine', installationId: f.installation.installationId, role: ingress.role ?? 'manage', encryptionMode: 'plain' } }),
+                machineId: 'machine', installationId: f.installation.installationId, role: ingress.role ?? 'manage', encryptionMode: options.machineEncryption ? 'e2ee' : 'plain' } }),
     };
 }

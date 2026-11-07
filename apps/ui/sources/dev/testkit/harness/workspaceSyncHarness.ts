@@ -1,4 +1,4 @@
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncStatusV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { createMachineFixture, createPlainMachineRowFixture } from '../fixtures/machineFixtures';
 import { applyProjectAccountRowsFixture } from '../fixtures/projectAccountRows';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from './homeGovernanceHarness';
@@ -13,6 +13,18 @@ export type WorkspaceSyncRpcRequest = Readonly<{
     /** The Home whose socket carried the RPC. */
     serverUrl?: string;
 }>;
+
+/** Daemon relationships-list envelope for status-reader fixtures. */
+export function createWorkspaceSyncRelationshipsListFixture(statuses: readonly WorkspaceSyncStatusV1[],
+    controllerMachineId = statuses[0]?.controllerMachineId ?? 'machine-a') {
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    return { controllerMachineId, sets: [], relationships: statuses.map(status => ({ status, definition: {
+        v: 1 as const, relationshipId: status.relationshipId, controllerMachineId: status.controllerMachineId,
+        alphaWorkspaceRefId: `${status.relationshipId}-alpha`, betaWorkspaceRefId: `${status.relationshipId}-beta`,
+        mode: status.mode, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+        enabled: true, createdAtMs: 1, updatedAtMs: 1,
+    } })), remoteRelationships: [], membership: { workspaceRefId: null, found: null }, discoveryAvailable: true };
+}
 
 /** Workspace sync fixtures stop at HTTP/Socket transport; scope and domain owners remain real. */
 export function createWorkspaceSyncHarness(respond: (request: WorkspaceSyncRpcRequest) => unknown) {

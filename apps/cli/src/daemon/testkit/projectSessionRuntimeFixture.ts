@@ -34,6 +34,7 @@ export type ProjectSessionRuntimeFixture = Readonly<{
 export async function createProjectSessionRuntimeFixture(options: Readonly<{
   serverId?: string; serverUrl?: string; accountSettings?: Readonly<Record<string, unknown>>; boundSessionId?: string;
   credentials?: StoredCredentials;
+  readAdditionalHttpResponse?: (url: string, request: import('axios').AxiosRequestConfig | undefined) => Promise<Readonly<{ status: number; data: unknown }> | undefined>;
   homeServerIdentityId?: string;
   machineAccess?: Readonly<{ custodianAccountId: string; role: 'use' | 'manage' }>;
 }> = {}): Promise<ProjectSessionRuntimeFixture> {
@@ -74,7 +75,9 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     if (path === '/v1/account/profile') return Response.json({ id: 'requester' });
     throw new Error(`Unexpected Home fetch: ${path}`);
   }));
-  vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+  vi.spyOn(axios, 'get').mockImplementation(async (url: string, requestOptions) => {
+    const supplied = await options.readAdditionalHttpResponse?.(url, requestOptions);
+    if (supplied !== undefined) return supplied;
     if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'requester' } };
     if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,

@@ -20,6 +20,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     serverUrl: string;
     serverIdentityId: string;
     accountId: string;
+    custodian?: Readonly<{ accountId: string; displayName: string }>;
     machineId: string;
     actionId: ActionId;
     tokenEpoch: number;
@@ -50,6 +51,8 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     const installation = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(27));
     const machine = {
         ...createPlainMachineRowFixture({ id: params.machineId, accountId: params.accountId }),
+        ...(params.custodian ? { access: { custodian: params.custodian, role: 'use' as const,
+            resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
         installationPublicKey: encodeBase64(installation.publicKey, 'base64'),
     };
     return {
@@ -78,7 +81,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                     v: 1, token: 'test-external-action-authorization', binding: {
                         accountId: params.accountId, authentication: { kind: 'account', tokenEpoch: params.tokenEpoch },
                         serverIdentityId: params.serverIdentityId, machineId: machine.id,
-                        custodianAccountId: params.accountId, installationId: machine.installationId,
+                        custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
                         accountEncryptionMode: 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
