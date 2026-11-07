@@ -531,6 +531,35 @@ describe('usage query captured Resource adapter', () => {
       .filter(demand => demand.sessionIds === undefined)).toHaveLength(transport === 'truncated' ? 2 : 1);
   });
 
+  it('does not cancel completed Usage evidence after EOF', async () => {
+    const captured = await context(request => {
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return new Response(JSON.stringify({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })) }) + '\n',
+        { headers: { 'Content-Type': 'application/x-ndjson' } });
+    });
+    const transport = captured.readTransport!;
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    const observed: typeof captured = { ...captured, readTransport: { ...transport,
+      read(path, init, options, consume) {
+        return transport.read(path, init, options, response => {
+          // Observe the real network response borrower; parsing and settlement stay real.
+          if (path === USAGE_SESSION_EVIDENCE_PATH && response.body) {
+            const reader = response.body.getReader();
+            readers.push(reader);
+            vi.spyOn(reader, 'cancel');
+            Object.defineProperty(response.body, 'getReader', { value: () => reader });
+          }
+          return consume(response);
+        });
+      },
+    } };
+    const batch = await readUiUsageQueryBatch(observed, { queries: [normalizeUsageQuery({ period: { relative: '90days' } })] });
+    expect(batch.results[0]?.howYouWork?.sessionCoverage).toMatchObject({ selected: 0, admitted: 0 });
+    expect(readers.length).toBeGreaterThan(0);
+    for (const reader of readers) expect(reader.cancel, 'a fully consumed response is not cancelled during settlement').not.toHaveBeenCalled();
+  });
+
   it('cancels a held Usage evidence stream on Account retirement without publishing its unfinished private facts', async () => {
     const id = 'stream-retirement';
     const consumed = createDeferred<void>();
@@ -3034,16 +3063,23 @@ describe('usage query captured Resource adapter', () => {
     let historyRequests = 0;
     let changedHistory = false;
     let accountingRequests = 0;
+    let quotaResolves = 0;
+    let quotaRecords = 0;
     const profile = { connectedAccountsV4: [{ ref, status: 'connected' as const, authenticationModeId: 'manual',
       revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
       configurationReady: false, configurationRevision: null, scopes: [] }] };
     const captured = await context(async request => {
       if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
       if (request.path === '/v2/usage/query') { accountingRequests++; return Response.json(value); }
-      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
-        recordId: snapshot.recordId, providerAccountId: 'provider-work', fetchedAt: now, staleAfterMs: 60_000 });
-      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: snapshot },
-        metadata: { fetchedAt: now, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        quotaResolves++;
+        return Response.json({ source, recordId: snapshot.recordId, providerAccountId: 'provider-work', fetchedAt: now, staleAfterMs: 60_000 });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+        quotaRecords++;
+        return Response.json({ content: { t: 'plain', v: snapshot },
+          metadata: { fetchedAt: now, staleAfterMs: 60_000, status: 'ok' }, sources: [source] });
+      }
       if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
         historyRequests++;
         const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
@@ -3115,13 +3151,32 @@ describe('usage query captured Resource adapter', () => {
       expect({ historyRequests, accountingRequests }, 'unchanged cache evidence must not wake the Resource').toEqual(before);
       expect(decodeUsageQueryResource(entry.getSnapshot().value!)).toBe(settled);
       expect(resourcePublications, 'unchanged store/provider ticks must publish nothing to Resource subscribers').toBe(publicationsBefore);
+      const quotaBeforeWakes = { quotaResolves, quotaRecords };
+      for (let index = 0; index < 12; index++) {
+        publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+          t: 'account-change', changeKinds: [index % 2 === 0 ? 'machine' : 'automation'], entityIds: [`unrelated-${index}`],
+        }, 'socket');
+        await flushHookEffects({ cycles: 30 });
+      }
+      expect({ quotaResolves, quotaRecords }, 'unrelated socket wakes must not reread provider usage').toEqual(quotaBeforeWakes);
+      expect({ historyRequests, accountingRequests }, 'the Home planner excludes unrelated query changes').toEqual(before);
+      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId, {
+        t: 'account-change', changeKinds: ['account'], entityIds: ['provider-account-usage'],
+      }, 'socket');
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      await flushHookEffects({ cycles: 30 });
+      expect({ quotaResolves, quotaRecords }, 'one relevant wake rereads each provider endpoint once').toEqual({
+        quotaResolves: quotaBeforeWakes.quotaResolves + 1, quotaRecords: quotaBeforeWakes.quotaRecords + 1,
+      });
+      const afterRelevantWake = { historyRequests, accountingRequests };
+      const publicationsAfterRelevantWake = resourcePublications;
       if (!includeAccounting) {
         publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['self', 'session-a', 'machine-a', 'approval-a'], {
           changeKinds: ['account', 'session', 'machine', 'artifact'], usageQueryAffects: true,
         });
         await flushHookEffects({ cycles: 30 });
-        expect({ historyRequests, accountingRequests }, 'unrelated detailed Home changes must not reread Capacity').toEqual(before);
-        expect(resourcePublications).toBe(publicationsBefore);
+        expect({ historyRequests, accountingRequests }, 'unrelated detailed Home changes must not reread Capacity').toEqual(afterRelevantWake);
+        expect(resourcePublications).toBe(publicationsAfterRelevantWake);
         const sessions = storage.getState().sessions;
         storage.setState({ sessions: { ...sessions, 'unrelated-capacity-session': createSessionFixture({
           id: 'unrelated-capacity-session', serverId: captured.accountLifetime.scope.serverId, encryptionMode: 'plain',
@@ -3129,8 +3184,8 @@ describe('usage query captured Resource adapter', () => {
         await flushHookEffects({ cycles: 30 });
         storage.setState({ sessions });
         await flushHookEffects({ cycles: 30 });
-        expect({ historyRequests, accountingRequests }, 'Session membership changes must not reread Capacity').toEqual(before);
-        expect(resourcePublications, 'Session membership must not publish a quota-only revision').toBe(publicationsBefore);
+        expect({ historyRequests, accountingRequests }, 'Session membership changes must not reread Capacity').toEqual(afterRelevantWake);
+        expect(resourcePublications, 'Session membership must not publish a quota-only revision').toBe(publicationsAfterRelevantWake);
       }
       changedHistory = true;
       const changes: ApiChangeEntry[] = [

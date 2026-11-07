@@ -681,7 +681,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                             receivedBytes, reachedEof, upstreamAborted: phaseSignal?.aborted === true,
                             accountCurrent: context.accountLifetime.isCurrent(), capturedTransport: !!context.readTransport,
                             ...(failure ? { failure } : {}) });
-                        await reader.cancel().catch(() => {});
+                        if (!reachedEof) await reader.cancel().catch(() => {});
                         reader.releaseLock();
                     }
                 }
