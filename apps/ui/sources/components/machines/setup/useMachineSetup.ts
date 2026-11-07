@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -38,6 +39,8 @@ const execute = createFrontDoorActionExecute();
 export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'reapply' }>
   | Readonly<{ kind: 'preset'; preset: ManagedMachinePresetV1 }>
+  /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
+  | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
   | Readonly<{
       kind: 'remove';
       item: Exclude<MachinePresetItemV1, { kind: 'app' }>;
@@ -215,7 +218,8 @@ export function useMachineSetup(
             ...(removeItemKeys ? { removeItemKeys } : {}),
           });
         } else {
-          // Re-apply the setup the Machine already has: its own sources, planned again for their effects now.
+          // Re-apply the setup the Machine already has: its own sources, planned again for their effects now. Stop
+          // using proposes the same sources without that preset; native retention keeps its items by default.
           const result = await execute(
             'machines.setup.plan',
             { homeId, machineId },
@@ -246,7 +250,13 @@ export function useMachineSetup(
                       {
                         homeId,
                         machineId,
-                        sources: parsed.data.sources,
+                        sources:
+                          intent.kind === 'stop'
+                            ? parsed.data.sources.filter(
+                                (source) => machineSetupSourceOriginKeyV1(source) !== intent.sourceKey,
+                              )
+                            : parsed.data.sources,
+                        ...(intent.kind === 'stop' ? { current: parsed.data } : {}),
                         desiredRevision: parsed.data.desiredRevision,
                         ...(removeItemKeys?.length ? { removeItemKeys } : {}),
                       },
@@ -370,6 +380,8 @@ export type MachineSetupRecipeRow = Readonly<{
     item: SetupItem;
     title: NonNullable<MachineSetupPlanResultV1['recipeTitles']>[number]['title'] | null;
     status: RecipeStatus | null;
+    /** The Plan source that holds it, so the row can name the preset it came from. */
+    sourceIndex: number;
     /** From the Machine's preset (changed through the preset), or added on this Machine (removable here). */
     fromPreset: boolean;
     removable: boolean;
@@ -400,6 +412,7 @@ export function readMachineSetupRecipes(
                 key: `${sourceIndex}.${itemIndex}`, ref, item,
                 title: plan.recipeTitles?.find(entry => sameRef(entry.ref, ref))?.title ?? null,
                 status: checked ?? observed ?? null,
+                sourceIndex,
                 fromPreset: source.kind !== 'direct',
                 removable: source.kind === 'direct',
             });

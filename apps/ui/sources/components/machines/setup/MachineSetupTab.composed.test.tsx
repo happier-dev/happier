@@ -468,14 +468,12 @@ describe('Machine → Setup tab (P-M1)', () => {
       (node) => node.props?.testID === testID && typeof node.props.onPress === 'function')[0];
     // Opening the tab is the one check: it reads the Machine's setup once and names its preset.
     phase = 'check on open';
-    await waitForHomeGovernance(() => expect(pressable('machine-setup-change-preset')).toBeDefined());
+    await waitForHomeGovernance(() => expect(pressable('machine-setup-source-again:account:build')).toBeDefined());
     expect(plans).toEqual([{ homeId: 'srv_build', machineId: 'devbox' }]);
     expect(frontDoorReads().length).toBeGreaterThan(0);
-    // Change preset → Build box reviews in place; nothing runs before Apply.
+    // Apply again → Build box's newer revision reviews in place; nothing runs before Apply.
     phase = 'review Build box in place';
-    const menu = mounted.tree.findAll(node => node.props?.testID === 'machine-setup-preset-menu'
-      && typeof node.props.onSelect === 'function')[0]!;
-    await act(async () => menu.props.onSelect('build'));
+    await act(async () => pressable('machine-setup-source-again:account:build')!.props.onPress());
     const { t } = await import('@/text');
     const answer = (testID: string) => mounted.tree.findAll(node => node.props?.testID === testID
       && typeof node.props.title === 'string')[0]?.props.subtitle as string | undefined;
@@ -507,6 +505,67 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(applied).toHaveLength(1);
     expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
     await mounted.unmount();
+  });
+
+  it('lists every attached preset in order, applies a changed one again, and stops using one without removing what it set up', async () => {
+    const { reviewMachineSetupSourceChangeV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
+    const home = await harness.addHome({
+      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+    });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [
+      preset('web', 'Web box'), preset('build', 'Build box'), { ...preset('other', 'Other box'), revision: 3 },
+    ] } });
+    const fonts = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'com.example.machine-tools', recipeId: 'fonts', revision: '1' }, inputs: {} } };
+    const other = { kind: 'accountPreset' as const, presetId: 'other', presetRevision: 3, setup: { scripts: [{ body: 'echo other' }] } };
+    const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 4, exclusions: [], support: [], sources: [
+      other,
+      { kind: 'accountPreset', presetId: 'build', presetRevision: 1, setup: { items: [fonts] } },
+      { kind: 'direct', setup: {} },
+    ] });
+    const plans: unknown[] = [];
+    // The receiving Machine's Plan is the transport boundary; the tab, its hook and the shared preparation stay real.
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+      plans.push(request);
+      let result: unknown = current;
+      if (request.mode === 'effects') {
+        const change = reviewMachineSetupSourceChangeV1({ currentSources: current.sources, proposedSources: request.sources! });
+        if (!change.ok) throw new Error(change.error);
+        result = { ...current, sources: change.sources, recipePlans: [] };
+      }
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true, result } } };
+    } });
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    // The Machine page is a page presentation; section actions (Attach a preset) render only there.
+    const { ItemList } = await import('@/components/ui/lists/ItemList');
+    const screen = await renderScreen(<ItemList><MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} /></ItemList>);
+    const withProp = (testID: string, prop: string) => screen.tree.findAll(node => node.props?.testID === testID && node.props[prop] !== undefined)[0];
+    await waitForHomeGovernance(() => expect(withProp('machine-setup-source:account:build', 'title')).toBeDefined());
+    const order = screen.tree.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.startsWith('machine-setup-source:')
+      && typeof node.props.title === 'string').map(node => node.props.testID as string);
+    expect([...new Set(order)]).toEqual(['machine-setup-source:account:other', 'machine-setup-source:account:build']);
+    // Only the preset whose newer revision this Machine hasn't taken offers Apply again.
+    expect(withProp('machine-setup-source-again:account:other', 'onPress')).toBeUndefined();
+    // Attach lists only setup presets that aren't attached yet.
+    expect((withProp('machine-setup-attach-menu', 'items')!.props.items as { id: string }[]).map(item => item.id)).toEqual(['web']);
+    // Apply again reviews the newer copy in place of the old one, keeping the order.
+    await act(async () => withProp('machine-setup-source-again:account:build', 'onPress')!.props.onPress());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-review')).not.toBeNull());
+    expect(plans.at(-1)).toEqual({ homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: [
+      other, { kind: 'accountPreset', presetId: 'build', presetRevision: 2, setup: preset('build', 'Build box').setup }, { kind: 'direct', setup: {} },
+    ] });
+    await act(async () => withProp('machine-setup-review-cancel', 'onPress')!.props.onPress());
+    // Stop using proposes the sources without it; what it set up stays on the Machine unless the review removes it.
+    await waitForHomeGovernance(() => expect(withProp('machine-setup-source-menu:account:build', 'onSelect')).toBeDefined());
+    await act(async () => withProp('machine-setup-source-menu:account:build', 'onSelect')!.props.onSelect('stop'));
+    await waitForHomeGovernance(() => expect(withProp('machine-setup-apply', 'onPress')?.props.disabled).toBe(false));
+    expect(plans.at(-1)).toEqual({ homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: [other, { kind: 'direct', setup: {} }] });
+    expect(screen.findByTestId('machine-setup-review')).not.toBeNull();
+    await screen.unmount();
   });
 
   it('leads from no preset to making one, from the tab', async () => {

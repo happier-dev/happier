@@ -1,7 +1,8 @@
 import * as React from 'react';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { machineSetupSourceOriginKeyV1, type MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -138,14 +139,18 @@ function MachineSetupRoot(
     return <MachineSetupReviewInPlace setup={setup} machineName={machine} />;
   }
 
-  const presetSource =
-    setup.plan?.sources.find((source) => source.kind !== 'direct') ?? null;
-  const preset =
-    presetSource?.kind === 'accountPreset'
-      ? (presetList.find((entry) => entry.id === presetSource.presetId) ?? null)
-      : null;
+  const attached = setup.plan?.sources.filter(isAttachedSource) ?? NO_SOURCES;
+  const attachedKeys = new Set(attached.map(machineSetupSourceOriginKeyV1));
+  const attachable = presetList.filter(
+    (entry) => !attachedKeys.has(presetOriginKey(entry)),
+  );
+  const nameOf = (source: AttachedSource) =>
+    source.kind === 'bundledPreset'
+      ? t('machinePresets.setup.tab.bundledPreset')
+      : (presetList.find((entry) => entry.id === source.presetId)?.name ??
+        t('machinePresets.setup.tab.presetUnreadable'));
   const nothingSetUp =
-    setup.plan !== null && presetSource === null && recipes.length === 0;
+    setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
 
   const freshness = (
@@ -195,50 +200,56 @@ function MachineSetupRoot(
         <PageLoadingRows testID="machine-setup-loading" />
       ) : (
         <>
-          {presetSource || presetList.length === 0 ? (
+          {attached.length > 0 || presetList.length === 0 ? (
             <ItemGroup
-              title={t('machinePresets.setup.tab.preset')}
+              title={t('machinePresets.setup.tab.presets')}
               testID="machine-setup-preset"
+              description={
+                attached.length > 0
+                  ? t('machinePresets.setup.tab.presetsHelp', { machine })
+                  : undefined
+              }
+              action={
+                editable && attached.length > 0 && presetList.length > 0 ? (
+                  <AttachPresetMenu
+                    presets={attachable}
+                    disabled={setup.pending !== null}
+                    onChoose={(choice) => {
+                      void setup.prepare({ kind: 'preset', preset: choice });
+                    }}
+                  />
+                ) : undefined
+              }
             >
-              {presetSource ? (
-                <Item
-                  testID="machine-setup-preset-row"
-                  accessoryLayout="adaptive"
-                  icon={<Icon name="shield" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                  title={
-                    preset?.name ??
-                    (presetSource.kind === 'bundledPreset'
-                      ? t('machinePresets.setup.tab.bundledPreset')
-                      : t('machinePresets.setup.tab.presetUnreadable'))
-                  }
-                  subtitle={
-                    presetSource.kind === 'accountPreset'
-                      ? t('machinePresets.setup.tab.presetFacts', {
-                          revision: presetSource.presetRevision,
-                          count: presetSource.setup.items?.length ?? 0,
-                        })
-                      : t('machinePresets.setup.itemCount', {
-                          count: presetSource.setup.items?.length ?? 0,
-                        })
-                  }
-                  showChevron={false}
-                  rightElement={
-                    editable && presetList.length > 0 ? (
-                      <PresetMenu
-                        presets={presetList}
-                        currentId={preset?.id ?? null}
-                        label={t('machinePresets.setup.tab.changePreset')}
-                        disabled={setup.pending !== null}
-                        onChoose={(choice) => {
-                          void setup.prepare({
-                            kind: 'preset',
-                            preset: choice,
-                          });
-                        }}
-                      />
-                    ) : undefined
-                  }
-                />
+              {attached.length > 0 ? (
+                attached.map((source) => {
+                  const sourceKey = machineSetupSourceOriginKeyV1(source);
+                  const latest =
+                    source.kind === 'accountPreset'
+                      ? (presetList.find((entry) => entry.id === source.presetId) ?? null)
+                      : null;
+                  return (
+                    <AttachedPresetRow
+                      key={sourceKey}
+                      sourceKey={sourceKey}
+                      source={source}
+                      name={nameOf(source)}
+                      newer={
+                        latest && source.kind === 'accountPreset' && latest.revision > source.presetRevision
+                          ? latest
+                          : null
+                      }
+                      editable={editable}
+                      busy={setup.pending !== null}
+                      onApplyAgain={(choice) => {
+                        void setup.prepare({ kind: 'preset', preset: choice });
+                      }}
+                      onStopUsing={() => {
+                        void setup.prepare({ kind: 'stop', sourceKey, name: nameOf(source) });
+                      }}
+                    />
+                  );
+                })
               ) : (
                 <Item
                   testID="machine-setup-preset-none"
@@ -312,7 +323,11 @@ function MachineSetupRoot(
                       ? localize(recipe.ref.pluginId, recipe.title)
                       : null
                   }
-                  presetName={preset?.name ?? null}
+                  presetName={
+                    setup.plan && recipe.fromPreset
+                      ? nameOf(setup.plan.sources[recipe.sourceIndex] as AttachedSource)
+                      : null
+                  }
                   editable={editable}
                   busy={setup.pending !== null}
                   onReapply={() => {
@@ -464,15 +479,22 @@ function MachineSetupReviewInPlace(
     [props.machineName],
   );
   const removing = review.intent.kind === 'remove';
+  const stopping = review.intent.kind === 'stop' ? review.intent.name : null;
   return (
     <View testID="machine-setup-review">
       <MachineTabSubHead
         title={
-          removing
-            ? t('machinePresets.setup.tab.reviewRemove')
-            : t('machinePresets.setup.tab.reviewTitle')
+          stopping !== null
+            ? t('machinePresets.setup.tab.reviewStopUsing', { preset: stopping })
+            : removing
+              ? t('machinePresets.setup.tab.reviewRemove')
+              : t('machinePresets.setup.tab.reviewTitle')
         }
-        description={t('machinePresets.setup.tab.reviewHelp')}
+        description={
+          stopping !== null
+            ? t('machinePresets.setup.tab.stopUsingHelp')
+            : t('machinePresets.setup.tab.reviewHelp')
+        }
         back={{
           label: t('machinePresets.setup.tab.title'),
           onPress: setup.cancelReview,
@@ -510,7 +532,9 @@ function MachineSetupReviewInPlace(
                 ? undefined
                 : {
                     testID: 'machine-setup-apply',
-                    label: removing
+                    label: stopping !== null
+                      ? t('machinePresets.setup.tab.stopUsingRun')
+                      : removing
                       ? t('machinePresets.setup.tab.removeRun')
                       : t('machinePresets.setup.applyRun', {
                           machine: props.machineName,
@@ -613,11 +637,100 @@ function RecipeRow(
   );
 }
 
-function PresetMenu(
+type AttachedSource = Exclude<MachineSetupSourceEntryV1, { kind: 'direct' }>;
+const NO_SOURCES: readonly AttachedSource[] = Object.freeze([]);
+const isAttachedSource = (source: MachineSetupSourceEntryV1): source is AttachedSource => source.kind !== 'direct';
+/** The origin key an Account preset has once attached, from the source owner rather than a local format. */
+const presetOriginKey = (preset: ManagedMachinePresetV1) =>
+  machineSetupSourceOriginKeyV1({ kind: 'accountPreset', presetId: preset.id, presetRevision: preset.revision, setup: preset.setup ?? {} });
+
+/** One attached preset (q/machine): what it is and how current, Apply again when its preset moved on, Stop using. */
+function AttachedPresetRow(
+  props: Readonly<{
+    sourceKey: string;
+    source: AttachedSource;
+    name: string;
+    newer: ManagedMachinePresetV1 | null;
+    editable: boolean;
+    busy: boolean;
+    onApplyAgain: (preset: ManagedMachinePresetV1) => void;
+    onStopUsing: () => void;
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const { source, newer } = props;
+  const facts =
+    source.kind === 'accountPreset'
+      ? t('machinePresets.setup.tab.presetFacts', {
+          revision: source.presetRevision,
+          count: source.setup.items?.length ?? 0,
+        })
+      : t('machinePresets.setup.itemCount', { count: source.setup.items?.length ?? 0 });
+  return (
+    <Item
+      testID={`machine-setup-source:${props.sourceKey}`}
+      accessoryLayout="adaptive"
+      icon={<Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+      title={props.name}
+      subtitle={
+        newer
+          ? `${t('machinePresets.setup.tab.newerRevision', { revision: newer.revision })} · ${facts}`
+          : facts
+      }
+      showChevron={false}
+      rightElement={
+        props.editable ? (
+          <View style={styles.rowActions}>
+            {newer ? (
+              <RoundButton
+                testID={`machine-setup-source-again:${props.sourceKey}`}
+                size="small"
+                display="secondary"
+                title={t('machinePresets.setup.tab.applyAgain')}
+                disabled={props.busy}
+                onPress={() => props.onApplyAgain(newer)}
+              />
+            ) : null}
+            <DropdownMenu
+              testID={`machine-setup-source-menu:${props.sourceKey}`}
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
+              matchTriggerWidth={false}
+              items={[
+                {
+                  id: 'stop',
+                  title: t('machinePresets.setup.tab.stopUsing'),
+                  destructive: true,
+                },
+              ]}
+              onSelect={() => {
+                setMenuOpen(false);
+                props.onStopUsing();
+              }}
+              trigger={({ toggle }) => (
+                <RoundButton
+                  testID={`machine-setup-source-more:${props.sourceKey}`}
+                  size="small"
+                  display="secondary"
+                  title="…"
+                  accessibilityLabel={t('common.more')}
+                  disabled={props.busy}
+                  onPress={toggle}
+                />
+              )}
+            />
+          </View>
+        ) : undefined
+      }
+    />
+  );
+}
+
+/** Attach a preset (q/attach): setup presets this Machine doesn't use yet; choosing one reviews it in place. */
+function AttachPresetMenu(
   props: Readonly<{
     presets: readonly ManagedMachinePresetV1[];
-    currentId: string | null;
-    label: string;
     disabled: boolean;
     onChoose: (preset: ManagedMachinePresetV1) => void;
   }>,
@@ -628,25 +741,19 @@ function PresetMenu(
       props.presets.map((preset) => ({
         id: preset.id,
         title: preset.name,
-        subtitle:
-          preset.id === props.currentId
-            ? t('machinePresets.setup.tab.updateToLatest', {
-                revision: preset.revision,
-              })
-            : describePreset(preset),
-        checked: preset.id === props.currentId,
+        subtitle: describePreset(preset),
       })),
-    [props.presets, props.currentId],
+    [props.presets],
   );
   return (
     <DropdownMenu
-      testID="machine-setup-preset-menu"
+      testID="machine-setup-attach-menu"
       open={open}
       onOpenChange={setOpen}
       items={items}
       search={items.length > 6}
       matchTriggerWidth={false}
-      selectedId={props.currentId}
+      emptyLabel={t('machinePresets.setup.tab.attachNone')}
       onSelect={(id) => {
         setOpen(false);
         const preset = props.presets.find((entry) => entry.id === id);
@@ -654,10 +761,10 @@ function PresetMenu(
       }}
       trigger={({ toggle }) => (
         <RoundButton
-          testID="machine-setup-change-preset"
+          testID="machine-setup-attach-preset"
           size="small"
           display="secondary"
-          title={props.label}
+          title={t('machinePresets.setup.tab.attachPreset')}
           disabled={props.disabled}
           onPress={toggle}
         />
@@ -771,3 +878,7 @@ function ToolsRow(
 function describePreset(preset: ManagedMachinePresetV1): string {
     return describeMachineSetup(preset.setup).map(fact => t('machinePresets.setup.fact', { label: fact.label, value: fact.value })).join(' · ');
 }
+
+const styles = StyleSheet.create((theme) => ({
+  rowActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+}));
