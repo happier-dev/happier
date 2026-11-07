@@ -111,10 +111,22 @@ async function pausedWorkflow(encrypted = false, dispatch = false, originalAutho
     storage: createWorkflowRunStorageClient({ token: 'account-token', serverHttpBaseUrl: 'https://home.example' }),
     resolveEncryption: async () => encryption,
   });
-  return { runId, accountId, actionId, actionInput, authorization, context, readAdmission, storage };
+  return { runId, accountId, actionId, actionInput, authorization, context, readAdmission, storage, encryption };
 }
 
 describe('accepted Workflow Action approval replay', () => {
+  it.each([false, true])('opens native Account replay against sealed authorization, not editable caller policy (encrypted=%s)', async encrypted => {
+    const h = await pausedWorkflow(encrypted);
+    const read = createWorkflowActionAdmissionReader({ storage: h.storage,
+      nativeAccountId: h.accountId, resolveEncryption: async () => h.encryption });
+    const context = { actionRequestId: h.context.actionRequestId, runtimeAccountId: h.accountId,
+      executionRunWorkflowRunId: h.runId, actionCaller: { kind: 'workflowRun' as const, runId: h.runId,
+        authorization: { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } } } };
+    expect(await read({ runId: h.runId, context, phase: 'approval_replay' })).not.toBeNull();
+    expect(await read({ runId: h.runId, context: { ...context, actionCaller: { ...context.actionCaller,
+      authorization: { ...context.actionCaller.authorization, admittedPermissionCeiling: 'yolo' } } }, phase: 'approval_replay' })).toBeNull();
+    expect(await read({ runId: h.runId, context: { ...context, runtimeAccountId: 'other-account' }, phase: 'approval_replay' })).toBeNull();
+  });
   it('admits a deployment leaf after its original PAT expires, while new admissions refuse it', async () => {
     const original = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-pat-root', binding: {
       serverIdentityId: 'identity', accountId: 'owner', principalId: 'owner', credentialId: 'expired-pat',

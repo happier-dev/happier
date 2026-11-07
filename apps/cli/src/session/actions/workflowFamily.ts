@@ -321,6 +321,7 @@ export function createCliWorkflowFamily(
       serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),
   }) : undefined;
   const readWorkflowActionAdmission = params.credentials ? createWorkflowActionAdmissionReader({
+    nativeAccountId: readAccountIdFromToken(params.credentials.token) ?? undefined,
     storage: workflowRunStorage,
     resolveEncryption: createCredentialedWorkflowRunEncryptionResolver({ credentials: params.credentials,
       serverHttpBaseUrl: workflowRunServerHttpBaseUrl }),

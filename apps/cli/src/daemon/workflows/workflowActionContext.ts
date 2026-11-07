@@ -70,31 +70,39 @@ export function buildWorkflowActionContext(execution: Readonly<{
 /** Restore selected policy at installed ingress from the same accepted invocation the coordinator used. */
 export async function readWorkflowActionPolicyContext(input: Readonly<{
   admission: WorkflowActionAdmission;
-  actionId: string;
-  input: unknown;
   context: ActionExecutorContext;
-}>): Promise<Pick<ActionExecutorContext, 'approvalProfileId' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput'> | null> {
+}> & (Readonly<{ actionId: string; input: unknown; phase?: 'dispatch' }>
+  | Readonly<{ phase: 'approval_replay'; resolveContext: ReturnType<typeof createWorkflowActionContextResolver> }>)
+): Promise<Pick<ActionExecutorContext, 'approvalProfileId' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
   const { admission, context } = input;
-  const invocation = await admission.readActionInvocation('dispatch');
+  const invocation = await admission.readActionInvocation(input.phase ?? 'dispatch');
   const execution = invocation?.progress.execution;
-  if (!invocation || execution?.kind !== 'action' || execution.actionId !== input.actionId
-    || execution.actionRequestId !== context.actionRequestId || !sameStrictJsonValue(execution.input, input.input)) return null;
+  if (!invocation || execution?.kind !== 'action' || execution.actionRequestId !== context.actionRequestId
+    || (input.phase !== 'approval_replay' && (execution.actionId !== input.actionId
+      || !sameStrictJsonValue(execution.input, input.input)))) return null;
   const accepted = admission.accepted;
   const structure = await resolveWorkflowInvocationStructureV1({ definition: accepted.definition,
     frozenChildren: accepted.frozenChildren, inputs: accepted.inputs, invocation,
     readInvocation: admission.readInvocation, keyOfInvocation: row => row.index.id });
-  if (structure?.leaf.kind !== 'action' || structure.leaf.actionId !== input.actionId) return null;
+  if (structure?.leaf.kind !== 'action' || structure.leaf.actionId !== execution.actionId) return null;
   const blockId = structure.leaf.id;
   const frozen = accepted.materializedLeaves.find(leaf => leaf.kind === 'action'
-    && leaf.sourceKey === structure.sourceKey && leaf.blockId === blockId && leaf.actionId === input.actionId);
+    && leaf.sourceKey === structure.sourceKey && leaf.blockId === blockId && leaf.actionId === execution.actionId);
   if (!frozen) return null;
   const selected = resolveWorkflowAcceptedStepSelectionV1(frozen, structure.frame.item?.value, structure.inputs);
-  const policy = buildWorkflowActionContext({ runId: admission.run.id, invocationRecordId: invocation.index.id,
+  const executionContext = { runId: admission.run.id, invocationRecordId: invocation.index.id,
     workDepth: accepted.workDepth, authorization: accepted.authorization,
+    workspace: accepted.workspaceTarget.project,
+    ...(accepted.origin?.originSessionId ? { originSessionId: accepted.origin.originSessionId } : {}),
+    ...(selected.role ? { role: selected.role } : {}),
+    ...(context.signal ? { signal: context.signal } : {}),
     ...(accepted.origin ? { origin: accepted.origin } : {}),
-    ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }) });
+    ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }) };
+  const policy = input.phase === 'approval_replay'
+    ? await input.resolveContext(executionContext) : buildWorkflowActionContext(executionContext);
   return { approvalProfileId: policy.approvalProfileId, approvalProfileChange: policy.approvalProfileChange,
-    callerPermissionMode: policy.callerPermissionMode, workflowSessionInput: policy.workflowSessionInput };
+    callerPermissionMode: policy.callerPermissionMode, workflowSessionInput: policy.workflowSessionInput,
+    ...(policy.agentStartContext ? { agentStartContext: policy.agentStartContext } : {}) };
 }
 
 /** Fresh host policy and accepted Run facts for new Workflow work, never Action operands. */

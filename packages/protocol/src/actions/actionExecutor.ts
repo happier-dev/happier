@@ -1,10 +1,12 @@
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
+import { SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
-import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, prepareHostReviewedChildPolicyV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1,
@@ -1363,6 +1365,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // daemon-origin checks; never reconstruct an occurrence from the Artifact.
     const lifetime = deps.hostActionApprovalLifetime;
     const operationOrigin = args.request.v === 2 ? args.request.executionOriginV1 : undefined;
+    const readinessRole = readSessionAgentReadinessRoleV1(args.request.actionId);
+    const readinessParent = readinessRole
+      ? readHostReviewedChildRootV1(args.ctx, args.request.actionId, args.request.actionArgs) : null;
+    const originalAuthorization = args.ctx.externalActionExecutionAuthorization;
+    const originAuthorization = operationOrigin?.externalActionExecutionAuthorization;
+    const retainedReadinessParent = readinessParent?.actionId === SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1
+      && args.ctx.operationAcceptance?.actionId === readinessParent.actionId
+      && originalAuthorization?.token === originAuthorization?.token
+      && sameStrictJsonValue(originalAuthorization?.binding ?? null, originAuthorization?.binding ?? null)
+      ? readinessParent : null;
     // The original native operation already owns admitted work. A Workflow
     // continuation must retain its exact caller and invocation, never borrow a
     // deciding caller's ports or reconstruct authority from editable content.
@@ -1374,7 +1386,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && args.request.v === 2 && args.request.approval?.flow === 'blocking'
       && (args.ctx.actionCaller?.kind === 'host' && operationOrigin.caller.kind === 'host'
         || args.ctx.actionCaller?.kind === 'workflowRun' && operationOrigin.caller.kind === 'workflowRun'
-          && args.ctx.operationAcceptance?.actionId === args.request.actionId
+          && (args.ctx.operationAcceptance?.actionId === args.request.actionId || retainedReadinessParent !== null)
           && operationOrigin.actionId === args.request.actionId
           && args.ctx.surface === operationOrigin.surface
           && Boolean(args.ctx.serverId && args.ctx.runtimeAccountId)
@@ -1830,6 +1842,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       } : {}),
       ...(replaySessionTargets ? { sessionTargetsV1: replaySessionTargets } : {}),
       actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay ? { kind: 'host' } : replayCaller),
+      ...(!appOwnedContextReplay && replayCaller.kind === 'workflowRun'
+        ? { executionRunWorkflowRunId: replayCaller.runId } : {}),
       ...(args.retainedPluginSettingsIntent
         ? { isPluginSettingsIntentCurrent: args.retainedPluginSettingsIntent } : {}),
       ...(args.retainedWidgetAreaContext ? { widgetAreaContext: args.retainedWidgetAreaContext } : {}),
@@ -1896,6 +1910,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         : {}),
     };
+    if (retainsHostOperation && retainedReadinessParent && originalAuthorization) {
+      // This exact live child keeps its original requester's private carrier;
+      // the approval Artifact cannot recreate the issuer's operand proof.
+      executionContext = { ...executionContext, externalActionExecutionAuthorization: originalAuthorization };
+    }
     if ((executionContext.approvedActionReplay?.hostReviewedChildren || executionContext.callerSurface)
       && origin?.success && originIsCurrent && (appOwnedReplay || !origin.data.externalActionExecutionAuthorization)
       && origin.data.accountId && origin.data.accountId === args.ctx.runtimeAccountId
@@ -2022,6 +2041,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return projectActionExecutionObservation(actionId, privateResult);
         }
         effectAttempted = true;
+        if (retainsHostOperation && retainedReadinessParent && readinessRole) {
+          return await invokeHostReviewedChildV1({ parent: retainedReadinessParent, context: executionContext,
+            child: { action: actionId, role: readinessRole, input: projectNativeJsonValueForTransport(executionInput) },
+            execute: (input, context) => executeCoreTerminal(actionId, input, context, true, undefined, undefined, true,
+              undefined, false, sameReplayHome) });
+        }
         return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, undefined,
           false, sameReplayHome);
       } finally {
@@ -2146,6 +2171,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       result.ok ? result : classifyExecutionRunStartPreDispatchFailure(actionId, result)) };
   }
 
+  // A new ordinary invocation keeps the authenticated caller, never its
+  // parent's consent or host-reviewed admission services.
+  const ordinaryChildContext = (context: ActionExecutorContext): ActionExecutorContext => {
+    const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
+      presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
+      hostReviewedChild: _parentReviewedChild, admittedHostReviewedChildren: _parentReviewedChildren,
+      invocationServices: _parentServices, ...caller } = context;
+    return caller;
+  };
+
   const executeCore = async (
     actionId: ActionId,
     input: unknown,
@@ -2158,20 +2193,31 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // and routed branches. Count per Action so a completed grant/read on retry
     // cannot shift another Action's slots. Nested parents extend the same path.
     const childPositions = new Map<ActionId, number>();
-    const executeChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean) => {
+    const executeChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean,
+      execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>) => {
       const position = childPositions.get(childId) ?? 0;
       childPositions.set(childId, position + 1);
-      const parentRequestId = normalizeId(childContext.actionRequestId);
-      const derivedContext = parentRequestId ? { ...childContext,
+      const caller = hostInternal ? childContext : ordinaryChildContext(childContext);
+      const parentRequestId = normalizeId(caller.actionRequestId);
+      const derivedContext = parentRequestId ? { ...caller,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
           childActionId: childId, position }),
-      } : childContext;
+      } : caller;
+      if (!hostInternal && execute) return execute(childId, childInput, derivedContext);
       return !hostInternal && deps.executeOrdinaryChildAction
         ? deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext })
         : executeInvocation(childId, childInput, derivedContext, hostInternal);
     };
     const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) =>
       executeChild(childId, childInput, childContext, true);
+    const withOrdinaryChildAction = (caller: ActionExecutorContext): ActionExecutorContext => ({ ...caller,
+      executeOrdinaryChildAction: (childId, childInput, childOptions) => executeChild(childId, childInput, { ...caller,
+        ...(childOptions?.signal ? { signal: childOptions.signal } : {}),
+        ...(childOptions?.serverId ? { serverId: childOptions.serverId } : {}),
+        ...(childOptions?.expectedAccountId ? { expectedAccountId: childOptions.expectedAccountId } : {}),
+        ...(childOptions?.externalActionTarget ? { externalActionTarget: childOptions.externalActionTarget } : {}),
+      }, false, childOptions?.execute),
+    });
     const stopThenArchiveSession = async (sessionId: string, childContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
       const stopped = await executeHostChild('session.stop', { sessionId }, childContext);
       if (!stopped.ok || isDeferredApprovalResult(stopped)) return stopped;
@@ -3587,6 +3633,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
+      ctx = retainHostReviewedChildAdmissionV1(ctx, actionId, admittedInput) ?? ctx;
       ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
         ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
@@ -3684,8 +3731,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           // The child is the caller's own new invocation: ordinary admission and
           // approval policy, never the parent's bypass, consent or request identity.
           executeChild: (childId, childInput) => {
-            const { bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
-              actionRequestId: parentRequestId, ...caller } = context;
+            const { actionRequestId: parentRequestId, ...caller } = ordinaryChildContext(context);
             const position = childPositions.get(childId) ?? 0;
             childPositions.set(childId, position + 1);
             const parent = normalizeId(parentRequestId);
@@ -4574,12 +4620,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       if (actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke') {
         return deps.uiCurrentContextAction
-          ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: { ...ctx,
-            executeOrdinaryChildAction: (childId, childInput, options) => executeChild(childId, childInput, { ...ctx,
-              ...(options?.signal ? { signal: options.signal } : {}),
-              ...(options?.externalActionTarget ? { externalActionTarget: options.externalActionTarget } : {}),
-            }, false),
-          } })
+          ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: withOrdinaryChildAction(ctx) })
           : { ok: false, errorCode: 'unsupported_action', error: 'current_ui_context_not_mounted' };
       }
       if (actionId === 'ui.find') {
@@ -4994,7 +5035,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.settingsDeclarationAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        const result = await deps.settingsDeclarationAction({ actionId, input: parsed.data, context: ctx,
+        const result = await deps.settingsDeclarationAction({ actionId, input: parsed.data, context: withOrdinaryChildAction(ctx),
           executeOwnerAction: request => executeInvocation(request.actionId, request.input, { ...request.context, bypassApprovals: false }),
         });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
@@ -5203,7 +5244,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.filesystemActionExecute) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        return completeActionResult(await deps.filesystemActionExecute({ actionId, input: parsed.data, context: ctx }));
+        const result = await deps.filesystemActionExecute({ actionId, input: parsed.data, context: ctx });
+        // Native filename capability failures are declared domain results. Keep
+        // them distinct from Action refusals so only the former can fall back.
+        if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles) {
+          const native = spec.outputSchema.safeParse(result);
+          if (native.success) return { ok: true, result: native.data };
+        }
+        return completeActionResult(result);
       }
       const dispatchReviewDispatch2Result = await dispatchReviewDispatch2({ actionId, parsed, ctx, executeHostChild, data, deps, startExecutionRunWithSelection,
         workflowSessionScope: workflowSessionScope ?? null });
@@ -5767,7 +5815,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!spawnArgs) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
-          const args = { ...spawnArgs, admittedInput: admittedSpawnInput };
+          const args = { ...spawnArgs, admittedInput: admittedSpawnInput,
+            invokeAgentReadinessAction: (childId: SessionAgentReadinessActionIdV1, childInput: unknown) => {
+              const role = readSessionAgentReadinessRoleV1(childId);
+              if (!role) return Promise.resolve<ActionExecuteResult>({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
+              const normalized = getActionSpec(childId).inputSchema.parse(childInput);
+              return invokeHostReviewedChildV1({
+                parent: { actionId, input: projectNativeJsonValueForTransport(admittedSpawnInput) as Record<string, JsonValue> },
+                context: ctx, child: { action: childId, role, input: projectNativeJsonValueForTransport(normalized) },
+                execute: (preparedInput, childContext) => executeHostChild(childId, preparedInput, childContext),
+              });
+            } };
           const continuation = ctx.invocationServices?.sessionCreation;
           const res = continuation
             ? await deps.sessionSpawnNew(args, continuation)

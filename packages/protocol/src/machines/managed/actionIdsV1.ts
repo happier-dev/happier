@@ -1,5 +1,6 @@
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { readRecord } from '../../inputs/inputRecords.js';
+import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../../actions/externalActionApi.js';
 
 export const MANAGED_ACTIVITY_READ_RPC_METHOD = 'managed.activity.read';
 export const MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD = 'managed.admission.drain.confirm';
@@ -12,6 +13,32 @@ export const SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 = {
   plan: { action: 'machines.setup.plan', role: 'session_spawn_setup_plan' },
   apply: { action: MACHINE_SETUP_APPLY_ACTION_ID_V1, role: 'session_spawn_setup_apply' },
 } as const;
+
+/** Readiness discovers first; mutating acquisition retains ordinary Manage admission. */
+export const SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 = 'session.spawn_new';
+export const SESSION_AGENT_READINESS_CHILDREN_V1 = {
+  inventory: { action: 'machines.agents.list', role: 'session_agent_inventory' },
+  acquire: { action: 'machines.agents.install', role: 'session_agent_acquire' },
+  status: { action: 'machines.agents.install.status', role: 'session_agent_acquire_status' },
+} as const;
+export type SessionAgentReadinessActionIdV1 = typeof SESSION_AGENT_READINESS_CHILDREN_V1[keyof typeof SESSION_AGENT_READINESS_CHILDREN_V1]['action'];
+
+export function readSessionAgentReadinessRoleV1(actionId: string): string | undefined {
+  return Object.values(SESSION_AGENT_READINESS_CHILDREN_V1).find(child => child.action === actionId)?.role;
+}
+
+/** A host-reviewed readiness child retains its original selected installation. */
+export function readSessionAgentReadinessChildActionV1(
+  binding: ExternalActionExecutionAuthorizationV1['binding'] | undefined,
+  reviewedChild: ReviewedActionChildHttpProofV1 | undefined,
+  selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
+): SessionAgentReadinessActionIdV1 | null {
+  if (binding?.actionId !== SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 || !reviewedChild
+    || binding.target.kind !== 'machine' || binding.target.machineId !== binding.machineId
+    || selectedTarget && (selectedTarget.machineId !== binding.machineId || selectedTarget.installationId !== binding.installationId)) return null;
+  return Object.values(SESSION_AGENT_READINESS_CHILDREN_V1).find(child => child.action === reviewedChild.actionId
+    && child.role === reviewedChild.role)?.action ?? null;
+}
 
 /** Selects ordinary setup routing; admission remains owned by the caller's reviewed-child boundary. */
 export function isMachineSetupPlanOrApplyActionIdV1(actionId: string): boolean {

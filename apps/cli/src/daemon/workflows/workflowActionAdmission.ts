@@ -15,12 +15,15 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptio
 import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
 }
 
 export type WorkflowActionAdmissionReaderParams = Readonly<{
+  /** Credentialed native Account scope, never supplied by approval content. */
+  nativeAccountId?: string;
   storage: Pick<ReturnType<typeof createWorkflowRunStorageClient>, 'execute'>;
   resolveEncryption: (context: ActionExecutorContext) => Promise<WorkflowRunReadEncryptionV1 | null>;
 }>;
@@ -41,6 +44,7 @@ export function createCredentialedWorkflowActionAdmissionReader(params: Readonly
   serverHttpBaseUrl: string;
 }>): ReturnType<typeof createWorkflowActionAdmissionReader> {
   return createWorkflowActionAdmissionReader({
+    nativeAccountId: readAccountIdFromToken(params.credentials.token) ?? undefined,
     storage: createWorkflowRunStorageClient({ token: params.credentials.token, serverHttpBaseUrl: params.serverHttpBaseUrl }),
     resolveEncryption: createCredentialedWorkflowRunEncryptionResolver(params),
   });
@@ -76,9 +80,10 @@ export function createWorkflowActionAdmissionReader(params: WorkflowActionAdmiss
     const localCaller = context.actionCaller;
     const localRun = localCaller?.kind === 'workflowRun' && localCaller.runId === runId
       && context.executionRunWorkflowRunId === runId;
-    // Local replay retains the signed Run-start root, checked against the accepted snapshot below.
+    // Signed replay retains its Run-start root. Native replay uses the
+    // credentialed Account and sealed authorization below, never Artifact policy.
     if (phase === 'approval_replay' && !externalRun
-      && (!localRun || !context.externalActionExecutionAuthorization)) return null;
+      && (!localRun || !context.externalActionExecutionAuthorization && !params.nativeAccountId)) return null;
     if (!requestId || !(externalRun
       || localRun)) return null;
     if (!requestId.startsWith(`${runId}/`)) return null;
@@ -104,6 +109,11 @@ export function createWorkflowActionAdmissionReader(params: WorkflowActionAdmiss
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.data.ownerAccountId, runId },
       envelope: parseWorkflowStoredContentEnvelopeV1(stored.acceptedEnvelope) });
     if (opened.kind !== 'available') return null;
+    if (phase === 'approval_replay' && !externalRun && !context.externalActionExecutionAuthorization
+      && (params.nativeAccountId !== run.data.ownerAccountId || context.runtimeAccountId !== params.nativeAccountId
+        || opened.content.authorization.externalActionExecutionAuthorization
+        || localCaller?.kind !== 'workflowRun'
+        || !sameStrictJsonValue(localCaller.authorization, opened.content.authorization))) return null;
     if (!externalRun && context.externalActionExecutionAuthorization
       && (!localRun || !sameStrictJsonValue(opened.content.authorization.externalActionExecutionAuthorization,
         { v: context.externalActionExecutionAuthorization.v, token: context.externalActionExecutionAuthorization.token,

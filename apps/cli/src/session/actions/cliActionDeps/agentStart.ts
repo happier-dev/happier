@@ -14,11 +14,12 @@ import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleCon
 
 export function createCliAgentStartContext(
   params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
-  { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession }: Readonly<{
+  { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, readWorkflowActionStartContext }: Readonly<{
     prepareAccountRoleOverrides: (signal?: AbortSignal) => Promise<void>;
     readReadyAccountRoleOverrides: (signal?: AbortSignal) => ReturnType<typeof readPreparedAccountRoleOverrides>;
     readRoleSources: RoleSourceReader;
     resolveActionCallerSession: (context: ActionExecutorContext) => ReturnType<typeof resolveCliActionCallerSession>;
+    readWorkflowActionStartContext?: (context: ActionExecutorContext) => Promise<ActionExecutorContext['agentStartContext'] | null>;
   }>,
   readEffectiveDeps: () => ActionExecutorDeps,
 ): NonNullable<ActionExecutorDeps['resolveAgentStartContext']> {
@@ -26,6 +27,11 @@ export function createCliAgentStartContext(
     const binding = context.externalActionExecutionAuthorization?.binding;
     const workflowOrigin = binding?.workflowActionOrigin;
     const witness = workflowOrigin?.sessionAuthority;
+    // Originless approval replay restores the accepted invocation through the
+    // Workflow context owner; it has no Session authority witness to consume.
+    if (context.actionCaller?.kind === 'workflowRun' && !witness) {
+      return await readWorkflowActionStartContext?.(context) ?? null;
+    }
     if (workflowOrigin || context.actionCaller?.kind === 'workflowRun') {
       if (!binding || !workflowOrigin || !witness || context.actionCaller?.kind !== 'workflowRun'
         || context.actionCaller.runId !== workflowOrigin.runId || context.actionRequestId !== binding?.requestId

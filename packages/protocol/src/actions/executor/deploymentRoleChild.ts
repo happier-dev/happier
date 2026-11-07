@@ -34,6 +34,7 @@ export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<
 export type HostReviewedParentV1 = ReviewedOperation['parent'];
 type ChildProof = Readonly<{
   rootActionId?: string;
+  role?: string;
   signal?: AbortSignal;
   qualifiedActionId: string;
   envelope?: Readonly<Record<string, JsonValue>> & Readonly<{
@@ -158,6 +159,62 @@ export function readHostReviewedChildOriginalAuthorizationV1(context: ActionExec
   return proof.originalAuthorization;
 }
 
+function createReviewedChildProof(actionId: string, role: string, input: JsonValue): ReviewedActionChildHttpProofV1 {
+  const domainNative = isDeploymentDomainAddActionIdV1(actionId) && 'content' in readRecord(input)
+    ? projectDeploymentNativeAdmissionV1(actionId, input) : undefined;
+  return Object.freeze({ actionId, role,
+    inputDigest: computeActionInputApprovalDigestV1(actionId as ActionId, input),
+    ...(isDeploymentDomainNativeAdmissionV1(domainNative) ? { deploymentNativeAdmission: domainNative } : {}) });
+}
+
+function attachReviewedChildHttpProjection(context: ActionExecutorContext, childContext: ChildContext, proof: ChildProof): void {
+  const authorization = context.externalActionExecutionAuthorization;
+  const http = authorization?.requesterHttpProjection;
+  const reviewedChild = proof.reviewedChild;
+  const rootActionId = proof.rootActionId;
+  if (!reviewedChild || !rootActionId || !authorization || !http) return;
+  const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
+  Object.defineProperties(proof, {
+    originalAuthorization: { value: readHostReviewedChildOriginalAuthorizationV1(context) ?? authorization },
+    childAuthorization: { value: childAuthorization },
+  });
+  Object.defineProperties(childAuthorization, {
+    ...Object.getOwnPropertyDescriptors(authorization),
+    requesterHttpProjection: { value: Object.freeze({ ...http,
+      createRequestHeaders: async (request: Parameters<typeof http.createRequestHeaders>[0]) => {
+        if (!readProof(childContext, proof.qualifiedActionId, proof.input)) return null;
+        // Host reads retain the admitted parent purpose; child effects carry
+        // the exact operand accepted by ordinary Action admission and review.
+        const { reviewedChild: _reviewedChild, ...parentRequest } = request;
+        return http.createRequestHeaders(request.effectActionId === rootActionId
+          ? parentRequest : { ...request, effectActionId: proof.qualifiedActionId, reviewedChild });
+      },
+    }), enumerable: false },
+  });
+  Object.defineProperty(childContext, 'externalActionExecutionAuthorization', {
+    value: Object.freeze(childAuthorization), enumerable: true,
+  });
+}
+
+/** Called by the executor after this exact child's ordinary admission and review.
+ * Public context cannot manufacture the issuer's private operand or role. */
+export function retainHostReviewedChildAdmissionV1(context: ActionExecutorContext, actionId: string,
+  input: unknown): ActionExecutorContext | undefined {
+  const proof = readProof(context, actionId, input);
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  if (!proof?.operation || !proof.role || binding && binding.actionId !== proof.rootActionId) return undefined;
+  if (proof.operation[deploymentRoleChild] === true) return context;
+  const admittedProof: ChildProof = { ...proof,
+    operation: { ...proof.operation, [deploymentRoleChild]: true },
+    ...(binding?.actionId === proof.rootActionId ? {
+      reviewedChild: createReviewedChildProof(proof.qualifiedActionId, proof.role, proof.input),
+    } : {}),
+  };
+  const admittedContext: ChildContext = { ...context, [deploymentRoleChild]: admittedProof };
+  attachReviewedChildHttpProjection(context, admittedContext, admittedProof);
+  return admittedContext;
+}
+
 /** Restore an exact signed leaf already admitted by ingress, without inventing parent consent.
  * Only the trusted ingress adapter supplies this operand after verifying its signed binding. */
 export async function invokeHostAdmittedSignedReviewedChildV1<T>(params: Readonly<{
@@ -216,14 +273,10 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   if (!envelope && (!childInput || typeof childInput !== 'object' || Array.isArray(childInput))) return denied();
   const qualifiedActionId = envelope ? formatQualifiedPluginActionId(envelope.action) : action as ActionId;
   const proofInput = envelope ? envelope.input ?? null : childInput;
-  const domainNative = isDeploymentDomainAddActionIdV1(qualifiedActionId) && 'content' in readRecord(proofInput)
-    ? projectDeploymentNativeAdmissionV1(qualifiedActionId, proofInput) : undefined;
   const reviewedChild = params.admittedReview && binding?.actionId === parent.actionId
-    ? Object.freeze({ actionId: qualifiedActionId, role: child.role,
-      inputDigest: computeActionInputApprovalDigestV1(qualifiedActionId as ActionId, proofInput),
-      ...(isDeploymentDomainNativeAdmissionV1(domainNative) ? { deploymentNativeAdmission: domainNative } : {}) }) : undefined;
+    ? createReviewedChildProof(qualifiedActionId, child.role, proofInput) : undefined;
   const proof: ChildProof = {
-    rootActionId: parent.actionId, qualifiedActionId, input: proofInput,
+    rootActionId: parent.actionId, role: child.role, qualifiedActionId, input: proofInput,
     ...(reviewedChild ? { reviewedChild } : {}),
     ...(context.signal ? { signal: context.signal } : {}),
     ...(envelope ? { envelope } : {}),
@@ -243,32 +296,8 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   };
   const childContext: ChildContext = { ...context, bypassApprovals: false,
     hostReviewedChild: undefined, invocationServices: params.invocationServices, [deploymentRoleChild]: proof };
-  const authorization = context.externalActionExecutionAuthorization;
-  const http = authorization?.requesterHttpProjection;
   // Independently Home-bound Run children keep their own incumbent ceiling.
-  if (reviewedChild && authorization && http) {
-    const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
-    Object.defineProperties(proof, {
-      originalAuthorization: { value: readHostReviewedChildOriginalAuthorizationV1(context) ?? authorization },
-      childAuthorization: { value: childAuthorization },
-    });
-    Object.defineProperties(childAuthorization, {
-      ...Object.getOwnPropertyDescriptors(authorization),
-      requesterHttpProjection: { value: Object.freeze({ ...http,
-        createRequestHeaders: async (request: Parameters<typeof http.createRequestHeaders>[0]) => {
-          if (!readProof(childContext, qualifiedActionId, proof.input)) return null;
-          // Host reads explicitly retain the admitted parent purpose. Only the
-          // child's own requests carry its qualified effect and reviewed proof.
-          const { reviewedChild: _reviewedChild, ...parentRequest } = request;
-          return http.createRequestHeaders(request.effectActionId === parent.actionId
-            ? parentRequest : { ...request, effectActionId: qualifiedActionId, reviewedChild });
-        },
-      }), enumerable: false },
-    });
-    Object.defineProperty(childContext, 'externalActionExecutionAuthorization', {
-      value: Object.freeze(childAuthorization), enumerable: true,
-    });
-  }
+  attachReviewedChildHttpProjection(context, childContext, proof);
   return await params.execute(envelope ?? childInput, childContext, typeof child.action === 'string' ? child.action : 'action.invoke');
 }
 

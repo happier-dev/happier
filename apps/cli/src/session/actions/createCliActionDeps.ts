@@ -461,7 +461,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
   });
   const resolveActionCallerSession = async (context: ActionExecutorContext) => await resolveCliActionCallerSession(callerSessionResolution(context));
-  const resolveAgentStartContext = createCliAgentStartContext(params, { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession }, () => readEffectiveDeps?.() ?? actionDeps);
+  const resolveAgentStartContext = createCliAgentStartContext(params, { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession,
+    readWorkflowActionStartContext: context => readWorkflowActionStartContext(context) }, () => readEffectiveDeps?.() ?? actionDeps);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials,
     serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl,
     operationContext: params.savedSecretOperationContext,
@@ -789,7 +790,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         && roleAccountLifetimeToken === getActiveAccountSettingsSnapshotLifetimeToken()) }
     : undefined;
   const workflowRunStorageHost = createCliWorkflowRunStorage(params, resolveCurrentSessionValue, resolveServerRequestHeaders, normalizeStringValue);
-  const { workflowTriggers, readWorkflowApprovedOperation, workflowAction, workflowActionPort,
+  const { workflowTriggers, readWorkflowApprovedOperation, readWorkflowActionStartContext, workflowAction, workflowActionPort,
     startCombinedWorkflow, waitForCombinedWorkflow, readCombinedWorkflowInvocations } = createCliWorkflowFamily(params, {
     ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, readProjectRows, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,

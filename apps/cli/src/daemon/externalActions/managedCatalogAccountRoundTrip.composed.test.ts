@@ -13,6 +13,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AccountSettingsSchema, FeaturesResponseSchema, AUTHORITY_CEILING_HEADER_V1, PluginManifestV2Schema } from '@happier-dev/protocol';
+import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
@@ -722,11 +723,13 @@ describe('managed catalog original Account transport', () => {
       nativeExecutions.push({ actionId: admitted.actionId, execution });
       return { ok: true, result: createExternalActionDaemonDispatchResponse(result.prepared) };
     } }) });
-    if (surface === 'voice' || kind === 'plan') {
-      const content = prepareAccountSettingsV2Content({ credentials: software.credentials, envelopeKind: 'plain',
+    if (surface === 'voice' || kind === 'plan' || 'rerunSetup' in scenario) {
+      const content = prepareAccountSettingsV2Content({ credentials: software.credentials, envelopeKind: mode === 'e2ee' ? 'encrypted' : 'plain',
         raw: { ...(surface === 'voice' ? { voice: { ...settingsDefaults.voice, canApproveRequests: true } } : {}),
           ...(kind === 'plan' ? { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
             actions: { [SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action]: { approvalRequiredSurfaces: ['agent'] } } }) } : {}),
+          ...('rerunSetup' in scenario ? { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
+            actions: { 'machines.setup.apply': { approvalRequiredSurfaces: ['agent'] } } }) } : {}),
           ...(requireVoiceApproval ? { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
             actions: { 'machines.setup.apply': { approvalRequiredSurfaces: ['voice'] } } }) } : {}) } });
       const written = await app.inject({ method: 'POST', url: '/v2/account/settings',
@@ -1828,7 +1831,7 @@ describe('managed catalog original Account transport', () => {
               acceptedContext: prior.acceptedContext, replay: { runId: originalRunId } });
             if (!project) throw new Error('Accepted Setup target unavailable');
             const runId = crypto.randomUUID();
-            const started = await ui.executeConfirmed('workflow.run.start', { ...start, runId }, {
+            const started = await ui.execute('workflow.run.start', { ...start, runId }, {
               ...context, defaultSessionMachineId: machineId,
               ...(originSessionId ? { defaultSessionId: originSessionId } : {}), externalActionTarget: { kind: 'machine', machineId,
                 project: projectAcceptedWorkflowRunTarget(project) },
@@ -1837,12 +1840,31 @@ describe('managed catalog original Account transport', () => {
               .toMatchObject({ ok: true, result: { run: { id: runId, machineId } } });
             await automationWorker!.catchUp();
             await software.waitForWorkflowCoordinator();
-            // The current finite Setup owner spends this Run's admitted leaf;
-            // it does not compose another Run beneath the person's new Run.
-            const completed = await ui.execute('workflow.run.get', { runId }, context);
-            expect(completed, JSON.stringify(completed)).toMatchObject({ ok: true,
-              result: { run: { id: runId, machineId, state: 'succeeded' } } });
-            expect(admittedRunIds).toHaveLength(2);
+            const queue = await ui.execute('approval.request.list', { workflowRunId: runId,
+              actionId: 'machines.setup.apply', status: 'open' }, context);
+            expect(queue, JSON.stringify(queue)).toMatchObject({ ok: true });
+            if (!queue.ok) throw new Error(queue.errorCode);
+            const cards = ApprovalQueueListResultV1Schema.parse(queue.result).items;
+            expect(cards, JSON.stringify(queue)).toHaveLength(1);
+            workflowAdmitted = new Promise<void>(resolve => { signalWorkflowAdmitted = resolve; });
+            const setupWake = workflowAdmitted.then(() => automationWorker!.catchUp());
+            void setupWake.catch(() => {});
+            const approved = await ui.executeConfirmed('approval.request.decide',
+              { artifactId: cards[0]!.artifactId, decision: 'approve' }, context);
+            expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true,
+              result: { status: 'executed', execution: { ok: true } } });
+            await setupWake;
+            await automationWorker!.catchUp();
+            await software.waitForWorkflowCoordinator();
+            // This fixture coordinates worker claims but has no parked-Run
+            // recovery subscription. Assert the actual Setup child effect,
+            // rather than the parent's later approval-settlement observation.
+            expect(admittedRunIds).toHaveLength(3);
+            const childRunId = admittedRunIds.find(id => id !== originalRunId && id !== runId)!;
+            expect(claimedRunIds).toContain(childRunId);
+            const completed = await ui.execute('workflow.run.get', { runId: childRunId }, context);
+            expect(completed).toMatchObject({ ok: true,
+              result: { run: { id: childRunId, machineId, state: 'succeeded' } } });
             expect(await software.readInstalled()).toMatchObject({ installed: true, effects: ['apt-get'] });
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: originalRunId } }))
               .toMatchObject({ state: 'failed' });
