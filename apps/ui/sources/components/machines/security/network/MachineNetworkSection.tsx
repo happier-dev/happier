@@ -5,12 +5,13 @@ import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import {
   type AccessProviderRefV1,
+  type AccessProviderSelectionV1,
   type MachinePrivateNetworkObservationV1} from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import {
   type MachineIngressCapabilityV1,
   type MachineReachabilityPostureV1,
 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
-import type { MachineReachabilityChangeV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
+import { MachineReachabilityConfigureFailureDetailsV1Schema, type MachineReachabilityChangeV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -22,6 +23,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
@@ -329,10 +332,24 @@ function ManagementGroup(
   const draftSsh = draft?.management.publicSsh ?? null;
   const recovery =
     observation.recovery ?? posture?.management.independentRecovery ?? null;
+  // Ways in the person configured but this Machine is not on yet; each joins through the same reviewed change.
+  const join = (props.network.facts.access ?? projectMachineNetworkAccessFacts(props.network.facts))?.privateNetworkJoin;
+  const addable = props.editable && props.controls.review.kind === 'idle' && props.controls.draft === null
+    && join?.kind === 'available'
+    ? join.selections.filter((selection) => !observation.privateNetworks.some((network) =>
+        accessProviderRefsEqualV1(network.provider, selection.provider)))
+    : [];
   return (
     <ItemGroup
       title={t('machineDetailPage.network.manageTitle')}
       description={t('machineDetailPage.network.manageDescription')}
+      action={addable.length > 0 ? (
+        <AddWayInMenu
+          selections={addable}
+          providerTitle={props.providerTitle}
+          onJoin={(selection) => props.controls.onPrepareChange({ kind: 'privateNetwork', intent: 'join', selection })}
+        />
+      ) : undefined}
     >
       <Item
         testID="machine-network-happier"
@@ -440,6 +457,43 @@ function ManagementGroup(
   );
 }
 
+/** "Add a way in": the configured private networks this Machine can join, each opening the reviewed Join. */
+function AddWayInMenu(
+  props: Readonly<{
+    selections: readonly AccessProviderSelectionV1[];
+    providerTitle: MachineNetworkProviderTitle;
+    onJoin: (selection: AccessProviderSelectionV1) => void;
+  }>,
+) {
+  const [open, setOpen] = React.useState(false);
+  const title = t('machineDetailPage.network.addWayIn');
+  const items = props.selections.map((selection, index) => ({
+    id: String(index),
+    title: props.providerTitle(selection.provider) ?? t('machineDetailPage.network.privateTitle'),
+    subtitle: t('machineDetailPage.network.addWayInPrivate'),
+    icon: <Icon name="tree-structure" />,
+  }));
+  return (
+    <DropdownMenu
+      testID="machine-network-add-way-in"
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      onSelect={(id) => {
+        const selection = props.selections[Number(id)];
+        if (selection) props.onJoin(selection);
+      }}
+      matchTriggerWidth={false}
+      rowKind="item"
+      popoverPhonePresentation="sheet"
+      popoverAccessibilityLabel={title}
+      trigger={({ toggle, open: isOpen }) => (
+        <SectionActionButton testID="machine-network-add-way-in-trigger" icon="plus" title={title} expanded={isOpen} onPress={toggle} />
+      )}
+    />
+  );
+}
+
 function IngressGroup(
   props: Readonly<{
     network: MachineNetworkViewModel;
@@ -478,8 +532,17 @@ function IngressGroup(
         accessProviderRefsEqualV1(c.provider, savedProvider.provider),
       )
     : true;
-  // With nothing else this Machine can publish through, Nothing public is a statement, not a one-option radio.
-  const alone = !savedProvider && capabilities.length === 0;
+  const selections = props.network.facts.selections;
+  // What each provider row can save: the saved default, or a ready provider with exactly one saved configuration
+  // on this Machine. The host resolves that selection at admission; anything else stays information with its reason.
+  const choices = capabilities.map((capability) => {
+    if (savedProvider && accessProviderRefsEqualV1(capability.provider, savedProvider.provider)) return savedProvider;
+    const configured = selections?.filter((selection) => accessProviderRefsEqualV1(selection.provider, capability.provider)) ?? [];
+    return capability.state === 'ready' && configured.length === 1 ? configured[0]! : null;
+  });
+  const choosable = choices.filter(Boolean).length + (savedProvider && !savedHasCapability ? 1 : 0);
+  // With nothing else to choose, Nothing public is a statement, not a one-option radio.
+  const alone = choosable === 0;
   return (
     <ItemGroup
       title={t('machineDetailPage.network.ingressTitle')}
@@ -490,7 +553,7 @@ function IngressGroup(
         accessibilityRole: 'radiogroup' as const,
         accessibilityLabel: t('machineDetailPage.network.ingressTitle'),
         // The choices live inside IngressChoice, which the group's own child walk cannot see.
-        selectableItemCountOverride: 1 + (savedProvider ? 1 : 0),
+        selectableItemCountOverride: 1 + choosable,
       })}
     >
       {alone ? (
@@ -532,27 +595,21 @@ function IngressGroup(
           }
         />
       ) : null}
-      {capabilities.map((capability) => {
-        const isSaved =
-          savedProvider !== null &&
-          accessProviderRefsEqualV1(
-            capability.provider,
-            savedProvider.provider,
-          );
+      {capabilities.map((capability, index) => {
+        const selection = choices[index] ?? null;
         return (
           <IngressChoice
             key={accessProviderKey(capability.provider)}
             providerTitle={props.providerTitle}
             providerRef={capability.provider}
             capability={capability}
-            selected={isSaved && chosen?.kind === 'provider'}
-            // Choosing a different provider needs its own configuration; only the saved one can come back.
-            onPress={
-              isSaved && canChoose && savedProvider
-                ? () => choose({ kind: 'provider', selection: savedProvider })
-                : undefined
-            }
-            radio={isSaved}
+            selected={selection !== null && chosen?.kind === 'provider'
+              && accessProviderRefsEqualV1(chosen.selection.provider, capability.provider)}
+            onPress={selection && canChoose ? () => choose({ kind: 'provider', selection }) : undefined}
+            radio={selection !== null}
+            // A ready provider with no saved configuration on this Machine says so, instead of reading as available.
+            notSetUp={selection === null && capability.state === 'ready'
+              && !selections?.some((candidate) => accessProviderRefsEqualV1(candidate.provider, capability.provider))}
           />
         );
       })}
@@ -568,6 +625,7 @@ function IngressChoice(
     selected: boolean;
     onPress?: () => void;
     radio?: boolean;
+    notSetUp?: boolean;
   }>,
 ) {
   const id = accessProviderKey(props.providerRef);
@@ -581,14 +639,17 @@ function IngressChoice(
           name={capability?.exposure === 'public' ? 'globe' : 'tree-structure'}
         />
       }
-      title={describeIngressTitle(capability)}
-      titleQualifier={props.providerTitle(props.providerRef) ?? t('machineDetailPage.network.anotherWayIn')}
+      // The provider names the row; what it does to the services, and anything it still needs, sits beneath.
+      title={props.providerTitle(props.providerRef) ?? t('machineDetailPage.network.anotherWayIn')}
       subtitle={
         capability === null
-          ? t('machineDetailPage.network.stateUnknown')
-          : capability.state === 'ready'
-            ? t(INGRESS_REACH_KEYS[capability.exposure])
-            : t(INGRESS_STATE_KEYS[capability.state])
+          ? `${t('machineDetailPage.network.ingressSaved')} · ${t('machineDetailPage.network.stateUnknown')}`
+          : [
+              describeIngressConsequence(capability),
+              capability.state !== 'ready'
+                ? t(INGRESS_STATE_KEYS[capability.state])
+                : props.notSetUp ? t('machineDetailPage.network.ingressNotSetUp') : null,
+            ].filter(Boolean).join(' · ')
       }
       selected={props.selected}
       accessibilityRole={radio ? 'radio' : undefined}
@@ -607,10 +668,9 @@ function IngressChoice(
 }
 
 /** Who reaches the services through this capability, in words: the exposure, and for public ones the ports. */
-function describeIngressTitle(
-  capability: MachineIngressCapabilityV1 | null,
+function describeIngressConsequence(
+  capability: MachineIngressCapabilityV1,
 ): string {
-  if (!capability) return t('machineDetailPage.network.ingressSaved');
   if (capability.exposure !== 'public') return t(EXPOSURE_KEYS[capability.exposure]);
   const ports = capability.inboundPorts.map((port) => String(port.port));
   return ports.length > 0
@@ -966,6 +1026,12 @@ function NetworkReviewFoot(
   }
   if (review.kind === 'failed') {
     const planChanged = review.failure.errorCode === 'plan_changed';
+    // The firewall owner's closed result: a verified restoration means the Machine is back as it was.
+    const details = MachineReachabilityConfigureFailureDetailsV1Schema.safeParse(review.failure.details);
+    const rolledBack = details.success && 'status' in details.data && details.data.status === 'rolledBack'
+      && details.data.restoration?.status === 'verified';
+    // The provider resolver refused the chosen default before any effect; another choice is the way on.
+    const providerRefused = PROVIDER_REFUSAL_CODES.has(review.failure.errorCode);
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -978,9 +1044,13 @@ function NetworkReviewFoot(
               : 'machineDetailPage.network.prepareFailed',
             { machine },
           )}
-          reason={t(planChanged
-            ? 'machineDetailPage.network.planChanged'
-            : review.plan ? 'machineDetailPage.network.applyRecovery' : 'machineDetailPage.network.prepareRecovery')}
+          reason={rolledBack
+            ? t('machineDetailPage.network.rolledBack', { machine })
+            : providerRefused
+              ? t('machineDetailPage.network.providerRefused', { machine })
+              : t(planChanged
+                ? 'machineDetailPage.network.planChanged'
+                : review.plan ? 'machineDetailPage.network.applyRecovery' : 'machineDetailPage.network.prepareRecovery')}
           action={{
             label: t('common.refresh'),
             onPress: () => {
@@ -1215,12 +1285,10 @@ function postureEquals(
 
 /** Every address on the internet, IPv4 and IPv6. */
 const ANYWHERE_CIDRS = new Set(['0.0.0.0/0', '::/0']);
-const INGRESS_REACH_KEYS = {
-  local: 'machineDetailPage.network.ingressReachLocal',
-  lan: 'machineDetailPage.network.ingressReachLan',
-  privateNetwork: 'machineDetailPage.network.ingressReachPrivate',
-  public: 'machineDetailPage.network.ingressReachPublic',
-} as const;
+/** The access-provider resolver's typed refusals for a chosen default (no effect attempted). */
+const PROVIDER_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  'invalid_access_provider_selection', 'access_provider_unavailable', 'access_provider_target_unsupported',
+]);
 const DAEMON_STATE_KEYS = {
   ready: 'machineDetailPage.network.daemonReady',
   unavailable: 'machineDetailPage.network.daemonUnavailable',

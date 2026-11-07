@@ -15,6 +15,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import {
   presentMachineNetwork,
@@ -323,14 +324,13 @@ describe('Machine → Network page', () => {
     const marks = screen.root.findAllByType(HappierRadioMark);
     expect(marks.map((mark) => mark.props.selected)).toEqual([false, true]);
     expect(findTestInstanceByTypeWithProps(screen, ItemGroup, { accessibilityRole: 'radiogroup' })?.props.selectableItemCountOverride).toBe(2);
-    // Provider qualifiers come from the contribution title; ids remain selectors only.
-    expect(caddyRow?.props.titleQualifier).toBe('Caddy');
-    expect(caddyRow?.props.title).not.toBe('caddy');
+    // Provider titles come from the contribution title; ids remain selectors only.
+    expect(caddyRow?.props.title).toBe('Caddy');
     const cloudflare = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-cloudflareNamed' });
-    expect(cloudflare?.props.titleQualifier).toBe('Cloudflare (named tunnel)');
+    expect(cloudflare?.props.title).toBe('Cloudflare (named tunnel)');
     expect(cloudflare?.props.subtitle).toContain('machineDetailPage.network.needsAuth');
     expect(cloudflare?.props.onPress).toBeUndefined();
-    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-tailscaleServe' })?.props.titleQualifier).toBe('Tailscale Serve');
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-tailscaleServe' })?.props.title).toBe('Tailscale Serve');
   });
 
   it('states Nothing public without a radio when the Machine offers no other way to publish services', async () => {
@@ -353,7 +353,7 @@ describe('Machine → Network page', () => {
     const screen = await render({ ...network, facts: { ...network.facts, observation: unknown } }, true);
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-manage-missing-internal-provider' })?.props.titleQualifier)
       .toBe('machineDetailPage.network.anotherWayIn');
-    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-missing-internal-provider' })?.props.titleQualifier)
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-missing-internal-provider' })?.props.title)
       .toBe('machineDetailPage.network.anotherWayIn');
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-private-missing-internal-provider:shop-prod.tail3c1.ts.net' })?.props.title)
       .toBe('machineDetailPage.network.privateTitle');
@@ -607,5 +607,103 @@ describe('Machine → Network page', () => {
     expect(line?.props.action).toBeUndefined();
     // The SSH row states its value; there is no control a Use grantee could mistake for live.
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })?.props.rightElement).toBeUndefined();
+  });
+});
+
+describe('Machine → Network: how people reach its services and ways in (P-M4)', () => {
+  const cloudflare = { provider: { kind: 'builtin' as const, id: 'cloudflareNamed' }, config: { hostname: 'shop.example.com' }, credentialRefs: [] };
+  const withCapabilities = (selections: MachineNetworkFacts['selections']): MachineNetworkViewModel => {
+    const next: MachineNetworkFacts = { posture, selections, observation: MachineReachabilityObservationV1Schema.parse({ ...observation, ingress: [
+      { revision: 7, provider: cloudflare.provider, exposure: 'public', inboundPorts: [], state: 'ready', remedies: [] },
+      { revision: 7, provider: { kind: 'builtin', id: 'tailscaleServe' }, exposure: 'privateNetwork', inboundPorts: [], state: 'ready', remedies: [] },
+      { revision: 7, provider: { kind: 'builtin', id: 'caddy' }, exposure: 'public', inboundPorts: [{ port: 443, protocol: 'tcp', exposure: 'public' }], state: 'needsSetup', remedies: ['configure'] },
+    ] }) };
+    const read: MachineNetworkRead = { kind: 'settled' };
+    return { ...presentMachineNetwork({ facts: next, read, reachable: true }), read, approval: null, refresh: vi.fn(async () => {}) };
+  };
+
+  it('lets the owner choose a ready provider with its one saved configuration, drafting exactly that selection', async () => {
+    const onDraft = vi.fn();
+    const screen = await render(withCapabilities([cloudflare]), true, { kind: 'idle' }, { onDraft });
+    const row = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-cloudflareNamed' });
+    // The provider names the row; its consequence sits beneath, never a raw id.
+    expect(row?.props.title).toBe('Cloudflare (named tunnel)');
+    expect(row?.props.subtitle).toBe('machineDetailPage.network.ingressPublicNoPorts');
+    expect(row?.props.accessibilityRole).toBe('radio');
+    row?.props.onPress();
+    // The same posture configure input the host admits (T2-INGRESS 61ca871428).
+    expect(onDraft).toHaveBeenCalledWith({ ...posture, defaultServiceIngress: { kind: 'provider', selection: cloudflare } });
+    expect(findTestInstanceByTypeWithProps(screen, ItemGroup, { accessibilityRole: 'radiogroup' })?.props.selectableItemCountOverride).toBe(2);
+    // A drafted provider reads as chosen.
+    const drafted = await renderScreen(React.createElement((await import('./MachineNetworkSection')).MachineNetworkView, {
+      network: withCapabilities([cloudflare]), machineName: 'shop-prod', online: true,
+      controls: { review: { kind: 'idle' }, draft: { ...posture, defaultServiceIngress: { kind: 'provider', selection: cloudflare } },
+        onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(), onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
+    }));
+    expect(findTestInstanceByTypeWithProps(drafted, Item, { testID: 'machine-network-ingress-cloudflareNamed' })?.props.selected).toBe(true);
+    expect(findTestInstanceByTypeWithProps(drafted, Item, { testID: 'machine-network-ingress-none' })?.props.selected).toBe(false);
+  });
+
+  it('keeps a provider with no saved selection, or not ready, as information with its reason, never a dead radio', async () => {
+    const screen = await render(withCapabilities([cloudflare]), true);
+    const serve = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-tailscaleServe' });
+    expect(serve?.props.title).toBe('Tailscale Serve');
+    expect(serve?.props.subtitle).toBe('machineDetailPage.network.exposurePrivate · machineDetailPage.network.ingressNotSetUp');
+    expect(serve?.props.onPress).toBeUndefined();
+    expect(serve?.props.accessibilityRole).toBeUndefined();
+    const caddy = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ingress-caddy' });
+    expect(caddy?.props.subtitle).toBe('machineDetailPage.network.ingressPublicPorts · machineDetailPage.network.needsSetup');
+    expect(caddy?.props.onPress).toBeUndefined();
+    // Nothing choosable beyond Nothing public: a statement, not a one-option radio.
+    const none = await render(withCapabilities([]), true);
+    expect(none.root.findAllByType(HappierRadioMark)).toHaveLength(0);
+    expect(findTestInstanceByTypeWithProps(none, Item, { testID: 'machine-network-ingress-cloudflareNamed' })?.props.onPress).toBeUndefined();
+  });
+
+  it('offers Add a way in for a configured private network the Machine is not on, through the same reviewed Join', async () => {
+    const tailscale = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: {}, credentialRefs: [] };
+    const off = { ...facts, selections: [tailscale], observation: { ...observation, privateNetworks: [] } };
+    const network = { ...model({ kind: 'settled' }, true), facts: { ...off, access: projectMachineNetworkAccessFacts(off) } };
+    const onPrepareChange = vi.fn();
+    // The section header action renders only in page presentation, so the action element is rendered on its own here.
+    const manageAction = async (screen: Awaited<ReturnType<typeof render>>) => {
+      const action = findTestInstanceByTypeWithProps(screen, ItemGroup, { title: 'machineDetailPage.network.manageTitle' })?.props.action;
+      return action ? await renderScreen(action) : null;
+    };
+    const menuScreen = await manageAction(await render(network, true, { kind: 'idle' }, { onPrepareChange }));
+    const menu = menuScreen ? findTestInstanceByTypeWithProps(menuScreen, DropdownMenu, { testID: 'machine-network-add-way-in' }) : null;
+    expect(menu?.props.items.map((item: { title: string }) => item.title)).toEqual(['Tailscale']);
+    menu?.props.onSelect(menu.props.items[0].id);
+    expect(onPrepareChange).toHaveBeenCalledWith({ kind: 'privateNetwork', intent: 'join', selection: tailscale });
+    // Already on that network, or a change already under review: nothing to add.
+    const on = { ...facts, selections: [tailscale] };
+    expect(await manageAction(await render({ ...model({ kind: 'settled' }, true), facts: { ...on, access: projectMachineNetworkAccessFacts(on) } }, true))).toBeNull();
+    expect(await manageAction(await render(network, true, { kind: 'review', plan }))).toBeNull();
+  });
+
+  it('says a failed apply was rolled back and verified, from the firewall owner\'s closed result', async () => {
+    const absent = { kind: 'absent' as const };
+    const recovery = { rules: absent, unit: absent, table: null, boot: { present: true, enabled: true, running: true } };
+    const failure = { ok: false as const, errorCode: 'native_effect_failed', error: 'native_effect_failed',
+      details: { status: 'rolledBack', recovery, restoration: { status: 'verified', recovery }, remedy: 'Check nftables.' } };
+    const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'failed', failure, plan });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' });
+    expect(card?.props.reason).toBe('machineDetailPage.network.rolledBack');
+    // Without a verified restoration the page never promises the Machine is back as it was.
+    const unverified = await render(model({ kind: 'settled' }, true), true,
+      { kind: 'failed', failure: { ...failure, details: { status: 'rolledBack', remedy: 'Check nftables.' } }, plan });
+    expect(findTestInstanceByTypeWithProps(unverified, SurfaceStateCard, { testID: 'machine-network-review-failed' })?.props.reason)
+      .toBe('machineDetailPage.network.applyRecovery');
+  });
+
+  it('names a refused provider default in words and keeps the choice to pick another', async () => {
+    const onDraft = vi.fn();
+    const screen = await render(model({ kind: 'settled' }, true), true,
+      { kind: 'failed', plan: null, failure: { ok: false, errorCode: 'access_provider_unavailable', error: 'access_provider_unavailable' } },
+      { onDraft });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' });
+    expect(card?.props.reason).toBe('machineDetailPage.network.providerRefused');
+    await card?.props.action.onPress();
+    expect(onDraft).not.toHaveBeenCalled();
   });
 });
