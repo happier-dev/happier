@@ -4,6 +4,7 @@ import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { SessionRuntimeIssueV1Schema } from '../sessions/control/runtimeIssueV1.js';
 
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { projectActionExecuteFailure } from '../actions/actionExecutionResult.js';
 
 import {
   WorkflowContainerClosingV1Schema,
@@ -34,6 +35,18 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('keeps content-unavailable details from the generic Action producer while rejecting extra fields', () => {
+    const failure = projectActionExecuteFailure({
+      ok: false, errorCode: 'content_unavailable', error: 'Unavailable', details: { reason: 'invalid_header' },
+    });
+    expect(WorkflowActionFailureV1Schema.parse(failure)).toEqual(failure);
+    const attributed = projectActionExecuteFailure(failure, 'request-header-read');
+    expect(WorkflowActionFailureV1Schema.parse(attributed)).toEqual(attributed);
+    expect(WorkflowActionFailureV1Schema.safeParse({ ...attributed, requestId: '' }).success).toBe(false);
+    expect(WorkflowActionFailureV1Schema.safeParse({ ...attributed, privateMetadata: 'private' }).success).toBe(false);
+    expect(WorkflowActionFailureV1Schema.safeParse({ ...attributed,
+      details: { reason: 'invalid_header', privateMetadata: 'private' } }).success).toBe(false);
+  });
   it('keeps executable participant identities out of generic item labels', () => {
     expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'session', session: { serverId: 'home', sessionId: 'private-id' } })).toBeUndefined();
     expect(projectWorkflowLoopItemDisplayLabelV1({ kind: 'model', launch: { title: 'External reviewer',

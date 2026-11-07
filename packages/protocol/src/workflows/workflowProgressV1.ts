@@ -6,7 +6,7 @@ import { WorkflowDiscussionOriginV1Schema } from './workflowDestinationsV1.js';
 import { SessionMessageReplyOutcomeV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
 import { z } from 'zod/mini';
 import { ActionCompletionStateV1Schema } from '../actions/actionCompletion.js';
-import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { AGENT_START_REFUSAL_CODES_V1, AgentStartRefusalV1Schema } from '../account/settings/admitAgentStartV1.js';
 import { LegacyAutomationWorkflowConversionReasonV1Schema } from '../automations/automationLegacyWorkflowConversionReasonV1.js';
 
@@ -918,6 +918,7 @@ export const WorkflowActionFailureV1Schema = lazyZodSchema(() => z.discriminated
   }),
   z.strictObject({
     failureCause: z.optional(ActionFailureCauseV1Schema), ok: z.literal(false), errorCode: z.literal('content_unavailable'), error: z.string().check(z.trim(), z.minLength(1)),
+    requestId: ActionExecuteFailureSchema.shape.requestId,
     details: z.optional(z.strictObject({ reason: z.union([WorkflowDefinitionContentUnavailableReasonV1Schema,
       z.literal('account_role_overrides_unavailable')]) })),
   }),
