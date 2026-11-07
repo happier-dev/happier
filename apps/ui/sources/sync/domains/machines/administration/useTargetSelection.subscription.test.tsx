@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary, type SessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -34,6 +34,81 @@ afterEach(async () => {
 });
 
 describe('machine administration target demand', () => {
+    it('offers 137-Machine census choices online first by name, retains a removed selection and does no sorting on offline heartbeats', async () => {
+        const { createElement } = await import('react');
+        const { t } = await import('@/text');
+        const machineOrder = await import('@/sync/domains/machines/machineListOrder');
+        const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+        const previous = storage.getState();
+        const home = await network.addHome('https://administration-picker-order.example.test', 'picker-owner', {
+            serverIdentityId: 'srv_picker_order',
+        });
+        await setActiveServerId(home.id);
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        const now = Date.now();
+        const machines = Array.from({ length: 137 }, (_, index) => createMachineFixture({
+            id: `picker-${String(index).padStart(3, '0')}`, active: index % 10 === 0, activeAt: now,
+            presenceProtocolVersion: 1,
+            revokedAt: index === 1 ? now : null,
+            replacedByMachineId: index === 2 ? 'picker-000' : null,
+            metadata: { ...createMachineFixture().metadata!, displayName: `Computer ${String(137 - index).padStart(3, '0')}` },
+        }));
+        const target = { serverIdentityId: 'srv_picker_order', machineId: machines[1]!.id };
+        try {
+            const scope = { serverId: home.id, accountId: home.accountId };
+            storage.setState(state => ({ profileScope: scope, settingsScope: scope,
+                settings: { ...state.settings, machineAdministrationTargetsLocalV1: { providers: target } } }));
+            storage.getState().applyMachines(machines, true, { sourceServerId: home.id });
+            storage.getState().markMachineListSettled(home.id);
+            const hook = await renderHook(() => useMachineAdministrationTargetSelection('providers'));
+            try {
+                const initial = hook.getCurrent();
+                expect(initial.pickerRows).toHaveLength(135);
+                const online = initial.pickerRows.filter(row => row.candidate.availability === 'online');
+                expect(online).toHaveLength(14);
+                expect(initial.pickerRows.slice(0, 14)).toEqual(online);
+                for (const rows of [online, initial.pickerRows.slice(14)]) {
+                    const names = rows.map(row => row.candidate.displayName);
+                    expect(names).toEqual([...names].sort((left, right) => left.localeCompare(right)));
+                }
+                expect(initial.state).toMatchObject({ kind: 'revoked', target });
+                const screen = await renderScreen(createElement(MachineAdministrationTargetSelector, {
+                    selection: initial, testIDPrefix: 'census.target',
+                }));
+                try {
+                    expect(screen.findHostByTestId('census.target.current')?.props.accessibilityLabel).toContain(t('settingsPlugins.targetSelection.revoked'));
+                    await screen.pressByTestIdAsync('census.target.current');
+                    expect(screen.findHostByTestId(`census.target.picker-option:${machines[1]!.id}`)).toBeNull();
+                    expect(screen.findHostByTestId(`census.target.picker-option:${machines[2]!.id}`)).toBeNull();
+                    expect(screen.findHostByTestId('census.target.picker-option:picker-130')).not.toBeNull();
+                } finally { await screen.unmount(); }
+                // Count the real Machine ordering work, excluding unrelated profile/transport sorts.
+                const sorts = vi.spyOn(machineOrder, 'compareMachineListOrder');
+                try {
+                    for (let tick = 1; tick <= 10; tick += 1) {
+                        await act(async () => storage.getState().applyMachineActivityUpdates([{ id: machines[3]!.id,
+                            active: false, activeAt: now + tick }], { sourceServerId: home.id }));
+                    }
+                    expect(sorts).toHaveBeenCalledTimes(0);
+                    expect(hook.getCurrent().pickerRows).toBe(initial.pickerRows);
+                    await act(async () => storage.getState().applyMachineActivityUpdates([{ id: machines[3]!.id,
+                        active: true, activeAt: Date.now() }], { sourceServerId: home.id }));
+                    expect(sorts).toHaveBeenCalled();
+                    const next = hook.getCurrent().pickerRows;
+                    expect(next.slice(0, 15).every(row => row.candidate.availability === 'online')).toBe(true);
+                    expect(next.slice(0, 15).some(row => row.machine.id === machines[3]!.id)).toBe(true);
+                    expect(next.find(row => row.machine.id === machines[4]!.id)).toBe(initial.pickerRows.find(row => row.machine.id === machines[4]!.id));
+                } finally { sorts.mockRestore(); }
+                const locked = { ...machines[4]!, availability: { kind: 'locked' as const, reason: 'decryption_failed' as const } };
+                await act(async () => storage.getState().applyMachines([locked], false, { sourceServerId: home.id }));
+                expect(hook.getCurrent().pickerRows.some(row => row.machine.id === locked.id)).toBe(true);
+                await act(async () => storage.getState().applyMachines([{ ...locked, revokedAt: now }], false, { sourceServerId: home.id }));
+                expect(hook.getCurrent().pickerRows.some(row => row.machine.id === locked.id)).toBe(false);
+                await act(async () => storage.getState().applyMachines(machines.filter(row => row.id !== target.machineId), true, { sourceServerId: home.id }));
+                expect(hook.getCurrent().state).toMatchObject({ kind: 'missing', target });
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previous); await removeServerProfile(home.id); }
+    });
     it.each(['select', 'clear'] as const)('remembers %s navigation past an unavailable route with Settings writes Off', async (intent) => {
         const syncRuntime = await import('@/sync/syncEngine');
         const requiredSync: typeof import('@/sync/sync') = createRequire(import.meta.url)('../../../sync.ts');
@@ -156,7 +231,7 @@ describe('machine administration target demand', () => {
             try {
                 expect(hook.getCurrent().pickerRows).toHaveLength(2);
                 expect(maxNameProjectionsPerRender).toBe(1);
-                expect(hook.getCurrent().candidates.every((candidate, index) => candidate === hook.getCurrent().pickerRows[index]?.candidate)).toBe(true);
+                expect(hook.getCurrent().pickerRows.every(row => hook.getCurrent().candidates.includes(row.candidate))).toBe(true);
                 expect(hook.getCurrent().selectedTarget).toBeNull();
                 expect(hook.getCurrent().resolveExecutionTarget()).toBeNull();
                 expect(storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey]).toBeUndefined();
@@ -165,7 +240,7 @@ describe('machine administration target demand', () => {
                 ] } }));
                 const updated = hook.getCurrent();
                 expect(updated.candidates.find(candidate => candidate.target.machineId === machine.id)?.displayName).toBe('Renamed machine');
-                expect(updated.candidates.every((candidate, index) => candidate === updated.pickerRows[index]?.candidate)).toBe(true);
+                expect(updated.pickerRows.every(row => updated.candidates.includes(row.candidate))).toBe(true);
             } finally {
                 await hook.unmount();
                 names.mockRestore();

@@ -6,6 +6,7 @@ import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMa
 import { t } from '@/text';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { carryMachineActivity, linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { describeManagedCreation } from '../managed/managedCreationPresentation';
@@ -297,8 +298,7 @@ export function reconcileMachineCollection(previous: MachineCollection | null, n
  * with dozens of retired or sleeping machines still opens on the ones that can work.
  */
 function compareMachineCollectionRows(a: MachineCollectionRow, b: MachineCollectionRow): number {
-    return Number(b.online) - Number(a.online)
-        || a.title.localeCompare(b.title)
+    return compareMachineListOrder(a.online, a.title, b.online, b.title)
         || machineCollectionRowKey(a).localeCompare(machineCollectionRowKey(b));
 }
 

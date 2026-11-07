@@ -11,6 +11,9 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import type { MachineAdministrationCandidateV1 } from './targetSelection';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureServerProfileScopeResolver, type ProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
+import { isMachineVisibleForLaunchSelection } from '../identity/filterVisibleMachines';
+import { compareMachineListOrder } from '../machineListOrder';
+import { isMachineAdministrationCandidateSelectable } from './targetSelection';
 
 /**
  * One Administration candidate together with the device-local routing row
@@ -25,6 +28,17 @@ export type MachineAdministrationCandidateInventoryRowV1<
     serverName: string;
     machine: TMachine;
 }>;
+
+/** Choices omit removed identities; the full candidate inventory still explains a retained selection. */
+export function buildMachineAdministrationTargetPickerRows(
+    rows: readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[],
+): readonly MachineAdministrationCandidateInventoryRowV1<MachineDisplayRenderable>[] {
+    return Object.freeze(rows.filter(row => isMachineVisibleForLaunchSelection(row.machine))
+        .sort((left, right) => compareMachineListOrder(
+            isMachineAdministrationCandidateSelectable(left.candidate), left.candidate.displayName,
+            isMachineAdministrationCandidateSelectable(right.candidate), right.candidate.displayName,
+        ) || compareInventoryRows(left, right)));
+}
 
 function buildReplacementTarget(
     serverIdentityId: string,

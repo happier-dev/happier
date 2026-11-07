@@ -45,6 +45,7 @@ import {
 } from './targetSelection';
 import {
     buildMachineAdministrationCandidateInventoryRowsFromSnapshots,
+    buildMachineAdministrationTargetPickerRows,
     type MachineAdministrationCandidateInventoryRowV1,
 } from './targetState';
 
@@ -145,7 +146,8 @@ export type MachineAdministrationTargetSelectionOptions = Readonly<{
 /** Presentation-only canonical Administration rows, without creating a persisted selection. */
 export function useMachineAdministrationTargetPickerRows(): readonly MachineAdministrationTargetPickerRowV1[] {
     const snapshots = useAllProfileMachineInventorySnapshots();
-    return useMachineAdministrationInventoryRows(snapshots);
+    const rows = useMachineAdministrationInventoryRows(snapshots);
+    return React.useMemo(() => buildMachineAdministrationTargetPickerRows(rows), [rows]);
 }
 
 /** Inventory owns content; the shared presence owner advances only changed availability facts. */
@@ -233,10 +235,11 @@ export function useMachineAdministrationTargetSelection(
             && target && areServerProfileIdentifiersEquivalent(value.serverId, target.serverIdentityId));
         return resolveFreshMachineAdministrationExecutionTarget(target, { ...options, accountScope: binding?.scope ?? null });
     }, [bindings]);
-    const pickerRows = useMachineAdministrationInventoryRows(snapshots);
+    const inventoryRows = useMachineAdministrationInventoryRows(snapshots);
+    const pickerRows = React.useMemo(() => buildMachineAdministrationTargetPickerRows(inventoryRows), [inventoryRows]);
     const candidates = React.useMemo(
-        () => Object.freeze(pickerRows.map((row) => row.candidate)),
-        [pickerRows],
+        () => Object.freeze(inventoryRows.map((row) => row.candidate)),
+        [inventoryRows],
     );
     const allowSoleCandidate = enabled && areMachineAdministrationInventoriesKnown(snapshots)
         && options.allowSoleCandidate !== false && !initialTargetPending;
