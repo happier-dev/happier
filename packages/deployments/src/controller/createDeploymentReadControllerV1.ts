@@ -120,10 +120,11 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             detail.targetLinks.map(item => item.targetLink)) : {};
         const secretRevisions = Object.values(memberVersions).map(member => {
             const generation = member.uncertain ? undefined : retained.find(receipt => receipt.deployment.id === member.deploymentId);
+            const runningBindings = generation?.content.ownServer?.approvedInputBasis?.bindings;
             return { machineId: member.machineId, installationId: member.installationId,
                 facts: readDeploymentSecretRevisionFacts({ bindings: detail.content.bindings,
-                    runningBindings: generation?.content.ownServer?.approvedInputBasis?.bindings,
-                    savedSecretRevisions: detail.savedSecretRevisions }) };
+                    ...(runningBindings === undefined ? {} : { runningBindings }),
+                    ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }) }) };
         });
         return { ...detail, runtimeTargetLink: link, memberVersions, secretRevisions };
     }
@@ -423,13 +424,15 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             }, demand);
         },
         acquireHistory(environmentId, query, demand) {
+            const { cursor: initialCursor, ...filters } = query;
             const key = (cursor: string | undefined) => JSON.stringify(['history', environmentId,
                 query.state ?? null, query.actorAccountId ?? null, query.operation ?? null, cursor ?? null]);
-            return createDeploymentReadPageLease<DeploymentHistoryPageV1>({ initialCursor: query.cursor, demand,
+            return createDeploymentReadPageLease<DeploymentHistoryPageV1>({ initialCursor, demand,
                 nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
                 acquire: (cursor, pageDemand) => acquire<DeploymentHistoryPageV1>({
                 key: key(cursor), kind: 'history', environmentId, previousPage: cursor !== undefined,
-                read: signal => transport.listHistory(scope, environmentId, { ...query, cursor }, { signal }),
+                read: signal => transport.listHistory(scope, environmentId,
+                    { ...filters, ...(cursor === undefined ? {} : { cursor }) }, { signal }),
                 admit(value) {
                     const page = DeploymentReceiptHistoryV1Schema.parse(value);
                     if (!page.items.every(row => row.environmentId === environmentId)) throw new Error('Foreign receipt');
