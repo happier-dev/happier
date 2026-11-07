@@ -7694,6 +7694,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         moveToWorkspaceRoot: '放回專案',
         sectionsMenuTitle: "分區",
         sectionsManageDescription: "為歸類工作階段的分區命名、排序或移除。移除分區不會刪除其中的工作階段。",
+        sectionsManageDescription: "為歸類工作階段的分區命名、排序或移除。移除分區不會刪除其中的工作階段。",
         newSectionEllipsis: "新增分區…",
         moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
         sectionDropHintTouch: "將工作階段移到這裡",

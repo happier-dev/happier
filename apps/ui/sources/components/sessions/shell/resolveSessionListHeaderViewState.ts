@@ -35,6 +35,22 @@ const SECTION_HEADER_VIEW_STATE_CACHE = new LruMap<string, SessionListHeaderView
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
 });
 
+/**
+ * The one device-local collapse key a group header's fold writes, within its list context. The header's
+ * chevron and the list's mounted fold command both use it, so they always fold the same group.
+ */
+export function resolveSessionListHeaderCollapseKey(
+    item: Extract<SessionListIndexItem, { type: 'header' }>,
+    projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>,
+): string {
+    if (item.headerKind === 'folder') return item.groupKey ?? `folder:${item.folderId ?? item.title}`;
+    if (item.headerKind === 'project') {
+        const groupKey = String(item.groupKey ?? '').trim();
+        return projectHeaderViewModelByGroupKey.get(groupKey)?.collapseKey ?? groupKey;
+    }
+    return item.groupKey || `${item.headerKind ?? ''}:${item.serverId ?? 'local'}`;
+}
+
 export function resolveSessionListHeaderViewState(input: Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
     collapsedKeys: Readonly<Record<string, boolean>>;
@@ -44,7 +60,7 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
     if (input.item.title && input.item.headerKind === 'project') {
         const groupKey = String(input.item.groupKey ?? '').trim();
         const viewModel = input.projectHeaderViewModelByGroupKey.get(groupKey) ?? null;
-        const collapseKey = viewModel?.collapseKey ?? groupKey;
+        const collapseKey = resolveSessionListHeaderCollapseKey(input.item, input.projectHeaderViewModelByGroupKey);
         const legacyWorkspaceKey = viewModel?.legacyWorkspaceKey ?? String(input.item.workspaceKey ?? '').trim();
         const scopeHint = viewModel?.scopeHint ?? input.item.workspaceScopeHint ?? null;
         const newSessionTarget = resolveNewSessionGroupTarget({ workspaceScopeHint: scopeHint, workspace: input.item.workspace });
@@ -94,7 +110,7 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
         return null;
     }
 
-    const collapseKey = input.item.groupKey || `${input.item.headerKind ?? ''}:${input.item.serverId ?? 'local'}`;
+    const collapseKey = resolveSessionListHeaderCollapseKey(input.item, input.projectHeaderViewModelByGroupKey);
     const title = input.item.headerKind === 'server'
         ? input.translateServerHeader(input.item.title)
         : input.item.title;

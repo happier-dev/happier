@@ -9790,6 +9790,7 @@ localTailscale: {
     moveToWorkspaceRoot: "プロジェクトに戻す",
     sectionsMenuTitle: "セクション",
     sectionsManageDescription: "セッションを整理するセクションの名前、順序、削除を管理します。セクションを削除してもセッションは残ります。",
+    sectionsManageDescription: "セッションを整理するセクションの名前、順序、削除を管理します。セクションを削除してもセッションは残ります。",
     newSectionEllipsis: "新しいセクション…",
     moveToProjectNamed: ({ project }: { project: string }) => `${project} に戻す`,
     sectionDropHintTouch: "ここにセッションを移動",

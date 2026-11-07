@@ -7932,6 +7932,7 @@ export const ru: TranslationStructure = {
     moveToWorkspaceRoot: "Вернуть в проект",
     sectionsMenuTitle: "Разделы",
     sectionsManageDescription: "Называйте, упорядочивайте и удаляйте разделы, по которым вы раскладываете сессии. При удалении раздела сессии сохраняются.",
+    sectionsManageDescription: "Называйте, упорядочивайте и удаляйте разделы, по которым вы раскладываете сессии. При удалении раздела сессии сохраняются.",
     newSectionEllipsis: "Новый раздел…",
     moveToProjectNamed: ({ project }: { project: string }) => `Вернуть в ${project}`,
     sectionDropHintTouch: "Переместите сессии сюда",

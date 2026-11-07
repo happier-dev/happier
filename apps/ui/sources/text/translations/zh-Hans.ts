@@ -9159,6 +9159,7 @@ export const zhHans: TranslationStructure = {
     moveToWorkspaceRoot: "放回项目",
     sectionsMenuTitle: "分区",
     sectionsManageDescription: "为归类会话的分区命名、排序或移除。移除分区不会删除其中的会话。",
+    sectionsManageDescription: "为归类会话的分区命名、排序或移除。移除分区不会删除其中的会话。",
     newSectionEllipsis: "新建分区…",
     moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
     sectionDropHintTouch: "将会话移到这里",

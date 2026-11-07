@@ -120,7 +120,8 @@ import {
     type SessionOrganizationMutationScope,
 } from '@/sync/ops/sessionOrganization';
 import { randomUUID } from '@/platform/randomUUID';
-import { resolveSessionSectionArchiveOutcome } from '@/components/sessions/organization/sessionSectionArchiveOutcome';
+import { confirmSessionSectionRemoval, presentSessionSectionArchiveOutcome, requestSessionSectionName } from '@/components/sessions/organization/sessionSectionEditing';
+import { useSessionListFoldCommands, writeSessionListGroupCollapsed } from './useSessionListFoldCommands';
 import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { buildNewSessionConfigurationDraft } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
@@ -577,11 +578,11 @@ export function useSessionListViewStateFromPaneState(
     const collapsedGroupKeysV1 = React.useMemo(() => readSessionListCollapsedGroups(storedCollapsedGroupKeysV1, collapseContextKey),
         [collapseContextKey, storedCollapsedGroupKeysV1]);
     const handleSetReportsCollapsed = React.useCallback((nodeId: string, collapsed: boolean) => {
-        collapsedGroupsState.set(buildSessionListCollapseKey(collapseContextKey, nodeId), collapsed);
+        writeSessionListGroupCollapsed(collapseContextKey, nodeId, collapsed);
     }, [collapseContextKey]);
     const toggleCollapsedGroup = React.useCallback((groupKey: string) => {
-        const key = buildSessionListCollapseKey(collapseContextKey, groupKey);
-        collapsedGroupsState.set(key, !collapsedGroupsState.read(key));
+        writeSessionListGroupCollapsed(collapseContextKey, groupKey,
+            !collapsedGroupsState.read(buildSessionListCollapseKey(collapseContextKey, groupKey)));
     }, [collapseContextKey]);
     const sessionMruOrder = useSessionMruOrder();
     const folderFeatureEnabledServerIds = renderPaneState.folderFeatureEnabledServerIds ?? EMPTY_KNOWN_TAGS;
@@ -1693,11 +1694,8 @@ export function useSessionListViewStateFromPaneState(
         if (resolveSessionSectionDraftAnchor(renderedListItemsRef.current, {
             serverId, sections: sectionMoveSourcesRef.current?.sections ?? [],
         })) return requestSectionDraft(serverId, create);
-        const name = await Modal.prompt(t('sessionsList.newSection'), undefined, {
-            placeholder: t('sessionsList.sectionNamePlaceholder'),
-            confirmText: t('common.create'),
-        });
-        return name?.trim() ? create(name.trim()) : false;
+        const name = await requestSessionSectionName(null);
+        return name ? create(name) : false;
     }, [requestSectionDraft]);
     const resolveSessionTitleForTreeRow = React.useCallback((sourceRowId: string): string | null => {
         const item = renderedListItemsRef.current.find((candidate) => candidate.type === 'session'
@@ -1955,13 +1953,9 @@ export function useSessionListViewStateFromPaneState(
 
     const handleRenameSection = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId) return;
-        const name = await Modal.prompt(t('common.rename'), undefined, {
-            defaultValue: item.title,
-            placeholder: t('sessionsList.sectionNamePlaceholder'),
-            confirmText: t('common.rename'),
-        });
-        if (!name?.trim() || name.trim() === item.title) return;
-        writeSectionDefinition(item.serverId, 'session.sections.update', { sectionId: item.folderId, name: name.trim() });
+        const name = await requestSessionSectionName(item.title);
+        if (!name) return;
+        writeSectionDefinition(item.serverId, 'session.sections.update', { sectionId: item.folderId, name });
     }, [writeSectionDefinition]);
 
     const handleChangeSectionIcon = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>, icon: string) => {
@@ -1971,17 +1965,7 @@ export function useSessionListViewStateFromPaneState(
 
     const handleRemoveSection = React.useCallback(async (item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId) return;
-        const section = sectionByGroupKey.get(item.groupKey ?? '');
-        const parent = section?.legacyContext?.ancestors.at(-1);
-        const parentName = parent?.display?.status === 'available' ? parent.display.value.name : null;
-        const confirmed = await Modal.confirm(
-            t('sessionsList.removeSectionConfirmTitle', { name: item.title || t('common.unavailable') }),
-            parentName
-                ? t('sessionsList.removeNestedSectionConfirmDescription', { parent: parentName })
-                : t('sessionsList.removeSectionConfirmDescription'),
-            { confirmText: t('sessionsList.removeSectionConfirm'), cancelText: t('common.cancel') },
-        );
-        if (!confirmed) return;
+        if (!await confirmSessionSectionRemoval(item.title, sectionByGroupKey.get(item.groupKey ?? ''))) return;
         writeSectionDefinition(item.serverId, 'session.sections.delete', { sectionId: item.folderId });
     }, [sectionByGroupKey, writeSectionDefinition]);
 
@@ -1990,17 +1974,8 @@ export function useSessionListViewStateFromPaneState(
         const sectionId = item.folderId;
         if (!sectionId) return;
         runOrganizationMutation(async () => {
-            const result = await archiveSessionSection({ scope: await getAvailableOrganizationMutationScope(item.serverId), sectionId });
-            const outcome = resolveSessionSectionArchiveOutcome(result);
-            if (!outcome) return;
-            Modal.alert(
-                t('sessionsList.sectionArchivePartialTitle'),
-                outcome.total === null
-                    ? t('sessionsList.sectionArchiveUnknown')
-                    : outcome.recovery === 'stop_sessions'
-                        ? t('sessionsList.sectionArchiveNeedsStop', { archived: outcome.archived, total: outcome.total })
-                        : t('sessionsList.sectionArchivePartial', { archived: outcome.archived, total: outcome.total }),
-            );
+            presentSessionSectionArchiveOutcome(await archiveSessionSection({
+                scope: await getAvailableOrganizationMutationScope(item.serverId), sectionId }));
         });
     }, [getAvailableOrganizationMutationScope, runOrganizationMutation]);
 
@@ -2128,6 +2103,9 @@ export function useSessionListViewStateFromPaneState(
     });
 
     const collapsedKeys = normalizedShellState.collapsedGroupKeys;
+    // Agents and Voice fold the groups this list draws through the same writer as the chevron (P5 U3).
+    useSessionListFoldCommands({ items: renderedListItems, collapsedKeys, projectHeaderViewModelByGroupKey,
+        collapseContextKey, active: surfaceOwnership.dataActive });
     // A Runs-only list holds no place a Session could start: its group headers carry no "+".
     const newSessionEnabled = filterController.displayFilters.show !== 'runs';
     const renderHeaderItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>, first: boolean) => (

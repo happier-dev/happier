@@ -11115,6 +11115,7 @@ const enSessionsList = {
   moveToWorkspaceRoot: "Back to project",
   sectionsMenuTitle: "Sections",
   sectionsManageDescription: "Name, order and remove the sections you file sessions into. Removing one keeps its sessions.",
+  sectionsManageDescription: "Name, order and remove the sections you file sessions into. Removing one keeps its sessions.",
   newSectionEllipsis: "New section…",
   moveToProjectNamed: ({ project }: { project: string }) => `Back to ${project}`,
   sectionDropHintTouch: "Move sessions here",

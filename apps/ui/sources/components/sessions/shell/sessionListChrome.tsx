@@ -46,7 +46,8 @@ import { useSessionListViewOptionWriter } from './useSessionListViewOptionWriter
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { CollectionGroupRollup } from '@happier-dev/plugin-ui/components';
 import { WorkStatusRollup } from '@/components/work/status/WorkStatusRollup';
-import { SESSION_SECTION_ICON_CHOICES, resolveSessionSectionIcon } from '@/components/sessions/organization/sessionSectionIcons';
+import { resolveSessionSectionIcon } from '@/components/sessions/organization/sessionSectionIcons';
+import { useSessionSectionMenu } from '@/components/sessions/organization/useSessionSectionMenu';
 import { useSessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
@@ -673,10 +674,6 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
         ? resolveSessionSectionDisplayTitle(props.item.displayState) : props.title;
     const actionsDisabled = props.disabled || displayLocked;
     const actionReach = groupActionHitReach(theme.space.s4);
-    const iconColor = actionsDisabled ? theme.colors.text.tertiary : theme.colors.text.secondary;
-    // Archive all works by the section's id, so a locked name does not stop it; a proven-empty section has nothing to archive.
-    const archiveDisabled = props.disabled === true || props.memberCount === 0;
-    const archiveIconColor = archiveDisabled ? theme.colors.text.tertiary : theme.colors.text.secondary;
     const sectionIcon = resolveSessionSectionIcon(props.icon);
     const dropTarget = React.useMemo(() => {
         if (!props.item.workspace || !props.item.folderId) return null;
@@ -694,72 +691,11 @@ export const SessionSectionHeader = React.memo(function SessionSectionHeader(pro
         target: dropTarget,
         onRegister: props.onRegisterDropTarget,
     });
-    const menuItems = React.useMemo((): DropdownMenuItem[] => [
-        {
-            id: 'rename',
-            title: t('common.rename'),
-            icon: <Icon name="pencil-simple" size={16} color={iconColor} />,
-            disabled: actionsDisabled,
-            category: 'edit',
-        },
-        {
-            id: 'icon',
-            title: t('sessionsList.sectionChangeIcon'),
-            icon: <Icon name={sectionIcon} size={16} color={iconColor} />,
-            disabled: actionsDisabled,
-            category: 'edit',
-            submenu: {
-                title: t('sessionsList.sectionChangeIcon'),
-                maxWidthCap: 200,
-                items: SESSION_SECTION_ICON_CHOICES.map((choice) => ({
-                    id: `icon:${choice}`,
-                    title: t(`sessionsList.sectionIcons.${choice}` as never),
-                    icon: <Icon name={choice} size={16} color={theme.colors.text.secondary} />,
-                    checked: choice === sectionIcon,
-                })),
-            },
-        },
-        ...(props.onNewSession ? [{
-            id: 'new-session',
-            title: t('sessionsList.sectionNewSessionHere'),
-            icon: <Icon name="plus" size={16} color={iconColor} />,
-            disabled: actionsDisabled,
-            category: 'edit',
-        }] : []),
-        ...(props.onArchiveAll ? [{
-            id: 'archive-all',
-            title: t('sessionsList.sectionArchiveAll'),
-            icon: <Icon name="archive" size={16} color={archiveIconColor} />,
-            disabled: archiveDisabled,
-            category: 'remove',
-        }] : []),
-        {
-            id: 'remove',
-            title: t('sessionsList.removeSection'),
-            subtitle: t('sessionsList.removeSectionDetail'),
-            icon: <Icon name="minus-circle" size={16} color={theme.colors.text.secondary} />,
-            category: 'remove',
-        },
-    ], [actionsDisabled, archiveDisabled, archiveIconColor, iconColor, props.onArchiveAll, props.onNewSession, sectionIcon, theme.colors.text.secondary]);
-    const handleMenuSelect = React.useCallback(async (itemId: string) => {
-        if (itemId === 'remove') {
-            await props.onRemove();
-            return;
-        }
-        if (itemId === 'archive-all') {
-            if (!archiveDisabled) await props.onArchiveAll?.();
-            return;
-        }
-        if (actionsDisabled) return;
-        if (itemId === 'new-session') {
-            props.onNewSession?.();
-        } else if (itemId === 'rename') {
-            await props.onRename();
-        } else if (itemId.startsWith('icon:')) {
-            const choice = SESSION_SECTION_ICON_CHOICES.find((candidate) => `icon:${candidate}` === itemId);
-            if (choice) await props.onChangeIcon(choice);
-        }
-    }, [actionsDisabled, props]);
+    const { items: menuItems, onSelect: handleMenuSelect } = useSessionSectionMenu({
+        icon: props.icon, displayLocked, disabled: props.disabled, memberCount: props.memberCount,
+        onRename: props.onRename, onChangeIcon: props.onChangeIcon, onRemove: props.onRemove,
+        onNewSession: props.onNewSession, onArchiveAll: props.onArchiveAll,
+    });
     const sectionAccessibilityActions = React.useMemo(() => {
         const actions: Array<{ name: string; label: string }> = [];
         if (typeof props.onMoveUp === 'function') {

@@ -22,7 +22,7 @@ import {
     type RegisterSessionListTreeRowBounds,
     type UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
-import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
+import { resolveSessionListHeaderCollapseKey, resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
 import {
     resolveSessionListHeaderActionHandlers,
@@ -152,7 +152,7 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
         props.onRenameWorkspace, props.onResetWorkspaceName, props.onToggleCollapse]);
 
     if (props.item.headerKind === 'folder') {
-        const collapseKey = props.item.groupKey ?? `folder:${props.item.folderId ?? props.item.title}`;
+        const collapseKey = resolveSessionListHeaderCollapseKey(props.item, props.projectHeaderViewModelByGroupKey);
         const folderServerId = props.item.serverId ?? props.item.workspace?.serverId ?? null;
         const rowId = props.item.folderId && folderServerId
             ? treeRowId.folder(folderServerId, props.item.folderId)

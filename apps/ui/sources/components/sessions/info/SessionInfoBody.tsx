@@ -116,6 +116,7 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
 import { useSessionSectionChoiceLabels } from '@/sync/domains/session/organization/useSessionSectionChoiceLabels';
+import { requestSessionSectionName } from '@/components/sessions/organization/sessionSectionEditing';
 import {
   requireSessionOrganizationMutationScope,
   writeSessionOrganizationTagLabels,
@@ -912,12 +913,10 @@ function SessionInfoContent({
       sections: organizationListViewState.sections,
       value: currentSectionFolderId ? { serverId: sessionServerId, sectionId: currentSectionFolderId } : null,
       onCreate: async () => {
-        const name = await Modal.prompt(t('sessionsList.newSection'), undefined, {
-          placeholder: t('sessionsList.sectionNamePlaceholder'), confirmText: t('common.create'),
-        });
-        if (!name?.trim()) return null;
+        const name = await requestSessionSectionName(null);
+        if (!name) return null;
         const created = SessionSectionResultV1Schema.parse(await sessionActions.executeValue(
-          'session.sections.create', { name: name.trim() },
+          'session.sections.create', { name },
         ));
         return { serverId: sessionServerId, sectionId: created.section.sectionId };
       },

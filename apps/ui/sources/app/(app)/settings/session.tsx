@@ -2,6 +2,7 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 import { CollectionSpacesSettingsSection } from '@/components/settings/session/CollectionSpacesSettingsView';
+import { SessionSectionsSettingsSection } from '@/components/settings/session/SessionSectionsSettingsView';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SessionListDensityPreview, SessionListLayoutPreview } from '@/components/settings/session/SessionListPreview';
 import React from 'react';
@@ -446,6 +447,7 @@ export const WorkspaceRouteBody = React.memo(function SessionSettingsScreen() {
             </ItemGroup>
 
             <CollectionSpacesSettingsSection entityKind="sessionWork" />
+            <SessionSectionsSettingsSection />
 
             <SettingSection section={SESSION_SETTINGS.sectionRefs.launchDefaults}>
                 <ItemGroup

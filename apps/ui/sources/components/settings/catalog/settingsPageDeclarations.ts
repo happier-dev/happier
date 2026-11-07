@@ -9,7 +9,7 @@ import {
     APPEARANCE_WIDGETS_SETTINGS, APPEARANCE_MOTION_SETTINGS, APPEARANCE_MACHINE_SUMMARY_SETTINGS,
 } from '@/components/settings/appearance/appearanceSettings';
 import { THEMES_SETTINGS } from '@/components/settings/appearance/themeProfiles/themesSettings';
-import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
+import { SESSION_SECTIONS_SETTINGS, SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 import { SESSION_RUNTIME_SETTINGS } from '@/components/settings/session/sessionRuntimeSettings';
 import { SESSION_PROVIDER_LIMITS_SETTINGS } from '@/components/settings/session/sessionProviderLimitsSettings';
 import { NEW_SESSION_WIZARD_SETTINGS } from '@/components/settings/session/newSessionWizardSettings';
@@ -130,6 +130,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     APPEARANCE_MACHINE_SUMMARY_SETTINGS,
     THEMES_SETTINGS,
     SESSION_SETTINGS,
+    SESSION_SECTIONS_SETTINGS,
     COORDINATION_SETTINGS,
     SESSION_RUNTIME_SETTINGS,
     SESSION_PROVIDER_LIMITS_SETTINGS,

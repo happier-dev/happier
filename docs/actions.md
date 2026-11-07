@@ -7923,6 +7923,15 @@ a mounted Sessions-list group is a mounted current-context command
 same context-qualified device-local key as the group's chevron and the
 `session.list.collapsedGroups` setting; it changes that one key only.
 
+Settings → Sessions → Sections (`session.list.sections`, a navigation anchor with no
+stored value) lists the selected Home's sections in `sortKey` order. Its rows
+create, rename, change the icon of, reorder, archive all and remove sections only
+through these section Actions, with the list's one removal confirmation. Folding
+a mounted Sessions-list group is a mounted current-context command
+(`ui.current_context.read` → `ui.current_context.command.invoke`) that writes the
+same context-qualified device-local key as the group's chevron and the
+`session.list.collapsedGroups` setting; it changes that one key only.
+
 Class-H token-management and security rows remain excluded from public API
 execution. Agent and MCP exposure is still authored per row; other class-H rows
 remain off unless explicitly requestable through mandatory human approval. Ordinary

@@ -1,3 +1,4 @@
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
 import { sessionListDisclosureBinding } from './sessionListDisclosureBinding';
 
@@ -92,6 +93,23 @@ export const SESSION_SETTINGS = defineSettingsPage({
                 providerLimits: {},
                 resume: {},
                 runtime: {},
+            },
+        },
+    },
+});
+
+/**
+ * Sections (Settings → Sessions → Sections): the organizer over the section Actions. Its anchor is the
+ * page's navigation target; each row's controls dispatch `session.sections.*`, never a settings write.
+ */
+export const SESSION_SECTIONS_SETTINGS = defineSettingsPage({
+    pageId: 'session',
+    subpage: { id: 'sections', route: SETTINGS_ROUTES.sessionSections, titleKey: 'sessionsList.sectionsMenuTitle', anchors: 'page' },
+    sections: {
+        sections: {
+            titleKey: 'sessionsList.sectionsMenuTitle',
+            settings: {
+                sections: { anchor: 'session.list.sections' },
             },
         },
     },

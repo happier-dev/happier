@@ -218,6 +218,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'session/provider-limits', titleKey: 'settingsSession.providerLimits.title' },
     { name: 'session/resume', titleKey: 'settingsSession.resume.title' },
     { name: 'session/runtime', titleKey: 'settingsSession.runtime.title' },
+    { name: 'session/sections', titleKey: 'sessionsList.sectionsMenuTitle' },
     { name: 'session/tool-rendering', titleKey: 'settingsSession.toolRendering.title' },
     { name: 'session/transcript', titleKey: 'settingsSession.transcript.title' },
     { name: 'session/transcript/advanced', titleKey: 'settingsSessionPages.transcript.advancedTitle' },
