@@ -5,11 +5,15 @@ import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope
 
 import { renderScreen } from '@/dev/testkit';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createNewSessionWizardTestProps, type NewSessionWizardTestProps } from './newSessionWizardTestFixtures';
+import type { NewSessionSimplePanelProps } from './NewSessionSimplePanel';
+import { createNewSessionPromptStore } from '../hooks/screenModel/newSessionPromptStore';
+import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 
 installNewSessionComponentsCommonModuleMocks();
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 afterEach(clearMachineRequestReachabilityForTest);
 const profile = AIBackendProfileSchema.parse({
@@ -37,6 +41,44 @@ async function renderWizard(props: NewSessionWizardTestProps = buildProps(), bou
 }
 
 describe('NewSessionWizard real AgentInput composition', () => {
+    it.each(['list', 'dropdown'] as const)('shows the managed permission value instead of %s choices', async (presentation) => {
+        const props = buildProps();
+        props.sectionPresentation = { permissions: presentation };
+        props.agent = { ...props.agent, permissionMode: 'read-only', permissionModeLock: { organization: 'Example' } };
+        const { screen, input } = await renderWizard(props);
+        const { OrganizationPolicyManagedLine } = await import('@/components/organizationPolicy/OrganizationPolicyFieldNotice');
+        const { Item } = await import('@/components/ui/lists/Item');
+        expect(screen.findAllByType(OrganizationPolicyManagedLine)).toHaveLength(1);
+        const managedValue = screen.findAllByType(Item).find(node => node.props.testID === 'new-session-managed-permission');
+        expect(managedValue?.props.title).toBe(getPermissionModeLabelForAgentType('codex', 'read-only'));
+        expect(managedValue?.props.onPress).toBeUndefined();
+        expect(input.onPermissionModeChange).toBeUndefined();
+        expect(screen.findAllByType(Item).filter(node => node.props.onPress && node.props.title === getPermissionModeLabelForAgentType('codex', 'yolo'))).toHaveLength(0);
+    });
+
+    it('shows managed permission in the simple composer and removes its picker', async () => {
+        const { NewSessionComposerCard } = await import('./NewSessionComposerCard');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const { OrganizationPolicyManagedLine } = await import('@/components/organizationPolicy/OrganizationPolicyFieldNotice');
+        const { Item } = await import('@/components/ui/lists/Item');
+        const panelProps: NewSessionSimplePanelProps = {
+            popoverBoundaryRef: { current: null }, headerHeight: 44, safeAreaTop: 0, safeAreaBottom: 0,
+            newSessionTopPadding: 0, newSessionSidePadding: 0, newSessionBottomPadding: 0, containerStyle: {},
+            promptStore: createNewSessionPromptStore(''), setSessionPrompt: () => {}, handleCreateSession: () => {},
+            canCreate: true, isCreating: false, emptyAutocompleteKinds: [], emptyAutocompleteSuggestions: async () => [],
+            agentType: 'codex', handleAgentClick: () => {}, permissionMode: 'read-only',
+            permissionModeLock: { organization: 'Example' }, handlePermissionModeChange: () => {},
+            modelMode: 'default', setModelMode: () => {}, modelOptions: [], connectionStatus: undefined,
+            machineName: undefined, selectedPath: '', showResumePicker: false, resumeSessionId: null,
+            isResumeSupportChecking: false, useProfiles: false, selectedProfileId: null,
+        };
+        const screen = await renderScreen(<runtime.Wrapper><NewSessionComposerCard panelProps={panelProps} layout="embedded" /></runtime.Wrapper>);
+        expect(screen.findAllByType(OrganizationPolicyManagedLine)).toHaveLength(1);
+        const managedValue = screen.findAllByType(Item).find(node => node.props.testID === 'new-session-managed-permission');
+        expect(managedValue?.props.title).toBe(getPermissionModeLabelForAgentType('codex', 'read-only'));
+        expect(screen.findByType(AgentInput).props.onPermissionModeChange).toBeUndefined();
+    });
+
     it('does not show an offline warning for withdrawn Machine presence and restores genuinely offline observations', async () => {
         const props = buildProps();
         const machine = { ...props.machine.selectedMachine!, active: false, activeAt: Date.now() - 120_000 };

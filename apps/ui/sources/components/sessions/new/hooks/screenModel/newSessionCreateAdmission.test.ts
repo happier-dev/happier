@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from './newSessionCreateAdmission';
+import { resolveNewSessionAgentSettingsRequirement, resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from './newSessionCreateAdmission';
 
 describe('resolveNewSessionCreateAdmission', () => {
     it('explains the first blocking requirement and advances the reason as it becomes ready', () => {
@@ -26,6 +26,21 @@ describe('resolveNewSessionCredentialDefaultsRequirement', () => {
         expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'loading', unavailableReason: reason })).toEqual({ ready: false, reason: null });
         expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'unavailable', unavailableReason: reason })).toEqual({ ready: false, reason });
         expect(resolveNewSessionCredentialDefaultsRequirement({ status: 'ready', unavailableReason: reason }).ready).toBe(true);
+    });
+});
+
+describe('resolveNewSessionAgentSettingsRequirement', () => {
+    const reason = 'Claude · Configuration · Unavailable';
+    // A Bot template's setup read "Unavailable" while the Agent's settings were still loading (REAL-USER-PASS F5).
+    it('stays quiet while the Agent settings load, and names them only once they settled without being ready', () => {
+        expect(resolveNewSessionAgentSettingsRequirement({ readiness: { ready: false, settled: false, loading: true, error: null }, unavailableReason: reason }))
+            .toEqual({ ready: false, reason: null });
+        expect(resolveNewSessionAgentSettingsRequirement({ readiness: { ready: false, settled: true, loading: false, error: null }, unavailableReason: reason }))
+            .toEqual({ ready: false, reason });
+        expect(resolveNewSessionAgentSettingsRequirement({ readiness: { ready: false, settled: false, loading: false, error: 'failed' }, unavailableReason: reason }))
+            .toEqual({ ready: false, reason });
+        expect(resolveNewSessionAgentSettingsRequirement({ readiness: null, unavailableReason: reason }).ready).toBe(true);
+        expect(resolveNewSessionAgentSettingsRequirement({ readiness: { ready: true, settled: true, loading: false, error: null }, unavailableReason: reason }).ready).toBe(true);
     });
 });
 

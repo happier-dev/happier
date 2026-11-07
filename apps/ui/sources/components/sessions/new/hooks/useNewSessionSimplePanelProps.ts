@@ -57,6 +57,9 @@ function useStableContentPopoverConfig(
     const signature = React.useMemo(
         () => buildContentPopoverStaticSignature(config),
         [
+            // Presence is part of the signature: a popover that appears (the folder chip once the first
+            // machine exists) must not keep the absent config.
+            config === undefined,
             config?.boundaryRef,
             config?.edgeFades,
             config?.edgeIndicators,
@@ -112,6 +115,7 @@ export function useNewSessionSimplePanelProps(
         composerFileScope: params.composerFileScope,
         setSessionPrompt: params.setSessionPrompt,
         handleCreateSession: params.handleCreateSession,
+        newSessionAfterSendMode: params.newSessionAfterSendMode,
         canCreate: params.canCreate,
         isCreating: params.isCreating,
         pendingLaunchAttempt: params.pendingLaunchAttempt,
@@ -136,6 +140,7 @@ export function useNewSessionSimplePanelProps(
         agentPickerProbe: params.agentPickerProbe,
         onAgentPickerVisibilityChange: params.onAgentPickerVisibilityChange,
         permissionMode: params.permissionMode,
+        permissionModeLock: params.permissionModeLock,
         allowedPermissionModes: params.allowedPermissionModes,
         handlePermissionModeChange: params.handlePermissionModeChange,
         modelMode: params.modelMode,
@@ -150,6 +155,7 @@ export function useNewSessionSimplePanelProps(
         acpSessionModeId: params.acpSessionModeId,
         setAcpSessionModeId: params.setAcpSessionModeId,
         acpConfigOptions: params.acpConfigOptions,
+        acpModelConfigOptionId: params.acpModelConfigOptionId,
         acpConfigOptionsProbe: params.acpConfigOptionsProbe,
         acpConfigOptionOverrides: params.acpConfigOptionOverrides,
         setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
@@ -179,6 +185,7 @@ export function useNewSessionSimplePanelProps(
     }), [
         params.acpConfigOptionOverrides,
         params.acpConfigOptions,
+        params.acpModelConfigOptionId,
         params.acpConfigOptionsProbe,
         params.acpSessionModeId,
         params.acpSessionModeOptions,
@@ -202,6 +209,7 @@ export function useNewSessionSimplePanelProps(
         params.emptyAutocompleteSuggestions,
         params.handleAgentClick,
         params.handleCreateSession,
+        params.newSessionAfterSendMode,
         params.handlePermissionModeChange,
         params.allowedPermissionModes,
         params.headerHeight,
@@ -220,6 +228,7 @@ export function useNewSessionSimplePanelProps(
         params.newSessionTopPadding,
         params.onAgentPickerSelect,
         params.permissionMode,
+        params.permissionModeLock,
         params.pendingLaunchAttempt,
         params.launchPendingPreviewVisible,
         params.popoverBoundaryRef,

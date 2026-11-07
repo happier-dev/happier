@@ -110,6 +110,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'selectedIndicatorColor'
         | 'profileMap'
         | 'permissionMode'
+        | 'permissionModeLock'
         | 'handlePermissionModeChange'
     > & Readonly<{
         selectedBackendTargetKey: string;

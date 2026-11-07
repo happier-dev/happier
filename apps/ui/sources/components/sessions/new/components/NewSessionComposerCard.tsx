@@ -5,6 +5,9 @@ import { resolveRequestedSessionModeId } from '@happier-dev/protocol/actions/ses
 import { View, useWindowDimensions } from 'react-native';
 
 import { AgentInput } from '@/components/sessions/agentInput';
+import { Item } from '@/components/ui/lists/Item';
+import { OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { getPermissionModeLabelForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { projectAgentInputAttachmentRowItems } from '@/components/sessions/agentInput/agentInputContracts';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
@@ -16,11 +19,18 @@ import {
 } from '@/components/sessions/keyboardAvoidance';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
+import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
 import { NewSessionLaunchApprovalNotice } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
-import { useNewSessionPromptValue } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
+import { useComposerTextSelector } from '@/components/sessions/agentInput/composerTextStore';
+import { isNewSessionComposerEditable } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { useNewSessionWorkflowStart } from '../hooks/useNewSessionWorkflowStart';
+import { useNewSessionEmbeddedHost, useNewSessionHostNavigation } from '../navigation/newSessionHost';
+import { router as appRouter, type Href } from 'expo-router';
+import { useNewSessionBackgroundLaunchStatus } from './useNewSessionBackgroundLaunchStatus';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
+
+const isEmptyComposerText = (text: string): boolean => text.length === 0;
 
 /**
  * The New Session composer card: the real `AgentInput` in new-session mode with its attachments,
@@ -40,6 +50,8 @@ export function NewSessionComposerCard(input: Readonly<{
     surfaceGroup?: GlassSurfaceGroup;
     /** `compact`: the composer keeps only machine and model (an embedding page's ask box). */
     controlPreset?: 'full' | 'compact';
+    /** Creation forms reuse the canonical controls beside their own explicit Create action. */
+    inputPresentation?: React.ComponentProps<typeof AgentInput>['inputPresentation'];
 }>): React.ReactElement {
     const props = input.panelProps;
     const embedded = input.layout === 'embedded';
@@ -97,10 +109,22 @@ export function NewSessionComposerCard(input: Readonly<{
     const composerHasSendableAttachments = hasSendableAttachments
         || props.composerDocument?.hasSendableAttachments === true;
 
-    // Subscribed here, at the leaf that renders the input: a keystroke re-renders this
-    // composer and nothing above it — not the panel, and not the screen model.
-    const sessionPrompt = useNewSessionPromptValue(props.promptStore);
-    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: sessionPrompt, surfaceGroup: input.surfaceGroup });
+    // The input leaf inside AgentInput subscribes to the prompt store itself, so a keystroke
+    // re-renders that leaf and nothing above it. This card follows only whether the text is empty.
+    const composerEmpty = useComposerTextSelector(props.promptStore, isEmptyComposerText);
+    // The host's line belongs to an empty composer: typing or the next send hands the row back.
+    const embeddedHost = useNewSessionEmbeddedHost();
+    const hostNavigation = useNewSessionHostNavigation();
+    const openStartedSession = React.useMemo(() => embeddedHost?.onOpenStartedSession
+        ?? ((href: string) => { appRouter.push(href as Href); }), [embeddedHost?.onOpenStartedSession]);
+    const openStartedDraft = React.useCallback((draftId: string) => {
+        hostNavigation.openDraft({ draftId, draftOrigin: null });
+    }, [hostNavigation]);
+    const backgroundLaunchStatus = useNewSessionBackgroundLaunchStatus({ openSession: openStartedSession, openDraft: openStartedDraft });
+    const emptyStatus = embeddedHost?.emptyComposerStatus !== undefined ? embeddedHost.emptyComposerStatus : backgroundLaunchStatus;
+    const connectionStatus = emptyStatus !== undefined && composerEmpty && !props.isCreating
+        ? emptyStatus ?? undefined : props.connectionStatus;
+    const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup });
     const { height: windowHeight } = useWindowDimensions();
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const initialAvailablePanelHeight = React.useMemo(() => {
@@ -140,20 +164,29 @@ export function NewSessionComposerCard(input: Readonly<{
                         retry={props.retryProviderLaunch}
                     />
                     <NewSessionLaunchApprovalNotice approval={props.launchApproval} />
+                    <NewSessionRequesterFolderHint isolation={props.requesterIsolation} />
                     <PluginContextualResourceStoreProvider>
                         {props.composerDocument?.beforeComposer}
                         {props.composerTopContent}
+                        {props.permissionModeLock ? <Item
+                            testID="new-session-managed-permission"
+                            title={getPermissionModeLabelForAgentType(props.agentType ?? '', props.permissionMode ?? 'default')}
+                            subtitle={<OrganizationPolicyManagedLine lock={props.permissionModeLock} />}
+                            showChevron={false}
+                        /> : null}
                         {/* The atmosphere's band and hero follow the composer itself, so what a
                             host stacks above it (a New bot title) stays on the page ground. */}
                         <View testID="new-session-composer-band" ref={atmosphereBoundary?.ref} onLayout={atmosphereBoundary?.onLayout}>
                         {workflowStart.composer ?? <AgentInput
+                        statusRegions={props.composerDocument?.statusRegions}
                         surfaceGroup={input.surfaceGroup}
-                        value={sessionPrompt}
+                        value={props.promptStore}
                         onChangeText={props.setSessionPrompt}
                         structuredInputMentions={props.composerDocument?.structuredInputMentions}
                         onStructuredInputMentionsChange={props.composerDocument?.onStructuredInputMentionsChange}
                         onComposerFocusChange={onComposerFocusChange}
                         onComposerFocusRequestChange={props.composerDocument?.onComposerFocusRequestChange}
+                        onComposerBlurRequestChange={props.composerDocument?.onComposerBlurRequestChange}
                         onPromptPickerOpenRequestChange={props.composerDocument?.onPromptPickerOpenRequestChange}
                         composerRef={props.composerDocument?.ref}
                         composerReferenceHost={props.composerReferenceHost}
@@ -164,10 +197,15 @@ export function NewSessionComposerCard(input: Readonly<{
                         composerDecorations={props.composerDocument?.composerDecorations ?? []}
                         composerInputLock={props.composerDocument?.composerInputLock ?? null}
                         onSend={handleSend}
+                        newSessionAfterSendMode={props.newSessionAfterSendMode}
+                        inputPresentation={input.inputPresentation}
                         {...(input.voiceAffordance === 'none' ? { voiceAffordance: 'none' as const } : {})}
                         {...(input.controlPreset ? { controlPreset: input.controlPreset } : {})}
                         isSendDisabled={!props.canCreate || (props.composerDocument?.composerInputLock ?? null) !== null}
-                        disabled={props.composerDocument?.composerInputLock?.mode === 'editAndSubmit'}
+                        disabled={!isNewSessionComposerEditable({
+                            isSubmitting: props.isCreating,
+                            inputLock: props.composerDocument?.composerInputLock,
+                        })}
                         isSending={props.isCreating}
                         placeholder={props.inputPlaceholder ?? t('session.inputPlaceholder')}
                         autocompleteKinds={props.emptyAutocompleteKinds}
@@ -192,7 +230,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         hasSendableAttachments={composerHasSendableAttachments}
                         permissionMode={props.permissionMode}
                         allowedPermissionModes={props.allowedPermissionModes}
-                        onPermissionModeChange={props.handlePermissionModeChange}
+                        onPermissionModeChange={props.permissionModeLock ? undefined : props.handlePermissionModeChange}
                         modelMode={props.modelMode}
                         modelPickerPresentation={props.modelPickerPresentation}
                         onModelModeChange={props.setModelMode}
@@ -208,11 +246,12 @@ export function NewSessionComposerCard(input: Readonly<{
                                 : undefined
                         }
                         acpConfigOptionsOverride={props.acpConfigOptions}
+                        acpModelConfigOptionIdOverride={props.acpModelConfigOptionId}
                         acpConfigOptionsOverrideProbe={props.acpConfigOptionsProbe}
                         acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
                         onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                         // A machine that cannot start a session says so above the card; a ready one is quiet.
-                        connectionStatus={props.connectionStatus}
+                        connectionStatus={connectionStatus}
                         statusBadges={props.statusBadges}
                         statusTrailingActions={props.statusTrailingActions}
                         showStatusPermissionMode={false}
@@ -229,6 +268,9 @@ export function NewSessionComposerCard(input: Readonly<{
                         resumePopover={props.showResumePicker ? props.resumePopover : undefined}
                         resumeIsChecking={props.isResumeSupportChecking}
                         contentPaddingHorizontal={0}
+                        // An embedding host's column supplies the card's width (Docked may be widened past the
+                        // reading width); only the `/new` screen keeps the conversation column's cap.
+                        {...(embedded ? { maxWidthCap: null } : {})}
                         {...(props.useProfiles
                             ? {
                                 profileId: props.selectedProfileId,

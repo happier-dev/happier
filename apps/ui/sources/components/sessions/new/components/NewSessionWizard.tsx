@@ -31,7 +31,9 @@ import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { isProfileCompatibleWithAgent, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
+import { OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import type { SecretSatisfactionResult } from '@/utils/secrets/secretSatisfaction';
 import type { CLIAvailability } from '@/agents/machineAgents/machineAgentCliAvailability';
 import { getAgentCore, isBundledAgentId, resolveBundledAgentIdFromContributionIdentity, type AgentId } from '@/agents/catalog/catalog';
@@ -193,6 +195,7 @@ export interface NewSessionWizardAgentProps {
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
+    permissionModeLock?: OrganizationPolicyLock | null;
     handlePermissionModeChange: (mode: PermissionMode) => void;
     installableDepInstallers?: InstallableDepInstallerProps[];
 }
@@ -491,6 +494,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         selectedIndicatorColor,
         profileMap,
         permissionMode,
+        permissionModeLock,
         handlePermissionModeChange,
         installableDepInstallers,
     } = props.agent;
@@ -786,7 +790,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onAgentPickerSelect={props.agent.onAgentPickerSelect}
                                         agentPickerProbe={props.agent.agentPickerProbe}
                                         permissionMode={permissionMode}
-                                        onPermissionModeChange={handlePermissionModeChange}
+                                        onPermissionModeChange={permissionModeLock ? undefined : handlePermissionModeChange}
                                         onPermissionClick={handleAgentInputPermissionClick}
                                         modelMode={modelMode}
                                         modelPickerPresentation={props.agent.modelPickerPresentation}
@@ -1218,7 +1222,12 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         title={t('newSession.wizardSection.permission')}
                                         description={t('newSession.selectPermissionModeDescription')}
                                     >
-                                        <AdaptiveSelectionSection
+                                        {permissionModeLock ? <Item
+                                            testID="new-session-managed-permission"
+                                            title={getPermissionModeLabelForAgentType(agentType, permissionMode)}
+                                            subtitle={<OrganizationPolicyManagedLine lock={permissionModeLock} />}
+                                            showChevron={false}
+                                        /> : <AdaptiveSelectionSection
                                             presentation={permissionPresentation}
                                             expandedContent={permissionOptions.map((option, index, array) => (
                                                 <Item
@@ -1246,7 +1255,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     onSelect={(id) => handlePermissionModeChange(id as PermissionMode)}
                                                 />
                                             )}
-                                        />
+                                        />}
                                     </ItemGroup>
                                 </View>
                         </View>

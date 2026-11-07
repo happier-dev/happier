@@ -17,9 +17,9 @@ connections, and directory provisioning.
 > directory, exact-Home HTTP clients, and administration surfaces are implemented behind
 > the `teams` feature gate. Narrowed Team authentication policy has server-side catalog
 > applicability checks, stale-edit comparison, credential qualification, typed recovery
-> failures, and a dedicated client editor. Non-invite admission-mode activation remains
-> unavailable until the enterprise-identity owner publishes its canonical applicability
-> decision. Source presence is not release availability or evidence that the complete
+> failures, and a dedicated client editor. The enterprise-identity owner produces the
+> canonical provisioned/JIT admission-mode applicability decision, consumed by Team policy
+> mutations. Source presence is not release availability or evidence that the complete
 > web/iOS/Android flow has passed its loaded-runtime gate.
 
 ## Canonical owners
@@ -38,6 +38,7 @@ connections, and directory provisioning.
 | Managed GitHub App registration and installation lifecycle | `apps/server/sources/app/integrations/github/githubManagedAppLifecycle.ts` |
 | Managed GitHub identity runtime and directory reads | `apps/server/sources/app/integrations/github/githubManagedIdentityProvider.ts` and `githubManagedDirectory.ts` |
 | Membership, roles, history horizons | `admitTeamMemberInTx` and the membership owner |
+| Who a new share may name (every shareable resource) | `apps/server/sources/app/teams/shareEligibility.ts` |
 | Invalidation | `apps/server/sources/app/teams/teamChanges.ts` |
 | Wire contracts | `packages/protocol/src/teams/` |
 
@@ -79,6 +80,17 @@ EndpointId to itself and the initiator EndpointId to the authenticated peer;
 the initiator Account need not equal the custodian Account. Home remains the
 resource, membership and consumer-currentness authority, and the source
 credential stays with its custodian.
+
+The same development resource update Action accepts a custodian-only
+`replacement.custodian` containing the source, disclosure ceiling and broker
+placement. Omitted manager-owned fields retain their stored values; a custodian
+without management authority need not read or repeat hidden policy, audience or
+limits. Explicit changes to those fields still require Team management authority.
+The existing revision guard, credential qualification and disclosure narrowing
+rules apply. Full replacements and legacy patches remain accepted. An older
+server that requires the full replacement rejects a custodian-only input without
+changing the resource; clients surface that operation's failure rather than
+filling hidden fields with presentation defaults.
 
 The initiator may be a foreign-owned Machine on which the recipient has current
 Machine Use admission and the exact Session/AccessKey binding. The Machine grant
@@ -314,6 +326,9 @@ Archiving:
 
 - hides the Team from active directories (archived Teams are a separate page, not a flag);
 - retains the Team, its logo, policies, memberships, Groups, and downstream references;
+- in the 0.3 development Machine Preset contract, projects Team-owned Presets as
+  archived and prevents new Create/Apply selection; explicitly archiving an
+  already inherited archive is an unchanged success, not a separate retirement;
 - revokes outstanding invitations in the same transaction — a link that survived archive
   would readmit people to a Team nobody is administering;
 - blocks metadata, policy, branding, and membership mutations except restore;
@@ -329,7 +344,7 @@ have disclosed.
 
 ## Policy
 
-Four closed enums and one nullable accepted-authentication document, each with a named downstream consumer:
+Four closed enums, a nullable accepted-authentication document, and nullable managed Session defaults, each with a named downstream consumer:
 
 | Field | Meaning | Enforced by |
 |---|---|---|
@@ -338,8 +353,9 @@ Four closed enums and one nullable accepted-authentication document, each with a
 | `defaultSessionHistoryAccess` | default admission history intent | membership owner mints the actual horizon |
 | `admissionMode` | membership admission intent | invitation/provisioning owners |
 | `authenticationPolicy` | inherited or explicitly accepted authentication references | auth-entry and Team access owners |
+| `managedDefaults` | Team and Group authoring defaults, without granting resource access | shared managed-defaults resolver and each Session field owner |
 
-There is no rules bag, condition language, Group override, allow/deny precedence, per-role
+There is no rules bag, condition language, Group access-policy override, allow/deny precedence, per-role
 permission matrix, or policy revision counter. Resource domains keep their own policies:
 credentials, Machines, automations, and repositories do not add fields here merely because
 they belong to a Team.
@@ -347,6 +363,29 @@ they belong to a Team.
 Policy is prospective. A change never rewrites existing Session grants and never rewrites a
 membership horizon that was minted once at activation. A mixed patch is authorized field by
 field before anything is written and commits wholly or not at all.
+
+### Managed Session defaults
+
+In 0.3 development source, one nullable JSON column stores the strict `ManagedDefaultsV1`
+document `{ team, groups: { [teamGroupId]: defaults } }`. The shared schema and per-field
+precedence owner are `packages/protocol/src/teams/managedDefaults.ts`. Values cover placement,
+Agent permission intent, model selection, and qualified connected-service purposes. The
+initial New Session integration consumes permission intent; other fields require their owners' consumers.
+
+The existing `teams.policy.set` replaces the document under `manageSettings`, or applies a
+scoped `managedGroupDefaults` change under existing Team/Group management authority. Omission
+preserves the document; `null` clears it. Point and directory projections expose only a
+member's applicable Group defaults unless that viewer holds the existing management
+authority. Denied Team readers receive no defaults. Malformed storage projects no defaults
+and `managedDefaultsStatus: 'repair_required'` for repair through the same writer.
+
+Defaults preselect choices without copying them into Account settings. Locked policy values
+outrank explicit choices; otherwise precedence is explicit choice, agreeing Group, Team,
+Home, then unlocked policy. Disagreeing Groups fall through per field/purpose. Only the
+[organization policy file](organization-policy.md#session-defaults) locks controls. Existing
+Team-change push and member-qualified Team snapshots supply updates; no additional polling
+or defaults storage is introduced. Home has no admin defaults slot in this implementation,
+so no Home defaults are persisted; machine policy remains a separate source.
 
 ### Accepted authentication
 
@@ -392,12 +431,15 @@ without inventing a second Home-method catalog. Teams are on by default
 journey is a release check owned by release automation and human QA, separate from the Home
 feature decision.
 
-Non-invite admission modes are visible with truthful typed recovery, but activation remains
-blocked in development source: the enterprise-identity lane has not yet published the one
-canonical availability/applicability producer for provisioned and JIT admission. The Team
-policy owner therefore fails those writes closed with
+In 0.3 development source, `resolveTeamAdmissionModeApplicabilityInTx` in
+`apps/server/sources/app/teams/identity/teamAdmissionModeApplicability.ts` produces the
+canonical provisioned/JIT availability decision. Provisioned admission requires completed
+directory evidence allowed by Home policy. JIT requires Home policy permission and an enabled,
+connected Team identity connection with an available OAuth runtime. The Team policy owner
+consumes that typed result and rejects an unavailable mode with
 `team_authentication_policy_unavailable`; it does not parse provider evidence or infer support
-from connection rows locally.
+from connection rows locally. The producer's presence does not certify the remaining mounted
+consumer and loaded-runtime journeys.
 
 ## Live Session presence
 
@@ -469,6 +511,26 @@ and idempotent; there is no cleanup queue.
 
 Archive retains the logo, so restore needs no re-upload.
 
+## Share eligibility
+
+In 0.3 development source, one rule decides who a new share may name, for every shareable
+resource: Sessions, Machines, Artifacts (including Project documents), Discussions,
+Saved Secrets and Project Source audiences. The subject must be an accepted friend, an
+active co-member of a current Team the sharer belongs to, or a Team or Group of a Team the
+sharer belongs to. `shareEligibility.ts` decides it inside each writer's transaction;
+resource writers consume its verdict and keep their own wire codes (Sessions keep the
+`session_access_` prefix). The collaboration people directory projects the same Account
+predicate, so share pickers offer only eligible people.
+
+The rule admits new shares only. An existing grant keeps working and stays removable after
+the friendship or membership ends, and nothing sweeps it; Team-derived grants still follow
+live membership. Writers that know the existing grant (Sessions, Machines, Artifacts,
+Discussions, Project Source audiences) also keep it editable. Saved Secrets replace their
+whole audience, so a retained Account that is no longer eligible must be removed before
+that audience can be changed. Resource-specific authority (who may manage a resource's grants,
+Team settings authority for Project Source Team audiences, recipient encryption readiness)
+is separate and unchanged.
+
 ## Directory
 
 One Home-local page ordered by `(normalized name, teamId)`.
@@ -481,7 +543,8 @@ One Home-local page ordered by `(normalized name, teamId)`.
 - `scope: 'administered'` is an explicit request reserved to Home `manageAllTeams`. It does
   not widen the member directory and does not confer membership.
 - `archived` selects the active or archived page. They are separate queries, which keeps one
-  stable ordering per page sequence.
+  stable ordering per page sequence. The Teams destination observes the archived sequence only
+  while **Show archived** is open; offering that control does not read the archive.
 - The cursor is opaque, bound to the exact scope and archive filter that produced it, and
   applied **after** visibility and archive predicates. A forged or replayed cursor is a
   position, never an authority, and a cursor from a different query is rejected with a typed

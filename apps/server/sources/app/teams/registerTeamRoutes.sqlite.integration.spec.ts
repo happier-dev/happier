@@ -75,6 +75,26 @@ describe("Team routes (SQLite integration)", () => {
         expect(unauthenticated.statusCode).toBe(401);
     });
 
+    it("writes and reads typed managed defaults through the existing Team policy transport", async () => {
+        const owner = await account();
+        const created = await post("/v1/teams/create", owner.id, { v: 1, name: "Managed defaults", requestKey: crypto.randomUUID() });
+        expect(created.statusCode, created.body).toBe(200);
+        const teamId: string = created.json().id;
+        const managedDefaults = { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" } }, groups: {} };
+        const updated = await post("/v1/teams/policy/set", owner.id, { v: 1, teamId, managedDefaults });
+        expect(updated.statusCode, updated.body).toBe(200);
+        expect(updated.json().policy.managedDefaults).toEqual(managedDefaults);
+        const read = await post("/v1/teams/get", owner.id, { v: 1, teamId });
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json().policy).toMatchObject({ managedDefaults, managedDefaultsStatus: "available" });
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults).toEqual(managedDefaults);
+        const invalid = await post("/v1/teams/policy/set", owner.id, {
+            v: 1, teamId, managedDefaults: { team: { permissionModeByAgentTargetKey: { "agent:example.agent/example": "invalid" } }, groups: {} },
+        });
+        expect(invalid.statusCode).toBe(400);
+        expect(invalid.json().error).toBe("invalid_team_input");
+    });
+
     it("serves the credential-resource lifecycle through the Team transport", async () => {
         const owner = await account();
         const created = await post("/v1/teams/create", owner.id, { v: 1, name: "Credentials", requestKey: crypto.randomUUID() });

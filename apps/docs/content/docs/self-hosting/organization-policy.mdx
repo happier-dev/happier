@@ -6,14 +6,14 @@ description: Set machine-level defaults and locks for Account services, Homes, a
 Give people on an organization-managed computer the right Account service and Home, and lock those choices when your deployment requires it. One local JSON file configures the desktop app and the CLI/daemon on that machine.
 
 <Callout>
-  Organization policy v1 is unreleased 0.3 development work. This guide does not
+  Organization policy v1 and v2 are unreleased 0.3 development work. This guide does not
   establish availability in a stable or preview release. Browser and mobile
   clients do not consume this machine file.
 </Callout>
 
 ## Before you deploy
 
-Use a desktop and CLI build that includes organization policy v1. You need administrator access to place the file in the machine location and control who can change the file and its parent directory.
+Use a desktop and CLI build that includes the policy version you deploy. Version 1 remains supported; Session defaults require version 2. You need administrator access to place the file in the machine location and control who can change the file and its parent directory.
 
 Choose the URLs separately: the **Account service** handles identity and Account discovery; a **Home** hosts your Happier data and sessions; an **Iroh relay** helps transport connections. Setting one does not set the others. Deploy the services first using the [server quickstart](/self-hosting/quickstart) and [identity configuration](/self-hosting/auth).
 
@@ -60,6 +60,29 @@ Set `locked` to `false` to suggest a default. A person's explicit saved choice w
 The order, from lowest to highest priority, is built-in defaults, the build's defaults, organization policy defaults, explicit user choices, then organization policy locks. A policy lock does not replace the saved choice. Setting `locked` to `false`, or removing the whole field, and restarting restores normal selection behavior.
 
 Locked controls display **Managed by {organization}**, with an accessible explanation and your support link when supplied. A Home lock also applies to alternate selection paths such as a URL or QR code; hiding the selection control is not its enforcement boundary.
+
+## Session defaults
+
+Version 2 adds `sessionDefaults`, with a `values` object and a boolean `locked`. The initial desktop integration applies permission intent on the new-Session screen; other Session-default fields require their owning integrations. For example, this document preselects read-only permission intent for new Claude Code Sessions:
+
+```json
+{
+  "schemaVersion": 2,
+  "organization": "Example Organization",
+  "sessionDefaults": {
+    "locked": false,
+    "values": {
+      "permissionModeByAgentTargetKey": {
+        "agent:happier.agent.claude/claude": "read-only"
+      }
+    }
+  }
+}
+```
+
+For each supplied Session choice, the priority from highest to lowest is a locked organization policy value, a person's explicit choice, a Group default, a Team default, a Home default, then an unlocked organization policy value. If applicable Groups disagree, their value is skipped and the Team default is considered. Team and Group defaults do not lock controls or replace Account preferences. A policy lock applies only to the choices present in `values`.
+
+An explicit permission choice in a draft, profile, or Account takes precedence over unlocked managed defaults. An implicit default remains eligible for Team and Group defaults that arrive after the new-Session screen opens. This machine file still applies only to desktop and CLI/daemon processes that load it.
 
 ## Personal Home creation
 

@@ -97,6 +97,8 @@ export const TeamSummaryV1Schema = lazyZodSchema(() => z.strictObject({
     canAppointOwner: z.boolean(),
   })),
   policy: TeamPolicyV1Schema,
+  /** Effective Group membership identities, decided by the server's membership owner. */
+  managedDefaultsGroupIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   viewerRole: z.nullable(TeamRoleV1Schema),
   capabilities: TeamCapabilitiesV1Schema,
   admission: TeamAdmissionProjectionV1Schema,

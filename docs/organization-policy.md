@@ -2,7 +2,7 @@
 
 Organization policy supplies machine-level defaults and locks for the Tauri desktop app and the CLI/daemon on that machine. It keeps Account-service selection, Home selection, Personal Home admission, feature decisions, and local Iroh relay configuration at their existing owners.
 
-**Release basis:** unreleased 0.3 development. This page describes the v1 contract; it does not establish stable or preview availability. The operator guide is [Organization policy](../apps/docs/content/docs/self-hosting/organization-policy.mdx).
+**Release basis:** unreleased 0.3 development. This page describes the v1 and v2 contracts; it does not establish stable or preview availability. The operator guide is [Organization policy](../apps/docs/content/docs/self-hosting/organization-policy.mdx).
 
 ## Scope and authority
 
@@ -30,7 +30,7 @@ An absent file resolves to unmanaged after one file open/stat attempt. There is 
 
 `packages/protocol/src/organizationPolicy/organizationPolicyV1.ts` owns the strict, versioned Zod schema, parsing result, errors, and lock metadata. Shared profile field definitions live alongside it in `buildDefaultProfile.ts`. The existing `resolveBuildDefaultProfile` API in `packages/cli-common/src/happierCloud.ts` consumes and re-exports those definitions; policy does not introduce a competing profile parser.
 
-The required document identity is `schemaVersion: 1` and a nonempty `organization`. Optional `supportUrl` supplies the organization's support destination. Unknown fields, unknown feature ids, unsupported versions, malformed URLs, and inconsistent relay configuration are invalid. Diagnostic issues identify a field path and issue code without echoing the rejected value.
+Both versions require a nonempty `organization`; optional `supportUrl` supplies the organization's support destination. Version 1 retains its strict published shape. Version 2 extends it with a required `sessionDefaults: { values, locked }` field, whose values use the shared `ManagedSessionDefaultsV1Schema` owner. The current reader accepts both versions. Unknown fields, unknown feature ids, unsupported versions, malformed URLs, and inconsistent relay configuration are invalid. Diagnostic issues identify a field path and issue code without echoing the rejected value.
 
 For the exact accepted field shapes, use the schema owner rather than maintaining a separate settings catalog here. A complete deployment example appears in the operator guide.
 
@@ -46,6 +46,12 @@ built-in < baked build default < organization policy default
 A policy default fills an unset choice. Each supplied `accountService`, `home`, or `personalHome` field requires an explicit boolean `locked`: `false` supplies a default; `true` fixes that field's effective value and refuses selection changes at its existing owner. Policy does not overwrite saved user choices with its projected values; setting the lock to `false` or removing the field and restarting restores normal selection precedence.
 
 Feature denies and forced relay configuration have their own semantics below. They are not editable defaults.
+
+### Session defaults
+
+Version 2 uses the shared managed-defaults schema for Session placement, per-Agent permission intent and model selection, and per-purpose connected-service defaults. The initial UI consumer applies permission intent; the presence of another field in the schema does not establish a live consumer for it. Each consumed field resolves from highest to lowest priority: a locked organization policy value, an explicit personal choice, an unambiguous Group value, a Team value, a Home value, then an unlocked organization policy value. Conflicting Group values fall through to the Team and lower layers. A lock applies only to fields supplied by that policy.
+
+Team and Group defaults preselect choices without locking controls or writing Account preferences. Explicit draft, profile, and Account permission choices remain personal choices; an implicit permission fallback does not outrank managed defaults. The new-Session permission owner applies later-arriving managed context while preserving authored intent and enforcing policy locks. The policy file keeps its desktop-only startup lifecycle; browser and mobile clients do not acquire a machine policy through Team defaults.
 
 ### Account service
 
@@ -83,7 +89,7 @@ The policy does not implement relay defaults, editable user-added relay lists, o
 
 Invalid policy produces a visible typed diagnostic. First-run installation and Account-service/Home selection fail closed until the file is corrected or removed and the owning process restarts. Other runtime and recovery paths continue; invalid policy is not a reason to exit the whole app or daemon.
 
-Lock metadata comes from the owning projection. The shared locked-control affordance displays **Managed by {organization}**, disables the governed control, exposes an accessible explanation, and offers `supportUrl` when supplied. Consumers do not infer a lock from a URL or reparse the document.
+Lock metadata comes from the owning projection. Governed fields show their effective value and omit choices that cannot succeed. The shared affordance displays **Managed by {organization}**, exposes an accessible explanation, and offers `supportUrl` when supplied. Consumers do not infer a lock from a URL or reparse the document.
 
 Action diagnostics distinguish `organization_policy_invalid`, `organization_policy_locked`, and `organization_policy_off`. Read failures preserve a typed issue such as `organization_policy_unreadable`, `organization_policy_invalid_utf8`, or `organization_policy_path_unavailable`. Diagnostics contain schema/file locations and codes, never raw policy contents or rejected values.
 

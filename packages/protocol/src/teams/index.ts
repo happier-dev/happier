@@ -4,6 +4,7 @@ export * from './credentials/index.js';
 export * from './cursor.js';
 export * from './errors.js';
 export * from './group.js';
+export * from './managedDefaults.js';
 export * from './invitation.js';
 export * from './membership.js';
 export * from './logo.js';

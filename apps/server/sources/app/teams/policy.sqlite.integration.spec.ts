@@ -5,8 +5,10 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { createTeamInTx } from "./lifecycle";
+import { createTeamInTx, readTeamSummaryForActorInTx } from "./lifecycle";
 import { authorizeTeamPolicyPatch, setTeamPolicyInTx } from "./policy";
+import { listTeamsForActorInTx } from "./queries";
+import { getTeamGroupForActorInTx } from "./groups/groupService";
 
 /**
  * Accepted-authentication narrowing at its own owner.
@@ -65,6 +67,106 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         if (!created.ok) throw new Error(`fixture Team creation failed: ${created.error}`);
         return { owner, teamId: created.team.id };
     }
+
+    it("persists managed defaults and patches one active Group without replacing sibling defaults", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const first = await db.teamGroup.create({ data: { teamId, name: "First", nameKey: "first" } });
+        const second = await db.teamGroup.create({ data: { teamId, name: "Second", nameKey: "second" } });
+        const { source } = await addCurrentWorkosAdmissionEvidence(teamId);
+        await db.teamExternalGroupBinding.create({ data: {
+            teamId, teamGroupId: second.id, directorySourceId: source.id,
+            externalGroupId: "directory-owned-group", bindingMode: "directory_created",
+        } });
+        const defaults = { team: {}, groups: { [first.id]: {}, [second.id]: {} } };
+        const input = { actorAccountId: owner.id, teamId, managedDefaults: defaults };
+        const result = await inTx(tx => setTeamPolicyInTx(tx, input));
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.team.policy.managedDefaults).toEqual(defaults);
+        const patch = { actorAccountId: owner.id, teamId,
+            managedGroupDefaults: { teamGroupId: first.id, defaults: null } };
+        const updated = await inTx(tx => setTeamPolicyInTx(tx, patch));
+        expect(updated.ok).toBe(true);
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults)
+            .toEqual({ team: {}, groups: { [second.id]: {} } });
+        const directoryPatch = { actorAccountId: owner.id, teamId,
+            managedGroupDefaults: { teamGroupId: second.id, defaults: {} } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, directoryPatch))).ok).toBe(true);
+        const directoryGroup = await inTx(tx => getTeamGroupForActorInTx(tx, { teamId, actorAccountId: owner.id, groupId: second.id }));
+        expect(directoryGroup.ok).toBe(true);
+        if (directoryGroup.ok) expect(directoryGroup.value.capabilities.updateMetadata).toBe(false);
+    });
+
+    it("refuses member writes and foreign or archived Group targets without changing defaults", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const foreign = await ownedTeam();
+        const other = await db.teamGroup.create({ data: { teamId: foreign.teamId, name: "Foreign", nameKey: "foreign" } });
+        const archived = await db.teamGroup.create({ data: { teamId, name: "Archived", nameKey: "archived", archivedAt: new Date() } });
+        const denied = { actorAccountId: member.id, teamId, managedDefaults: { team: {}, groups: {} } };
+        expect(await inTx(tx => setTeamPolicyInTx(tx, denied))).toEqual({ ok: false, error: "team_forbidden" });
+        for (const group of [other, archived]) {
+            const patch = { actorAccountId: owner.id, teamId,
+                managedGroupDefaults: { teamGroupId: group.id, defaults: {} } };
+            expect((await inTx(tx => setTeamPolicyInTx(tx, patch))).ok).toBe(false);
+        }
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults).toBeNull();
+    });
+
+    it("retains unchanged archived Group defaults when the Team layer changes, but refuses archived edits", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const group = await db.teamGroup.create({ data: { teamId, name: "Retained", nameKey: "retained" } });
+        const groupDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "read-only" as const } };
+        const initial = { actorAccountId: owner.id, teamId, managedDefaults: { team: {}, groups: { [group.id]: groupDefaults } } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, initial))).ok).toBe(true);
+        await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
+        const teamDefaults = { permissionModeByAgentTargetKey: { "agent:example.agent/example": "safe-yolo" as const } };
+        const replacement = { actorAccountId: owner.id, teamId,
+            managedDefaults: { team: teamDefaults, groups: { [group.id]: groupDefaults } } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, replacement))).ok).toBe(true);
+        const changed = { actorAccountId: owner.id, teamId,
+            managedDefaults: { team: teamDefaults, groups: { [group.id]: {} } } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, changed))).ok).toBe(false);
+        expect((await db.team.findUniqueOrThrow({ where: { id: teamId } })).managedDefaults).toEqual(replacement.managedDefaults);
+    });
+
+    it("projects only the member's effective Group defaults and exposes malformed storage for repair", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const member = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const membership = await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
+        const own = await db.teamGroup.create({ data: { teamId, name: "Own", nameKey: "own" } });
+        const other = await db.teamGroup.create({ data: { teamId, name: "Other", nameKey: "other" } });
+        await db.teamGroupMembership.create({ data: {
+            teamId, teamGroupId: own.id, teamMembershipId: membership.id,
+            nativeContribution: true, sessionAccessStartsAt: new Date(),
+        } });
+        const input = { actorAccountId: owner.id, teamId,
+            managedDefaults: { team: {}, groups: { [own.id]: {}, [other.id]: {} } } };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, input))).ok).toBe(true);
+        const projected = await inTx(tx => readTeamSummaryForActorInTx(tx, { teamId, actorAccountId: member.id }));
+        expect(projected.ok).toBe(true);
+        if (!projected.ok) return;
+        expect(projected.team.managedDefaultsGroupIds).toEqual([own.id]);
+        expect(projected.team.policy.managedDefaults).toEqual({ team: {}, groups: { [own.id]: {} } });
+        const directory = await inTx(tx => listTeamsForActorInTx(tx, {
+            v: 1, scope: "member", archived: "active", actorAccountId: member.id,
+        }));
+        expect(directory.ok).toBe(true);
+        if (directory.ok) {
+            const listed = directory.page.items.find(team => team.id === teamId);
+            expect(listed?.managedDefaultsGroupIds).toEqual([own.id]);
+            expect(listed?.policy.managedDefaults).toEqual(projected.team.policy.managedDefaults);
+        }
+        await db.$executeRaw`UPDATE "Team" SET "managedDefaults" = '{"invalid":true}' WHERE "id" = ${teamId}`;
+        const broken = await inTx(tx => readTeamSummaryForActorInTx(tx, { teamId, actorAccountId: owner.id }));
+        expect(broken.ok).toBe(true);
+        if (!broken.ok) return;
+        expect(broken.team.policy.managedDefaults).toBeNull();
+        expect(broken.team.policy.managedDefaultsStatus).toBe("repair_required");
+        const repair = { actorAccountId: owner.id, teamId, managedDefaults: null };
+        expect((await inTx(tx => setTeamPolicyInTx(tx, repair))).ok).toBe(true);
+    });
 
     async function addCurrentWorkosAdmissionEvidence(teamId: string) {
         const provider = await db.identityProviderInstance.create({

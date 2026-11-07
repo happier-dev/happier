@@ -17,6 +17,7 @@ import { isEffectiveTeamMembership } from "./memberships/effectiveMembership";
 import { TEAM_PROJECTION_SELECT, projectTeamSummaryV1 } from "./projections";
 import { readTeamSummaryCountsInTx } from "./teamSummaryCounts";
 import { toTeamViewer } from "./viewer";
+import { resolveEffectiveTeamGroupIdsForAccountInTeamsInTx } from "./groups/effectiveGroupMembership";
 
 /**
  * The Home-local Team directory.
@@ -191,6 +192,11 @@ export async function listTeamsForActorInTx(
     // that arm in one batch while preserving independent Home administration.
     const qualifications = await qualifyTeamProjectionReadAuthenticationsInTx(tx, { contexts, ...input.authentication });
     const counts = await readTeamSummaryCountsInTx(tx, page.map((row) => row.id));
+    const managedDefaultsGroupIds = await resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(tx, {
+        accountId: input.actorAccountId,
+        teamIds: contexts.filter(context => context.team.managedDefaults != null
+            && context.teamCapabilities.viewTeam && qualifications.get(context.team.id)?.ok).map(context => context.team.id),
+    });
 
     const items: TeamsPageV1["items"] = [];
     for (const context of contexts) {
@@ -211,6 +217,7 @@ export async function listTeamsForActorInTx(
         const qualified = qualifications.get(context.team.id)?.ok ?? false;
         items.push(projectTeamSummaryV1({
             counts: counts.get(context.team.id)!,
+            managedDefaultsGroupIds: managedDefaultsGroupIds.get(context.team.id) ?? [],
             teamCapabilities: qualified ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
             team: context.team,
             viewerRole: context.membership?.role ?? null,

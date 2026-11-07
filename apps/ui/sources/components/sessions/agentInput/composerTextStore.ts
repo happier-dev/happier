@@ -23,6 +23,9 @@ export type ComposerTextStore = Readonly<{
     subscribe: (listener: () => void) => () => void;
 }>;
 
+/** The read side of a composer's text: what a consumer needs to render or react to it. */
+export type ComposerTextSource = Pick<ComposerTextStore, 'getPrompt' | 'subscribe'>;
+
 export function createComposerTextStore(initialText: string): ComposerTextStore {
     let text = initialText;
     const listeners = new Set<() => void>();
@@ -63,6 +66,31 @@ export function useComposerTextStore(getInitialText: () => string): ComposerText
  * Subscribe to the live text. Call this in the leaf that renders the composer input so that
  * typing re-renders the input and nothing above it.
  */
-export function useComposerTextValue(store: ComposerTextStore): string {
+export function useComposerTextValue(store: ComposerTextSource): string {
     return React.useSyncExternalStore(store.subscribe, store.getPrompt, store.getPrompt);
+}
+
+/**
+ * Subscribe to a *semantic* fact about the live text (empty, non-empty, a command prefix, ...).
+ * The caller renders only when the selected primitive changes, not on every keystroke.
+ */
+export function useComposerTextSelector<T extends string | number | boolean | null>(
+    source: ComposerTextSource,
+    select: (text: string) => T,
+): T {
+    const getSnapshot = React.useCallback(() => select(source.getPrompt()), [select, source]);
+    return React.useSyncExternalStore(source.subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Resolve a controlled `value` (a string owned by a parent that re-renders with it, or a live store)
+ * to one text source. A controlled string changes the source passed to the input leaves in the
+ * parent's render; notifying an external store after that commit would require a second commit.
+ */
+export function useComposerTextSource(value: string | ComposerTextSource): ComposerTextSource {
+    return React.useMemo(() => typeof value === 'string' ? {
+        getPrompt: () => value,
+        // The controlled parent publishes changes through the source prop, not a second store.
+        subscribe: (_listener: () => void) => () => {},
+    } satisfies ComposerTextSource : value, [value]);
 }

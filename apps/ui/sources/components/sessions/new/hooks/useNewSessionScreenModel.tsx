@@ -144,6 +144,7 @@ import type {
     TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
+import { useManagedSessionDefaults } from '@/hooks/teams/useManagedSessionDefaults';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { useNewSessionAvailabilityState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAvailabilityState';
@@ -183,7 +184,7 @@ import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBe
 import { useAgentScopedPluginSettingsSnapshot } from '@/agents/registry/useAgentScopedPluginSettingsSnapshot';
 import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatus } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
-import { resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
+import { resolveNewSessionAgentSettingsRequirement, resolveNewSessionCreateAdmission, resolveNewSessionCredentialDefaultsRequirement, resolveNewSessionTargetRequirement } from '@/components/sessions/new/hooks/screenModel/newSessionCreateAdmission';
 import { resolveAgentLaunchBlockedReasonForNewSession } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { describeTemporaryComputerLaunchBlock, describeTemporaryComputerUnavailability } from '@/components/sessions/new/hooks/temporaryComputerCopy';
 import type { NewSessionInstructionsCreationModel, NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
@@ -238,7 +239,6 @@ import { useNewSessionActionOperationReconciliation } from '@/components/session
 import { resolveSessionSpawnNewOperationFailureMessage } from '@/sync/ops/actions/sessionSpawnNewAction';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
-import { createNewSessionSeededPlacementActionChip } from '@/components/sessions/new/newSessionSeededPlacementActionChip';
 import { useSessionPlacementCandidateRows } from '@/components/sessions/new/useSessionPlacementCandidateRows';
 import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import { prepareNewSessionSpaceMembership } from '@/components/sessions/new/organization/prepareNewSessionSpaceMembership';
@@ -1399,7 +1399,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         enabled: projectionCurrent,
     });
     const selectedAgentPluginSettings = selectedAgentScopedPluginSettings.snapshot;
-    const selectedAgentSettingsReady = selectedAgentScopedPluginSettings.ready;
     // Explicit embedding values are accepted only when this screen has an
     // identified selected Agent. Never let an unqualified snapshot become a
     // global availability input for every catalog Agent.
@@ -2501,8 +2500,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
         backendTarget,
         externalSessionsFeatureEnabled,
     });
+    const managedSessionDefaults = useManagedSessionDefaults({
+        serverId: targetServerId ?? '',
+        teamId: accessDraftState.primaryTeamId,
+        agentTargetKey: selectedBackendTargetKey,
+    });
     const {
         permissionMode,
+        permissionModeLock,
         hasUserSelectedPermissionModeRef,
         permissionModeRef,
         applyPermissionMode,
@@ -2517,6 +2522,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         profileMap,
         enabledAgentIds,
         sessionDefaultPermissionModeByTargetKey,
+        managedDefaults: managedSessionDefaults.read.context,
     });
 
     const resolveSelectedProfileAuthoringIntent = React.useCallback((profileId: string) => (
@@ -2900,11 +2906,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         });
     }, [buildCurrentPersistedDraft, persistDraftIfEnabled, router]);
     const seededPlacementRows = useSessionPlacementCandidateRows(seededPlacementCandidates);
-    const seededPlacementActionChip = React.useMemo(() => (
-        createNewSessionSeededPlacementActionChip({
-            rows: seededPlacementRows,
-            onSelect: selectSeededPlacement,
-        })
+    // The folder chip's own picker lists the seeded saved projects first: one where-it-runs control.
+    const seededPlacementChoices = React.useMemo(() => (
+        seededPlacementRows.length > 0 ? { rows: seededPlacementRows, onSelect: selectSeededPlacement } : undefined
     ), [seededPlacementRows, selectSeededPlacement]);
     const effectiveCurrentAuthoringDraft = currentAuthoringDraft;
     const temporaryComputerLaunchBlock = React.useMemo(() => {
@@ -2963,6 +2967,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setDraftSelectedPath,
         noFolderSelected: directoryKind === 'managed',
         onSelectNoFolder: offersNoFolder ? selectNoFolder : undefined,
+        placementCandidates: seededPlacementChoices,
         recentPaths,
         readRecentPaths,
         usePathPickerSearch,
@@ -4057,6 +4062,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
             reason: agentLaunchBlockedReason ?? `${t('settings.acpCatalog')} · ${t('common.unavailable')}` },
         resolveNewSessionCredentialDefaultsRequirement({ status: connectedAccountDefaultsStatus,
             unavailableReason: `${t('settings.connectedServices')} · ${t('common.unavailable')}` }),
+        { ready: managedSessionDefaults.read.status === 'ready',
+            reason: managedSessionDefaults.read.status === 'ready'
+                || managedSessionDefaults.binding.kind === 'resolving'
+                || managedSessionDefaults.read.reason === 'unobserved'
+                || managedSessionDefaults.read.reason === 'loading'
+                ? null : `${t('teams.title')} · ${t('common.unavailable')}` },
         { ready: temporaryComputerTargetReady,
             reason: describeTemporaryComputerUnavailability(temporaryComputerAvailability)
                 ?? (selectedTemporaryArtifact === null ? t('newSession.temporaryComputer.unavailable.platformRetired')
@@ -4068,8 +4079,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         { ready: collaborationAvailability !== 'loading' && canCreateSessionWithInitialAccess(currentAuthoringDraft.access, collaborationAvailability),
             reason: collaborationAvailability === 'loading' ? t('common.loading') : t('session.access.homeUnsupported') },
         { ready: targetServerId !== null, reason: t('newSession.notConnectedToServer') },
-        { ready: selectedAgentSettingsReady,
-            reason: `${agentLabel} · ${t('settingsAgents.configuration')} · ${t('common.unavailable')}` },
+        resolveNewSessionAgentSettingsRequirement({ readiness: selectedAgentScopedPluginSettings.readiness,
+            unavailableReason: `${agentLabel} · ${t('settingsAgents.configuration')} · ${t('common.unavailable')}` }),
         { ready: organizationPlacementState.valid,
             reason: `${organizationPlacementState.placement.folderId !== null
                 ? t('sessionsList.moveToFolder') : t('sessionTags.editTagsLabel')} · ${t('common.unavailable')}` },
@@ -4132,7 +4143,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         agentOptionState,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
-        seededPlacementActionChip,
         showAutomationActionChipsFromAuthoringContext: newSessionAuthoringContext.showAutomationActionChips,
         showServerPickerChip,
         targetServerId,
@@ -4172,7 +4182,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineHomeDir: displayedMachineHomeDir,
         machineUnavailableReason,
         directoryReadFailure: ownIsolation.failed ? t('newSession.requesterFoldersFailed') : null,
-    }), [directoryKind, displayedMachineHomeDir, machineUnavailableReason, ownIsolation.failed, rememberedPath, selectedPath]);
+        launchPreparable: ownIsolation.launchPreparable,
+    }), [directoryKind, displayedMachineHomeDir, machineUnavailableReason, ownIsolation.failed, ownIsolation.launchPreparable, rememberedPath, selectedPath]);
     const removeFolder = offersNoFolder ? selectNoFolder : undefined;
 
     // Auto-persist watches the composer text out of render: a keystroke re-arms the debounce
@@ -4217,7 +4228,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
     );
     // One cause, one line: the machine's own state leads (it is the cause of a blocked launch), then the
     // launch's blocker or progress, on the status line above the card where a session states its status.
+    // A docked card has no page around it: with nothing to report, its status row names it (the folded pill's
+    // name), so the draft actions beside it read as the card's header row, as a Session's status row does.
+    const dockedComposer = embeddedHost?.kind === 'docked';
     const composerConnectionStatus = React.useMemo(() => {
+        if (!connectionStatus && !launchStatus.line && dockedComposer) {
+            return { text: t('sessionDrafts.new.action'), color: theme.colors.text.secondary,
+                dotColor: theme.colors.text.tertiary, isPulsing: false };
+        }
         if (connectionStatus || !launchStatus.line) return connectionStatus;
         return launchStatus.line.kind === 'blocked'
             ? { text: launchStatus.line.text, color: theme.colors.state.warning.textForeground,
@@ -4225,7 +4243,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 detail: launchStatus.line.detail, action: launchStatus.line.action, secondaryAction: launchStatus.line.secondaryAction }
             : { text: launchStatus.line.text, color: theme.colors.text.secondary,
                 dotColor: theme.colors.status.connecting, isPulsing: true };
-    }, [connectionStatus, launchStatus.line, theme]);
+    }, [connectionStatus, dockedComposer, launchStatus.line, theme]);
     const composerStatusBadges = React.useMemo(
         () => [...launchStatus.badges, ...(input?.statusBadges ?? [])],
         [input?.statusBadges, launchStatus.badges],
@@ -4369,6 +4387,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             selectedIndicatorColor,
             profileMap,
             permissionMode,
+            permissionModeLock,
             handlePermissionModeChange,
         },
         machine: {
@@ -4494,6 +4513,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         },
         model: {
             permissionMode,
+            permissionModeLock,
             handlePermissionModeChange,
             modelMode,
             setModelMode: setDraftModelMode,

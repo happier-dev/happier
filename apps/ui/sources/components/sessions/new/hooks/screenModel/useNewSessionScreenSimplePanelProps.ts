@@ -1,9 +1,11 @@
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { useNewSessionSimplePanelProps } from '@/components/sessions/new/hooks/useNewSessionSimplePanelProps';
-import type { MachinePoolSelectionOriginV1, SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { MachinePoolSelectionOriginV1} from '@happier-dev/protocol/machines/pools/v1';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { describeExecutionTargetDestination } from '@/components/sessions/new/hooks/temporaryComputerTargetPresentation';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
+import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { t } from '@/text';
 
 type ModelOptionsProbe = NonNullable<NewSessionSimplePanelProps['modelOptionsProbe']>;
@@ -20,6 +22,8 @@ type AcpSessionModeProbeState = Readonly<{
 type AcpConfigOptionsProbeState = Readonly<{
     phase: AcpConfigOptionsProbe['phase'];
     onRefresh: AcpConfigOptionsProbe['onRefresh'];
+    failed?: boolean;
+    refreshErrorMessage?: string;
 }>;
 
 export function useNewSessionScreenSimplePanelProps(params: Readonly<{
@@ -43,6 +47,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'composerFileScope'
         | 'setSessionPrompt'
         | 'handleCreateSession'
+        | 'newSessionAfterSendMode'
         | 'registerTemporaryComputerReplacementLaunch'
         | 'canCreate'
         | 'isCreating'
@@ -78,7 +83,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     }>;
     model: Pick<
         NewSessionSimplePanelProps,
-        'permissionMode' | 'handlePermissionModeChange' | 'modelMode' | 'setModelMode' | 'modelOptions' | 'modelPickerProps' | 'modelPickerPresentation'
+        'permissionMode' | 'permissionModeLock' | 'handlePermissionModeChange' | 'modelMode' | 'setModelMode' | 'modelOptions' | 'modelPickerProps' | 'modelPickerPresentation'
     > & Readonly<{
         modelOptionsProbeState: ModelOptionsProbeState;
     }>;
@@ -88,6 +93,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'acpSessionModeId'
         | 'setAcpSessionModeId'
         | 'acpConfigOptions'
+        | 'acpModelConfigOptionId'
         | 'acpConfigOptionOverrides'
         | 'setAcpConfigOptionOverride'
     > & Readonly<{
@@ -110,11 +116,17 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     > & Readonly<{
         selectedMachine: Pick<MachineDisplayRenderable, 'id' | 'metadata' | 'availability'> | null;
         /**
+         * Whether the Home has a machine (the getting-started owner's fact; `null` while unknown). With none
+         * yet the machine chip asks where to run, and the folder chip waits for a machine (58d AF1).
+         */
+        hasMachine?: boolean | null;
+        /**
          * The draft's committed target. A Temporary computer has no Machine to
          * name, so the composer chip must read it from here or keep telling the
          * author to "Select machine" for a destination they already chose.
          */
         executionTarget?: SessionAuthoringExecutionTargetV2 | null;
+        managedMachineSelection?: ManagedMachineSelectionDraft | null;
         destination?: Readonly<{
             selectionOrigin?: MachinePoolSelectionOriginV1;
             machineGroups: readonly Readonly<{ serverId: string; serverName: string }>[];
@@ -135,10 +147,15 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         selectedMachine,
         destination,
         executionTarget,
+        managedMachineSelection,
+        hasMachine,
+        pathPopover,
         ...machineAndResumeProps
     } = params.machineAndResume;
+    // A chosen destination (a machine being created, a Temporary computer) is named even before it exists.
+    const noMachineYet = hasMachine === false && !executionTarget && !selectedMachine && !managedMachineSelection;
     const temporaryComputerName = describeExecutionTargetDestination(executionTarget);
-    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine);
+    const machineName = temporaryComputerName ?? getMachineDisplayName(selectedMachine) ?? managedMachineSelection?.receipt.launch.name;
     const destinationParts = machineName ? [machineName] : [];
     const serverId = params.targetServerId;
     // Pool provenance and the Home prefix describe an exact Machine choice; a
@@ -175,9 +192,13 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
             onRefresh: acpSessionModeProbeState.onRefresh,
         },
         acpConfigOptionsProbe: {
+            ...acpConfigOptionsProbeState,
             phase: acpConfigOptionsProbeState.phase,
             onRefresh: acpConfigOptionsProbeState.onRefresh,
         },
-        machineName: destinationParts.length > 0 ? destinationParts.join(' · ') : undefined,
+        // `null` is the chip's "no machine yet" state: it reads "Run on…" and opens the one picker.
+        machineName: noMachineYet ? null : destinationParts.length > 0 ? destinationParts.join(' · ') : undefined,
+        // A folder belongs to a machine: with none yet there is nothing to choose, so its chip waits.
+        pathPopover: noMachineYet ? undefined : pathPopover,
     });
 }

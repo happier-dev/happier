@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ManagedDefaultsV1Schema, ManagedSessionDefaultsV1Schema } from './managedDefaults.js';
 import { z } from 'zod/mini';
 
 import {
@@ -60,8 +61,8 @@ export const TEAM_DEFAULT_SESSION_HISTORY_ACCESS_V1: SessionHistoryAccessV1 = 'f
 
 /**
  * The complete Team policy projection: closed enums with named downstream
- * consumers and nothing else. There is deliberately no rules bag, no condition
- * language, no Group override, and no revision counter.
+ * consumers and managed Session defaults. Group default entries retain their
+ * existing Group identity; they confer no resource access.
  *
  * Authentication narrowing consumes the canonical Lane 03 selector codec.
  * Persisted null is inherit; projections retain that one representation.
@@ -79,6 +80,8 @@ export const TeamPolicyV1Schema = lazyZodSchema(() => z.strictObject({
    * publish it so an administrator can distinguish repair from Home-policy use.
    */
   authenticationPolicyStatus: z.optional(z.enum(['available', 'repair_required'])),
+  managedDefaults: z.optional(z.nullable(ManagedDefaultsV1Schema)),
+  managedDefaultsStatus: z.optional(z.enum(['available', 'repair_required'])),
 }));
 export type TeamPolicyV1 = z.infer<typeof TeamPolicyV1Schema>;
 
@@ -207,7 +210,15 @@ export const TeamPolicySetInputV1Schema = lazyZodSchema(() => z.strictObject({
   admissionMode: z.optional(TeamAdmissionModeV1Schema),
   previousAuthenticationPolicy: z.optional(TeamAuthenticationPolicyComparisonBasisV1Schema),
   authenticationPolicy: z.optional(z.nullable(TeamAuthenticationPolicyV1Schema)),
+  managedDefaults: z.optional(z.nullable(ManagedDefaultsV1Schema)),
+  managedGroupDefaults: z.optional(z.strictObject({
+    teamGroupId: TeamIdV1Schema,
+    defaults: z.nullable(ManagedSessionDefaultsV1Schema),
+  })),
 }).check(z.superRefine((input, context) => {
+  if (input.managedDefaults !== undefined && input.managedGroupDefaults !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Choose a Team replacement or a Group patch', path: ['managedGroupDefaults'] });
+  }
   if ((input.authenticationPolicy !== undefined) !== (input.previousAuthenticationPolicy !== undefined)) {
     context.addIssue({
       code: "custom",
@@ -219,6 +230,8 @@ export const TeamPolicySetInputV1Schema = lazyZodSchema(() => z.strictObject({
     || input.externalSharingPolicy !== undefined
     || input.defaultSessionHistoryAccess !== undefined
     || input.admissionMode !== undefined
+    || input.managedDefaults !== undefined
+    || input.managedGroupDefaults !== undefined
     || input.authenticationPolicy !== undefined, { message: 'Team policy patch changes nothing' })));
 export type TeamPolicySetInputV1 = z.infer<typeof TeamPolicySetInputV1Schema>;
 

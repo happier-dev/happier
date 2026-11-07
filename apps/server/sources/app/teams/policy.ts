@@ -1,7 +1,9 @@
 import { normalizeTeamAuthenticationPolicyV1, type TeamAuthenticationPolicyV1, type TeamRestrictedAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/entry';
 import { type TeamAuthenticationPolicyComparisonBasisV1, type TeamAuthenticationPolicyUnavailableDetailsV1 } from '@happier-dev/protocol/teams';
 import type { TeamCapabilitiesV1 } from "@happier-dev/protocol/teams";
+import { readManagedDefaultsV1, type ManagedDefaultsV1, type ManagedSessionDefaultsV1 } from "@happier-dev/protocol/teams";
 import type { TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { resolveTeamAuthenticationPolicyInTx } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
 import type { Tx } from "@/storage/inTx";
@@ -28,9 +30,11 @@ import {
 import { toTeamViewer } from "./viewer";
 import { applyTeamSessionAuthenticationContextEffectsInTx } from "./memberships/sessionAccessEffects";
 import { resolveTeamAdmissionModeApplicabilityInTx } from "./identity/teamAdmissionModeApplicability";
+import { authorizeTeamGroupDefaultsInTx } from "./groups/groupService";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 
 /**
- * Team policy: a closed set of fixed enums with named downstream consumers.
+ * Team policy and managed Session defaults, with named downstream consumers.
  *
  * Each field records intent that its own canonical owner enforces. Nothing here
  * evaluates Session access, rewrites existing grants, or touches membership
@@ -45,6 +49,8 @@ export type TeamPolicyError =
     | "team_not_found"
     | "team_forbidden"
     | "team_archived"
+    | "group_not_found"
+    | "group_archived"
     | "invalid_team_input"
     | "invalid_team_authentication_policy"
     | "team_authentication_policy_conflict"
@@ -71,6 +77,8 @@ export type SetTeamPolicyInput = Readonly<{
     admissionMode?: TeamAdmissionMode;
     previousAuthenticationPolicy?: TeamAuthenticationPolicyComparisonBasisV1;
     authenticationPolicy?: TeamAuthenticationPolicyV1 | null;
+    managedDefaults?: ManagedDefaultsV1 | null;
+    managedGroupDefaults?: Readonly<{ teamGroupId: string; defaults: ManagedSessionDefaultsV1 | null }>;
     authentication?: TeamOperationAuthenticationContext;
 }>;
 
@@ -104,6 +112,8 @@ type TeamPolicyPatch = Pick<SetTeamPolicyInput,
     | "defaultSessionHistoryAccess"
     | "admissionMode"
     | "authenticationPolicy"
+    | "managedDefaults"
+    | "managedGroupDefaults"
 >;
 
 /** Every changed field is authorized before any field is written. */
@@ -117,7 +127,9 @@ export function authorizeTeamPolicyPatch(
     const changesAuthentication = patch.admissionMode !== undefined
         || patch.authenticationPolicy !== undefined;
     return (!changesSessionPolicy || capabilities.managePolicy)
-        && (!changesAuthentication || capabilities.manageAuthentication);
+        && (!changesAuthentication || capabilities.manageAuthentication)
+        && (patch.managedDefaults === undefined || capabilities.manageSettings)
+        && (patch.managedGroupDefaults === undefined || capabilities.manageGroups);
 }
 
 export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Promise<TeamPolicyResult> {
@@ -137,7 +149,7 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
     if (viewer === null) return { ok: false, error: "team_not_found" };
 
     const changesAuthenticationPolicy = input.authenticationPolicy !== undefined;
-    if (!authorizeTeamPolicyPatch(context!.teamCapabilities, input)) {
+    if (!authorizeTeamPolicyPatch(context!.capabilities, input)) {
         // "Archived" is only the honest reason for someone who would otherwise
         // hold the capability. Home administration never confers `managePolicy`,
         // so an administrator is refused as forbidden on an archived Team too.
@@ -146,6 +158,9 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
         return { ok: false, error: archived && administersTeam ? "team_archived" : "team_forbidden" };
     }
 
+    if (input.managedDefaults !== undefined && input.managedGroupDefaults !== undefined) {
+        return { ok: false, error: "invalid_team_input" };
+    }
     const current = readCanonicalAuthenticationPolicy(viewer.team.authenticationPolicy);
     if (changesAuthenticationPolicy) {
         if (input.previousAuthenticationPolicy === undefined
@@ -165,6 +180,8 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
         && input.sessionCreationPolicy === undefined
         && input.externalSharingPolicy === undefined
         && input.defaultSessionHistoryAccess === undefined
+        && input.managedDefaults === undefined
+        && input.managedGroupDefaults === undefined
         && input.admissionMode === undefined;
     const qualification = await qualifyTeamOperationAuthenticationInTx(tx, {
         context: context!,
@@ -175,6 +192,37 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
             : {}),
     });
     if (!qualification.ok) return qualification;
+
+    let managedDefaults = input.managedDefaults;
+    if (input.managedGroupDefaults !== undefined) {
+        const error = await authorizeTeamGroupDefaultsInTx(tx, {
+            context: context!, teamGroupId: input.managedGroupDefaults.teamGroupId,
+        });
+        if (error) return { ok: false, error };
+        const stored = readManagedDefaultsV1(viewer.team.managedDefaults ?? null);
+        // A scoped Group edit cannot discard malformed Team or sibling data.
+        // A settings administrator repairs the complete document explicitly.
+        if (stored.status === "repair_required") return { ok: false, error: "invalid_team_input" };
+        const groups = { ...stored.defaults?.groups };
+        if (input.managedGroupDefaults.defaults === null) delete groups[input.managedGroupDefaults.teamGroupId];
+        else groups[input.managedGroupDefaults.teamGroupId] = input.managedGroupDefaults.defaults;
+        managedDefaults = { team: stored.defaults?.team ?? {}, groups };
+    } else if (managedDefaults !== undefined && managedDefaults !== null) {
+        const groupIds = Object.keys(managedDefaults.groups);
+        const groups = (await Promise.all(portableQueryChunks({ values: groupIds, bindingsPerValue: 1, fixedBindings: 2 })
+            .map(ids => tx.teamGroup.findMany({
+                where: { id: { in: [...ids] }, teamId: input.teamId }, select: { id: true, archivedAt: true },
+            })))).flat();
+        if (groups.length !== groupIds.length) return { ok: false, error: "group_not_found" };
+        const stored = readManagedDefaultsV1(viewer.team.managedDefaults ?? null);
+        for (const group of groups) {
+            // A full Team save may carry a retained preference for restoration;
+            // an archived Group still cannot receive a changed preference.
+            if (group.archivedAt !== null && !sameStrictJsonValue(
+                stored.defaults?.groups[group.id], managedDefaults.groups[group.id],
+            )) return { ok: false, error: "group_archived" };
+        }
+    }
 
     if (input.admissionMode !== undefined) {
         const applicability = await resolveTeamAdmissionModeApplicabilityInTx({
@@ -221,6 +269,9 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
     }
 
     const data = {
+        ...(managedDefaults === undefined ? {} : {
+            managedDefaults: managedDefaults === null ? getActivePrismaRuntime().DbNull : managedDefaults,
+        }),
         ...(input.sessionCreationPolicy === undefined ? {} : { sessionCreationPolicy: input.sessionCreationPolicy }),
         ...(input.externalSharingPolicy === undefined ? {} : { externalSharingPolicy: input.externalSharingPolicy }),
         ...(input.defaultSessionHistoryAccess === undefined

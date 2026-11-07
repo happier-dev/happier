@@ -43,6 +43,29 @@ the [requester's confirmation](/sessions/inbox-and-approvals#shared-bot-confirma
 Team membership alone does not supply that consent or make the Bot ready;
 see [Bot readiness](/organize/session-organization#bot-readiness-in-03-development).
 
+### Shared machines and credentials
+
+Team membership, Machine access and Session sharing are separate grants. A Team
+owner or admin is not automatically the owner of a Machine; that owner is its
+enrolled Account on the Machine's Home. Machine **Can manage** includes trusted
+administration and can defeat operating-system isolation.
+
+In unreleased 0.3 development, Machine **Can use** also permits Workflows and
+schedules. Use your own Connected Account credentials and review the
+[sign-in lifetime and private Run boundaries](/accounts/session-sharing).
+
+Shared-machine execution is incomplete, unreleased 0.3 development work. Its
+first isolation step uses one shared Agent operating-system user for members and
+the owner's isolated Agent. Selected credentials, Direct-delivered keys and
+readable Session context remain visible to peers sharing that user; it does not
+establish confidentiality between Accounts. The Machine owner can inspect
+material delivered there even when members have separate users. Separate Linux
+users and private checkouts are now being integrated, not yet verified as a
+complete usable journey. See
+[shared-machine trust](/accounts/session-sharing) and
+[Direct delivery](/accounts/team-credentials#direct-delivery-on-a-shared-machine)
+before choosing a shared target.
+
 ## Create a Team
 
 Open **Settings → Teams** and choose **New Team**. Give it a **Name** and, if it
@@ -88,6 +111,13 @@ attention**, each with a way to deal with it. A Team you have just created shows
 instead — invite people, choose how members sign in, share a session — until
 someone else joins or is invited. **Invite people** at the top of the page opens
 the invitation for that Team.
+
+In unreleased 0.3 development source, the overview also lists Workflows shared
+with this Team. Open a Workflow and choose **History** on a Team-visible
+schedule row to see History filtered to that trigger, with **Edited by**
+attribution on its occurrences. The owner's private Runs stay excluded; a
+personal Workflow share alone does not expose their history. See
+[Workflow Team visibility](/extras/automations#team-visibility).
 
 The **Members** tab lists everybody in the Team with their role and status, and
 filters for owners and admins, members, guests, and suspended people. Opening a
@@ -225,6 +255,23 @@ A **Logo** replaces the Team's monogram everywhere the Team appears. Team and
 Group names, descriptions, Group membership, and policy are administration data
 the Home can read, including on an end-to-end encrypted Account, so keep secrets
 out of them.
+
+### Managed Session preferences (0.3 development)
+
+Unreleased development source also lets administrators supply Session preferences
+through the existing Team policy action. The first New Session consumer preselects
+the permission mode for the selected Agent. Placement, connected-service and model
+preferences have a shared data contract; their consumers are still being integrated.
+
+Your explicit choice takes priority over Group and Team preferences. An agreeing
+Group preference comes before the Team preference; conflicting Groups fall back
+to the Team. These preferences do not change your Account settings or grant access
+to a Machine, model or credential.
+
+Only a locked [organization policy](/self-hosting/organization-policy) fixes the
+permission value and shows **Managed by** the organization. An unlocked policy
+supplies a fallback below personal, Group and Team choices. The policy file is
+local to the desktop machine; browser and mobile clients do not read it.
 
 ## Archiving a Team
 

@@ -8,10 +8,11 @@ import {
     type TeamSessionCreationPolicyV1,
     type SessionHistoryAccessV1,
     type TeamSummaryV1,
+    type TeamPolicySetInputV1,
 } from '@happier-dev/protocol/teams';
 import type {
     TeamAuthenticationPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/entry';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -169,7 +170,7 @@ export function setTeamPolicy(params: Readonly<{
     previousAuthenticationPolicy?: TeamAuthenticationPolicyComparisonBasisV1;
     /** `null` restores Home inheritance; omitted leaves the current value unchanged. */
     authenticationPolicy?: TeamAuthenticationPolicyV1 | null;
-}>): Promise<TeamMutationOutcome> {
+} & Pick<TeamPolicySetInputV1, 'managedDefaults' | 'managedGroupDefaults'>>): Promise<TeamMutationOutcome> {
     return mutateTeam({
         scope: params.scope,
         address: params.address,
@@ -190,6 +191,8 @@ export function setTeamPolicy(params: Readonly<{
             ...(params.authenticationPolicy !== undefined
                 ? { authenticationPolicy: params.authenticationPolicy }
                 : {}),
+            ...(params.managedDefaults !== undefined ? { managedDefaults: params.managedDefaults } : {}),
+            ...(params.managedGroupDefaults !== undefined ? { managedGroupDefaults: params.managedGroupDefaults } : {}),
         },
     });
 }

@@ -33,6 +33,7 @@ import {
 } from "./actorContext";
 import { toTeamViewer } from "./viewer";
 import { resolveTeamCapabilitiesV1 } from "./capabilities";
+import { resolveEffectiveTeamGroupIdsForAccountInTx } from "./groups/effectiveGroupMembership";
 
 /**
  * The one Team lifecycle service.
@@ -464,10 +465,14 @@ async function projectQualifiedTeamContextInTx(
         ? await qualifyTeamProjectionReadAuthenticationInTx(tx, { context, ...authentication })
         : { ok: true as const };
     const counts = await readTeamSummaryCountsInTx(tx, [context.team.id]);
+    const managedDefaultsGroupIds = qualification.ok && context.teamCapabilities.viewTeam && context.team.managedDefaults != null
+        ? await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId: context.team.id, accountId: context.actorAccountId })
+        : [];
     return {
         qualification,
         team: projectTeamSummaryV1({
             counts: counts.get(context.team.id)!,
+            managedDefaultsGroupIds,
             teamCapabilities: qualification.ok ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
             team: context.team,
             viewerRole: context.membership?.role ?? null,

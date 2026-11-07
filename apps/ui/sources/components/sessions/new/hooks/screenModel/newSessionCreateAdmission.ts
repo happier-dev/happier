@@ -1,3 +1,5 @@
+import type { AgentPluginSettingsReadiness } from '@/agents/registry/registryUiBehavior';
+
 export type NewSessionCreateRequirement = Readonly<{
     ready: boolean;
     /** Why it blocks, for the composer's status line; `null` when a control on the card already asks. */
@@ -13,6 +15,20 @@ export function resolveNewSessionCreateAdmission(requirements: ReadonlyArray<New
     return blocker
         ? { canCreate: false, disabledReason: blocker.reason }
         : { canCreate: true, disabledReason: null };
+}
+
+/**
+ * The selected Agent's settings: loading is not a problem to report (the composer would read "Unavailable" while they
+ * arrive), only settings that settled without being ready, or failed, are.
+ */
+export function resolveNewSessionAgentSettingsRequirement(input: Readonly<{
+    /** `null` when the Agent declares no scoped settings. */
+    readiness: AgentPluginSettingsReadiness | null;
+    unavailableReason: string;
+}>): NewSessionCreateRequirement {
+    const { readiness } = input;
+    if (!readiness || readiness.ready) return { ready: true, reason: null };
+    return { ready: false, reason: readiness.settled || readiness.error ? input.unavailableReason : null };
 }
 
 type NewSessionTargetReasonKey = 'newSession.noMachineSelected' | 'newSession.machineUnavailableStatus';

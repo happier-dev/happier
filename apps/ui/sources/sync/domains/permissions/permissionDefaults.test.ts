@@ -11,6 +11,34 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
     };
     const accountDefaults = readAccountPermissionDefaults(accountDefaultsByTargetKey, ['claude', 'codex', 'gemini']);
 
+    it('preselects the Team permission without changing personal settings', () => {
+        const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+        const emptyDefaults = readAccountPermissionDefaults({}, ['codex']);
+        const input = {
+            agentType: 'codex', accountDefaults: emptyDefaults,
+            managedDefaults: {
+                teamDefaults: { team: { permissionModeByAgentTargetKey: { [targetKey]: 'read-only' as const } }, groups: {} },
+                groupIds: [],
+            },
+        };
+        expect(resolveNewSessionDefaultPermissionMode(input)).toBe('read-only');
+        expect(emptyDefaults.byTargetKey).toEqual({});
+    });
+
+    it('keeps explicit personal defaults above managed defaults and policy locks above both', () => {
+        const targetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+        const managedDefaults = {
+            teamDefaults: { team: { permissionModeByAgentTargetKey: { [targetKey]: 'read-only' as const } }, groups: {} },
+            policyDefaults: { organization: 'Example', locked: false, values: { permissionModeByAgentTargetKey: { [targetKey]: 'yolo' as const } } },
+        };
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, managedDefaults })).toBe('safe-yolo');
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, managedDefaults, explicitPermissionMode: 'default' })).toBe('default');
+        expect(resolveNewSessionDefaultPermissionMode({
+            agentType: 'codex', accountDefaults, explicitPermissionMode: 'safe-yolo',
+            managedDefaults: { ...managedDefaults, policyDefaults: { ...managedDefaults.policyDefaults, locked: true } },
+        })).toBe('yolo');
+    });
+
     it('reads account defaults from backend target keys', () => {
         expect(readAccountPermissionDefaults(accountDefaultsByTargetKey, ['claude', 'codex', 'gemini'])).toEqual({
             byTargetKey: {

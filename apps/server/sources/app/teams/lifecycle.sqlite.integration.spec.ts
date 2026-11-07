@@ -75,6 +75,8 @@ describe("Team lifecycle (SQLite integration)", () => {
                 // is inheritance, not an empty explicit selection.
                 authenticationPolicy: null,
                 authenticationPolicyStatus: "available",
+                managedDefaults: null,
+                managedDefaultsStatus: "available",
             });
             expect(result.team.admission.historyChoice).toEqual({
                 admin: "choice", member: "choice", guest: "hidden",
@@ -466,6 +468,8 @@ describe("Team lifecycle (SQLite integration)", () => {
                 // A Session-policy patch leaves authentication narrowing alone.
                 authenticationPolicy: null,
                 authenticationPolicyStatus: "available",
+                managedDefaults: null,
+                managedDefaultsStatus: "available",
             });
             // A history default is the intent for the next admission; an existing
             // horizon was minted once at activation and is never rewritten.

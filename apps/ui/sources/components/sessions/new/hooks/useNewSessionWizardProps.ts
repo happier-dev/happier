@@ -128,6 +128,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     selectedIndicatorColor: string;
     profileMap: Map<string, AIBackendProfile>;
     permissionMode: PermissionMode;
+    permissionModeLock?: NewSessionWizardAgentProps['permissionModeLock'];
     handlePermissionModeChange: (mode: PermissionMode) => void;
 
     // Machine section
@@ -429,6 +430,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             selectedIndicatorColor: params.selectedIndicatorColor,
             profileMap: params.profileMap,
             permissionMode: params.permissionMode,
+            permissionModeLock: params.permissionModeLock,
             handlePermissionModeChange: params.handlePermissionModeChange,
             installableDepInstallers,
         };
@@ -468,6 +470,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.acpConfigOptionsProbe,
         params.acpConfigOptionOverrides,
         params.permissionMode,
+        params.permissionModeLock,
         params.profileMap,
         params.selectedIndicatorColor,
         params.onAgentPickerSelect,

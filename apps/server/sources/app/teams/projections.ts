@@ -2,7 +2,7 @@ import { z } from "zod/mini";
 import type { Prisma } from "@prisma/client";
 
 import { resolveTeamAdmissionProjectionV1, type TeamSummaryCountsV1, type TeamSummaryV1 } from '@happier-dev/protocol/teams/projections';
-import { type TeamCapabilitiesV1, type TeamPolicyV1 } from '@happier-dev/protocol/teams';
+import { readManagedDefaultsV1, type TeamCapabilitiesV1, type TeamPolicyV1 } from '@happier-dev/protocol/teams';
 import { normalizeTeamAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema } from '@happier-dev/protocol/auth/entry';
 
 import type { HomeGovernanceAuthority } from "@/app/home/governance/homeCapabilities";
@@ -30,6 +30,7 @@ export const TEAM_PROJECTION_SELECT = {
     defaultSessionHistoryAccess: true,
     admissionMode: true,
     authenticationPolicy: true,
+    managedDefaults: true,
     archivedAt: true,
     directorySources: {
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -55,6 +56,7 @@ export type TeamRecord = Readonly<{
     defaultSessionHistoryAccess: SessionHistoryAccess;
     admissionMode: TeamAdmissionMode;
     authenticationPolicy: unknown;
+    managedDefaults?: unknown;
     archivedAt: Date | null;
     directorySources?: readonly DirectoryMembershipProjectionRow[];
 }>;
@@ -103,6 +105,7 @@ export function projectTeamLogoRefV1(team: Pick<TeamRecord, "id" | "logo">): Tea
 
 /** The closed policy projection; the stored columns are already the contract. */
 export function projectTeamPolicyV1(team: TeamRecord): TeamPolicyV1 {
+    const managedDefaults = readManagedDefaultsV1(team.managedDefaults ?? null);
     const parsedAuthenticationPolicy = team.authenticationPolicy === null
         ? null
         : TeamAuthenticationPolicyV1Schema.safeParse(team.authenticationPolicy);
@@ -121,6 +124,8 @@ export function projectTeamPolicyV1(team: TeamRecord): TeamPolicyV1 {
         authenticationPolicyStatus: parsedAuthenticationPolicy !== null && !parsedAuthenticationPolicy.success
             ? "repair_required"
             : "available",
+        managedDefaults: managedDefaults.defaults,
+        managedDefaultsStatus: managedDefaults.status,
     };
 }
 
@@ -171,7 +176,18 @@ export function projectTeamSummaryV1(input: Readonly<{
      */
     teamCapabilities: TeamCapabilitiesV1;
     counts: TeamSummaryCountFacts;
+    managedDefaultsGroupIds?: readonly string[];
 }>): TeamSummaryV1 {
+    const policy = projectTeamPolicyV1(input.team);
+    if (!input.capabilities.viewTeam) {
+        policy.managedDefaults = null;
+    } else if (policy.managedDefaults && !input.capabilities.manageSettings && !input.teamCapabilities.manageGroups) {
+        const applicable = new Set(input.managedDefaultsGroupIds ?? []);
+        policy.managedDefaults = {
+            team: policy.managedDefaults.team,
+            groups: Object.fromEntries(Object.entries(policy.managedDefaults.groups).filter(([id]) => applicable.has(id))),
+        };
+    }
     return {
         id: input.team.id,
         name: input.team.name,
@@ -184,7 +200,8 @@ export function projectTeamSummaryV1(input: Readonly<{
                 canAppointOwner: input.homeAuthority.manageAllTeams,
             }
             : null,
-        policy: projectTeamPolicyV1(input.team),
+        policy,
+        managedDefaultsGroupIds: input.capabilities.viewTeam ? [...(input.managedDefaultsGroupIds ?? [])] : [],
         ...(input.capabilities.viewTeam && input.team.directorySources !== undefined ? {
             directoryMembership: projectTeamDirectoryMembershipFact(input.team.directorySources),
         } : {}),

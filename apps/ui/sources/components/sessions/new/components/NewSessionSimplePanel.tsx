@@ -27,6 +27,7 @@ import {
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { AgentInput } from '@/components/sessions/agentInput';
+import type { OrganizationPolicyLock } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import type { AgentInputExtraActionPresentation } from '@/components/sessions/agentInput/agentInputContracts';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import type { AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
@@ -115,6 +116,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     agentPickerProbe?: React.ComponentProps<typeof AgentInput>['agentPickerProbe'];
     onAgentPickerVisibilityChange?: React.ComponentProps<typeof AgentInput>['onAgentPickerVisibilityChange'];
     permissionMode: React.ComponentProps<typeof AgentInput>['permissionMode'];
+    permissionModeLock?: OrganizationPolicyLock | null;
     allowedPermissionModes?: React.ComponentProps<typeof AgentInput>['allowedPermissionModes'];
     handlePermissionModeChange: React.ComponentProps<typeof AgentInput>['onPermissionModeChange'];
     modelMode: React.ComponentProps<typeof AgentInput>['modelMode'];

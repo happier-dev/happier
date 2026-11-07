@@ -3,6 +3,7 @@ import { FEATURE_ID_ENUM } from '../features/featureIds.js';
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { BuildDefaultProfileFields } from './buildDefaultProfile.js';
 import { createServerUrlComparableKey } from '../server/urls/serverUrlComparableKey.js';
+import { ManagedSessionDefaultsV1Schema } from '../teams/managedDefaults.js';
 
 export const OrganizationPolicyV1Schema = z.object({
   schemaVersion: z.literal(1),
@@ -24,9 +25,15 @@ export const OrganizationPolicyV1Schema = z.object({
 }).strict();
 
 export type OrganizationPolicyV1 = Readonly<z.infer<typeof OrganizationPolicyV1Schema>>;
+export const OrganizationPolicyV2Schema = OrganizationPolicyV1Schema.extend({
+  schemaVersion: z.literal(2),
+  sessionDefaults: z.object({ values: ManagedSessionDefaultsV1Schema, locked: z.boolean() }).strict(),
+});
+export type OrganizationPolicyV2 = Readonly<z.infer<typeof OrganizationPolicyV2Schema>>;
+const OrganizationPolicySchema = z.discriminatedUnion('schemaVersion', [OrganizationPolicyV1Schema, OrganizationPolicyV2Schema]);
 export type OrganizationPolicyLoadResult =
   | Readonly<{ status: 'absent' }>
-  | Readonly<{ status: 'loaded'; policy: OrganizationPolicyV1 }>
+  | Readonly<{ status: 'loaded'; policy: OrganizationPolicyV1 | OrganizationPolicyV2 }>
   | Readonly<{ status: 'invalid'; error: Readonly<{ path: string; code: string }> }>;
 export type OrganizationPolicyField = 'accountService' | 'home' | 'personalHome';
 export type OrganizationPolicyLock = Readonly<{ organization: string; supportUrl?: string }>;
@@ -36,7 +43,7 @@ export function parseOrganizationPolicyV1(raw: string): OrganizationPolicyLoadRe
   let value: unknown;
   try { value = JSON.parse(raw); }
   catch { return { status: 'invalid', error: { path: '$', code: 'invalid_json' } }; }
-  const parsed = OrganizationPolicyV1Schema.safeParse(value);
+  const parsed = OrganizationPolicySchema.safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     return { status: 'invalid', error: { path: issue.path.join('.') || '$', code: issue.code } };
@@ -47,6 +54,16 @@ export function parseOrganizationPolicyV1(raw: string): OrganizationPolicyLoadRe
 export function getOrganizationPolicyLock(result: OrganizationPolicyLoadResult, field: OrganizationPolicyField): OrganizationPolicyLock | null {
   if (result.status !== 'loaded' || result.policy[field]?.locked !== true) return null;
   return { organization: result.policy.organization, ...(result.policy.supportUrl ? { supportUrl: result.policy.supportUrl } : {}) };
+}
+
+export function getOrganizationPolicySessionDefaults(result: OrganizationPolicyLoadResult):
+  (OrganizationPolicyV2['sessionDefaults'] & OrganizationPolicyLock) | null {
+  if (result.status !== 'loaded' || result.policy.schemaVersion !== 2) return null;
+  return {
+    ...result.policy.sessionDefaults,
+    organization: result.policy.organization,
+    ...(result.policy.supportUrl ? { supportUrl: result.policy.supportUrl } : {}),
+  };
 }
 
 export class OrganizationPolicyActionError extends Error {

@@ -68,8 +68,34 @@ export async function resolveEffectiveTeamGroupIdsForAccountInTx(
     tx: Tx,
     params: Readonly<{ teamId: string; accountId: string }>,
 ): Promise<readonly string[]> {
-    return (await resolveTeamGroupMembershipsForAccountInTx(tx, params))
-        .filter(membership => membership.effective).map(membership => membership.teamGroupId).sort();
+    return (await resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(tx, {
+        teamIds: [params.teamId], accountId: params.accountId,
+    })).get(params.teamId) ?? [];
+}
+
+/** Resolve a directory page as one indexed membership set, never one read per Team. */
+export async function resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(
+    tx: Tx,
+    params: Readonly<{ teamIds: readonly string[]; accountId: string }>,
+): Promise<ReadonlyMap<string, readonly string[]>> {
+    const byTeam = new Map<string, string[]>();
+    for (const teamIds of portableQueryChunks({ values: [...new Set(params.teamIds)], bindingsPerValue: 1, fixedBindings: 4 })) {
+        const rows = await tx.teamGroupMembership.findMany({
+            where: {
+                ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE,
+                teamMembership: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE.teamMembership,
+                    accountId: params.accountId, teamId: { in: [...teamIds] } },
+            },
+            select: { teamId: true, teamGroupId: true },
+            orderBy: { teamGroupId: "asc" },
+        });
+        for (const row of rows) {
+            const ids = byTeam.get(row.teamId);
+            if (ids) ids.push(row.teamGroupId);
+            else byTeam.set(row.teamId, [row.teamGroupId]);
+        }
+    }
+    return byTeam;
 }
 
 /** Read only this Account's current lifetime memberships, optionally for one credential audience. */

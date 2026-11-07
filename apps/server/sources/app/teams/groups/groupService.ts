@@ -58,7 +58,7 @@ import {
  *
  * A Group is a named targeting set inside exactly one Team, and this module is
  * its whole lifecycle: name, description, archive state, roster, and the native
- * half of the contribution union. There is no Group role, no per-Group policy,
+ * half of the contribution union. There is no Group role,
  * no nesting, and no deny precedence, so every decision here is either "may this
  * actor manage Groups in this Team" or "does this Group currently exist".
  */
@@ -134,6 +134,26 @@ async function readGroupRowInTx(
         select: TEAM_GROUP_ROW_SELECT,
     });
     return row && row.teamId === input.teamId ? row : null;
+}
+
+/** Managed defaults use Group management, independently of directory-owned metadata. */
+export async function authorizeTeamGroupDefaultsInTx(
+    tx: Tx,
+    input: Readonly<{ context: TeamActorContext; teamGroupId: string }>,
+): Promise<"group_not_found" | "team_archived" | "team_forbidden" | "group_archived" | null> {
+    const row = await readGroupRowInTx(tx, { teamId: input.context.team.id, groupId: input.teamGroupId });
+    if (!row) return "group_not_found";
+    if (input.context.team.archivedAt !== null) return "team_archived";
+    if (!input.context.teamCapabilities.manageGroups) return "team_forbidden";
+    if (row.archivedAt !== null) return "group_archived";
+    const bindings = await readTeamGroupBindingsInTx(tx, { teamGroupId: row.id });
+    const capabilities = resolveTeamGroupCapabilitiesV1({
+        manageGroups: input.context.teamCapabilities.manageGroups,
+        teamArchivedAt: input.context.team.archivedAt,
+        group: row,
+        management: projectTeamGroupManagementV1(bindings),
+    });
+    return capabilities.manageNativeMembers ? null : "team_forbidden";
 }
 
 /** Commit-time Group grantability through the canonical member Team directory. */

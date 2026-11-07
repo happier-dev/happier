@@ -119,6 +119,17 @@ describe('Team policy contract', () => {
     expect(TeamPolicySetInputV1Schema.safeParse({ v: 1, teamId: 't1' }).success).toBe(false);
   });
 
+  it('admits managed defaults through the policy patch and keeps a Group patch scoped to one identity', () => {
+    const managedDefaults = { team: {}, groups: { g1: {} } };
+    expect(TeamPolicySetInputV1Schema.parse({ v: 1, teamId: 't1', managedDefaults }))
+      .toEqual({ v: 1, teamId: 't1', managedDefaults });
+    const managedGroupDefaults = { teamGroupId: 'g1', defaults: null };
+    expect(TeamPolicySetInputV1Schema.parse({ v: 1, teamId: 't1', managedGroupDefaults }))
+      .toEqual({ v: 1, teamId: 't1', managedGroupDefaults });
+    expect(TeamPolicySetInputV1Schema.safeParse({ v: 1, teamId: 't1', managedDefaults, managedGroupDefaults }).success).toBe(false);
+    expect(TeamPolicySetInputV1Schema.safeParse({ v: 1, teamId: 't1', managedGroupDefaults: { defaults: {} } }).success).toBe(false);
+  });
+
   it('accepts the canonical nullable Team authentication policy and rejects invalid narrowing', () => {
     expect(TeamPolicySetInputV1Schema.safeParse({
       v: 1,
