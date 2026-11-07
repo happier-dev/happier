@@ -12,8 +12,20 @@ import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createProjectSourceInTx, readProjectSourceInTx, listProjectSourcesInTx, updateProjectSourceInTx, deleteProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import type { Fastify } from '../../types';
+import {
+    ProjectDeploymentDefaultsReadInputV1Schema, ProjectDeploymentDefaultsSetInputV1Schema,
+    ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsFailureV1Schema,
+    type ProjectDeploymentDefaultsOutputV1,
+} from '@happier-dev/protocol';
+import { readProjectDeploymentDefaultsInTx, setProjectDeploymentDefaultsInTx } from '@/app/projects/projectDeploymentDefaultsService';
+import { AutomationValidationError } from '@/app/automations/automationValidation';
 
 const params = z.strictObject({ id: z.string().check(z.minLength(1)) });
+function defaultsResultStatus(result: ProjectDeploymentDefaultsOutputV1): 200 | 400 | 403 | 404 | 409 {
+    return result.ok ? 200 : result.error === 'project_defaults_unavailable' ? 404
+        : result.error === 'project_defaults_access_denied' ? 403
+        : result.error === 'project_defaults_conflict' || result.error === 'project_defaults_content_unavailable' ? 409 : 400;
+}
 function resultStatus(result: { ok: boolean; error?: 'source_invalid' | 'source_unavailable' }): 200 | 400 | 404;
 function resultStatus(result: { ok: boolean; error?: 'source_invalid' | 'source_unavailable' | 'source_access_denied' | 'source_conflict' }): 200 | 400 | 403 | 404 | 409;
 function resultStatus(result: { ok: boolean; error?: string }): 200 | 400 | 403 | 404 | 409 | 503;
@@ -27,6 +39,28 @@ function resultStatus(result: { ok: boolean; error?: string }): 200 | 400 | 403 
 
 /** Metadata-only front doors share one admission, membership and CAS owner. */
 export function projectSourceRoutes(app: Fastify): void {
+    const defaultsResponse = { 200: ProjectDeploymentDefaultsOutputV1Schema,
+        400: ProjectDeploymentDefaultsFailureV1Schema, 403: ProjectDeploymentDefaultsFailureV1Schema,
+        404: ProjectDeploymentDefaultsFailureV1Schema, 409: ProjectDeploymentDefaultsFailureV1Schema };
+    app.get('/v1/projects/:id/deployment-defaults', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
+        params, querystring: omit(ProjectDeploymentDefaultsReadInputV1Schema, { projectSourceId: true }), response: defaultsResponse,
+    } }, async (request, reply) => {
+        if (request.validationError) return reply.code(400).send({ ok: false, error: 'project_defaults_invalid' });
+        const result = await inReadSnapshot(tx => readProjectDeploymentDefaultsInTx(tx, request.userId,
+            { serverId: request.query.serverId, projectSourceId: request.params.id }, readTeamOperationAuthenticationFromRequest(request),
+            request.externalActionExecutionAuthorizationBinding));
+        return reply.code(defaultsResultStatus(result)).send(result);
+    });
+    app.put('/v1/projects/:id/deployment-defaults', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
+        params, body: ProjectDeploymentDefaultsSetInputV1Schema, response: defaultsResponse,
+    } }, async (request, reply) => {
+        if (request.validationError || request.body.projectSourceId !== request.params.id) {
+            return reply.code(400).send({ ok: false, error: 'project_defaults_invalid' });
+        }
+        const result = await inTx(tx => setProjectDeploymentDefaultsInTx(tx, request.userId, request.body,
+            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+        return reply.code(defaultsResultStatus(result)).send(result);
+    });
     const readResponse = { 200: ProjectSourcesReadOutputV1Schema, 400: ProjectSourcesReadOutputV1Schema, 403: ProjectSourcesReadOutputV1Schema, 404: ProjectSourcesReadOutputV1Schema, 409: ProjectSourcesFailureV1Schema, 503: ProjectSourcesFailureV1Schema };
     app.get('/v1/projects/sources', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
         querystring: extend(omit(ProjectSourcesListInputV1Schema, { audience: true, limit: true }), { audience: z.optional(z.string()), limit: z.optional(z.coerce.number().check(z.int(), z.positive())) }),
@@ -43,7 +77,9 @@ export function projectSourceRoutes(app: Fastify): void {
         params, querystring: omit(ProjectSourcesReadInputV1Schema, { sourceId: true }), response: readResponse,
     } }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ ok: false, error: 'source_invalid' });
-        const result = await inReadSnapshot(tx => readProjectSourceInTx(tx, request.userId, { serverId: request.query.serverId, sourceId: request.params.id }, readTeamOperationAuthenticationFromRequest(request)));
+        const admittedSource = request.externalActionDeploymentCreateSource;
+        const result = admittedSource ? { ok: true as const, source: admittedSource, canManage: false }
+            : await inReadSnapshot(tx => readProjectSourceInTx(tx, request.userId, { serverId: request.query.serverId, sourceId: request.params.id }, readTeamOperationAuthenticationFromRequest(request)));
         return reply.code(resultStatus(result)).send(result);
     });
     app.post('/v1/projects/sources', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
@@ -58,8 +94,14 @@ export function projectSourceRoutes(app: Fastify): void {
     } }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ ok: false, error: 'source_invalid' });
         if (request.body.sourceId !== request.params.id) return reply.code(400).send({ ok: false, error: 'source_invalid' });
-        const result = await inTx(tx => updateProjectSourceInTx(tx, request.userId, request.body, readTeamOperationAuthenticationFromRequest(request)), { /* Project source replay and Team/audience/Artifact admission span independent rows. */ isolationLevel: "Serializable" });
-        return reply.code(resultStatus(result)).send(result);
+        try {
+            const result = await inTx(tx => updateProjectSourceInTx(tx, request.userId, request.body, readTeamOperationAuthenticationFromRequest(request)), { /* Source and preview-role admission span independent rows. */ isolationLevel: "Serializable" });
+            return reply.code(resultStatus(result)).send(result);
+        } catch (error) {
+            // Catch only after inTx has rolled back Source, enablement and Runs.
+            if (error instanceof AutomationValidationError) return reply.code(409).send({ ok: false, error: 'source_conflict' });
+            throw error;
+        }
     });
     app.delete('/v1/projects/sources/:id', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {
         params, body: ProjectSourcesDeleteInputV1Schema, response: {

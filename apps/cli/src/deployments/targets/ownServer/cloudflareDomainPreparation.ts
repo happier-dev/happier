@@ -66,7 +66,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             admissions.push(admitted);
         }
         const service = bindMachineConnectorSecretsForHost({ credentials: host.installedCredentials ?? host.credentials,
-            serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, context,
+            serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, context, domain,
             signal: context.signal ?? new AbortController().signal,
             domainAdmissions: admissions.flatMap(item => item.domainAdmission ? [item.domainAdmission] : []),
             assertCurrent: async () => { context.signal?.throwIfAborted(); }, onGrant: grant => acknowledged.push(grant) });

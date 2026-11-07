@@ -1,26 +1,27 @@
+import { isDeepStrictEqual } from 'node:util';
 import * as privacyKit from 'privacy-kit';
-import { ProjectDeploymentDefaultsPayloadV1Schema, type ProjectDeploymentDefaultsReadInputV1, type ProjectDeploymentDefaultsSetInputV1, type ProjectDeploymentDefaultsOutputV1 } from '@happier-dev/protocol';
+import { ProjectDeploymentDefaultsPayloadV1Schema, type ProjectDeploymentDefaultsReadInputV1,
+    type ProjectDeploymentDefaultsSetInputV1, type ProjectDeploymentDefaultsChangeHintV1,
+    type ProjectDeploymentDefaultsOutputV1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readArtifactForCallerInTx, resolveArtifactAudienceInTx } from '@/app/artifacts/artifactAccessService';
+import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import type { Tx } from '@/storage/inTx';
-import { readProjectSourceInTx } from './sources/projectSourceService';
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { readProjectSourceInTx, readProjectSourceCustodyInTx, resolveProjectSourceAudienceInTx } from './sources/projectSourceService';
 
 type ContentReference = NonNullable<ProjectDeploymentDefaultsSetInputV1['content']>;
-
 export type ProjectDeploymentDefaultsReadInput = ProjectDeploymentDefaultsReadInputV1;
-
+export type ProjectDeploymentDefaultsSetInput = ProjectDeploymentDefaultsSetInputV1;
 type FailureCode = Extract<ProjectDeploymentDefaultsOutputV1, { ok: false }>['error'];
-
 const failure = (error: FailureCode) => ({ ok: false as const, error });
-
 type Authentication = Partial<TeamOperationAuthenticationContext>;
-
 type DefaultsRow = NonNullable<Awaited<ReturnType<Tx['projectDeploymentDefaults']['findUnique']>>>;
-
 
 function reference(row: DefaultsRow | null): ContentReference | null {
     return row?.contentArtifactId && row.contentHeaderVersion !== null && row.contentBodyVersion !== null
@@ -29,13 +30,11 @@ function reference(row: DefaultsRow | null): ContentReference | null {
         : null;
 }
 
-
 function malformedReference(row: DefaultsRow | null, content: ContentReference | null): boolean {
     return row !== null && (row.contentArtifactId !== null || row.contentHeaderVersion !== null || row.contentBodyVersion !== null) && content === null;
 }
 
 /** The existing Artifact owner alone decides mode, key custody and recipient readiness. */
-
 async function admitContentInTx(tx: Tx, actorAccountId: string, projectSourceId: string, content: ContentReference,
     audience: readonly string[] | null, access: 'read' | 'write',
 ) {
@@ -65,20 +64,38 @@ async function admitContentInTx(tx: Tx, actorAccountId: string, projectSourceId:
     return { ok: true as const };
 }
 
-/** Exact Project demand returns only its admitted private Artifact reference, never a body inventory. */
-
+/** Admit new Source demand once; signed preparation consumes its captured Source before the same content read. */
 export async function readProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: string, input: ProjectDeploymentDefaultsReadInput,
     authentication: Authentication = {},
+    admittedBinding?: ExternalActionExecutionAuthorizationBindingV1,
 ): Promise<ProjectDeploymentDefaultsOutputV1> {
     if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return failure('project_defaults_unavailable');
-    const source = await readProjectSourceInTx(tx, actorAccountId, { serverId: input.serverId, sourceId: input.projectSourceId }, authentication);
-    if (!source.ok) return failure('project_defaults_unavailable');
+    let sourceRevision: number;
+    if (admittedBinding?.deploymentPreparationAdmission) {
+        const preparation = admittedBinding.deploymentPreparationAdmission;
+        const source: Readonly<{ id: string; revision?: number }> | undefined = preparation.operation === 'setup'
+            ? preparation.catalogSources?.find(selected => selected.source.id === input.projectSourceId)?.source
+            : 'source' in preparation ? preparation.source : undefined;
+        if (admittedBinding.accountId !== actorAccountId || admittedBinding.serverIdentityId !== input.serverId
+            || !source || source.id !== input.projectSourceId) return failure('project_defaults_unavailable');
+        if (source.revision !== undefined) {
+            sourceRevision = source.revision;
+        } else {
+            // Setup/create capture Source identity only; the response still needs its metadata revision.
+            const custody = await readProjectSourceCustodyInTx(tx, source.id);
+            if (!custody) return failure('project_defaults_unavailable');
+            sourceRevision = custody.source.revision;
+        }
+    } else {
+        const source = await readProjectSourceInTx(tx, actorAccountId, { serverId: input.serverId, sourceId: input.projectSourceId }, authentication);
+        if (!source.ok) return failure('project_defaults_unavailable');
+        sourceRevision = source.source.revision;
+    }
     const loaded = await readProjectDeploymentDefaultsContentInTx(tx, actorAccountId, input.projectSourceId);
-    return loaded.ok ? { ...loaded, projectSourceId: input.projectSourceId, sourceRevision: source.source.revision } : loaded;
+    return loaded.ok ? { ...loaded, projectSourceId: input.projectSourceId, sourceRevision } : loaded;
 }
 
 /** Exact content admission after the caller has admitted the Source in this transaction. */
-
 export async function readProjectDeploymentDefaultsContentInTx(tx: Tx, actorAccountId: string, projectSourceId: string,
     prospectiveOwner?: ProjectSourceOwnerV1,
 ) {
@@ -102,3 +119,41 @@ export async function readProjectDeploymentDefaultsContentInTx(tx: Tx, actorAcco
 }
 
 /** Source and content revisions bind one prepared defaults leaf; configured domain records are untouched. */
+export async function setProjectDeploymentDefaultsInTx(tx: Tx, actorAccountId: string, input: ProjectDeploymentDefaultsSetInput,
+    authentication: Authentication = {},
+): Promise<ProjectDeploymentDefaultsOutputV1> {
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return failure('project_defaults_unavailable');
+    // Serialize the first leaf insertion with Source authority changes at its existing parent.
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    if (provider === 'postgres' || provider === 'pglite') await tx.$queryRawUnsafe('SELECT "id" FROM "ProjectSource" WHERE "id" = $1 FOR UPDATE', input.projectSourceId);
+    if (provider === 'mysql') await tx.$queryRawUnsafe('SELECT `id` FROM `ProjectSource` WHERE `id` = ? FOR UPDATE', input.projectSourceId);
+    const source = await readProjectSourceInTx(tx, actorAccountId, { serverId: input.serverId, sourceId: input.projectSourceId }, authentication);
+    if (!source.ok) return failure('project_defaults_unavailable');
+    if (!source.canManage) return failure('project_defaults_access_denied');
+    const row = await tx.projectDeploymentDefaults.findUnique({ where: { projectSourceId: input.projectSourceId } });
+    const previous = reference(row);
+    if (malformedReference(row, previous)) return failure('project_defaults_content_unavailable');
+    if (source.source.revision !== input.expectedSourceRevision || (row?.revision ?? 0) !== input.expectedRevision) {
+        return failure('project_defaults_conflict');
+    }
+    const audience = await resolveProjectSourceAudienceInTx(tx, [source.source]);
+    if (input.content) {
+        const admitted = await admitContentInTx(tx, actorAccountId, input.projectSourceId, input.content, audience, 'write');
+        if (!admitted.ok) return admitted;
+    }
+    if (isDeepStrictEqual(previous, input.content)) {
+        return { ok: true as const, projectSourceId: input.projectSourceId, sourceRevision: source.source.revision, revision: row?.revision ?? 0, content: input.content };
+    }
+    const data = input.content ?? { contentArtifactId: null, contentHeaderVersion: null, contentBodyVersion: null };
+    if (row) {
+        const changed = await tx.projectDeploymentDefaults.updateMany({ where: { projectSourceId: input.projectSourceId, revision: input.expectedRevision },
+            data: { ...data, revision: { increment: 1 } } });
+        if (changed.count !== 1) return failure('project_defaults_conflict');
+    } else {
+        await tx.projectDeploymentDefaults.create({ data: { projectSourceId: input.projectSourceId, ...data } });
+    }
+    const revision = input.expectedRevision + 1;
+    await markAccountsChanged(tx, { accountIds: audience, entityId: `projects:${input.projectSourceId}:deploymentDefaults`,
+        hint: { projectSourceId: input.projectSourceId, key: 'deploymentDefaults', revision } satisfies ProjectDeploymentDefaultsChangeHintV1 });
+    return { ok: true as const, projectSourceId: input.projectSourceId, sourceRevision: source.source.revision, revision, content: input.content };
+}

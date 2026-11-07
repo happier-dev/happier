@@ -6,6 +6,7 @@ import type { PluginProjectionV2 } from '../daemon/contributionRegistryProjectio
 import { AcpBackendDefinitionV1Schema, AcpBackendLaunchV1Schema, type AcpBackendDefinitionV1 } from '../acp/catalog/settingsV1.js';
 import type { AcpCatalogSnapshotV1 } from '../acp/catalog/catalogRowsV1.js';
 import { AcpPlatformFitV1Schema } from '../acp/catalog/registry/acpPlatformFitV1.js';
+import { isNewerVersion } from '../updates/versionComparison.js';
 
 /** Caller-owned executable facts only. Inventory never carries environment or secret material. */
 export const MachineAcpInventoryDefinitionSchema = lazyZodSchema(() => z.strictObject({
@@ -51,7 +52,7 @@ const MachineAgentFactsSchema = lazyZodSchema(() => z.object({
   update: z.strictObject({ supported: z.boolean(), command: z.nullable(z.string()) }),
   signIn: z.strictObject({
     status: z.enum(['signedIn', 'signedOut', 'unknown']),
-    /** Omission retains required authentication for older inventory producers. */
+    /** Omission uses native login support; an explicit requirement takes precedence. */
     required: z.optional(z.boolean()),
     accountLabel: z.optional(z.string()),
     loginSupport: z.enum(['login_terminal', 'status_only', 'manual_only', 'unsupported']),
@@ -77,27 +78,52 @@ export const MachineAgentInventoryItemSchema = lazyZodSchema(() => (<T extends z
 })));
 export type MachineAgentInventoryItem = z.output<typeof MachineAgentInventoryItemSchema>;
 
+/** Unknown or non-comparable versions preserve an already installed executable. */
+export function resolveMachineAgentAcquireIntentV1(input: Pick<MachineAgentInventoryItem,
+  'installed' | 'version' | 'latestVersion'> & Readonly<{
+    update?: Readonly<Pick<MachineAgentInventoryItem['update'], 'supported'>> | null;
+  }>): 'install' | 'update' | null {
+  if (!input.installed) return 'install';
+  return input.update?.supported && isNewerVersion(input.version, input.latestVersion) ? 'update' : null;
+}
+
 /** Shared installation/authentication prerequisite, before UI update/job presentation. */
 export const MachineAgentExecutionStateV1Schema = lazyZodSchema(() => z.enum([
   'ready', 'needsSignIn', 'notInstalled', 'unsupported', 'checking', 'unknown',
 ]));
 export type MachineAgentExecutionStateV1 = z.infer<typeof MachineAgentExecutionStateV1Schema>;
 
-export function resolveMachineAgentExecutionStateV1(input: Pick<MachineAgentInventoryItem,
+export function resolveMachineAgentExecutionStateV1(input: Readonly<{
+  /** Inventory has already resolved the selected credential; strip only its display lifecycle overlays. */
+  inventoryState: MachineAgentExecutionStateV1 | 'updateAvailable' | 'installing' | 'failed';
+  known?: boolean;
+  checking?: boolean;
+}> | Pick<MachineAgentInventoryItem,
   'installed' | 'platform' | 'fit'> & Readonly<{
   dependencies: readonly Pick<MachineAgentInventoryItem['dependencies'][number], 'installed'>[];
-  signIn: Readonly<{ status: MachineAgentInventoryItem['signIn']['status']; native?: Readonly<{ required?: boolean }> }>;
+  signIn: Readonly<Pick<MachineAgentInventoryItem['signIn'], 'status'>
+    & Partial<Pick<MachineAgentInventoryItem['signIn'], 'required' | 'loginSupport'>>
+    & { native?: Readonly<Partial<Pick<MachineAgentInventoryItem['signIn'], 'required' | 'loginSupport'>>> }>;
   known?: boolean;
   checking?: boolean;
   credentialRouteReady?: boolean;
   authenticationRequired?: boolean;
 }>): MachineAgentExecutionStateV1 {
+  if ('inventoryState' in input) {
+    const state = input.inventoryState;
+    if (input.checking && (state === 'unknown' || state === 'checking')) return 'checking';
+    if (input.known === false) return 'unknown';
+    if (state === 'updateAvailable') return 'ready';
+    if (state === 'installing' || state === 'failed') return 'notInstalled';
+    return state;
+  }
   if (input.known === false) return input.checking ? 'checking' : 'unknown';
   if (input.fit?.kind === 'unknown') return 'unknown';
-  if (!input.platform.supported) return 'unsupported';
+  if (input.fit?.kind === 'cant_run' || !input.platform.supported) return 'unsupported';
   if (!input.installed || input.dependencies.some(dependency => !dependency.installed)) return 'notInstalled';
   if (input.credentialRouteReady === false) return 'unknown';
-  if (input.authenticationRequired ?? input.signIn.native?.required !== false) {
+  const nativeSignIn = input.signIn.native ?? input.signIn;
+  if (input.authenticationRequired ?? nativeSignIn.required ?? (nativeSignIn.loginSupport !== 'unsupported')) {
     if (input.signIn.status === 'signedOut') return 'needsSignIn';
     if (input.signIn.status !== 'signedIn') return 'unknown';
   }

@@ -10,7 +10,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -27,12 +27,16 @@ import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([
+it.each(([
     ['machines.managed.delete', 'plain'], ['machines.managed.power.set', 'plain'],
     ['machines.managed.inspect', 'plain'], ['machines.managed.acquire', 'plain'],
     ['deployments.teardown', 'plain'], ['deployments.teardown', 'e2ee'],
     ['deployments.environments.update', 'plain'], ['deployments.environments.update', 'e2ee'],
-] as const)('settles public CLI %s approval replay at its origin (%s)', async (actionId, encryptionMode) => {
+    ['deployments.environments.create', 'plain'], ['deployments.environments.create', 'e2ee'],
+    ['deployments.environments.create', 'plain', 'existing-source-first-link'],
+    ['deployments.environments.create', 'plain', 'new-project-first-link'],
+] as const).map(([actionId, encryptionMode, createShape]) => [actionId, encryptionMode, createShape ?? ''] as const))
+('settles public CLI %s approval replay at its origin (%s) %s', async (actionId, encryptionMode, createShape) => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-delete-replay-' }, async () => {
         const accountId = 'delete-owner';
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
@@ -48,7 +52,22 @@ it.each([
         const target = { kind: 'machine' as const, machineId: 'controller' };
         // Captured #48 shape: the explicit controller target survives a public
         // approval read even when private execution authorization is absent.
-        const actionArgs = actionId === 'deployments.environments.update' ? { serverId: configuration.activeServerId, environmentId: environment.id,
+        const preparedCreate = actionId === 'deployments.environments.create';
+        const signedEnvironment = preparedCreate || actionId === 'deployments.environments.update';
+        const firstLink = detail.targetLinks[0]!;
+        const actionArgs = preparedCreate ? { serverId: configuration.activeServerId,
+            ...(createShape === 'new-project-first-link'
+                ? { newProject: { owner: { kind: 'account', accountId }, name: 'New compose project', requestKey: 'create-project' } }
+                : { projectSourceId: 'source' }),
+            requestKey: 'create-environment', protection: createShape ? 'nonProduction' : 'production', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: 'controller', contentArtifactId: environment.contentArtifactId,
+            contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
+            ...(createShape ? { buildMachineId: 'controller', firstTargetLink: {
+                contentArtifactId: firstLink.targetLink.contentArtifactId,
+                contentHeaderVersion: firstLink.targetLink.contentHeaderVersion, contentBodyVersion: firstLink.targetLink.contentBodyVersion,
+                machines: [{ machineId: 'controller', installationId: 'installation' }],
+            } } : {}) }
+            : actionId === 'deployments.environments.update' ? { serverId: configuration.activeServerId, environmentId: environment.id,
             expectedRevision: environment.revision, contentArtifactId: environment.contentArtifactId,
             contentHeaderVersion: environment.contentHeaderVersion, contentBodyVersion: environment.contentBodyVersion,
             patch: { ingress: { kind: 'cloudflareTunnel' } } }
@@ -61,13 +80,13 @@ it.each([
                     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }
             : { homeId: 'srv_home', managedId: 'lima-leaf', when: 'now', expectedRevision: 0,
                 ...(actionId === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' }) };
-        // #82 retains the Account-auth root and the installation's proof over
-        // the original ingress-only input; this terminal has no machine signer.
-        const authorization = actionId === 'deployments.environments.update'
+        // Signed Environment approvals retain the Account root and installation
+        // proof over the reviewed input; this terminal has no machine signer.
+        const authorization = signedEnvironment
             ? ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-ingress-root', binding: {
                 accountId, custodianAccountId: accountId, serverIdentityId: 'srv_home', machineId: 'controller',
                 installationId: 'installation', actionId, authentication: { kind: 'account', tokenEpoch: 1 },
-                accountEncryptionMode: encryptionMode, environmentId: environment.id,
+                accountEncryptionMode: encryptionMode, ...(!preparedCreate ? { environmentId: environment.id } : {}),
                 requestId: 'original-delete', requestEnvelopeDigest: 'a'.repeat(43),
                 target, deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, actionArgs),
             } }) : undefined;
@@ -90,17 +109,22 @@ it.each([
             ? encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64') : encodePlainArtifactStoredContent(value);
         artifacts.seed('delete-approval', seal(buildApprovalRequestArtifactHeaderV1(request)),
             seal({ body: JSON.stringify(request) }), resource.dataEncryptionKey ?? undefined);
-        if (actionId === 'deployments.environments.update') {
+        if (signedEnvironment) {
             artifacts.seed(environment.contentArtifactId,
                 seal({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }),
                 seal({ body: JSON.stringify(detail.content) }), resource.dataEncryptionKey ?? undefined);
+            if (createShape) artifacts.seed(firstLink.targetLink.contentArtifactId,
+                seal({ kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'First own-server target' }),
+                seal({ body: JSON.stringify(firstLink.content) }), resource.dataEncryptionKey ?? undefined);
             app.get(`/v1/deployments/environments/${environment.id}`, async () => ({ ok: true, environment,
                 targetLinks: detail.targetLinks.map(item => item.targetLink) }));
         }
         const paths: string[] = [];
         const environmentPatches: string[] = [];
+        const environmentCreates: string[] = [];
         app.addHook('onRequest', async request => {
             paths.push(request.url);
+            if (request.method === 'POST' && request.url === '/v1/deployments/environments') environmentCreates.push(request.url);
             if (request.method === 'PATCH' && request.url.startsWith('/v1/deployments/environments/')) environmentPatches.push(request.url);
         });
         const machine = { id: 'controller', kind: 'persistent', active: true,
@@ -115,7 +139,8 @@ it.each([
         type Call = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
         const calls: Call[] = [];
         const accountSettings = AccountSettingsSchema.parse({});
-        const deleted = actionId === 'deployments.environments.update'
+        const deleted = preparedCreate ? { ok: true, environmentId: environment.id, revision: 1 }
+            : actionId === 'deployments.environments.update'
             ? { ok: true, environmentId: environment.id, revision: environment.revision + 1 }
             : { kind: 'accepted', managedId: 'lima-leaf', intentRevision: 1,
                 operation: { operationId: 'native-delete-operation' } };
@@ -166,9 +191,10 @@ it.each([
             expect(result, JSON.stringify({ result, paths, calls })).toMatchObject({ ok: true, result: { ok: true, status: 'executed',
                 execution: { ok: true, effectAttempted: true, result: deleted } } });
             expect(calls).toMatchObject([{ method: `controller:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}` }]);
-            if (actionId === 'deployments.environments.update') {
+            if (signedEnvironment) {
                 expect(calls).toHaveLength(1);
                 expect(environmentPatches).toEqual([]);
+                expect(environmentCreates).toEqual([]);
             } else {
                 expect(paths).not.toContain(managedMachineActionEndpointPathV1(actionId));
             }

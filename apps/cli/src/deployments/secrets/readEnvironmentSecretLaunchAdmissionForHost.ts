@@ -1,4 +1,9 @@
 import { readDeploymentAuthorizationFailure, refuseDeploymentAuthorization } from '../deploymentAuthorizationFailure';
+import { randomUUID } from 'node:crypto';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { projectDeploymentChildRoutingV1, type DeploymentDomainChildRpcV1,
+    type DeploymentDomainHeaderV1 } from '@happier-dev/protocol';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -14,7 +19,8 @@ import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunc
     type EnvironmentDomainSecretLaunchAdmissionV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { resolveExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { createExternalActionMachineRpcExecution, projectExternalActionRequesterHttpAuthorization,
+    resolveExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { OwnServerSecretLaunchAdmission, OwnServerSecretLaunchAdmissionRequest } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
@@ -26,7 +32,7 @@ const refuse = (code: string, cause?: ActionExecuteFailure): never => {
     throw Object.assign(new Error(cause?.error ?? code), { code, ...(cause ? { cause } : {}) });
 };
 type InstalledSecretContext = Pick<ActionExecutorContext, 'signal' | 'externalActionExecutionAuthorization'
-    | 'externalActionCredential' | 'rpcSessionAuthorization'> & Readonly<{
+    | 'externalActionCredential' | 'rpcSessionAuthorization' | 'externalActionTarget' | 'originalActionEnvelope'> & Readonly<{
     operationAcceptance?: Pick<NonNullable<ActionExecutorContext['operationAcceptance']>, 'operationId'>;
 }>;
 type HostSecretAdmissionRequest = Omit<OwnServerSecretLaunchAdmissionRequest, 'materialization'> & Readonly<{
@@ -81,6 +87,8 @@ type InstalledSecretHostInput = Pick<OwnServerSecretLaunchAdmissionRequest,
     'signal' | 'serverHttpBaseUrl' | 'machineId' | 'installationId'> & Readonly<{
     credentials: Pick<OwnServerSecretLaunchAdmissionRequest['credentials'], 'token'>;
     context: InstalledSecretContext;
+    /** Accepted Domain work, sealed by the existing installed signer for Home's child-purpose owner. */
+    deploymentChild?: DeploymentDomainChildRpcV1;
     /** Existing installed identity location, carried privately across elevation; never a copied seed. */
     installationIdentityFile?: string;
 }>;
@@ -99,7 +107,29 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
     const prepareRequest = async (path: string, body: EnvironmentSecretLaunchAdmissionBodyV1 | MachineConnectorSecretGrantBodyV1,
         effectActionId?: string) => {
         await assertAuthority();
-        const projection = effectActionId ? input.context.externalActionExecutionAuthorization?.requesterHttpProjection : undefined;
+        let context = input.context;
+        const authorization = context.externalActionExecutionAuthorization;
+        if (input.deploymentChild && authorization) {
+            const rootHttp = authorization.requesterHttpProjection;
+            const target = context.externalActionTarget;
+            if (!rootHttp || !target) return refuseDeploymentAuthorization('home_secret_launch_headers_refused');
+            const child = input.deploymentChild;
+            const method = `${child.machineId}:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`;
+            const requestId = randomUUID();
+            const externalActionExecution = createExternalActionMachineRpcExecution({ context: { ...context, operationAcceptance: undefined },
+                effectActionId: child.actionId, installationId: identity.installationId, method, requestId, params: child,
+                deploymentChildRouting: projectDeploymentChildRoutingV1(child), privateKey: identity.privateKey });
+            const packet = WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId, params: child,
+                originalActionEnvelope: context.originalActionEnvelope, externalActionExecution });
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                serverId: rootHttp.serverId, serverIdentityId: rootHttp.serverIdentityId,
+                serverHttpBaseUrl: input.serverHttpBaseUrl, target, installationId: identity.installationId,
+                privateKey: identity.privateKey, rootAdmitted: true, forwardedDeploymentChild: child,
+                deploymentChildExecution: packet, signal: input.signal });
+            if (!projected) return refuseDeploymentAuthorization('home_secret_launch_headers_refused');
+            context = { ...context, externalActionExecutionAuthorization: projected };
+        }
+        const projection = effectActionId ? context.externalActionExecutionAuthorization?.requesterHttpProjection : undefined;
         const proof = signMachineInstallationProof({ payload: { version: 1, machineId: input.machineId,
             installationId: identity.installationId, accountId: projection?.accountId ?? accountId,
             deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
@@ -107,7 +137,7 @@ function createInstalledSecretTransportForHost(input: InstalledSecretHostInput,
         const data = { ...body, proof };
         const authorizationHeaders = createRequestHeaders ? await createRequestHeaders(data)
             : projection && effectActionId ? await resolveExternalActionRequesterServerRequestHeaders({
-                context: input.context, serverHttpBaseUrl: input.serverHttpBaseUrl, method: 'POST', path, body: data,
+                context, serverHttpBaseUrl: input.serverHttpBaseUrl, method: 'POST', path, body: data,
                 effectActionId }) : { Authorization: `Bearer ${input.credentials.token}` };
         if (!authorizationHeaders) return refuseDeploymentAuthorization('home_secret_launch_headers_refused');
         const url = `${input.serverHttpBaseUrl}${path}`;
@@ -186,17 +216,26 @@ export type MachineConnectorSecretGrantHostRequest = Omit<InstalledSecretHostInp
 /** Capture every admitted Domain target; Account code supplies only the connector and token. */
 export function bindMachineConnectorSecretsForHost(input: Omit<MachineConnectorSecretGrantHostRequest,
     'subject' | 'hostMachineId' | 'hostInstallationId'> & Readonly<{
+    domain: DeploymentDomainHeaderV1;
     domainAdmissions: readonly EnvironmentDomainSecretLaunchAdmissionV1[];
     onGrant?: (grant: Readonly<{ machineId: string; installationId: string; grantRef: string }>) => void;
 }>): NonNullable<PluginAccountActionContext['services']['machineConnectorSecrets']> {
-    const { domainAdmissions, onGrant, ...host } = input;
+    const { domain, domainAdmissions, onGrant, ...host } = input;
     type Write = NonNullable<PluginAccountActionContext['services']['machineConnectorSecrets']>['write'];
     return Object.freeze({
         async write({ token, subject }: Parameters<Write>[0]) {
             const grants: { machineId: string; installationId: string; grantRef: string }[] = [];
             for (const { controller, target, actionOperationId } of domainAdmissions) {
+                const capture = domain.placements?.find(item => item.desired
+                    && item.placement.machineId === target.machineId && item.placement.installationId === target.installationId
+                    && item.placement.actionOperationId === actionOperationId);
+                if (!capture) return refuse('target_mismatch');
+                const deploymentChild: DeploymentDomainChildRpcV1 = { v: 1, kind: 'domain', actionId: 'deployments.domains.add',
+                    input: { serverId: host.serverId, environmentId: domain.environmentId, domainId: domain.id },
+                    machineId: target.machineId, installationId: target.installationId,
+                    expectedDomainRevision: domain.revision, actionOperationId, capture };
                 const written = await writeMachineConnectorSecretGrantForHost({
-                    ...host, context: { ...host.context, operationAcceptance: { operationId: actionOperationId } }, token,
+                    ...host, deploymentChild, context: { ...host.context, operationAcceptance: { operationId: actionOperationId } }, token,
                     installationPublicKey: decodeBase64(target.publicKey, 'base64url'),
                     hostMachineId: controller.machineId, hostInstallationId: controller.installationId,
                     subject: { v: 1, kind: 'connectorToken', machineId: target.machineId,
@@ -240,7 +279,7 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
     } : undefined);
     try {
         await custody.assertCurrent();
-        const actionId = input.context.externalActionExecutionAuthorization?.binding.actionId;
+        const actionId = input.deploymentChild?.actionId ?? input.context.externalActionExecutionAuthorization?.binding.actionId;
         // Domain effects carry their accepted child to Home. Its active-job
         // lookup owns this request; local custody only observes cancellation.
         if (actionId !== 'deployments.domains.add' && actionId !== 'deployments.domains.remove') {
@@ -271,7 +310,7 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
     const body = { serverId: input.serverId, hostMachineId: input.hostMachineId,
         hostInstallationId: input.hostInstallationId, subject: input.subject };
     const path = machineConnectorSecretGrantPathForHost(input.subject.machineId);
-    const effectActionId = input.context.externalActionExecutionAuthorization?.binding.actionId;
+    const effectActionId = input.deploymentChild?.actionId ?? input.context.externalActionExecutionAuthorization?.binding.actionId;
     const request = async (operation: MachineConnectorSecretGrantBodyV1) => projectResponse(await custody.request(
         path, MachineConnectorSecretGrantBodyV1Schema.parse(operation), effectActionId));
     const prepareRemoval = async () => {

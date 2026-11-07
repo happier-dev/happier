@@ -59,7 +59,8 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
       && (origin.caller.kind === 'host' || origin.caller.kind === 'plugin')) {
     const appOrTerminalInvocation = !origin.externalActionExecutionAuthorization
       && (origin.caller.kind === 'host' || origin.caller.kind === 'plugin')
-      && (origin.surface === 'ui' || origin.surface === 'voice' || origin.surface === 'plugin' || origin.surface === 'cli');
+      && (origin.surface === 'ui' || origin.surface === 'voice' || origin.surface === 'plugin' || origin.surface === 'cli'
+        || origin.surface === 'mcp' && origin.caller.kind === 'host');
     const daemonMachineId = origin.caller.kind === 'plugin' && origin.target?.kind === 'machine'
       ? origin.target.machineId.trim()
       : appOrTerminalInvocation ? undefined : origin.machineId?.trim();
@@ -87,9 +88,13 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
       || isManagedRetainedControlInvocation(actionId, input.data))
     && origin.target?.kind === 'machine') return { kind: 'daemon', machineId: origin.target.machineId };
   if (placement === 'account' && origin.target?.kind === 'machine') {
-    // A token's approved Account effect retains its original signed transport.
-    // The deciding app's Account bearer cannot replace that credential custody.
-    if (origin.principalId && origin.credentialId) return { kind: 'daemon', machineId: origin.target.machineId };
+    // An effect prepared through required daemon ingress retains that signer
+    // after normalization makes its prepared input Account-placed.
+    if (origin.externalActionExecutionAuthorization
+        && spec.originalExecution?.daemonIngressSurfaces?.some(surface => surface === origin.surface)
+      || origin.principalId && origin.credentialId) {
+      return { kind: 'daemon', machineId: origin.target.machineId };
+    }
     const reviewed = HostReviewedChildrenPlanV1Schema.safeParse(readRecord(request.preview).hostReviewedChildren);
     // The Account root's reviewed native effects retain their original host.
     // App replay would discard the Machine custody needed by those children.

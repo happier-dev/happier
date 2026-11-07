@@ -22,6 +22,11 @@ import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
+function isReadOnlyTargetRole(role: DeploymentTargetRoleV1): boolean {
+    return ['inspect', 'observe', 'projects.list', 'projects.provisionOptions',
+        'projects.link', 'branches.list', 'query.readOnly', 'logs.build', 'logs.runtime'].includes(role);
+}
+
 export type DeploymentTargetRoleAdmissionHost = Readonly<{
     serverId: string;
     machineId: string;
@@ -125,6 +130,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     // custody projection must never erase a successfully parsed receipt.
     const lifecycle = parsed.filter(entry => 'deploymentId' in entry.input);
     const matched = lifecycle.length ? lifecycle : parsed;
+    const mutating = matched.some(({ binding }) => !isReadOnlyTargetRole(binding.role));
     const input = matched[0]!.input;
     const actionId = formatQualifiedPluginActionId({ pluginId: request.pluginId, localId: request.localId });
     const reviewed = readHostReviewedChildOperationV1(request.context, actionId, request.input);
@@ -160,7 +166,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     const environment = detail.environment;
     if (environment.id !== input.environmentId || !await isServerProfileHomeIdentity(environment.serverId, host.serverId) || environment.deletedAtMs !== undefined
         || !environment.capabilities.read) return refuse('deployment_access_denied', 'deployment.target.admission.environment_read');
-    if (environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
+    if (mutating && environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
     let candidates = matched;
     if (input.targetLinkId) {
         const selected = detail.targetLinks.find(entry => entry.targetLink.id === input.targetLinkId);
@@ -176,7 +182,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
             && link.source.contribution.pluginId === request.pluginId && link.source.contribution.localId === binding.targetLocalId
             && link.targetKind === binding.targetKind);
         if (!candidates.length) return refuse('target_mismatch', 'deployment.target.admission.link_identity');
-        if (link.revision !== input.expectedTargetLinkRevision) return refuse('deployment_conflict');
+        if (mutating && link.revision !== input.expectedTargetLinkRevision) return refuse('deployment_conflict');
         if (retained && (link.source.contribution.pluginId !== retained.source.pluginId
             || link.source.contribution.localId !== retained.source.localId
             || !isDeepStrictEqual(retained.deleteAction, { pluginId: request.pluginId, localId: request.localId })
@@ -200,8 +206,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     }
     if ((request.executionTarget === 'account' || candidates.some(candidate => candidate.binding.role.includes('.') || candidate.binding.role === 'uploadDeploy'))
         && environment.controllerMachineId !== host.machineId) return refuse('machine_unavailable');
-    candidates = candidates.filter(({ binding }) => ['inspect', 'observe', 'projects.list', 'projects.provisionOptions',
-        'projects.link', 'branches.list', 'query.readOnly', 'logs.build', 'logs.runtime'].includes(binding.role)
+    candidates = candidates.filter(({ binding }) => isReadOnlyTargetRole(binding.role)
         ? environment.capabilities.read : ['link', 'projects.provision', 'connectionSecret.save'].includes(binding.role)
             ? environment.capabilities.manageTargets : environment.capabilities.deploy
                 || admittedOperation === (binding.role === 'uploadDeploy' ? 'deploy' : binding.role));

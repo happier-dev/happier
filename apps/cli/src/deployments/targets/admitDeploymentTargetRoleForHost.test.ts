@@ -35,6 +35,24 @@ describe('deployment role host admission', () => {
                 role, receipt: { content: { platform: { targetLinkRevision: 1 } } } });
         });
 
+        it.each([
+            ['logs.build', 'environment', false], ['logs.runtime', 'link', false], ['observe', 'both', false],
+            ['observe', 'environment', true], ['observe', 'link', true],
+        ] as const)('requires revision equality for %s after a %s edit only with mutation %s', async (role, changed, mixed) => {
+            const fixture = role === 'observe' ? createDeploymentTargetRoleAdmissionFixture(role) : historicalLogs(role);
+            if (changed !== 'link') fixture.state.environment.environment.revision++;
+            if (changed !== 'environment') fixture.state.environment.targetLinks[0]!.targetLink.revision++;
+            if (mixed) {
+                const request = { ...fixture.request, bindings: [...fixture.request.bindings,
+                    { ...fixture.request.bindings[0]!, role: 'cancel' as const }] };
+                await expect(admitDeploymentTargetRoleForHost(request, fixture.host))
+                    .rejects.toMatchObject({ code: 'deployment_conflict' });
+            } else {
+                fixture.state.environment.environment.capabilities.deploy = false;
+                await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({ role });
+            }
+        });
+
         it.each(['missing', 'deleted', 'detached', 'replaced target', 'foreign Account', 'foreign provider', 'foreign receipt'] as const)(
             'refuses retained logs for %s with the owning fact', async change => {
                 const fixture = historicalLogs();
@@ -351,9 +369,11 @@ describe('deployment role host admission', () => {
         ['runtime link', 'target_mismatch'], ['foreign target', 'target_mismatch'],
         ['foreign native resource', 'deployment_access_denied'], ['foreign branch', 'deployment_access_denied'],
         ['foreign principal', 'deployment_access_denied'], ['wrong controller', 'machine_unavailable'],
-        ['stale link', 'deployment_conflict'], ['missing read capability', 'deployment_access_denied'],
+        ['stale link', 'deployment_conflict'], ['stale environment', 'deployment_conflict'],
+        ['missing read capability', 'deployment_access_denied'],
     ] as const)('refuses managed data with %s', async (change, code) => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+        const fixture = createDeploymentTargetRoleAdmissionFixture(
+            change === 'stale link' || change === 'stale environment' ? 'branches.create' : 'query.readOnly');
         if (change === 'runtime link') fixture.state.environment.targetLinks[0]!.targetLink.role = 'runtime';
         if (change === 'foreign target') fixture.state.environment.targetLinks[0]!.targetLink.targetKind = 'foreign';
         if (change === 'foreign native resource') fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
@@ -365,6 +385,7 @@ describe('deployment role host admission', () => {
         } };
         if (change === 'wrong controller') fixture.state.environment.environment.controllerMachineId = 'foreign';
         if (change === 'stale link') fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
+        if (change === 'stale environment') fixture.state.environment.environment.revision = 2;
         if (change === 'missing read capability') fixture.state.environment.environment.capabilities.read = false;
         await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code });
     });
