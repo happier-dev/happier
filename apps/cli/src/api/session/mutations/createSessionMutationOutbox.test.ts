@@ -1462,6 +1462,86 @@ describe('createSessionMutationOutbox', () => {
         }
     });
 
+    it('automatically retries Activity before an earlier blocked ordered head is due', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+        const sessionId = 's-independent-activity-retry';
+        const deliveredSnapshots: unknown[] = [];
+        let activityAttempts = 0;
+        vi.mocked(axios.post).mockRejectedValue({ response: { status: 503 } });
+        const { createSessionMutationJournal } = await import('./createSessionMutationOutbox');
+        const { createRuntimeActivitySnapshotMutation, createSessionTurnMutation } = await import('./sessionMutationTypes');
+        const { parseQueuedSessionMutation } = await import('./sessionMutationPersistence');
+        const outbox = createSessionMutationJournal({
+            custody: 'runtime',
+            token: 'tok',
+            sessionId,
+            paths: (await createRuntimePersistenceContext(sessionId)).paths,
+            admission: parseQueuedSessionMutation,
+            getSocket: () => createApiSessionSocketStub({ connected: false }),
+            requestReconnect: () => {},
+            deliverRuntimeActivitySnapshot: async (mutation) => {
+                activityAttempts += 1;
+                if (activityAttempts === 2) return { status: 'retryable', reason: 'temporarily_unavailable' };
+                deliveredSnapshots.push(mutation.snapshot);
+                return {
+                    status: 'delivered',
+                    path: 'socket',
+                    runtimeActivityEvidence: {
+                        disposition: 'applied',
+                        projection: { ...mutation.snapshot, observedAt: Date.now(), revision: activityAttempts },
+                    },
+                };
+            },
+        });
+        try {
+            await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+            // Settle the initial snapshot so later Activity is appended behind the ordered queue.
+            await outbox.enqueueRuntimeActivitySnapshot(createRuntimeActivitySnapshotMutation({
+                sessionId, snapshot: { state: 'active', activeCount: 1 },
+            }));
+            const head = createSessionTurnMutation({
+                sessionId, action: 'begin', turnId: 'turn-head', mutationId: 'head', observedAt: Date.now(),
+            });
+            const tail = createSessionTurnMutation({
+                sessionId, action: 'complete', turnId: 'turn-head', mutationId: 'tail', observedAt: Date.now(),
+            });
+            await outbox.enqueueSessionTurn(head);
+            await outbox.enqueueSessionTurn(tail);
+            await outbox.flush('timer');
+            // The head already has the normal 30-second capped backoff. Give Activity
+            // a shorter retry without changing the deadline persisted for that head.
+            process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '1000';
+            const terminal = createRuntimeActivitySnapshotMutation({
+                sessionId, snapshot: { state: 'idle', activeCount: 0 },
+            });
+            await outbox.enqueueRuntimeActivitySnapshot(terminal);
+            expect(await readPersistedOutboxMutations(sessionId)).toEqual([
+                expect.objectContaining({ mutationId: head.mutationId, nextAttemptAt: Date.now() + 30_000 }),
+                expect.objectContaining({ mutationId: tail.mutationId, attempts: 0, nextAttemptAt: 0 }),
+                expect.objectContaining({ mutationId: terminal.mutationId, nextAttemptAt: Date.now() + 2_000 }),
+            ]);
+            const headAttempts = vi.mocked(axios.post).mock.calls.length;
+
+            await vi.advanceTimersByTimeAsync(2_000);
+
+            // Only the scheduled timer may trigger delivery; do not explicitly flush.
+            await vi.waitFor(async () => {
+                expect(deliveredSnapshots).toEqual([
+                    { state: 'active', activeCount: 1 }, { state: 'idle', activeCount: 0 },
+                ]);
+                expect(await readPersistedOutboxMutations(sessionId)).toEqual([
+                    expect.objectContaining({ mutationId: head.mutationId }),
+                    expect.objectContaining({ mutationId: tail.mutationId, attempts: 0, nextAttemptAt: 0 }),
+                ]);
+            });
+            expect(vi.mocked(axios.post).mock.calls.length).toBe(headAttempts);
+        } finally {
+            await outbox.close();
+            vi.useRealTimers();
+        }
+    });
+
     it('delivers a runtime-activity terminal snapshot even when an earlier session turn is retryably blocked', async () => {
         const sessionId = 's-runtime-activity-not-blocked-by-turn';
         const deliveredSnapshots: unknown[] = [];
