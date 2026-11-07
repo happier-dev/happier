@@ -1,5 +1,4 @@
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
-import { qualifyMcpExecutionSourceForHost, readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 import { randomUUID } from 'node:crypto';
 import { readRunnerAgentSessionBootstrap } from '@/agent/runtime/session/process/runnerAgentSessionBootstrap';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
@@ -15,7 +14,12 @@ import { formatProcessOwnerTag, PROCESS_OWNER_ENV_KEY } from '@/processes/ownerT
 import { joinCurrentWindowsSessionProcessCustody } from '@/subprocess/supervision/processCustody';
 import { buildToolIdleTimeoutEnvironmentOverlay } from '@/processes/toolIdleTimeouts';
 import { readMachineResourcesPolicySnapshot } from '@/api/machine/machineResourcesPolicy';
+import { qualifyMcpExecutionSourceForHost, readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
+import { readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { hasExplicitlyEmptyManagedMcpSelection } from '@/mcp/servers/resolveSessionCapabilitiesForDirectory';
 
+import { admitNativeRealtimeInput } from '@/agent/runtime/session/realtime/admitNativeRealtimeInput';
 import type {
   AccountSettings,
   AgentExecutionTargetV1,
@@ -31,7 +35,6 @@ import type {
   SessionMetadataPublisherPreconditionV1,
   SessionContextUsageSnapshotV1,
   WorkerUpdateV1,
-  TranscriptRawAgentEventV1,
 } from '@happier-dev/protocol';
 import type {
   AgentSessionHostServices,
@@ -42,7 +45,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
-import { BackendTargetRefV2InputSchema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetRefV2InputSchema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { applySessionProviderBindingMetadataV1, projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
@@ -52,7 +55,6 @@ import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/m
 import { createSessionActiveModelSelection, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { renderWorkerUpdatePromptBlockV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
-import type { WorkerUpdateFollowMatchV1 } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
@@ -75,6 +77,7 @@ import { clearInitialGoalFromEnv, readInitialGoalFromEnv } from '@/daemon/spawn/
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import { ApiClient } from '@/api/api';
+import { SessionRuntimeActivitySnapshotRejectedError } from '@/api/session/stateUpdates';
 import type { RpcHandlerManagerLike } from '@/api/rpc/types';
 import type {
   ApiSessionClient,
@@ -128,11 +131,13 @@ import {
   getActiveAccountSettingsSnapshotLifetimeToken,
   readAccountRoleOverridesFromSnapshot,
   subscribeActiveAccountSettingsKeys,
+  type AccountSettingsSnapshotResolver,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { prepareActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { createRetainedAccountExecutionRuntime, type RetainedAccountExecutionRuntime,
+  type AccountExecutionRuntimeRegistryLease as PluginRuntimeRegistryLease } from '@/plugins/runtime/accountExecutionRuntime';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
 import { createSessionMcpStdioRuntime } from '@/mcp/runtime/createSessionMcpStdioRuntime';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -161,12 +166,12 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { registerHappierSessionAgentToolRpc } from '@/mcp/startHappyServer';
 import type { StructuredInputCatalogReaders } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { resolveCliMemoryRecallGuidanceEnabled } from '@/agent/prompts/library/resolveCliMemoryRecallGuidanceEnabled';
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import {
   resolveSessionPendingQueueDeliveryTiming,
-  resolveSessionPendingQueueMaxPopPerWake,
 } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
@@ -210,11 +215,11 @@ import {
 import { createSessionRunnerRestartAdmission, registerSessionProviderInputAdmissionRpc } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
 import { clearSessionGuardStateOnRunnerStart, type SessionGuardNoticeOwner } from '@/agent/runtime/session/input/sessionGuardNoticeRpc';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
-import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { notifyDaemonSessionActivityChanged } from '@/daemon/controlClient';
 import { createSessionProviderInputConsumerSessionAdapter } from '@/agent/runtime/waitForNextPermissionModeMessage';
-import { commitRuntimeSessionEvent } from '@/agent/runtime/session/transcripts/publishRuntimeSessionEvent';
+import { createHostWorkerUpdatePublication } from '@/agent/runtime/session/contextOnly/hostWorkerUpdatePublication';
 import { resolveInitialHostSessionModelSelection } from '@/agent/runtime/session/loop/resolveInitialModelSelection';
+import { resolveModelSelectionSource } from '@/providers/sessions/resolveModelSelectionSource';
 import { createSessionRuntimeModelsPublisher } from '@/agent/runtime/controls/sessionRuntimeModelsPublisher';
 import { createSessionRuntimeModesPublisher } from '@/agent/runtime/controls/sessionRuntimeModesPublisher';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -237,6 +242,7 @@ import {
   resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import {
   applyDisplayTitleSessionMetadata,
   createModelIntentMetadataCasCandidate,
@@ -416,11 +422,10 @@ function resolvePendingComposerMediaReleaseIntents(
 
 function createPendingMessageComposerAdmissionAcceptedControl(
   bridge: SessionLoopLifecycleDeps['daemonTurnContributionsBridge'],
-  getSessionId: () => string,
+  sessionId: string,
 ): ((request: SessionPendingMessageComposerAdmissionAcceptedRequestV1) => Promise<void>) | undefined {
   if (!bridge) return undefined;
   return async (request) => {
-    const sessionId = getSessionId();
     if (request.sessionId !== sessionId) {
       throw new Error('Pending Composer acceptance belongs to a different Session');
     }
@@ -455,11 +460,10 @@ function createPendingMessageComposerAdmissionAcceptedControl(
 
 function createPendingMessageComposerAdmissionAbandonedControl(
   bridge: SessionLoopLifecycleDeps['daemonTurnContributionsBridge'],
-  getSessionId: () => string,
+  sessionId: string,
 ): ((request: SessionPendingMessageComposerAdmissionAbandonedRequestV1) => Promise<void>) | undefined {
   if (!bridge) return undefined;
   return async (request) => {
-    const sessionId = getSessionId();
     if (request.sessionId !== sessionId) {
       throw new Error('Pending Composer abandonment belongs to a different Session');
     }
@@ -502,7 +506,9 @@ export type HostRuntimeReplacementLifecycle = Readonly<{
 }>;
 
 export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Readonly<{
+  readNativeAttachLaunchAuthority?: import('@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks').PluginRuntimeHookOperations['readNativeAttachLaunchAuthority'];
   runScmCommand?: ScmCommandRunner;
+  admitAgentSessionRealtimeInput?: import('@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks').PluginRuntimeHookOperations['admitAgentSessionRealtimeInput'];
   readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
   openedWithoutConnectedServices?: () => boolean;
   prepareRunTeamCredentialProviderBinding?: SessionRuntimeControls['prepareRunTeamCredentialProviderBinding'];
@@ -586,7 +592,7 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   resolveMcpToolPolicy?: (permissionMode: string) => import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['mcpToolPolicy'];
   skills?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['skills'];
   accountSettings?: AccountSettings | null;
-  resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; savedSecretReferences?: readonly import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationReferenceV1[]; signal?: AbortSignal }>) => Promise<import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null>;
+  resolveAccountSettingsSnapshot?: AccountSettingsSnapshotResolver;
   /** Explicit scope for Account-settings consumers; Session scope is fail-closed. */
   accountSettingsAuthority?: HostSessionRuntimeAuthority['scope'];
   /** Explicit runtime credential reader for scoped compositions; ordinary hosts use their existing persistence reader. */
@@ -594,7 +600,6 @@ export type HostSessionRuntimeFactoryParams = Readonly<{
   providerBindingMaterialization?: AgentProviderBindingLaunchMaterializationV1;
   /** True only for the exact matching local cross-agent native-return record. */
   strictNativeResumeIdentity?: boolean;
-  pendingQueueDrainMaxPopPerWake?: number;
   pendingQueueDeliveryTiming?: AccountSettings['sessionPendingQueueDeliveryTiming'];
   permissionHandler: ProviderEnforcedPermissionHandler;
   getPermissionMode: () => PermissionMode;
@@ -1073,6 +1078,8 @@ export async function runHostSessionRuntime(
     }
   };
   const startupRegistrationLifetime = new AbortController();
+  let sessionAccountRuntime: RetainedAccountExecutionRuntime | undefined;
+  let workerUpdatePublication: ReturnType<typeof createHostWorkerUpdatePublication> | null = null;
   let currentSessionPresentationHost: CurrentSessionPresentationHost | null = null;
   let runtimeStopRequested = false;
   let runtimeStopDelegate: (() => Promise<void>) | null = null;
@@ -1147,6 +1154,14 @@ export async function runHostSessionRuntime(
   const machineAdmissionTransport = createScopedMachineAdmissionTransport(
     daemonTurnContributionsBridge,
   );
+  const createPendingMessageComposerAdmissionControls = (sessionId: string) => ({
+    acceptPendingMessageComposerAdmission: createPendingMessageComposerAdmissionAcceptedControl(
+      daemonTurnContributionsBridge, sessionId,
+    ),
+    abandonPendingMessageComposerAdmission: createPendingMessageComposerAdmissionAbandonedControl(
+      daemonTurnContributionsBridge, sessionId,
+    ),
+  });
 
   const persistedTakeoverAdmissionFromEnv =
     consumePersistedTakeoverAdmissionFromEnv();
@@ -1277,10 +1292,6 @@ export async function runHostSessionRuntime(
   let latestSessionContextUsage: SessionContextUsageSnapshotV1 | null = null;
   let ownerActivityDelivery: 'rich_sender' | 'home_required' = 'home_required';
   const runtimeState = { thinking: false };
-  const appliedModelByPendingLocalId = new Map<string, Readonly<{
-    provider: string;
-    selection: ProviderBoundModelRef;
-  }>>();
   let reconnectionHandle: { cancel: () => void } | null = null;
   let startupCoordinatorStart: (() => void | Promise<void>) | null = null;
   let commitPendingFirstInputAfterRuntimeReady: (() => Promise<void>) | null = null;
@@ -1394,6 +1405,7 @@ export async function runHostSessionRuntime(
       currentSessionPresentationHost?.retire();
     }
     session = newSession;
+    workerUpdatePublication?.bind(newSession);
     if (roleContext) applyRunnerMcpSessionContext(newSession, { getSessionRoleContext: roleContext });
     currentSessionPresentationHost?.bindCurrentSession();
     process.env[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
@@ -1479,9 +1491,7 @@ export async function runHostSessionRuntime(
   });
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: policyAgentId,
-    backendTarget: runtimeOpts.backendTarget
-      ? convertBackendTargetRefV2ToV1(readBackendTargetRefV2(runtimeOpts.backendTarget))
-      : undefined,
+    backendTarget: runtimeOpts.backendTarget,
     explicitPermissionMode: runtimeOpts.permissionMode,
     accountSettings,
   });
@@ -1509,6 +1519,7 @@ export async function runHostSessionRuntime(
         augmentSessionMetadata,
         transformSessionInputBeforeCommit,
         afterComposerAttachmentMessageAccepted,
+        createPendingMessageComposerAdmissionControls,
         machineAdmissionTransport,
         createInitialRegisteredSessionStateFieldMutations: (sessionId) => [
           createInitialHostRuntimeActivityMutation({
@@ -1566,6 +1577,7 @@ export async function runHostSessionRuntime(
           durableMutationDeliveryInitiallyActive: false,
           transformSessionInputBeforeCommit,
           afterComposerAttachmentMessageAccepted,
+          pendingMessageComposerAdmissionControls: createPendingMessageComposerAdmissionControls(sessionRow.id),
           machineAdmissionTransport,
         });
       },
@@ -1927,6 +1939,7 @@ export async function runHostSessionRuntime(
   // Finite material reads may refresh their snapshot without selecting another Home or Account.
   const sessionOpenContext = {
     home: session.getServerBinding(),
+    serverIdentityId: session.getServerIdentityId() ?? undefined,
     credentials: runtimeAuthority.accountCredentials,
     scopeKey: runtimeAuthority.accountCredentials
       ? runtimeOpts.accountSettingsContext?.scopeKey ?? resolveAccountSettingsScopeKey(runtimeAuthority.accountCredentials)
@@ -1973,6 +1986,26 @@ export async function runHostSessionRuntime(
     }
     return capturedOpenAccountOperation;
   };
+  if (sessionOpenContext.credentials && config.pluginRuntimeRegistryLease) {
+    const credentials = sessionOpenContext.credentials;
+    sessionAccountRuntime = createRetainedAccountExecutionRuntime(() => {
+      const operationContext = readSessionOpenAccountOperation();
+      if (!operationContext) throw new Error('saved_secret_account_snapshot_unavailable');
+      return {
+        happyHomeDir: config.machineMetadata.happyHomeDir,
+        signal: startupRegistrationLifetime.signal,
+        resolveServerFeaturesSnapshot: () => currentLifecycleSession.getServerFeaturesSnapshot(),
+        accountExecution: { credentials, serverUrl: sessionOpenContext.home.serverUrl,
+          serverId: sessionOpenContext.home.serverId, serverIdentityId: sessionOpenContext.serverIdentityId, machineId,
+          savedSecretOperationContext: operationContext,
+          isCurrent: () => !startupRegistrationLifetime.signal.aborted && isSessionOpenAccountCurrent(),
+          isCredentialCurrent: operationContext.isCurrent },
+      };
+    });
+  }
+  const sessionPluginRuntimeRegistryLease = config.pluginRuntimeRegistryLease && sessionAccountRuntime
+    ? { ...config.pluginRuntimeRegistryLease, accountRuntime: sessionAccountRuntime }
+    : config.pluginRuntimeRegistryLease;
   // Daemon launches already captured this policy in their admitted environment.
   // Manual/deferred launches read it only after the real Session supplies its Home.
   if (runtimeOpts.startedBy !== 'daemon' && runtimeAuthority.scope === 'account') {
@@ -2068,13 +2101,14 @@ export async function runHostSessionRuntime(
     }),
     sourceMaterialController: config.sessionFollowSourceMaterialResolver,
   });
-  const effectivePrepareHostContext = async ({ signal, requiredPrompt, contextOnlyWorkerUpdate, contextOnlyWorkerLocalId, followDeliveries, deliveryIntent = 'natural' }: Readonly<{
+  const effectivePrepareHostContext = async ({ signal, requiredPrompt, contextOnlyWorkerUpdate, contextOnlyWorkerLocalId, followDeliveries, deliveryIntent = 'natural', includeExecutionRunWorkerUpdates = true }: Readonly<{
     signal: AbortSignal;
     requiredPrompt: string;
     contextOnlyWorkerUpdate?: WorkerUpdateV1;
     contextOnlyWorkerLocalId?: string;
     followDeliveries?: PermissionModeQueuedPrompt['followDeliveries'];
     deliveryIntent?: 'natural' | 'wake';
+    includeExecutionRunWorkerUpdates?: boolean;
   }>): Promise<HostPreparedContext | null> => {
     const activeModelId = modelTransitionCoordinator?.readActiveTarget().selection.modelId ?? null;
     const allowance = resolveSessionFollowContextUtf8AllowanceV1({
@@ -2101,7 +2135,7 @@ export async function runHostSessionRuntime(
       ? measureSessionFollowUtf8Bytes(renderWorkerUpdatePromptBlockV1(fittedWake)) + 2
       : 0));
     const workerCandidates = [
-      ...(await currentLifecycleSession.prepareExecutionRunWorkerUpdates?.({ signal }) ?? []),
+      ...(includeExecutionRunWorkerUpdates ? await currentLifecycleSession.prepareExecutionRunWorkerUpdates?.({ signal }) ?? [] : []),
       ...(await readWorkflowInputPort()?.prepareWorkerUpdates?.({ signal, maxUtf8Bytes: remainingBytes }) ?? []),
     ];
     const workerItems = workerCandidates.flatMap((candidate) => {
@@ -2216,6 +2250,8 @@ export async function runHostSessionRuntime(
       }
     },
     readDefaultEngine: () => ({ agentTargetKey: modelTargetKey }),
+    readAppliedChildSelection: () => readAppliedChildSelection(),
+    readAgentCatalogSnapshot: () => config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot(),
     readOrganization: (signal) => session.readRolePromptOrganization(signal),
   });
   const prepareWorkspaceWritesPolicy = createWorkspaceWritesPolicyPreparation({
@@ -2255,14 +2291,6 @@ export async function runHostSessionRuntime(
   });
   const { registerProviderAcceptedEffect, observeProviderInputOutcome, clearAcceptedEffects } = createSessionProviderInputOutcomeBinding({
     getTarget: () => session,
-    takeAppliedModel: (localId) => {
-      const appliedModel = appliedModelByPendingLocalId.get(localId) ?? null;
-      appliedModelByPendingLocalId.delete(localId);
-      return appliedModel;
-    },
-    discardAppliedModel: (localId) => {
-      appliedModelByPendingLocalId.delete(localId);
-    },
   });
   let inputConsumer: SessionProviderInputConsumer<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt> | null = null;
   const inFlightSteerController: InFlightSteerController = {
@@ -2286,7 +2314,8 @@ export async function runHostSessionRuntime(
       return await consumer.runProviderInputDispatch(dispatchOpts);
     },
     registerProviderAcceptedEffect,
-    prepareHostContext: effectivePrepareHostContext,
+    // Child completion context waits for idle intake even when authored input steers this turn.
+    prepareHostContext: input => effectivePrepareHostContext({ ...input, includeExecutionRunWorkerUpdates: false }),
     readStructuredInputDispatchServices: () => {
       const targetSession = currentLifecycleSession;
       return {
@@ -2432,9 +2461,6 @@ export async function runHostSessionRuntime(
       : runtimeContext.sessionMetadataSnapshot;
   const transcriptSession = createCurrentSessionTranscriptPort(() => session);
   const { messageQueue } = permissionModeState;
-  const pendingQueueDrainMaxPopPerWake = resolveSessionPendingQueueMaxPopPerWake(
-    runtimeOpts.accountSettingsContext?.settings ?? null,
-  );
   const readPendingQueueDeliveryTiming = () => resolveSessionPendingQueueDeliveryTiming(
     runtimeAuthority.scope === 'session'
       ? null
@@ -2447,33 +2473,9 @@ export async function runHostSessionRuntime(
   const workflowStepWithdrawal = createWorkflowStepWithdrawal({
     reportWithdrawn: async (input) => { await readWorkflowInputPort()?.reportWorkflowStepWithdrawn(input); },
   });
-  const commitContextOnlyHostEvent = async (localId: string, event: TranscriptRawAgentEventV1): Promise<void> => {
-    await commitRuntimeSessionEvent({
-      session: currentLifecycleSession, agentId: config.agentMessageType, localId,
-      event,
-    });
-  };
-  const commitContextOnlyWorkerEvents = async (
-    localId: string, events: readonly Readonly<{ localId: string; update: WorkerUpdateV1;
-      followMatches?: readonly WorkerUpdateFollowMatchV1[]; followInputLocalId?: string }>[], fallback: TranscriptRawAgentEventV1,
-    followWakeEventLocalId?: string,
-  ): Promise<void> => {
-    if (!events.some((event) => event.localId === localId)) {
-      await commitContextOnlyHostEvent(localId, fallback);
-    }
-    await commitWorkerUpdateEvents(events, followWakeEventLocalId);
-  };
-  const commitWorkerUpdateEvents = async (
-    events: readonly Readonly<{ localId: string; update: WorkerUpdateV1;
-      followMatches?: readonly WorkerUpdateFollowMatchV1[]; followInputLocalId?: string }>[], followWakeEventLocalId?: string,
-  ): Promise<void> => {
-    for (const event of events) {
-      await commitContextOnlyHostEvent(event.localId, { type: 'worker-update', update: event.update,
-        ...(event.followMatches?.length ? { followMatches: [...event.followMatches] } : {}),
-        ...(event.followInputLocalId ? { followInputLocalId: event.followInputLocalId } : {}),
-        ...(followWakeEventLocalId ? { followWakeEventLocalId } : {}) });
-    }
-  };
+  workerUpdatePublication = createHostWorkerUpdatePublication({ getSession: () => session, agentId: config.agentMessageType });
+  workerUpdatePublication.bind(session);
+  const { commitHostEvent: commitContextOnlyHostEvent, commitContextOnlyWorkerEvents, commitWorkerUpdateEvents } = workerUpdatePublication;
   inputConsumer = createSessionProviderInputConsumer({
     messageQueue,
     session: createSessionProviderInputConsumerSessionAdapter(currentLifecycleSession, {
@@ -2484,7 +2486,6 @@ export async function runHostSessionRuntime(
     pendingQueueDeliveryTiming,
     resolvePendingQueueDeliveryTiming: readPendingQueueDeliveryTiming,
     refreshBeforeQueuedBatch: false,
-    pendingDrainMaxPopPerWake: pendingQueueDrainMaxPopPerWake,
     waitForContextOnlyInputChange: async (signal) => {
       const controller = new AbortController();
       const abort = () => controller.abort(signal.reason);
@@ -2644,6 +2645,13 @@ export async function runHostSessionRuntime(
     });
   unsubscribePendingQueueDeliveryTimingForConstructionCleanup =
     unsubscribePendingQueueDeliveryTiming;
+  const agentToolsDelivery = resolveAgentToolsDelivery(
+    policyAgentId,
+    config.pluginRuntimeRegistryLease?.registry.contributes,
+  );
+  const receivesUserMcpServers = agentReceivesUserMcpServersV1(agentToolsDelivery);
+  const managedMcpExplicitlyEmpty = Object.keys(config.resolvedMcpServers ?? {}).length === 0
+    && hasExplicitlyEmptyManagedMcpSelection(runtimeSessionMetadataSnapshot ?? runtimeMetadata);
   let mcpExecutionSource: ReturnType<typeof readMcpExecutionSource> | undefined;
   const readSessionMcpExecutionSource = async (signal?: AbortSignal) => {
     signal?.throwIfAborted();
@@ -2663,6 +2671,61 @@ export async function runHostSessionRuntime(
     }
     return source;
   };
+  if (!managedMcpExplicitlyEmpty && runtimeAuthority.accountCredentials && (receivesUserMcpServers || agentToolsDelivery !== 'unsupported')) {
+    await readSessionMcpExecutionSource();
+  }
+  const runnerMcpAccountSettings = !managedMcpExplicitlyEmpty && runtimeAuthority.scope === 'account'
+    && config.resolveRunnerMcpServersAccountSettings
+    ? config.resolveRunnerMcpServersAccountSettings({
+      opts: runtimeOpts,
+      session,
+      metadata: runtimeSessionMetadataSnapshot ?? runtimeMetadata,
+    })
+    : !managedMcpExplicitlyEmpty && runtimeAuthority.scope === 'account'
+      ? runtimeOpts.accountSettingsContext?.settings ?? null
+      : null;
+  // A Session-scoped runtime must never materialize Account settings or saved
+  // secrets. The explicit authority is the only owner of this distinction;
+  // absence of encryption material is not used as a scope signal.
+  const effectiveRunnerMcpAccountSettings = runtimeAuthority.accountCredentials
+    ? runnerMcpAccountSettings
+    : null;
+  const agentToolCapabilities = (config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot()).catalogEntriesById[policyAgentId];
+  const mcpToolControl = agentToolCapabilities?.mcpToolControl;
+  const mcpAccountLifetimeToken = sessionOpenContext.lifetimeToken;
+  const mcpAccountScopeKey = sessionOpenContext.scopeKey;
+  const resolveSessionAccountSettingsSnapshot: NonNullable<HostSessionRuntimeFactoryParams['resolveAccountSettingsSnapshot']> = async input => {
+    input?.signal?.throwIfAborted();
+    startupRegistrationLifetime.signal.throwIfAborted();
+    if (!runtimeAuthority.accountCredentials || !mcpAccountScopeKey) return null;
+    const current = isSessionOpenAccountCurrent;
+    if (!current()) return null;
+    // The captured Account serves Providers and selected launch secrets even
+    // when managed MCP is disabled. Only MCP demand acquires its source/catalog.
+    if (input?.mcpServerCatalog) {
+      await readSessionMcpExecutionSource(input.signal);
+      if (!current()) return null;
+      await runWithServerHttpBaseUrl(sessionOpenContext.home.serverUrl, () =>
+        prepareActiveMcpServerCatalog({ credentials: runtimeAuthority.accountCredentials!, scopeKey: mcpAccountScopeKey,
+          lifetimeToken: mcpAccountLifetimeToken, signal: input.signal }));
+    }
+    if (input?.secretReferenceOverlay || input?.savedSecretReferences?.length) {
+      if (!current()) return null;
+      const serverHttpBaseUrl = sessionOpenContext.home.serverUrl;
+      await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+        const operationContext = readSessionOpenAccountOperation();
+        if (!operationContext) return null;
+        await refreshSavedSecretCatalogForOperation({ expectedScopeKey: mcpAccountScopeKey,
+          secretReferenceOverlay: input.secretReferenceOverlay, references: input.savedSecretReferences,
+          operationContext, signal: input.signal });
+      });
+    }
+    input?.signal?.throwIfAborted();
+    startupRegistrationLifetime.signal.throwIfAborted();
+    return current() ? readSessionOpenAccountOperation()?.readSnapshot() ?? null : null;
+  };
+  // Child Runs inherit this exact captured reader. Neither their authored input
+  // nor ambient Account state can manufacture a replacement execution source.
   const agentExecutionHome = session.getServerIdentityId();
   let agentExecutionSource: ReturnType<typeof readMcpExecutionSource> | undefined;
   const readSessionAgentExecutionSource = () => {
@@ -2683,53 +2746,45 @@ export async function runHostSessionRuntime(
     })();
     return agentExecutionSource;
   };
-  const runnerMcpAccountSettings = runtimeAuthority.scope === 'account'
-    && config.resolveRunnerMcpServersAccountSettings
-    ? config.resolveRunnerMcpServersAccountSettings({
-      opts: runtimeOpts,
-      session,
-      metadata: runtimeSessionMetadataSnapshot ?? runtimeMetadata,
-    })
-    : runtimeAuthority.scope === 'account'
-      ? runtimeOpts.accountSettingsContext?.settings ?? null
-      : null;
-  // A Session-scoped runtime must never materialize Account settings or saved
-  // secrets. The explicit authority is the only owner of this distinction;
-  // absence of encryption material is not used as a scope signal.
-  const effectiveRunnerMcpAccountSettings = runtimeAuthority.accountCredentials
-    ? runnerMcpAccountSettings
-    : null;
-  const agentToolsDelivery = resolveAgentToolsDelivery(
-    policyAgentId,
-    config.pluginRuntimeRegistryLease?.registry.contributes,
-  );
-  const receivesUserMcpServers = agentReceivesUserMcpServersV1(agentToolsDelivery);
-  const agentToolCapabilities = (config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot()).catalogEntriesById[policyAgentId];
-  const mcpToolControl = agentToolCapabilities?.mcpToolControl;
-  const mcpAccountLifetimeToken = sessionOpenContext.lifetimeToken;
-  const mcpAccountScopeKey = sessionOpenContext.scopeKey;
-  const resolveMcpAccountSettingsSnapshot: NonNullable<HostSessionRuntimeFactoryParams['resolveAccountSettingsSnapshot']> = async input => {
-    if (effectiveRunnerMcpAccountSettings === null || !runtimeAuthority.accountCredentials || !mcpAccountScopeKey) return null;
-    const current = isSessionOpenAccountCurrent;
-    if (!current()) return null;
-    await runWithServerHttpBaseUrl(sessionOpenContext.home.serverUrl, () =>
-      prepareActiveMcpServerCatalog({ credentials: runtimeAuthority.accountCredentials!, scopeKey: mcpAccountScopeKey,
-        lifetimeToken: mcpAccountLifetimeToken, signal: input?.signal }));
-    if (input?.savedSecretReferences?.length) {
-      const snapshot = getActiveAccountSettingsSnapshot();
-      if (!current() || !snapshot) return null;
-      const serverHttpBaseUrl = sessionOpenContext.home.serverUrl;
-      return await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
-        const operationContext = readSessionOpenAccountOperation();
-        if (!operationContext) return null;
-        const admitted = await refreshSavedSecretCatalogForOperation({ expectedScopeKey: mcpAccountScopeKey,
-          references: input.savedSecretReferences, operationContext, signal: input.signal });
-        return current() ? admitted : null;
-      });
-    }
-    return current() ? readSessionOpenAccountOperation()?.readSnapshot() ?? null : null;
-  };
-  const activeRunnerMcpAccountSnapshot = receivesUserMcpServers ? await resolveMcpAccountSettingsSnapshot() : null;
+  Object.assign(resolveSessionAccountSettingsSnapshot, {
+    readOperationContext: () => readSessionOpenAccountOperation() ?? null,
+    readAgentExecutionContext: async (signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      startupRegistrationLifetime.signal.throwIfAborted();
+      const operation = readSessionOpenAccountOperation();
+      if (!operation || !agentExecutionHome || session.getServerIdentityId() !== agentExecutionHome
+        || !isSessionOpenAccountCurrent() || !await operation.isCurrent(signal)) {
+        return refuseMcpExecutionSource('requester_authority_unavailable');
+      }
+      const source = await readSessionAgentExecutionSource();
+      signal?.throwIfAborted();
+      startupRegistrationLifetime.signal.throwIfAborted();
+      if (source.kind !== 'requester' || source.identity.kind !== 'isolated'
+        || source.identity.accountAutomation || source.hostHomeServerIdentityId !== agentExecutionHome
+        || session.getServerIdentityId() !== agentExecutionHome || !isSessionOpenAccountCurrent()
+        || !source.credentials || !sameStoredCredentials(operation.credentials, runtimeAuthority.accountCredentials)
+        || readInstallationIdentityIfExistsSync()?.installationId !== source.identity.requester.installationId) {
+        return refuseMcpExecutionSource('requester_authority_unavailable');
+      }
+      // A private Session bearer legitimately differs from profile sign-in.
+      // Only the ordinary Account branch is withdrawn by replacing that sign-in.
+      if (!('requesterSessionCredentialScope' in source.credentials)
+        && !sameStoredCredentials(source.credentials,
+          await readStoredCredentialsForServerId(sessionOpenContext.home.serverId))) {
+        return refuseMcpExecutionSource('requester_authority_unavailable');
+      }
+      signal?.throwIfAborted();
+      startupRegistrationLifetime.signal.throwIfAborted();
+      if (!isSessionOpenAccountCurrent() || session.getServerIdentityId() !== agentExecutionHome
+        || readInstallationIdentityIfExistsSync()?.installationId !== source.identity.requester.installationId
+        || !await operation.isCurrent(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
+      return { requesterIdentity: { kind: 'isolated' as const, requester: source.identity.requester,
+        separationRequired: source.identity.separationRequired },
+      isolationEnabled: config.machineMetadata.agentIsolation?.enabled === true };
+    },
+  } satisfies Pick<AccountSettingsSnapshotResolver, 'readOperationContext' | 'readAgentExecutionContext'>);
+  const activeRunnerMcpAccountSnapshot = receivesUserMcpServers && !managedMcpExplicitlyEmpty
+    ? await resolveSessionAccountSettingsSnapshot({ mcpServerCatalog: true }) : null;
   const runnerMcpSavedSecretResources = activeRunnerMcpAccountSnapshot?.savedSecretResources;
   let runnerSkills: RunnerSkillsResult | null = null;
   let activeAgentCompositionToolSelection: AgentCompositionToolSelection | null = null;
@@ -2764,9 +2819,7 @@ export async function runHostSessionRuntime(
     getActiveTurnAdmissionWitness: () => runtimeForInFlightSteer?.readActiveTurnAdmissionWitness?.() ?? null,
     getRuntimeLifetimeSignal: () => runtimeForInFlightSteer?.getRuntimeLifetimeSignal?.() ?? null,
     getHostTurnAbortSignal: () => readHostTurnAbortSignal?.() ?? null,
-    getBackendTarget: () => runtimeOpts.backendTarget
-      ? readBackendTargetRefV2(runtimeOpts.backendTarget)
-      : null,
+    getBackendTarget: () => runtimeOpts.backendTarget ?? null,
     getCurrentSessionLocation: () => ({
       path: runtimeDirectory,
       host: config.machineMetadata.host,
@@ -2793,8 +2846,8 @@ export async function runHostSessionRuntime(
       ...(config.runtimeActionSettingsProvider
         ? { actionsSettingsProvider: config.runtimeActionSettingsProvider }
         : {}),
-      ...(config.pluginRuntimeRegistryLease
-        ? { pluginRuntimeRegistryLease: config.pluginRuntimeRegistryLease }
+      ...(sessionPluginRuntimeRegistryLease
+        ? { pluginRuntimeRegistryLease: sessionPluginRuntimeRegistryLease }
         : {}),
     });
   }
@@ -2827,6 +2880,7 @@ export async function runHostSessionRuntime(
     }));
   });
   let nativeMcpRuntime: ReturnType<typeof createSessionMcpStdioRuntime> | undefined;
+  let nativeAttachmentRequester: import('@/rpc/handlers/fileSystem/sessionAttachmentIntake').SessionAttachmentRequester | undefined;
   let nativeMcpLaunchMaterial: HostSessionRuntimeFactoryParams['mcpLaunchMaterial'];
   const mcpPreparation = traceCapabilityPreparation('mcp_preparation', async () => {
     const bootstrapFile = process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
@@ -2834,10 +2888,11 @@ export async function runHostSessionRuntime(
       ? (await readRunnerAgentSessionBootstrap(bootstrapFile)).launch
       : undefined;
     const isolationEnabled = config.machineMetadata.agentIsolation?.enabled === true;
+    const nativeExecutionSource = launch?.agentIsolationMemberIdentity || launch?.agentIsolationRuntimeHome || isolationEnabled
+      ? await readSessionAgentExecutionSource() : { kind: 'local_user' as const };
     const isolatedMaterial = await resolveSessionMcpNativeLaunchMaterial({
       launch, isolationEnabled, homeServerIdentityId: session.getServerIdentityId(),
-      source: launch?.agentIsolationMemberIdentity || launch?.agentIsolationRuntimeHome || isolationEnabled
-        ? await readSessionAgentExecutionSource() : { kind: 'local_user' },
+      source: nativeExecutionSource,
       signal: startupRegistrationLifetime.signal,
     });
     const isolatedIdentity = isolatedMaterial?.identity;
@@ -2849,6 +2904,12 @@ export async function runHostSessionRuntime(
         ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }) }),
       directory: runtimeDirectory, signal: startupRegistrationLifetime.signal,
     });
+    if (isolatedMaterial?.target && nativeExecutionSource.kind === 'requester'
+      && nativeExecutionSource.identity.kind === 'isolated') nativeAttachmentRequester = Object.freeze({
+        // The native material owner above bound this captured nonempty Home.
+        sessionId: currentLifecycleSession.sessionId, homeServerIdentityId: nativeExecutionSource.hostHomeServerIdentityId!,
+        identity: nativeExecutionSource.identity,
+      });
     const result = receivesUserMcpServers || agentToolsDelivery !== 'unsupported'
     ? await runWithServerHttpBaseUrl(sessionOpenContext.home.serverUrl, () => resolveRunnerMcpServersFn({
       session: runnerMcpSession,
@@ -2860,8 +2921,8 @@ export async function runHostSessionRuntime(
       ...(config.runtimeActionSettingsProvider
         ? { actionsSettingsProvider: config.runtimeActionSettingsProvider }
         : {}),
-      ...(config.pluginRuntimeRegistryLease
-        ? { pluginRuntimeRegistryLease: config.pluginRuntimeRegistryLease }
+      ...(sessionPluginRuntimeRegistryLease
+        ? { pluginRuntimeRegistryLease: sessionPluginRuntimeRegistryLease }
         : {}),
       ...(runnerMcpSavedSecretResources
         ? { savedSecretResources: runnerMcpSavedSecretResources }
@@ -2874,6 +2935,9 @@ export async function runHostSessionRuntime(
       mcpToolCallIdMetaKey: agentToolCapabilities?.mcpToolCallIdMetaKey,
       mcpPermissionHandler: permissionHandler,
       includeHappierMcpServer: agentToolsDelivery === 'native_mcp',
+      isolationEnabled: config.machineMetadata.agentIsolation?.enabled === true,
+      localWorkflow: config.localWorkflow,
+      readExecutionSource: readSessionMcpExecutionSource,
       ...(nativeMcpRuntime ? { admittedStdio: nativeMcpRuntime.runtime } : {}),
       ...(isolatedIdentity ? { localTransport: { agentUid: isolatedIdentity.agentUid } }
         : process.platform !== 'win32' && process.getuid ? { localTransport: { agentUid: process.getuid() } } : {}),
@@ -2901,7 +2965,7 @@ export async function runHostSessionRuntime(
   startupPhaseStartedAt = performance.now();
   startupPhase = 'skills_preparation';
   readMcpToolContext = () => ({ mcpServerIdentities: mcpServerIdentities ?? {},
-    prepareCatalog: () => resolveMcpAccountSettingsSnapshot(),
+    prepareCatalog: () => resolveSessionAccountSettingsSnapshot({ mcpServerCatalog: true }),
     catalog: mcpAccountScopeKey && getActiveAccountSettingsSnapshot()?.scopeKey === mcpAccountScopeKey
       && getActiveAccountSettingsSnapshotLifetimeToken() === mcpAccountLifetimeToken
       ? getActiveAccountSettingsSnapshot()?.mcpServerCatalog ?? null : null });
@@ -2987,7 +3051,7 @@ export async function runHostSessionRuntime(
   // Resolve an Artifact-backed selected role before the native process captures
   // its launch-only ceiling; unknown sources must not launch with a guessed policy.
   if (readSessionRolesV1(currentLifecycleSession.getMetadataSnapshot?.() ?? runtimeMetadata)?.roleId) {
-    await sessionRoleContext.resolveRoles(startupRegistrationLifetime.signal);
+    await sessionRoleContext.resolvePromptContext(startupRegistrationLifetime.signal);
   }
   resolveFreshSessionSystemPrompt = createSessionPromptPlanResolver({
     opts: runtimeOpts, session: currentLifecycleSession, agentId: policyAgentId,
@@ -3019,7 +3083,15 @@ export async function runHostSessionRuntime(
     mcpServers,
     get sessionMcpContext() { return mcpPrepared.value.sessionMcpContext; },
     get mcpLaunchMaterial() { return nativeMcpLaunchMaterial; },
-    ...(nativeMcpRuntime ? { bindMcpExecService: nativeMcpRuntime.bindExec } : {}),
+    ...(nativeMcpRuntime ? { bindMcpExecService: (service: ExecService) => {
+      const native = nativeMcpRuntime!;
+      const releaseExec = native.bindExec(service);
+      const releaseAttachments = nativeAttachmentRequester
+        ? currentLifecycleSession.bindSessionAttachmentNativeRuntime({ requester: nativeAttachmentRequester,
+          workingDirectory: runtimeDirectory,
+          prepareFilesystemEffect: native.prepareFilesystemEffect }) : undefined;
+      return () => { releaseAttachments?.(); releaseExec(); };
+    } } : {}),
     get agentEnvironment() { return mcpPrepared.value.agentEnvironment; },
     resolveMcpToolNaming,
     mcpServerIdentities,
@@ -3033,15 +3105,14 @@ export async function runHostSessionRuntime(
       return next;
     } } : {}),
     ...(runnerSkills?.delivery ? { skills: runnerSkills.delivery } : {}),
-    accountSettings: runnerMcpAccountSettings,
-    resolveAccountSettingsSnapshot: resolveMcpAccountSettingsSnapshot,
+    accountSettings: readSessionOpenAccountOperation()?.readSnapshot()?.settings ?? null,
+    resolveAccountSettingsSnapshot: resolveSessionAccountSettingsSnapshot,
     accountSettingsAuthority: runtimeAuthority.scope,
     ...(runtimeAuthority.scope === 'session'
       ? { readCredentials: async () => runtimeAuthority.sessionCredentials }
       : {}),
     ...(providerBindingMaterialization ? { providerBindingMaterialization } : {}),
     ...(isTrackedNativeReturn ? { strictNativeResumeIdentity: true } : {}),
-    pendingQueueDrainMaxPopPerWake,
     pendingQueueDeliveryTiming,
     permissionHandler,
     getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
@@ -3123,6 +3194,9 @@ export async function runHostSessionRuntime(
         },
         ownerId: sessionTag,
         agentGeneration: voiceAuthority.occurrenceId,
+        admitNativeInput: ({ admission, conversation, sessionId, signal }) => admitNativeRealtimeInput({
+          runtime: hookRuntime, admission, conversation, sessionId, signal, starterDepth: currentLifecycleSession.getWorkDepth?.(),
+        }),
         isOccurrenceCurrent: voiceAuthority.isCurrent,
         resolveProviderOccurrenceId: voiceAuthority.resolveProviderOccurrenceId,
         resolveRetirementSignal: voiceAuthority.resolveRetirementSignal,
@@ -3231,6 +3305,9 @@ export async function runHostSessionRuntime(
   }
   const initialActiveTargetBasis: AuthorizedSessionModelTransitionTarget = {
     selection: initialActiveSelection,
+    ...(hookRuntime.readAppliedTeamCredentialModel
+      ? { readAppliedTeamCredentialModel: hookRuntime.readAppliedTeamCredentialModel.bind(hookRuntime) }
+      : {}),
     policy: 'live',
     providerBinding: activeProviderBindingHandoff
       ? projectAgentSessionProviderBindingV1({
@@ -3305,19 +3382,8 @@ export async function runHostSessionRuntime(
     authorizeModelTransition.bindCurrentAuthorizationProof(
       initialActiveTargetBasis,
     );
-  let latestExactActiveSelectionFact =
-    startupSeed.modelSelection
-    && startupSeed.modelSelection.ref.agentTargetKey
-      === initialActiveTarget.selection.agentTargetKey
-    && startupSeed.modelSelection.ref.providerConnectionId
-      === initialActiveTarget.selection.providerConnectionId
-    && startupSeed.modelSelection.ref.modelId
-      === initialActiveTarget.selection.modelId
-      ? createActiveSelectionFact(
-          initialActiveTarget,
-          'runtime_apply',
-        )
-      : null;
+  // Startup configuration admits the route; it does not observe execution.
+  let latestExactActiveSelectionFact: SessionActiveModelSelection | null = null;
   const modelMutationAccountCredentials = runtimeAuthority.scope === 'account' ? runtimeAuthority.accountCredentials : null;
   const modelMutationAccountId = modelMutationAccountCredentials ? readAccountIdFromToken(modelMutationAccountCredentials.token) : null;
   modelMutationScope = modelMutationAccountId ? {
@@ -3330,6 +3396,9 @@ export async function runHostSessionRuntime(
     agentTargetKey: modelTargetKey,
     get ownerScope() { return modelMutationScope; },
     initialActiveTarget,
+    initialActiveTargetConfirmed:
+      hookRuntime.models?.read().currentModelId === initialActiveTarget.selection.modelId,
+    readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(session.getMetadataSnapshot()),
     isCurrentRun: () => modelTransitionOwnerCurrent,
     checkCurrentPublisherAuthority:
       checkCurrentModelPublisherAuthority,
@@ -3368,6 +3437,11 @@ export async function runHostSessionRuntime(
       }
       const outcome = await hookRuntime.updateSessionRuntimeConfig({
         modelId: target.selection.modelId,
+        modelSelectionSource: resolveModelSelectionSource({
+          selection: target.selection,
+          metadata: session.getMetadataSnapshot(),
+          launchSelection: startupSeed.modelSelection,
+        }),
         ...(target.providerBinding
           ? { providerBinding: target.providerBinding }
           : {}),
@@ -3376,11 +3450,9 @@ export async function runHostSessionRuntime(
         outcome,
       );
     },
-    publishActive: async (target) => {
-      const activeSelectionV1 = createActiveSelectionFact(
-        target,
-        'runtime_apply',
-      );
+    publishActive: async (target, evidence = 'runtime_apply') => {
+      const activeSelectionV1 = evidence === null
+        ? null : createActiveSelectionFact(target, evidence);
       const publishActive = async (): Promise<void> => {
         await modelTransitionMetadataSession
           .updateMetadataAsCurrentPublisher((current) =>
@@ -3392,7 +3464,7 @@ export async function runHostSessionRuntime(
             ));
       };
       try {
-        if (runtimeModelsPublisher && activeSelectionV1) {
+        if (runtimeModelsPublisher) {
           await runtimeModelsPublisher.publishActiveSelection({
             selection: target.selection,
             activeSelectionV1,
@@ -3415,12 +3487,14 @@ export async function runHostSessionRuntime(
         }
         throw error;
       }
-      adoptedModelSelection = SessionModelSelectionV1Schema.parse({
-        v: 1,
-        updatedAt: lastAcceptedModelIntentUpdatedAt || Date.now(),
-        ref: target.selection,
-      });
-      publishRuntimeOverrides();
+      if (evidence !== 'runtime_readback') {
+        adoptedModelSelection = SessionModelSelectionV1Schema.parse({
+          v: 1,
+          updatedAt: lastAcceptedModelIntentUpdatedAt || Date.now(),
+          ref: target.selection,
+        });
+        publishRuntimeOverrides();
+      }
     },
     revokeActiveSelectionProof: async (selection) => {
       if (
@@ -3498,9 +3572,7 @@ export async function runHostSessionRuntime(
     readRuntimeModelId: () => {
       const modelId =
         hookRuntime.models?.read().currentModelId;
-      return typeof modelId === 'string' && modelId.trim().length > 0
-        ? modelId.trim()
-        : null;
+      return readNonBlankOpaqueIdentifier(modelId);
     },
     ...(hookRuntime.models
       ? {
@@ -3582,15 +3654,18 @@ export async function runHostSessionRuntime(
             updatedAt: freshIntent.updatedAt,
             ref: selection,
           });
-          const result = await traceStartupAuthority('model_intent_reconciliation', claimedSession,
-            () => modelTransitionCoordinator!.submit(selection, { source: 'metadata', reuseInitialAdmission: true }));
-          if (!result.ok) {
-            throw new Error(
-              `Startup model intent reconciliation failed: ${result.status}${
-                result.reason ? ` (${result.reason})` : ''
-              }`,
-            );
-          }
+          await traceStartupAuthority('model_intent_reconciliation', claimedSession, async () => {
+            const result = await modelTransitionCoordinator!.submit(selection, {
+              source: 'metadata',
+              reuseInitialAdmission: true,
+            });
+            if (!result.ok) {
+              const { originalCode } = readSessionPreparationFailureDiagnostic({ code: result.reason });
+              throw Object.assign(new Error(`Startup model intent reconciliation failed: ${result.status}`), {
+                code: originalCode === 'unknown' ? 'agent_startup_model_reconciliation_failed' : originalCode,
+              });
+            }
+          });
         }
       }
 
@@ -3789,6 +3864,62 @@ export async function runHostSessionRuntime(
       metadata: { runtimeDescriptorV1: descriptor }, sessionRunning: true }),
   });
   runtimePublicationMetadata = unsubscribeRuntimePublication;
+  async function readAppliedChildSelection(): Promise<ExecutionRunAppliedParentSelection> {
+    const unavailable = (
+      reason: 'model_coordinator_unavailable' | 'model_transition_unavailable'
+        | 'native_applied_selection_unavailable' | 'team_model_mismatch' | 'team_route_mismatch'
+        | 'connected_services_read_failed' | 'connected_services_unavailable' | 'session_retired'
+        | 'applied_target_changed' | 'native_applied_selection_changed',
+      transition?: Readonly<{
+        phase: 'before_connected_services' | 'after_connected_services';
+        reason: SessionAppliedModelTransitionUnavailableReason;
+      }>,
+    ): ExecutionRunAppliedParentSelection => {
+      logger.infoFile(`${config.uiLogPrefix} Applied parent selection unavailable`, {
+        sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, reason,
+        ...(transition ? { transitionPhase: transition.phase, transitionReason: transition.reason } : {}),
+      });
+      return { status: 'unavailable' };
+    };
+    await initialParentSelectionRegistration;
+    if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
+    const before = await modelTransitionCoordinator.readAppliedTarget();
+    if (before.status !== 'applied') return unavailable('model_transition_unavailable', {
+      phase: 'before_connected_services', reason: before.reason,
+    });
+    const appliedTarget = before.target;
+    const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
+    if (teamCredentialModel === undefined) return unavailable('native_applied_selection_unavailable');
+    if (teamCredentialModel && teamCredentialModel.modelId !== appliedTarget.selection.modelId) return unavailable('team_model_mismatch');
+    if (teamCredentialModel && appliedTarget.selection.providerConnectionId !== null) return unavailable('team_route_mismatch');
+    const connected = await readAppliedParentConnectedServices({
+      sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, agentId: policyAgentId,
+    }, { signal: startupRegistrationLifetime.signal }).catch(() => null);
+    if (startupRegistrationLifetime.signal.aborted) return unavailable('session_retired');
+    if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
+    const after = await modelTransitionCoordinator.readAppliedTarget();
+    if (connected === null) return unavailable('connected_services_read_failed');
+    if (connected.status !== 'applied') return unavailable('connected_services_unavailable');
+    if (after.status !== 'applied') return unavailable('model_transition_unavailable', {
+      phase: 'after_connected_services', reason: after.reason,
+    });
+    if (after.target !== appliedTarget) return unavailable('applied_target_changed');
+    if (JSON.stringify(hookRuntime.readAppliedTeamCredentialModel?.()) !== JSON.stringify(teamCredentialModel)) {
+      return unavailable('native_applied_selection_changed');
+    }
+    const unknownNativeModel = !teamCredentialModel && appliedTarget.selection.modelId === 'default'
+      && appliedTarget.selection.providerConnectionId === null;
+    return {
+      status: 'applied',
+      backendTarget: runtimeOpts.backendTarget ?? { kind: 'backend', backendId: policyAgentId },
+      modelId: unknownNativeModel ? null : appliedTarget.selection.modelId,
+      ...(teamCredentialModel ? { teamCredentialModel } : unknownNativeModel ? {} : { modelSelection: appliedTarget.selection }),
+      connectedServices: filterSuppressedConnectedServiceBindings({
+        bindings: connected.connectedServices,
+        suppressConnectedServiceIds: appliedTarget.runtimeBindingBasis?.agentSupport.authIsolation.suppressConnectedServiceIds ?? [],
+      }).bindings,
+    };
+  }
   if (nativeRuntime) {
     const runtimeAuthControl = nativeRuntime.runtimeAuth;
     const runtimeAuthControls = runtimeAuthControl
@@ -3800,17 +3931,8 @@ export async function runHostSessionRuntime(
           readIdentity: (request) => runtimeAuthControl.readIdentity(request),
         })
       : null;
-    const acceptPendingMessageComposerAdmission =
-      createPendingMessageComposerAdmissionAcceptedControl(
-        daemonTurnContributionsBridge,
-        () => currentLifecycleSession.sessionId,
-      );
-    const abandonPendingMessageComposerAdmission =
-      createPendingMessageComposerAdmissionAbandonedControl(
-        daemonTurnContributionsBridge,
-        () => currentLifecycleSession.sessionId,
-      );
     currentLifecycleSession.setSessionRuntimeControls({
+      resolveAccountSettingsSnapshot: resolveSessionAccountSettingsSnapshot,
       readReferenceAction,
       readPermissionHandler: () => permissionHandler,
       readCodingPromptBehavior: () => resolveFreshSessionSystemPrompt?.readCodingPromptBehavior?.() ?? null,
@@ -3818,62 +3940,7 @@ export async function runHostSessionRuntime(
         modelSelection: modelTransitionCoordinator?.readActiveTarget().selection ?? null,
         permissionMode: permissionModeState.getCurrentPermissionMode() ?? initialPermissionMode,
       }),
-      readAppliedChildSelection: async (): Promise<ExecutionRunAppliedParentSelection> => {
-        const unavailable = (
-          reason: 'model_coordinator_unavailable' | 'model_transition_unavailable'
-            | 'native_applied_selection_unavailable' | 'team_model_mismatch' | 'team_route_mismatch'
-            | 'connected_services_read_failed' | 'connected_services_unavailable' | 'session_retired'
-            | 'applied_target_changed' | 'native_applied_selection_changed',
-          transition?: Readonly<{
-            phase: 'before_connected_services' | 'after_connected_services';
-            reason: SessionAppliedModelTransitionUnavailableReason;
-          }>,
-        ): ExecutionRunAppliedParentSelection => {
-          logger.infoFile(`${config.uiLogPrefix} Applied parent selection unavailable`, {
-            sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, reason,
-            ...(transition ? { transitionPhase: transition.phase, transitionReason: transition.reason } : {}),
-          });
-          return { status: 'unavailable' };
-        };
-        await initialParentSelectionRegistration;
-        if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
-        const before = await modelTransitionCoordinator.readAppliedTarget();
-        if (before.status !== 'applied') return unavailable('model_transition_unavailable', {
-          phase: 'before_connected_services', reason: before.reason,
-        });
-        const appliedTarget = before.target;
-        const teamCredentialModel = hookRuntime.readAppliedTeamCredentialModel?.();
-        if (teamCredentialModel === undefined) return unavailable('native_applied_selection_unavailable');
-        if (teamCredentialModel && teamCredentialModel.modelId !== appliedTarget.selection.modelId) return unavailable('team_model_mismatch');
-        if (teamCredentialModel && appliedTarget.selection.providerConnectionId !== null) return unavailable('team_route_mismatch');
-        const connected = await readAppliedParentConnectedServices({
-          sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, agentId: policyAgentId,
-        }, { signal: startupRegistrationLifetime.signal }).catch(() => null);
-        if (startupRegistrationLifetime.signal.aborted) return unavailable('session_retired');
-        if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
-        const after = await modelTransitionCoordinator.readAppliedTarget();
-        if (connected === null) return unavailable('connected_services_read_failed');
-        if (connected.status !== 'applied') return unavailable('connected_services_unavailable');
-        if (after.status !== 'applied') return unavailable('model_transition_unavailable', {
-          phase: 'after_connected_services', reason: after.reason,
-        });
-        if (after.target !== appliedTarget) return unavailable('applied_target_changed');
-        if (JSON.stringify(hookRuntime.readAppliedTeamCredentialModel?.()) !== JSON.stringify(teamCredentialModel)) {
-          return unavailable('native_applied_selection_changed');
-        }
-        const unknownNativeModel = !teamCredentialModel && appliedTarget.selection.modelId === 'default'
-          && appliedTarget.selection.providerConnectionId === null;
-        return {
-          status: 'applied',
-          backendTarget: runtimeOpts.backendTarget ?? { kind: 'backend', backendId: policyAgentId },
-          modelId: unknownNativeModel ? null : appliedTarget.selection.modelId,
-          ...(teamCredentialModel ? { teamCredentialModel } : unknownNativeModel ? {} : { modelSelection: appliedTarget.selection }),
-          connectedServices: filterSuppressedConnectedServiceBindings({
-            bindings: connected.connectedServices,
-            suppressConnectedServiceIds: appliedTarget.runtimeBindingBasis?.agentSupport.authIsolation.suppressConnectedServiceIds ?? [],
-          }).bindings,
-        };
-      },
+      readAppliedChildSelection,
       ...(readWorkflowInputPort() ? { withdrawWorkflowStepInput: async (input: Readonly<{ localInputId: string }>) => {
         if (!config.hostContextOnlyInput && await readWorkflowDispatchFact(input.localInputId, new AbortController().signal) === 'dispatched') {
           workflowStepWithdrawal.observeWorkflowStepDispatched(input);
@@ -3930,8 +3997,6 @@ export async function runHostSessionRuntime(
         : {}),
       cancelActiveTurn: nativeRuntime.cancelTurn.bind(nativeRuntime),
       ...(typeof nativeRuntime.handleUserMessage === 'function' ? { handleUserMessage: nativeRuntime.handleUserMessage.bind(nativeRuntime) } : {}),
-      ...(acceptPendingMessageComposerAdmission ? { acceptPendingMessageComposerAdmission } : {}),
-      ...(abandonPendingMessageComposerAdmission ? { abandonPendingMessageComposerAdmission } : {}),
     });
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
   }
@@ -4130,15 +4195,6 @@ export async function runHostSessionRuntime(
             : {}),
         }),
       readActiveModelSelection: () => modelTransitionCoordinator!.readActiveTarget().selection,
-      onProviderPromptDispatchPrepared: ({ localIds, selection }) => {
-        const appliedModel = Object.freeze({
-          provider: policyAgentId,
-          selection,
-        });
-        for (const localId of localIds) {
-          appliedModelByPendingLocalId.set(localId, appliedModel);
-        }
-      },
       deps: {
         ...(deps.sessionLoopLifecycleDeps ?? {}),
         daemonTurnContributionsBridge,
@@ -4202,12 +4258,29 @@ export async function runHostSessionRuntime(
         const startupIssue = !runtimeStopRequested ? classifyPrimarySessionRuntimeIssue({
           cause: 'session_error', error: nativeStartupRefusal ?? error, provider: policyAgentId,
         }) : null;
-        if (startupIssue && !nativeStartupRefusal) {
+        // Typed Home admission refusals happen before a provider turn exists.
+        // A synthetic failed turn here would replay on a later admitted start.
+        const startupAdmissionRefusal = error instanceof SessionRuntimeActivitySnapshotRejectedError;
+        if (startupIssue && !nativeStartupRefusal && !startupAdmissionRefusal) {
           // Construction failures happen after Session custody but before the live
           // loop can own a turn. Publish through the same canonical lifecycle owner
           // before releasing durable delivery so the Session cannot become an
           // unexplained offline row with retained input.
-          await createSessionTurnLifecycle({ session, agentId: policyAgentId }).failTurn({
+          const projectFailure = createRuntimeFailureTranscriptProjector({
+            session, provider: config.agentMessageType, providerName: config.providerName,
+          });
+          await createSessionTurnLifecycle({ session, agentId: policyAgentId,
+            onAcceptedTurnFailure: async (event, issue) => {
+              try { await projectFailure(event, { issue }); }
+              catch {
+                // Unavailable history custody must not mask the original startup
+                // failure or prevent releasing construction resources.
+                logger.infoFile(`${config.uiLogPrefix} Startup failure transcript could not be retained`, {
+                  sessionId: session.sessionId, failureCode: issue.code,
+                });
+              }
+            },
+          }).failTurn({
             issue: startupIssue,
             allocateWhenIdle: true,
           });
@@ -4267,7 +4340,9 @@ export async function runHostSessionRuntime(
     throw error;
   }
   } finally {
+    workerUpdatePublication?.dispose();
     startupRegistrationLifetime.abort();
+    await sessionAccountRuntime?.dispose();
     disposeAgentSessionRealtimeVoiceRpc?.();
     providerBindingRuntimeDiagnosticRedaction.close();
   }

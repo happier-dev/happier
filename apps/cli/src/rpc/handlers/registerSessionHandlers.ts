@@ -20,6 +20,7 @@ import { registerWorkspaceFileReplaceHandlers } from './workspaceFileReplace';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
 import { registerSessionControlHandlers, type SessionRuntimeControls } from './sessionControls';
+import { registerSessionPermissionRpcHandlers } from './sessionPermissions';
 import {
     registerDaemonContributionRegistryProjectionHandler,
     type DaemonContributionRegistryProjectionRegistrationOptions,
@@ -39,6 +40,7 @@ import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { createSessionAttachmentNativeRegistrar, type SessionAttachmentNativeRuntime } from './fileSystem/sessionAttachmentIntake';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -154,6 +156,7 @@ export function registerSessionHandlers(
         waitForSessionRuntimeControls?: (signal?: AbortSignal) => Promise<boolean>;
         accessPolicy?: FilesystemAccessPolicy;
         filesystemEffectAdmission?: FilesystemEffectAdmission;
+        readSessionAttachmentNativeRuntime?: () => SessionAttachmentNativeRuntime | null | undefined;
         executionBudgetRegistry?: ExecutionBudgetRegistry;
         admissionDrain?: DaemonAdmissionDrain;
         nativeOperationRuntime?: NonNullable<Parameters<typeof registerBashHandler>[2]>['nativeOperationRuntime'];
@@ -196,14 +199,30 @@ export function registerSessionHandlers(
         rpcHandlerManager,
         opts?.sessionId ?? null,
     );
+    // Remote mediation is routed to the Session process that owns the live
+    // permission handler, not the Machine registrar. Install generic routes
+    // before specialized Session controls/permission handlers replace theirs.
+    if (opts?.sessionId) registerSessionPermissionRpcHandlers({
+        rpcHandlerManager: authorizedSessionRpcHandlerManager,
+        // ApiSessionClient supplies its Home-bound shared Action executor here.
+        ...(opts.transcriptActionExecutor ? { actionExecutor: opts.transcriptActionExecutor } : {}),
+    });
     const sessionAttachmentStore = opts?.sessionId
         ? new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs, expiryTrigger: 'self' })
         : null;
+    let disposeNativeAttachments: (() => Promise<void>) | undefined;
     if (sessionAttachmentStore && opts?.sessionId) {
         const sessionId = opts.sessionId;
         const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
         const sessionRpcTransferMaxBytes = resolveServerRoutedTransferMaxBytes();
-        const attachmentRpcHandlerManager = createFilesystemEffectRpcRegistrar(authorizedSessionRpcHandlerManager, filesystemEffectAdmission);
+        const nativeAttachments = createSessionAttachmentNativeRegistrar({
+            delegate: authorizedSessionRpcHandlerManager,
+            readRuntime: opts.readSessionAttachmentNativeRuntime,
+            store: sessionAttachmentStore,
+            configuration: { sessionAttachment: { sessionId }, sessionRpcTransferMaxBytes },
+        });
+        disposeNativeAttachments = nativeAttachments.dispose;
+        const attachmentRpcHandlerManager = createFilesystemEffectRpcRegistrar(nativeAttachments.registrar, filesystemEffectAdmission);
         registerTransferUploadRpcHandlers(attachmentRpcHandlerManager, {
             workingDirectory,
             accessPolicy,
@@ -310,6 +329,9 @@ export function registerSessionHandlers(
         resolveSessionAttachment: handle => handle.sessionId === opts?.sessionId
             ? sessionAttachmentStore?.getIssuedAttachment(handle) ?? null
             : null,
-        dispose: async () => { await sessionAttachmentStore?.dispose(); },
+        dispose: async () => {
+            try { await disposeNativeAttachments?.(); }
+            finally { await sessionAttachmentStore?.dispose(); }
+        },
     };
 }

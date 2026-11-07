@@ -9,6 +9,7 @@ import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { type AnyClientUpgradeRequiredV1 } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { isSocketIoAckTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { type SocketRpcAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import {
     SOCKET_RPC_EVENTS,
@@ -51,7 +52,9 @@ import {
     resolveRpcMethodAvailabilityPollMs,
 } from "./rpcMethodAvailability";
 import { classifySocketClusterFetchFailureReason, discoverRpcTargets, readMachineRpcTargetPresence } from "./rpcTargetDiscovery";
-import { readSocketRoomSnapshot } from '../socketRoomDiscovery';
+import { readSocketRoomSnapshot, subscribeToSocketRoomJoins } from '../socketRoomDiscovery';
+import { readVerifiedMachineSocketInstallationIdFromSocketData } from '../machineSocketInstallationProof';
+import { buildRpcMethodRoom } from './rpcMethodRoom';
 import type { RpcAckResponseEmitter, RpcForwardTargetGuard } from "./_types";
 
 export type RpcForwardResult =
@@ -119,7 +122,36 @@ async function readLatestRpcTargetBySocketId(params: Readonly<{
     }
 }
 
-export async function forwardRpcCall(params: Readonly<{
+function rpcLogCorrelation(params: Readonly<{
+    traceId?: string;
+    callerSocketId?: string;
+    cancellation?: Readonly<{ targetRequestId: string }>;
+}>) {
+    const targetTraceId = params.traceId ?? params.cancellation?.targetRequestId;
+    return targetTraceId ? {
+        // Ingress supplies a safe relay identity; HTTP roots use the existing
+        // opaque-id privacy projection without changing the wire identity.
+        requestId: params.callerSocketId || /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetTraceId)
+            ? targetTraceId : `sha256:${createHash('sha256').update(targetTraceId).digest('hex')}`,
+        ...(params.callerSocketId ? { callerSocketId: params.callerSocketId } : {}),
+    } : null;
+}
+
+export async function forwardRpcCall(params: Parameters<typeof executeRpcForwardCall>[0]): Promise<RpcForwardResult> {
+    const result = await executeRpcForwardCall(params);
+    const method = params.method.slice(params.method.indexOf(':') + 1);
+    if (!result.ok && 'errorCode' in result && result.errorCode
+        && (method === CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD || method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD)) {
+        log({ module: 'websocket-rpc', event: 'connected-account-rpc-failed',
+            code: result.errorCode,
+            phase: 'failureCause' in result ? result.failureCause?.phase ?? 'rpc.forward' : 'rpc.forward',
+            ...rpcLogCorrelation(params),
+        }, 'Connected Account RPC failed');
+    }
+    return result;
+}
+
+async function executeRpcForwardCall(params: Readonly<{
     io: Server;
     targetUserId: string;
     method: string;
@@ -130,6 +162,7 @@ export async function forwardRpcCall(params: Readonly<{
     authorization?: SocketRpcAuthorizationContext;
     /** Home-owned current Machine routing facts; never copied from inbound fields. */
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
+    receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
     /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
     transportResponseEnvelopeVersion?: 1;
@@ -179,21 +212,23 @@ export async function forwardRpcCall(params: Readonly<{
 }>): Promise<RpcForwardResult> {
     const callStartedAt = Date.now();
     const lookupStartedAt = Date.now();
-    const targetTraceId = params.traceId ?? params.cancellation?.targetRequestId;
-    const correlation = targetTraceId ? {
-        // Socket ingress already supplies its existing safe relay identity. HTTP
-        // roots use the same opaque-id privacy projection as daemon diagnostics;
-        // keep the original trace on the wire so the daemon derives the same id.
-        requestId: params.callerSocketId || /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetTraceId)
-            ? targetTraceId : `sha256:${createHash('sha256').update(targetTraceId).digest('hex')}`,
-        ...(params.callerSocketId ? { callerSocketId: params.callerSocketId } : {}),
-    } : null;
+    const correlation = rpcLogCorrelation(params);
     let methodRegistrationAbsent = false;
-    let discoveryFailed = false;
+    let discoveryFailure: ActionFailureCauseV1 | undefined;
+    // An admitted Machine's post-firewall observation must travel through Home
+    // and ACK on its own registered daemon. Keep ordinary self-calls excluded;
+    // this exact read still consumes the existing admission and target guard.
+    const excludedSocketId = params.machineAdmission
+        && params.method === `${params.machineAdmission.machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`
+        ? undefined : params.callerSocketId;
     const selection = await waitForRpcTargetAvailability({
         graceMs: resolveRpcMethodAvailabilityGraceMs(params.method),
         pollMs: resolveRpcMethodAvailabilityPollMs(),
-        excludedSocketId: params.callerSocketId,
+        subscribeToAvailability: listener => subscribeToSocketRoomJoins(params.io, buildRpcMethodRoom({
+            userId: params.targetUserId, method: params.sessionDecisionTargetMethod ?? params.method,
+        }), listener),
+        signal: params.cancellation?.signal,
+        excludedSocketId,
         answeringClient: params.answeringClient,
         ...(params.callerLifetime ? { callerLifetime: params.callerLifetime } : {}),
         discoverTargets: async () => {
@@ -202,18 +237,18 @@ export async function forwardRpcCall(params: Readonly<{
                 userId: params.targetUserId,
                 method: params.sessionDecisionTargetMethod ?? params.method,
                 fetchTimeoutMs: resolveRpcClusterFetchTimeoutMs(params.method),
-                excludedSocketId: params.callerSocketId,
+                excludedSocketId,
                 answeringClient: params.answeringClient,
                 targetGuard: params.targetGuard,
                 ...(correlation ? { correlation } : {}),
             });
-            discoveryFailed = discovery === null;
+            discoveryFailure = discovery.failureCause;
             methodRegistrationAbsent = discovery?.methodRoomEmpty === true;
             return discovery?.targets ?? [];
         },
     });
     if (correlation) log({ module: 'websocket-rpc', event: 'rpc-target-lookup', ...correlation,
-        method: params.method, status: selection.type, discoveryFailed,
+        method: params.method, status: selection.type, discoveryFailed: discoveryFailure !== undefined,
         ...(selection.type === 'target' ? { targetSocketId: selection.target.id } : {}),
         durationMs: Date.now() - lookupStartedAt,
     }, 'RPC target lookup completed');
@@ -245,10 +280,11 @@ export async function forwardRpcCall(params: Readonly<{
     }
 
     if (selection.type === "not-available") {
-        if (discoveryFailed) {
+        if (discoveryFailure) {
             recordRpcCallFailure(params.method, 'request_error');
             observeRpcCall({ method: params.method, durationMs: Date.now() - callStartedAt, result: 'error' });
-            return { ok: false, error: 'RPC target discovery unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE };
+            return { ok: false, error: 'RPC target discovery unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+                failureCause: discoveryFailure };
         }
         if (params.answeringClient) return { ok: false, error: 'Answering client unavailable', errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
         const presence = params.isTargetUnavailable ? null : await readMachineRpcTargetPresence({
@@ -256,6 +292,7 @@ export async function forwardRpcCall(params: Readonly<{
             userId: params.targetUserId,
             method: params.sessionDecisionTargetMethod ?? params.method,
             fetchTimeoutMs: resolveRpcClusterFetchTimeoutMs(params.method),
+            machineAdmission: params.receivingMachineAdmission ?? params.machineAdmission,
         });
         return recordMethodUnavailable({
             method: params.method,
@@ -283,7 +320,15 @@ export async function forwardRpcCall(params: Readonly<{
             ? targetData.machineId.trim()
             : "";
     if (targetClientType === "machine-scoped" && targetMachineId) {
-        const machine = await db.machine.findFirst({
+        const admission = params.receivingMachineAdmission ?? params.machineAdmission;
+        const admittedTarget = admission?.machineId === targetMachineId
+            && admission.custodianAccountId === params.targetUserId ? admission : null;
+        if (admittedTarget && readVerifiedMachineSocketInstallationIdFromSocketData(targetData) !== admittedTarget.installationId) {
+            return recordMethodUnavailable({ method: params.method, callStartedAt });
+        }
+        // The request admission already decided lifecycle and content mode.
+        // Legacy callers and physically different receivers retain their own read.
+        const machine = admittedTarget ? null : await db.machine.findFirst({
             where: {
                 accountId: params.targetUserId,
                 id: targetMachineId,
@@ -294,13 +339,14 @@ export async function forwardRpcCall(params: Readonly<{
                 replacedByMachineId: true,
             },
         });
-        if (classifyMachineAvailabilityState(machine) !== "available") {
+        if (!admittedTarget && classifyMachineAvailabilityState(machine) !== "available") {
             return recordMethodUnavailable({
                 method: params.method,
                 callStartedAt,
+                targetUnavailable: true,
             });
         }
-        if (isPlainMachineDataKeyMarker(machine?.dataEncryptionKey)) {
+        if (admittedTarget ? admittedTarget.encryptionMode === 'plain' : isPlainMachineDataKeyMarker(machine?.dataEncryptionKey)) {
             const callerCompatibility = params.callerSocket
                 ? readAccountStoredContentCompatibilityForSocket(
                     params.callerSocket,
@@ -360,9 +406,11 @@ export async function forwardRpcCall(params: Readonly<{
             ...(params.originalActionEnvelope ? { originalActionEnvelope: params.originalActionEnvelope } : {}),
             timeoutMs,
             ...(targetRequestId ? { requestId: targetRequestId } : {}),
+            ...(params.cancellation?.ackSignal ? { waitForResultOnCancel: true } : {}),
             ...(params.traceId ? { traceId: params.traceId } : {}),
             ...(params.authorization ? { authorization: params.authorization } : {}),
             ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
+            ...(params.receivingMachineAdmission ? { receivingMachineAdmission: params.receivingMachineAdmission } : {}),
             ...(params.transportResponseEnvelopeVersion === 1
                 ? { transportResponseEnvelopeVersion: 1 as const }
                 : {}),
@@ -508,6 +556,11 @@ export async function forwardRpcCall(params: Readonly<{
                 ? { error: 'RPC target disconnected after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN }
                 : params.method.endsWith(`:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`)
                 ? { error: 'confidential_continuation_failed', errorCode: 'confidential_continuation_failed' }
+                : !requestSubmitted && error instanceof Error && 'code' in error && error.code === RPC_ERROR_CODES.FORBIDDEN
+                ? { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN }
+                : !requestSubmitted && error instanceof Error && 'code' in error && error.code === 'agent_isolation_unavailable'
+                ? { error: error.message, errorCode: error.code,
+                    failureCause: projectActionFailureCauseV1(error, 'rpc.forward.requester_execution') }
                 : isSocketIoAckTimeoutError(error)
                 ? { error: error.message, errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE }
                 : { error: error instanceof Error ? error.message : "RPC call failed" }),

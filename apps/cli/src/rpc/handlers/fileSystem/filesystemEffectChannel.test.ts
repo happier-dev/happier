@@ -2,8 +2,11 @@ import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod/mini';
 
-import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { createEncryptedTransferChunkEnvelope, createTransferRecipientKeyPair,
+  decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { SessionAttachmentHandleV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDirectTransferImportSessionManager } from '@/machines/transfer/directTransferImportSession';
 import { createDirectPeerTransferApp, requestDirectPeerTransferToFile } from '@/machines/transfer/directPeerTransport';
@@ -21,14 +24,110 @@ async function openNativePipe(root: string, configuration: Partial<FilesystemEff
   // path policy, file IO, encryption and mounted transport owners remain real.
   const stdin = new PassThrough();
   const stdout = new PassThrough();
-  const running = runFilesystemEffectInternal(stdin, stdout);
-  const channel = createFilesystemEffectChannel({ input: stdin, output: stdout, dispose: async () => { await running; } });
-  await initializeFilesystemEffectChannel(channel, { workingDirectory: root,
-    accessPolicy: { kind: 'restrictedRoots', roots: [root] }, ...configuration });
+  const running = runFilesystemEffectInternal(stdin, stdout).then(() => ({ ok: true as const }), (error: unknown) => {
+    stdout.destroy(error instanceof Error ? error : new Error(String(error)));
+    return { ok: false as const, error };
+  });
+  const channel = createFilesystemEffectChannel({ input: stdin, output: stdout, dispose: async () => {
+    const result = await running;
+    if (!result.ok) throw result.error;
+  } });
+  try {
+    await initializeFilesystemEffectChannel(channel, { workingDirectory: root,
+      accessPolicy: { kind: 'restrictedRoots', roots: [root] }, ...configuration });
+  } catch (error) { await channel.dispose().catch(() => {}); throw error; }
   return channel;
 }
 
 describe('native filesystem mounted byte corridor', () => {
+  it('retains Session attachment custody through encrypted upload, finalization and handle-only previews', async () => {
+    await withTempDir('happier-native-attachment-', async root => {
+      const member = join(root, 'member-a');
+      const neighbor = join(root, 'member-b');
+      await mkdir(member); await mkdir(neighbor);
+      const channel = await openNativePipe(member, { sessionAttachment: { sessionId: 'session-a' } });
+      const foreign = await openNativePipe(neighbor, { sessionAttachment: { sessionId: 'session-b' } });
+      const invoke = (method: string, input: unknown) => channel.request({ kind: 'rpc', method, input });
+      const bytes = Buffer.from([255, 0, 128, 13, 10]);
+      const request = { t: 'session_attachment_upload_v1', sessionId: 'session-a',
+        messageLocalId: 'message-a', attachmentId: 'attachment-a', fileName: 'notes.dat', sizeBytes: bytes.length,
+        uploadLocation: 'os_temp', workspaceRelativeDir: '.happier/attachments',
+        vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false };
+      try {
+        for (const input of [
+          { ...request, sessionId: 'session-b' },
+          { t: 'session_file_upload_v1', path: 'generic.dat', sizeBytes: 0 },
+          { t: 'composer_media_stage_upload_v1', path: 'generic.dat', sizeBytes: 0 },
+          { ...request, workspaceRelativeDir: '../member-b' },
+        ]) await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, input))
+          .resolves.toMatchObject({ response: { success: false } });
+
+        // Caller workspace hints cannot replace the host-fixed Session directory.
+        const opened = z.object({ response: z.object({ success: z.literal(true), uploadId: z.string(),
+          recipientPublicKeyBase64: z.string() }), expiresAt: z.number() }).parse(
+          await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, { ...request,
+            workingDirectory: neighbor, workspaceRootPath: neighbor }));
+        const encrypted = createEncryptedTransferChunkEnvelope({ transferId: opened.response.uploadId, sequence: 0,
+          payload: bytes, recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64 });
+        await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
+          { uploadId: opened.response.uploadId, index: 0, ...encrypted })).resolves.toMatchObject({ response: { success: true } });
+        const finalized = z.object({ response: z.object({ success: z.literal(true), attachmentHandle: SessionAttachmentHandleV1Schema }),
+          issuedAttachment: z.object({ handle: SessionAttachmentHandleV1Schema, filePath: z.string(),
+            displayPath: z.string(), name: z.string(), sizeBytes: z.number(), attachmentId: z.string() }) }).parse(
+          await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: opened.response.uploadId }));
+        expect(finalized.issuedAttachment).toMatchObject({ handle: finalized.response.attachmentHandle,
+          name: 'notes.dat', sizeBytes: bytes.length, attachmentId: 'attachment-a' });
+        expect(finalized.issuedAttachment.filePath.startsWith(join(member, '.happier', 'attachments'))).toBe(true);
+        expect(await readFile(finalized.issuedAttachment.filePath)).toEqual(bytes);
+
+        const recipient = createTransferRecipientKeyPair();
+        const preview = { t: 'session_attachment_download_v1', attachmentHandle: finalized.response.attachmentHandle,
+          recipientPublicKeyBase64: recipient.recipientPublicKeyBase64 };
+        for (const input of [
+          { ...preview, attachmentHandle: { ...preview.attachmentHandle, sessionId: 'session-b' } },
+          { ...preview, attachmentHandle: { ...preview.attachmentHandle, id: 'forged-handle' } },
+          { ...preview, path: finalized.issuedAttachment.filePath },
+          { t: 'session_file_download_v1', path: finalized.issuedAttachment.filePath,
+            recipientPublicKeyBase64: recipient.recipientPublicKeyBase64 },
+        ]) await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, input))
+          .resolves.toMatchObject({ response: { success: false } });
+        await expect(foreign.request({ kind: 'rpc', method: RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
+          input: { ...preview, attachmentHandle: { ...preview.attachmentHandle, sessionId: 'session-b' } } }))
+          .resolves.toMatchObject({ response: { success: false } });
+
+        // Finalizing one preview must leave the issued handle with this Session owner.
+        for (let index = 0; index < 2; index++) {
+          const download = z.object({ response: z.object({ success: z.literal(true), downloadId: z.string() }) })
+            .parse(await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, preview));
+          const chunk = z.object({ response: z.object({ success: z.literal(true), payloadBase64: z.string(),
+            encryptedDataKeyEnvelopeBase64: z.string(), isLast: z.literal(true) }) }).parse(
+            await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, { downloadId: download.response.downloadId, index: 0 }));
+          expect(decryptEncryptedTransferChunkEnvelope({ transferId: download.response.downloadId, sequence: 0,
+            payloadBase64: chunk.response.payloadBase64, encryptedDataKeyEnvelopeBase64: chunk.response.encryptedDataKeyEnvelopeBase64,
+            recipientSecretKeySeed: recipient.recipientSecretKeySeed })).toEqual(bytes);
+          await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, { downloadId: download.response.downloadId }))
+            .resolves.toMatchObject({ response: { success: true } });
+        }
+      } finally { await foreign.dispose(); await channel.dispose(); }
+    });
+  });
+
+  it('keeps Machine native transfer custody generic and refuses attachment intake', async () => {
+    await withTempDir('happier-native-machine-transfer-', async root => {
+      const channel = await openNativePipe(root);
+      const invoke = (method: string, input: unknown) => channel.request({ kind: 'rpc', method, input });
+      try {
+        await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, { t: 'session_attachment_upload_v1',
+          sessionId: 'session-a', messageLocalId: 'message-a', fileName: 'notes.dat', sizeBytes: 0 }))
+          .resolves.toMatchObject({ response: { success: false, errorCode: 'filesystem_identity_custody_unavailable' } });
+        const opened = z.object({ response: z.object({ success: z.literal(true), uploadId: z.string() }) }).parse(
+          await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, { t: 'session_file_upload_v1', path: 'generic.dat', sizeBytes: 0 }));
+        await expect(invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, { uploadId: opened.response.uploadId }))
+          .resolves.toMatchObject({ response: { success: true } });
+      } finally { await channel.dispose(); }
+    });
+  });
+
   it('dispatches admitted capabilities through the native service with requester Account metadata', async () => {
     await withTempDir('happier-native-capabilities-', async root => {
       const channel = await openNativePipe(root);

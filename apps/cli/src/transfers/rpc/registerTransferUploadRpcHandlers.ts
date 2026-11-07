@@ -42,8 +42,8 @@ export function registerTransferUploadRpcHandlers(
     sessionRpcTransferMaxBytes?: number | null;
     attachmentUpload?: TransferUploadInitAttachmentDeps;
     composerMediaStage?: ComposerMediaStageUploadTargetDeps;
-    /** Immutable Session namespace: only attachments are accepted, never caller paths. */
-    sessionAttachment?: Readonly<{ sessionId: string }>;
+    /** Immutable Session namespace; native hosts can fix placement inside the workspace. */
+    sessionAttachment?: Readonly<{ sessionId: string; uploadLocation?: 'workspace' }>;
   }>,
 ): RpcHandlerInvoker {
   const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
@@ -91,7 +91,7 @@ export function registerTransferUploadRpcHandlers(
             ...(request.relativePath === undefined ? {} : { relativePath: request.relativePath }),
             ...(request.directoryEntries === undefined ? {} : { directoryEntries: request.directoryEntries }),
             sizeBytes: request.sizeBytes,
-            uploadLocation: request.uploadLocation,
+            uploadLocation: deps.sessionAttachment.uploadLocation ?? request.uploadLocation,
             workspaceRelativeDir: request.workspaceRelativeDir,
             vcsIgnoreStrategy: request.vcsIgnoreStrategy,
             vcsIgnoreWritesEnabled: request.vcsIgnoreWritesEnabled,

@@ -6,9 +6,13 @@ import { captureAgentNativeLaunchAuthorityForHost, spawnAuthorizedHostExecLaunch
 import { createSupervisedMcpStdioTransport, type AdmittedMcpStdioRuntime } from './supervisedStdioTransport';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
+import { createFilesystemEffectChannel, initializeFilesystemEffectChannel,
+  type FilesystemEffectChannel } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
+import type { FilesystemEffectConfiguration } from '@/rpc/handlers/fileSystem/filesystemEffectOperation';
 
-/** Configuration preparation precedes the incumbent invocation's Exec binding;
- * only a later custom-tool request can open its selected third-party process. */
+/** The Session's incumbent Exec binding owns both selected MCP processes and
+ * its host-private native filesystem pipe. Configuration alone cannot launch. */
 export function createSessionMcpStdioRuntime(input: Readonly<{
   target: AgentLaunchMaterializationTarget;
   nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'>;
@@ -18,40 +22,47 @@ export function createSessionMcpStdioRuntime(input: Readonly<{
 }>) {
   let service: ExecService | undefined;
   const unavailable = () => new PluginError({ code: 'agent_isolation_unavailable',
-    message: 'Current Session native MCP execution is unavailable', retryable: false,
+    message: 'Current Session native execution is unavailable', retryable: false,
     details: { phase: 'native_execution_preparation' } });
   const bindExec = (next: ExecService) => {
     input.signal.throwIfAborted();
     service = next;
     return () => { if (service === next) service = undefined; };
   };
+  const openNativeProcess = async (request: Readonly<{
+    command: string;
+    args: readonly string[];
+    environment: ProcessEnvInput;
+    selectedMaterials: AgentLaunchMaterialization['selectedMaterials'];
+    signal?: AbortSignal;
+  }>) => {
+    const combined = request.signal ? AbortSignal.any([input.signal, request.signal]) : input.signal;
+    combined.throwIfAborted();
+    const current = service;
+    if (!current) throw unavailable();
+    const material = Object.freeze({ ...input.target, nativeIdentity: input.nativeIdentity,
+      environment: Object.freeze(buildScopedProcessEnv({ baseEnv: request.environment })),
+      selectedMaterials: Object.freeze(request.selectedMaterials.map(file => Object.freeze({ ...file }))),
+    });
+    const authority = captureAgentNativeLaunchAuthorityForHost(current, 'exec', combined, () => material);
+    if (!authority) throw unavailable();
+    const launch = await authority.authorize({ command: request.command,
+      args: request.args, cwd: input.directory, env: {} }, combined);
+    let release = launch.release;
+    try {
+      combined.throwIfAborted();
+      const process = spawnAuthorizedHostExecLaunchForHost({ ...launch,
+        maxStdoutBytes: 0, maxStderrBytes: 0, waitForGracefulRootExitBeforeTreeStop: true },
+      { signal: combined, retainLaunch: retained => { release = retained; } });
+      return { process, signal: combined, release: async () => { await release(); } };
+    } catch (error) { await release(); throw error; }
+  };
   const runtime: AdmittedMcpStdioRuntime = Object.freeze({
     target: input.target,
     environment: input.environment,
     async prepareTransport({ config, selectedMaterials, signal }) {
-      const combined = signal ? AbortSignal.any([input.signal, signal]) : input.signal;
-      combined.throwIfAborted();
-      const current = service;
-      if (!current) throw unavailable();
-      const material: AgentLaunchMaterialization & Readonly<{
-        nativeIdentity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'>;
-      }> = Object.freeze({ ...input.target, nativeIdentity: input.nativeIdentity,
-        environment: Object.freeze(buildScopedProcessEnv({ baseEnv: input.environment, explicitEnv: config.env })),
-        selectedMaterials: Object.freeze(selectedMaterials.map(file => Object.freeze({ ...file }))),
-      });
-      const authority = captureAgentNativeLaunchAuthorityForHost(current, 'exec', combined, () => material);
-      if (!authority) throw unavailable();
-      const launch = await authority.authorize({ command: config.command,
-        args: config.args ?? [], cwd: input.directory, env: {} }, combined);
-      let release = launch.release;
-      let supervised: ReturnType<typeof spawnAuthorizedHostExecLaunchForHost>;
-      try {
-        combined.throwIfAborted();
-        supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch,
-          maxStdoutBytes: 0, maxStderrBytes: 0, waitForGracefulRootExitBeforeTreeStop: true },
-        { signal: combined, retainLaunch: retained => { release = retained; } });
-      } catch (error) { await release(); throw error; }
-      const process = supervised;
+      const { process, release } = await openNativeProcess({ command: config.command, args: config.args ?? [],
+        environment: buildScopedProcessEnv({ baseEnv: input.environment, explicitEnv: config.env }), selectedMaterials, signal });
       let closing: Promise<void> | undefined;
       const transport = createSupervisedMcpStdioTransport({ ...process,
         dispose: () => closing ??= (async () => {
@@ -66,5 +77,45 @@ export function createSessionMcpStdioRuntime(input: Readonly<{
       return { transport, stderr: process.child.stderr };
     },
   });
-  return Object.freeze({ runtime, bindExec });
+  const prepareFilesystemEffect = async (configuration: FilesystemEffectConfiguration,
+    signal?: AbortSignal): Promise<FilesystemEffectChannel> => {
+    const { process, release, signal: lifetime } = await openNativeProcess({
+      command: resolveInstalledMachineEffectCli(), args: ['filesystem-effect'],
+      environment: { HOME: input.nativeIdentity.home,
+        ...(input.environment.PATH === undefined ? {} : { PATH: input.environment.PATH }),
+        TMPDIR: input.target.runtimeHome, TEMP: input.target.runtimeHome, TMP: input.target.runtimeHome },
+      selectedMaterials: [], signal,
+    });
+    let initialized = false;
+    let closing: Promise<void> | undefined;
+    const channel = createFilesystemEffectChannel({ input: process.child.stdin, output: process.child.stdout,
+      signal: lifetime, dispose: () => closing ??= (async () => {
+        // Channel disposal sends EOF first. Let the selected native member
+        // close its descriptors before the existing supervisor settles it.
+        try {
+          if (initialized) {
+            let unsubscribe = () => {};
+            try {
+              await Promise.race([process.handle.wait(), new Promise<never>((_resolve, reject) => {
+                unsubscribe = process.onOutcomeUncertain(reject);
+              })]);
+            } finally { unsubscribe(); }
+          }
+          await process.dispose();
+        } catch (cause) {
+          throw new PluginError({ code: 'indeterminate',
+            message: 'Native filesystem cleanup is unconfirmed', retryable: false,
+            details: { phase: 'native_execution_settlement' } }, { cause });
+        }
+        const settlement = await process.waitForSettlement();
+        if (settlement.remainder) throw new PluginError({ code: 'indeterminate',
+          message: 'Native filesystem cleanup is unconfirmed', retryable: false,
+          details: { phase: 'native_execution_settlement' } });
+        await release();
+      })(),
+    });
+    try { await initializeFilesystemEffectChannel(channel, configuration); initialized = true; return channel; }
+    catch (error) { await channel.dispose(); throw error; }
+  };
+  return Object.freeze({ runtime, bindExec, prepareFilesystemEffect });
 }

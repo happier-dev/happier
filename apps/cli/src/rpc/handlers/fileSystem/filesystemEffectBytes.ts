@@ -3,6 +3,7 @@ import { copyFile, rename, rm } from 'node:fs/promises';
 import { z } from 'zod/mini';
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SessionAttachmentHandleV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import { configuration as cliConfiguration } from '@/configuration';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { CapabilitiesDetectRequest, CapabilitiesDetectResponse,
@@ -17,6 +18,7 @@ import { createFileTransferPayloadSource, disposeTransferPayloadSource, readTran
   resolveTransferPayloadManifestHash, resolveTransferPayloadSizeBytes, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
+import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { executeConfiguredFilesystemEffect, invalidOperation,
   type FilesystemEffectConfiguration } from './filesystemEffectOperation';
 import { createFilesystemEffectEntryOwner } from './filesystemEffectEntries';
@@ -80,6 +82,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   };
   const entries = createFilesystemEffectEntryOwner(configuration, uploads, registerSource, signal);
   const rpcStore = new TransferSessionStore({ ttlMs: cliConfiguration.filesTransferSessionTtlMs });
+  const attachmentPathAllowanceRegistry = configuration.sessionAttachment ? createTransferPathAllowanceRegistry() : undefined;
   const rpcHandlers = new Map<string, RpcHandler<unknown, unknown>>();
   const sessionRpcTransferMaxBytes = configuration.sessionRpcTransferMaxBytes === undefined
     ? resolveServerRoutedTransferMaxBytes() : configuration.sessionRpcTransferMaxBytes;
@@ -120,10 +123,18 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   registerWorkspaceFileListHandler(registrar, configuration.workingDirectory, { accessPolicy: configuration.accessPolicy });
   registerTransferUploadRpcHandlers(registrar, { workingDirectory: configuration.workingDirectory,
     accessPolicy: configuration.accessPolicy, store: rpcStore, sessionRpcTransferMaxBytes, finalizeFileOperations,
+    ...(configuration.sessionAttachment ? {
+      sessionAttachment: { ...configuration.sessionAttachment, uploadLocation: 'workspace' as const },
+      attachmentUpload: { pathAllowanceRegistry: attachmentPathAllowanceRegistry,
+        resolveSessionWorkingDirectory: async () => configuration.workingDirectory },
+    } : {}),
     getAdditionalAllowedWriteDirs: () => configuration.additionalAllowedWriteDirs ?? [] });
   registerTransferDownloadRpcHandlers(registrar, { workingDirectory: configuration.workingDirectory,
     accessPolicy: configuration.accessPolicy, store: rpcStore, sessionRpcTransferMaxBytes,
-    getAdditionalAllowedReadDirs: () => configuration.additionalAllowedReadDirs ?? [],
+    ...(configuration.sessionAttachment ? { sessionAttachment: configuration.sessionAttachment } : {}),
+    getAdditionalAllowedReadDirs: () => attachmentPathAllowanceRegistry
+      ? [...(configuration.additionalAllowedReadDirs ?? []), ...attachmentPathAllowanceRegistry.getAdditionalAllowedReadDirs()]
+      : configuration.additionalAllowedReadDirs ?? [],
     getAdditionalAllowedReadFiles: () => configuration.additionalAllowedReadFiles ?? [] });
   return {
     async execute(raw: unknown): Promise<unknown> {
@@ -159,7 +170,7 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
             ...(manifestHash ? { manifestHash } : {}) };
         }
         case 'rpc': {
-          if (!hasFilesystemEffectTransferCustody(command.method, command.input)) return { response: { success: false,
+          if (!configuration.sessionAttachment && !hasFilesystemEffectTransferCustody(command.method, command.input)) return { response: { success: false,
               errorCode: 'filesystem_identity_custody_unavailable', error: 'This transfer custody is unavailable in the native operation' } };
           const handler = rpcHandlers.get(command.method);
           if (!handler) throw invalidOperation();
@@ -170,7 +181,12 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
           const downloadId: unknown = result && Reflect.get(result, 'downloadId') || input && Reflect.get(input, 'downloadId');
           const expiresAt = typeof uploadId === 'string' ? rpcStore.getUploadSession(uploadId)?.expiresAt
             : typeof downloadId === 'string' ? rpcStore.getDownloadSession(downloadId)?.expiresAt : undefined;
-          return { response, ...(expiresAt === undefined ? {} : { expiresAt }) };
+          const handle = configuration.sessionAttachment && command.method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE
+            && result && Reflect.get(result, 'success') === true
+            ? SessionAttachmentHandleV1Schema.safeParse(Reflect.get(result, 'attachmentHandle')) : null;
+          const issuedAttachment = handle?.success ? rpcStore.getIssuedAttachment(handle.data) : null;
+          return { response, ...(expiresAt === undefined ? {} : { expiresAt }),
+            ...(issuedAttachment ? { issuedAttachment } : {}) };
         }
         case 'action': return await executeConfiguredFilesystemEffect(configuration,
           { actionId: command.actionId, input: command.input }, signal);
