@@ -1307,8 +1307,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       effectAttempted = false,
     ): Promise<
       | Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }>
-      | Readonly<{ ok: false; errorCode: string; error: string }>
+      | ActionExecuteFailure
     > => {
+      // Missing execution custody leaves consent available for the origin.
+      // A transport-confirmed refusal before delivery can settle it here;
+      // the expected-status write still protects a concurrent execution claim.
+      if (!effectAttempted && request.status !== 'executing' && failure.effectAttempted === undefined) {
+        return { ...failure, effectAttempted: false };
+      }
       const executedAtMs = Date.now();
       // Both definitive refusal and an unknown dispatched outcome end replay
       // custody and keep the Action's declared settled-input projection.

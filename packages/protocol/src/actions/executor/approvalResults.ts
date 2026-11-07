@@ -16,6 +16,7 @@ import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdent
 import type { ApprovalStaleReason } from '../../approvals/approvalExecutionFailure.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import { ActionExecuteResultSchema } from '../actionExecutionResult.js';
+import { RpcError } from '../../rpc/errors.js';
 
 /** Replay crosses a process boundary; malformed acknowledgements prove no outcome. */
 export function readApprovalReplayResult(result: unknown): ActionExecuteResult {
@@ -126,10 +127,13 @@ export async function classifyApprovalExecutionOriginCurrentness(args: Readonly<
       details?: unknown;
     }> }
 >> {
-  let reason: ApprovalStaleReason = 'origin_not_current';
+  let reason: ApprovalStaleReason | undefined;
   try {
     const current = await args.check(value => { reason = value; });
-    return current ? { status: 'current' } : { status: 'stale', reason };
+    if (current) return { status: 'current' };
+    // An adapter that supplied no failed fact did not establish staleness.
+    if (!reason) throw new RpcError('approval_context_unavailable', 'approval_context_unavailable');
+    return { status: 'stale', reason };
   } catch (error) {
     const failure = normalizeActionExecutorThrownError(error);
     if (failure.errorCode === 'project_requester_home_unavailable') {

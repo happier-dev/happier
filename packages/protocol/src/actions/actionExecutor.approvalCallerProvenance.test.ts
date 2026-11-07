@@ -1195,17 +1195,14 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       artifactId: 'approval-plugin-spawn-legacy-1',
       decision: 'approve',
     }, { surface: 'ui', authority: 'present_user' })).resolves.toMatchObject({
-      ok: true,
-      result: {
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
-      },
+      ok: false,
+      errorCode: 'approval_stale',
+      effectAttempted: false,
+      details: { reason: 'origin_version' },
     });
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-    expect(storedRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate.mock.calls.map(([{ request }]) => request.status)).toEqual(['approved']);
+    expect(storedRequest.execution).toBeUndefined();
+    expect(storedRequest).toEqual(approvalsUpdate.mock.calls[0]?.[0].request);
     expect(sessionSpawnNew).not.toHaveBeenCalled();
   });
 
@@ -1351,17 +1348,14 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       artifactId: 'approval-session-agent-predecessor-1',
       decision: 'approve',
     }, { surface: 'ui', authority: 'present_user' })).resolves.toMatchObject({
-      ok: true,
-      result: {
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
-      },
+      ok: false,
+      errorCode: 'approval_stale',
+      effectAttempted: false,
+      details: { reason: 'origin_version' },
     });
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-    expect(storedRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate.mock.calls.map(([{ request }]) => request.status)).toEqual(['approved']);
+    expect(storedRequest.execution).toBeUndefined();
+    expect(storedRequest).toEqual(approvalsUpdate.mock.calls[0]?.[0].request);
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
     expect(observeActionExecution.mock.calls.map(([observation]) => observation.actionId)).toEqual(['approval.request.decide']);
     expect(observeActionExecution).not.toHaveBeenCalledWith(expect.objectContaining({ actionId: 'session.title.set' }));
@@ -1428,7 +1422,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       return { ok: true as const };
     });
     const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
-    const isApprovalExecutionOriginCurrent = vi.fn(async () => isCurrent);
+    const isApprovalExecutionOriginCurrent = vi.fn<NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']>>(async ({ reportStale }) => {
+      if (!isCurrent) reportStale?.('credential_changed');
+      return isCurrent;
+    });
     const executor = createActionExecutor({
       approvalsGet: async () => storedRequest,
       approvalsUpdate,
@@ -1446,11 +1443,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       serverIdentityId: observedServerIdentityId,
     });
     expect(result).toMatchObject({
-      ok: true,
-      result: {
-        status: 'failed',
-        execution: { ok: false, errorCode: 'approval_stale' },
-      },
+      ok: false,
+      errorCode: 'approval_stale',
+      effectAttempted: false,
+      details: { reason: checksCurrentness ? 'credential_changed' : 'home_changed' },
     });
     if (checksCurrentness) {
       expect(isApprovalExecutionOriginCurrent).toHaveBeenCalledWith(expect.objectContaining({
@@ -1461,15 +1457,12 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
           target: { kind: 'session', sessionId: 'session-1' },
         }),
       }));
-      expect(approvalsUpdate).toHaveBeenCalledTimes(2);
     } else {
       expect(isApprovalExecutionOriginCurrent).not.toHaveBeenCalled();
-      expect(approvalsUpdate).toHaveBeenCalledTimes(2);
     }
-    expect(storedRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate.mock.calls.map(([{ request }]) => request.status)).toEqual(['approved']);
+    expect(storedRequest.execution).toBeUndefined();
+    expect(storedRequest).toEqual(approvalsUpdate.mock.calls[0]?.[0].request);
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
@@ -1641,14 +1634,14 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       artifactId: 'approval-api-current-1',
       decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'server-1' })).resolves.toMatchObject({
-      ok: true,
-      result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } },
+      ok: false,
+      errorCode: 'approval_stale',
+      effectAttempted: false,
+      details: { reason: 'origin_invalid' },
     });
-    expect(approvalsUpdate).toHaveBeenCalledTimes(2);
-    expect(storedRequest).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
-    });
+    expect(approvalsUpdate.mock.calls.map(([{ request }]) => request.status)).toEqual(['approved']);
+    expect(storedRequest.execution).toBeUndefined();
+    expect(storedRequest).toEqual(approvalsUpdate.mock.calls[0]?.[0].request);
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
   it('persists the exact Workflow Run caller in a durable approval origin', async () => {

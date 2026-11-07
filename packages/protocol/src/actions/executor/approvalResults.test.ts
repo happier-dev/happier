@@ -2,7 +2,7 @@ import { ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
 import type { ActionExecuteResult } from './types.js';
 import { describe, expect, it } from 'vitest';
 
-import { buildActionExecuteResultFromRecordedApprovalExecution, projectSettledApprovalExecution } from './approvalResults.js';
+import { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './approvalResults.js';
 import { ApprovalRequestPublicReadSchema } from '../../approvals/approvalRequestPublicRead.js';
 import { projectApprovalRequestForPublicRead } from '../actionApprovalPresentation.js';
 
@@ -65,5 +65,17 @@ describe('settled approval effect evidence', () => {
     const settled = projectSettledApprovalExecution({ request, actionId, exec, dispatchEffectAttempted: true, executedAtMs: 3 });
     expect(settled.request).toMatchObject({ status, execution: { ok: status === 'executed', effectAttempted: attempted } });
     expect(settled.exec.ok).toBe(status === 'executed');
+  });
+});
+
+describe('approval origin currentness diagnostics', () => {
+  it('does not turn a checker without a reason into an origin-not-current fact', async () => {
+    expect(await classifyApprovalExecutionOriginCurrentness({ check: async () => false }))
+      .toMatchObject({ status: 'read_failed', failure: { errorCode: 'approval_context_unavailable' } });
+    expect(await classifyApprovalExecutionOriginCurrentness({ check: async report => {
+      report('credential_changed'); return false;
+    } })).toEqual({ status: 'stale', reason: 'credential_changed' });
+    expect(await classifyApprovalExecutionOriginCurrentness({ check: async () => true }))
+      .toEqual({ status: 'current' });
   });
 });
