@@ -4,6 +4,7 @@ import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@ha
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { AgentSessionStartupInstructionsV1Schema, type AgentSessionStartupInstructionsV1, type AgentSessionStartupInstructionsMarkerV1 } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail, SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
 import { renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
@@ -25,7 +26,6 @@ import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
-import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -38,8 +38,10 @@ import {
     completePendingMachineSpawnAttemptCustodyForSession,
 } from '@/sync/ops/machines';
 import { executeSessionSpawnNewAction } from '@/sync/ops/actions/sessionSpawnNewAction';
+import { executeWithInPlaceApprovalReview } from '@/components/approvals/executeWithInPlaceApprovalReview';
+import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resumeSession, sessionUnarchiveWithServerScope } from '@/sync/ops/sessions';
-import { resolveSpawnAttemptDirectoryIdentity } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveMachineForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
@@ -68,7 +70,7 @@ import {
     writeVoiceConversationScopeMetadata,
     type VoiceConversationScopeMetadata,
 } from './voiceConversationScopeMetadata';
-import { persistVoiceAutoTargetMachineId, readVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSettings';
+import { persistVoiceAutoTargetMachineId } from './voiceAutoTargetMachineSettings';
 import {
     isVoiceConversationSystemSessionMetadata,
     shouldRetireLegacyVoiceConversationSession,
@@ -203,94 +205,9 @@ function withCanonicalVoiceSettings(state: any): any {
     };
 }
 
-function resolveVoiceHomeDirectory(state: any, machineId: string): string | null {
-    const agentCfg = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(state)).agent;
-    const subdir = normalizeNonEmptyString(agentCfg?.voiceHomeSubdirName) ?? 'voice-agent';
-    const machine = resolveMachineForActiveServerFromState(state, machineId);
-    const happyHomeDir = normalizeNonEmptyString(machine?.metadata?.happyHomeDir);
-    if (happyHomeDir) {
-        return resolveMachineAbsolutePath({
-            rootPath: happyHomeDir,
-            requestPath: subdir,
-        });
-    }
-
-    for (const recent of state?.authoringMemory?.recentMachinePaths ?? []) {
-        if (normalizeNonEmptyString(recent?.machineId) !== machineId) continue;
-        const recentDirectory = normalizeNonEmptyString(recent?.path);
-        if (recentDirectory) return recentDirectory;
-    }
-
-    for (const session of Object.values(state?.sessions ?? {}) as any[]) {
-        const resolvedTarget = typeof session?.id === 'string' ? readMachineTargetForSession(session.id) : null;
-        if (normalizeNonEmptyString(resolvedTarget?.machineId) !== machineId) continue;
-        const sessionDirectory = normalizeNonEmptyString(resolvedTarget?.basePath);
-        if (sessionDirectory) return sessionDirectory;
-    }
-
-    return null;
-}
-
-function resolveRecentVoiceDirectoryForMachine(state: any, machineId: string | null | undefined): string | null {
-    const normalizedMachineId = normalizeNonEmptyString(machineId);
-    if (!normalizedMachineId) return null;
-    for (const recent of state?.authoringMemory?.recentMachinePaths ?? []) {
-        if (normalizeNonEmptyString(recent?.machineId) !== normalizedMachineId) continue;
-        const recentDirectory = normalizeNonEmptyString(recent?.path);
-        if (recentDirectory) return recentDirectory;
-    }
-    return null;
-}
-
-function resolveRecentVoiceDirectoryForRouteMachine(state: any, routeMachineId: string | null | undefined): string | null {
-    const normalizedRouteMachineId = normalizeNonEmptyString(routeMachineId);
-    if (!normalizedRouteMachineId) return null;
-    for (const recent of state?.authoringMemory?.recentMachinePaths ?? []) {
-        const recentMachineId = normalizeNonEmptyString(recent?.machineId);
-        if (resolveVoiceExecutionMachineIdFromState(state, { machineId: recentMachineId ?? '' }) !== normalizedRouteMachineId) continue;
-        const recentDirectory = normalizeNonEmptyString(recent?.path);
-        if (recentDirectory) return recentDirectory;
-    }
-    return null;
-}
-
-function resolveVoiceSpawnDirectoryIdentity(
-    state: any,
-    machineId: string,
-    directory: unknown,
-): string | null {
-    const normalizedDirectory = normalizeNonEmptyString(directory);
-    if (!normalizedDirectory) return null;
-    const machine = resolveMachineForActiveServerFromState(state, machineId);
-    return resolveSpawnAttemptDirectoryIdentity(
-        normalizedDirectory,
-        normalizeNonEmptyString(machine?.metadata?.homeDir),
-    );
-}
-
-function resolveRequiredVoiceSpawnDirectoryIdentity(
-    state: any,
-    machineId: string,
-    directory: string,
-): string {
-    const identity = resolveVoiceSpawnDirectoryIdentity(state, machineId, directory);
-    if (!identity) throw new Error('Voice spawn directory identity is unavailable');
-    return identity;
-}
-
-function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory: string } | null {
-    const canonicalState = withCanonicalVoiceSettings(state);
-    const machineId = resolveVoiceExecutionMachineIdFromState(canonicalState);
-    if (!machineId) return null;
-    const voice = canonicalState.settings.voice as VoiceSettings;
-    const configuredOriginId = voice.executionMachine.mode === 'fixed'
-        ? voice.executionMachine.machineId
-        : readVoiceAutoTargetMachineId(canonicalState);
-    const directory =
-        resolveVoiceHomeDirectory(canonicalState, machineId)
-        ?? resolveRecentVoiceDirectoryForMachine(canonicalState, configuredOriginId)
-        ?? resolveRecentVoiceDirectoryForRouteMachine(canonicalState, machineId);
-    return directory ? { machineId, directory } : null;
+function resolveVoiceHomeSpawnTarget(state: any): { machineId: string } | null {
+    const machineId = resolveVoiceExecutionMachineIdFromState(withCanonicalVoiceSettings(state));
+    return machineId ? { machineId } : null;
 }
 
 export function resolveVoiceHomeDaemonMachineId(state: any = storage.getState()): string | null {
@@ -560,6 +477,7 @@ function toVoiceConversationSpawnError(spawned: unknown): Error {
                 : errorCode ?? 'VOICE_CONVERSATION_SPAWN_FAILED',
             ...(errorDetail ? { errorDetail } : {}),
             ...(uxDiagnostic ? { uxDiagnostic } : {}),
+            ...(spawnRecord.providerError ? { providerError: spawnRecord.providerError } : {}),
             ...(spawnRecord.spawnAttemptCustody
                 ? { spawnAttemptCustody: spawnRecord.spawnAttemptCustody }
                 : {}),
@@ -570,7 +488,7 @@ function toVoiceConversationSpawnError(spawned: unknown): Error {
 async function spawnVoiceConversationSession(params: Readonly<{
     machineId: string;
     serverId: string;
-    directory: string;
+    directory: SessionDirectoryIntentV1;
     backendTarget: PersistedBackendTargetRefV2;
     permissionMode: PermissionIntent;
     creationKey: string;
@@ -599,31 +517,40 @@ async function spawnVoiceConversationSession(params: Readonly<{
             : null;
     const modelSelection = params.modelSelection ?? (configuredModelRef
         ? SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() }) : undefined);
-    const action = await executeSessionSpawnNewAction({
-        creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
-        executionTarget: {
-            serverId: params.serverId,
-            machineId: params.machineId,
-        },
-        directory: { kind: 'path', path: params.directory },
-        agentTarget,
-        permissionMode: params.permissionMode,
-        transcriptStorage: 'persisted',
-        ...(modelSelection !== undefined ? { modelSelection } : {}),
-        ...(params.connectedServices
-            ? { connectedServices: params.connectedServices }
-            : {}),
-        ...(params.startupInstructions
-            ? { agentSessionStartupInstructionsV1: params.startupInstructions }
-            : {}),
-    }, {
-        // This prepares the carrier for the host-admitted conversation. Model
-        // tools keep the automation-owned Voice Action surface separately.
-        surface: 'ui',
-        serverId: params.serverId,
-        ...(params.accountLifetime ? { expectedAccountId: params.accountLifetime.scope.accountId } : {}),
-        actionRequestId: params.creationKey,
+    const lifecycle = getVoiceSessionLifecycleController();
+    const controlSessionId = lifecycle?.getSnapshot().sessionId;
+    const action = await executeWithInPlaceApprovalReview({
+        actionId: 'session.spawn_new',
         signal: params.signal,
+        onDismissed: () => {
+            if (lifecycle && controlSessionId) fireAndForget(lifecycle.stop(controlSessionId));
+        },
+        execute: (executor, signal) => executeSessionSpawnNewAction({
+            creationKey: SessionCreationKeyV1Schema.parse(params.creationKey),
+            executionTarget: {
+                serverId: params.serverId,
+                machineId: params.machineId,
+            },
+            directory: params.directory,
+            agentTarget,
+            permissionMode: params.permissionMode,
+            transcriptStorage: 'persisted',
+            ...(modelSelection !== undefined ? { modelSelection } : {}),
+            ...(params.connectedServices
+                ? { connectedServices: params.connectedServices }
+                : {}),
+            ...(params.startupInstructions
+                ? { agentSessionStartupInstructionsV1: params.startupInstructions }
+                : {}),
+        }, {
+            // This prepares the carrier for the host-admitted conversation. Model
+            // tools keep the automation-owned Voice Action surface separately.
+            surface: 'ui',
+            serverId: params.serverId,
+            ...(params.accountLifetime ? { expectedAccountId: params.accountLifetime.scope.accountId } : {}),
+            actionRequestId: params.creationKey,
+            signal,
+        }, executor),
     });
     if (!action.ok) {
         throw toVoiceConversationSpawnError({
@@ -640,6 +567,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
                 errorCode: launchErrorCode ?? action.result.code,
                 errorMessage: launchErrorCode ?? action.result.code,
                 errorDetail: 'launchError' in action.result ? action.result.launchError : undefined,
+                providerError: 'providerError' in action.result ? action.result.providerError : undefined,
                 retryableProviderFailure:
                     'providerError' in action.result
                     && action.result.providerError?.retryable === true
@@ -1058,7 +986,9 @@ async function ensureVoiceConversationSessionForVoiceHomeUnguarded(
         serverId,
         accountLifetime,
         signal,
-        directory: target.directory,
+        // Home's hidden carrier has no user-selected project directory. Let
+        // the daemon's managed-directory owner choose its execution location.
+        directory: { kind: 'managed' },
         backendTarget,
         permissionMode,
         creationKey,
@@ -1268,7 +1198,7 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
         serverId,
         accountLifetime,
         signal: params.signal,
-        directory,
+        directory: { kind: 'path', path: directory },
         backendTarget,
         ...(connectedServices ? { connectedServices } : {}),
         ...(modelSelection ? { modelSelection } : {}),

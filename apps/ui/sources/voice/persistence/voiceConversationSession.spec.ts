@@ -366,7 +366,7 @@ async function dispatchMachineRpc(request: { method: string; payload: unknown; m
     const backendId = resolveBundledAgentIdFromContributionIdentity(identity) ?? buildQualifiedPluginContributionKey(identity);
     const options = {
       ...input, machineId: input.executionTarget.machineId, serverId: input.executionTarget.serverId,
-      directory: input.directory.kind === 'path' ? input.directory.path : '',
+      directory: input.directory.kind === 'path' ? input.directory.path : '/daemon/managed/carrier',
       backendTarget: { kind: 'backend' as const, backendId }, userAttemptId: input.creationKey,
     };
     const spawned = input.agentSessionStartupInstructionsV1
@@ -744,6 +744,51 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' } },
       modelSelection: expect.objectContaining({ ref: chat }),
     }));
+  });
+
+  it.each(['provider_compatibility_unverified', 'provider_materialization_failed',
+    'provider_incompatible_with_agent', 'provider_credential_transport_unavailable'] as const)(
+    'retains %s from real Voice Home Start through presentation and shared recovery', async code => {
+    const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
+    const { transitionVoiceRuntimeToIdle } = await import('@/voice/runtime/machine/voiceConversationRuntimeHelpers');
+    const { voiceConversationRuntimeMachine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
+    const { deriveLocalVoiceSessionSnapshot } = await import('@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot');
+    const { projectVoiceAttemptPresentation } = await import('@/components/voice/attempt/projectVoiceAttemptPresentation');
+    const { executeVoiceAttemptRecovery } = await import('@/components/voice/attempt/voiceAttemptRecovery');
+    const { presentProviderError, presentProviderRecoveryAction } = await import('@/providers/connection/errorPresentation');
+    const { VoiceAttemptPresentationSchema } = await import('@happier-dev/protocol/voice/attemptPresentation');
+    const { t } = await import('@/text');
+    const agent = state.settings.voice.providers.local_conversation.config.agent;
+    const ref = { agentTargetKey: 'agent:happier.agent.opencode/opencode',
+      providerConnectionId: 'pc_4d7bde6f-8271-4489-86ca-b89c8ca15aad', modelId: 'openrouter/free' };
+    Object.assign(agent, { agentSource: 'agent', agentId: 'opencode', chatModelSource: 'custom',
+      chatModelId: ref.modelId, providerChat: { status: 'configured', chat: ref, commit: ref } });
+    const providerError = createProviderErrorV1(code, { connectionId: ref.providerConnectionId, machineId: 'machine-1' });
+    spawnResponse.mockResolvedValue({ type: 'error', code: 'spawn_failed', retryable: false, providerError });
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    const error = await ensureVoiceConversationSessionForVoiceHome().then(() => null, (cause: unknown) => cause);
+    expect(error).toMatchObject({ providerError });
+    transitionVoiceRuntimeToIdle({ controlSessionId: '__voice_agent__', reason: 'spawn_failed', cause: error });
+    const snapshot = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot());
+    expect(snapshot).toMatchObject({ errorMessage: code, errorProviderError: providerError, errorPresentation: 'error' });
+    const context = { connectRecoveryTarget: { kind: 'unavailable' as const }, runtimeRecoveryTarget: null,
+      attemptSessionId: '__voice_agent__', startSessionId: null, globalStartAuthorized: true, providerError };
+    const presentation = VoiceAttemptPresentationSchema.parse(projectVoiceAttemptPresentation({
+      control: { availability: 'recoverable', live: false, canStart: false, canStop: false, canMute: false,
+        muted: false, capturing: false, primaryAction: 'recover', recoveryAvailable: true,
+        surfaceState: 'error', tone: 'error', stop: 'blush', sessionId: '__voice_agent__', markPose: 'blocked', statusCell: null },
+      attemptId: 'provider-start', ended: false, ...snapshot, recoveryAction: snapshot.errorRecoveryAction ?? null,
+      recoveryContext: context, serviceTitle: 'Voice', agentTitle: 'OpenCode', agentMachineLabel: 'Computer',
+    }));
+    const copy = presentProviderError(providerError);
+    expect(presentation).toMatchObject({ providerError, failureTitle: t(copy.titleKey), failureMessage: t(copy.descriptionKey),
+      recovery: { label: t(presentProviderRecoveryAction(providerError, {})!.titleKey) } });
+    const destinations: unknown[] = [];
+    await expect(executeVoiceAttemptRecovery({ recoveryAction: snapshot.errorRecoveryAction ?? null,
+      setupIncomplete: false, context, navigate: href => { destinations.push(href); } })).resolves.toBe(true);
+    expect(destinations).toEqual([code === 'provider_incompatible_with_agent'
+      ? '/(app)/settings/providers' : `/(app)/settings/providers/${ref.providerConnectionId}`]);
+    voiceConversationRuntimeMachine.reset();
   });
 
   it.each(['profile', 'group', 'native', 'default'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
@@ -1130,7 +1175,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       permissionMode: 'read-only',
       serverId: homeId,
     }));
@@ -1176,7 +1221,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       backendTarget: { kind: 'backend', backendId: 'acme.voice/agent' },
     }));
   });
@@ -1377,7 +1422,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     }) }));
   });
 
-  it('preserves the raw home-relative spawn directory with an explicit ordinary creation key', async () => {
+  it('keeps Home carrier creation independent of recent project paths with an explicit creation key', async () => {
     state.machines['machine-1'].metadata = {
       homeDir: '/Users/test',
     };
@@ -1392,7 +1437,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       kind: 'new', creationKey: 'ui-session-attempt-home-relative',
     })).resolves.toBe('voice-home-session');
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
-      directory: '~/repo',
+      directory: '/daemon/managed/carrier',
       userAttemptId: 'ui-session-attempt-home-relative',
     }));
   });
@@ -1548,7 +1593,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       serverId: homeId,
     }));
   });
@@ -1614,7 +1659,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-new',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       serverId: homeId,
     }));
   });
@@ -1733,7 +1778,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-2',
-      directory: '/Users/fixed/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       serverId: homeId,
     }));
   });
@@ -1793,12 +1838,12 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     await expect(pending).resolves.toBe('voice-home-session');
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       serverId: homeId,
     }));
   });
 
-  it('fails closed instead of roaming when the sticky auto target has no voice-home directory', async () => {
+  it('uses the sticky Machine without requiring a client-resolved Voice home directory', async () => {
     useVoiceTargetStore.getState().rememberAutoTargetMachine(state.settingsScope!, 'stale-machine');
     state.machines['stale-machine'] = {
       id: 'stale-machine',
@@ -1808,10 +1853,11 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
 
-    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
-      code: 'VOICE_CONVERSATION_TARGET_MISSING',
-    });
-    expect(spawnResponse).not.toHaveBeenCalled();
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({
+      executionTarget: { serverId: homeId, machineId: 'stale-machine' },
+      directory: { kind: 'managed' },
+    }));
   });
 
   it('fails closed instead of roaming when the sticky auto target is inactive', async () => {
@@ -1870,7 +1916,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     expect(spawnResponse).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-1',
-      directory: '/Users/test/.happier/voice-agent',
+      directory: '/daemon/managed/carrier',
       serverId: homeId,
     }));
   });

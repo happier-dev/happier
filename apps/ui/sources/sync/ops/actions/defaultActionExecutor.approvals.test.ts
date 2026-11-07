@@ -56,6 +56,7 @@ const { Modal } = await import('@/modal');
 const outgoing: SocketRpcRequestPayload[] = [];
 let rpcResult: unknown = { ok: true };
 let rpcAcknowledgement: unknown;
+let rpcResponder: ((payload: SocketRpcRequestPayload) => unknown | Promise<unknown>) | null = null;
 let decisionReceiver: ((input: unknown) => Promise<unknown>) | null = null;
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
@@ -66,7 +67,7 @@ installDisconnectedServerSocketBoundary((socket) => {
         if (event === SOCKET_RPC_EVENTS.CALL && rpcAcknowledgement instanceof Error) throw rpcAcknowledgement;
         if (event === SOCKET_RPC_EVENTS.CALL && rpcAcknowledgement !== undefined) return rpcAcknowledgement;
         return { ok: true, result: decisionReceiver && payload.method.endsWith(':' + RPC_METHODS.APPROVAL_REQUEST_DECIDE)
-            ? await decisionReceiver(payload.params) : rpcResult };
+            ? await decisionReceiver(payload.params) : event === SOCKET_RPC_EVENTS.CALL && rpcResponder ? await rpcResponder(payload) : rpcResult };
     });
 });
 const apiTokenSummary = {
@@ -248,6 +249,81 @@ await import('@/sync/syncEngine');
 await import('./defaultActionExecutor');
 
 describe('createDefaultActionExecutor approvals', () => {
+    it.each(['approve', 'approve_then_close', 'reject', 'cancel', 'stop', 'dismiss'] as const)('presents the retained Voice carrier directory approval and settles %s', async outcome => {
+        const { executeWithInPlaceApprovalReview } = await import('@/components/approvals/executeWithInPlaceApprovalReview');
+        const { executeSessionSpawnNewAction } = await import('./sessionSpawnNewAction');
+        const { SessionCreationKeyV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1');
+        const { bindMachineAccessActionHttpRequestV1 } = await import('@happier-dev/protocol/actions');
+        const { createDeferred } = await import('@/dev/testkit');
+        const machine = createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' });
+        homes.answer(homeId, '/v1/machines', { body: [machine] });
+        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine } });
+        const access = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', { serverId: homeId, machineId: machine.id });
+        homes.answer(homeId, access.path, { body: { machineId: machine.id, custodian: machine.access!.custodian,
+            access: machine.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } });
+        rpcResult = { ok: true, directory: '/voice-root', directoryKind: 'path', directoryCreationRequired: true, checkout: null };
+        const cancellation = new AbortController();
+        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
+        vi.mocked(Modal.show).mockImplementation(config => { shown.resolve(config); return 'voice-review'; });
+        const dismissed = vi.fn();
+        const input = { creationKey: SessionCreationKeyV1Schema.parse('voice-pending-approval'),
+            executionTarget: { serverId: homeId, machineId: 'machine-exact' },
+            directory: { kind: 'path' as const, path: '/voice-root' },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+        const pending = executeWithInPlaceApprovalReview({ actionId: 'session.spawn_new', signal: cancellation.signal,
+            onDismissed: dismissed, execute: (retained, signal) => executeSessionSpawnNewAction(input,
+                { ...context(), authority: 'present_user', actionCaller: { kind: 'host' },
+                    actionRequestId: 'voice-pending-approval', signal }, retained) });
+        retainedInvocations.push({ abort: cancellation, settled: pending.catch(() => null) });
+        const review = await Promise.race([shown.promise, pending.then(() => { throw new Error('Carrier settled before presenting approval'); })]);
+        const reviewProps = review.props as Readonly<{ artifactId: string; serverId: string;
+            onDecisionRecorded(decision: 'approve' | 'reject' | 'cancel'): void }>;
+        const request = persistedApproval(reviewProps.artifactId);
+        expect(request).toMatchObject({ actionId: 'session.spawn_new', status: 'open',
+            approval: { flow: 'blocking', result: 'required' },
+            executionOriginV1: { authority: 'present_user', surface: 'ui' },
+            sessionCreationDirectoryApproval: { directory: '/voice-root' } });
+        expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+        if (outcome === 'approve' || outcome === 'approve_then_close') {
+            const receipt = { type: 'success', disposition: 'created', sessionId: 'voice-carrier',
+                executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+            const spawnAcknowledgement = createDeferred<unknown>();
+            rpcResponder = call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW)
+                ? outcome === 'approve_then_close' ? spawnAcknowledgement.promise : receipt : rpcResult;
+            await expect(executor.execute('approval.request.decide', { artifactId: reviewProps.artifactId, decision: 'approve' }, context()))
+                .resolves.toMatchObject({ ok: true });
+            if (outcome === 'approve_then_close') {
+                reviewProps.onDecisionRecorded('approve');
+                review.onRequestClose?.();
+                expect(dismissed).not.toHaveBeenCalled();
+                spawnAcknowledgement.resolve(receipt);
+            }
+            const settled = await pending;
+            expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'voice-carrier' } });
+            expect(persistedApproval(reviewProps.artifactId).status).toBe('executed');
+            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toHaveLength(1);
+        } else if (outcome === 'reject' || outcome === 'cancel') {
+            const refused = pending.then(result => {
+                // The runtime must stop before its spawn adapter observes the refusal.
+                expect(dismissed).toHaveBeenCalledOnce();
+                return result;
+            });
+            await expect(executor.execute('approval.request.decide', { artifactId: reviewProps.artifactId, decision: outcome }, context()))
+                .resolves.toMatchObject({ ok: true });
+            expect(await refused).toMatchObject({ ok: false, errorCode: outcome === 'reject' ? 'approval_rejected' : 'approval_canceled' });
+            expect(persistedApproval(reviewProps.artifactId).status).toBe(outcome === 'reject' ? 'rejected' : 'canceled');
+            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+        } else {
+            if (outcome === 'dismiss') review.onRequestClose?.();
+            else cancellation.abort();
+            await expect(pending).resolves.toMatchObject({ ok: false });
+            expect(persistedApproval(reviewProps.artifactId).status).toBe('canceled');
+            expect(dismissed).toHaveBeenCalledTimes(outcome === 'dismiss' ? 1 : 0);
+            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+        }
+        expect(Modal.hide).toHaveBeenCalledWith('voice-review');
+    });
+
     it('executes a stored Account approval in the approving app regardless of plugin origin', async () => {
         const artifactId = 'plugin-account-placement';
         await seedApproval(artifactId, ApprovalRequestSchema.parse({
@@ -1091,6 +1167,7 @@ describe('createDefaultActionExecutor approvals', () => {
         outgoing.length = 0;
         rpcResult = { ok: true };
         rpcAcknowledgement = undefined;
+        rpcResponder = null;
         decisionReceiver = null;
     });
     afterEach(async () => {

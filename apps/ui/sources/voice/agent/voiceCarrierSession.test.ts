@@ -313,7 +313,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm1' },
-        directory: { kind: 'path', path: '/tmp/.happier/voice-agent' },
+        directory: { kind: 'managed' },
         agentTarget: expect.objectContaining({ identity: expect.objectContaining({ localId: 'claude' }) }),
         transcriptStorage: 'persisted',
       }),
@@ -523,7 +523,7 @@ describe('voiceConversationSession', () => {
     await expect(ensureVoiceConversationSessionId()).resolves.toBe('windows_voice');
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
-      directory: { kind: 'path', path: operationalDirectory },
+      directory: { kind: 'managed' },
     }));
   });
 
@@ -546,7 +546,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession.mock.calls[0]?.[0]).toHaveProperty('agentSessionStartupInstructionsV1');
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       executionTarget: { serverId: homeId, machineId: 'm1' },
-      directory: { kind: 'path', path: voiceHomeDirectory },
+      directory: { kind: 'managed' },
       agentTarget: expect.objectContaining({ identity: expect.objectContaining({ localId: 'codex' }) }),
       connectedServices: exactConnectedServices,
       permissionMode: 'default',
@@ -661,7 +661,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm1' },
-        directory: { kind: 'path', path: '/tmp/.happier/voice-agent' },
+        directory: { kind: 'managed' },
       }),
     );
   });
@@ -769,7 +769,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm_active' },
-        directory: { kind: 'path', path: '/tmp/active/voice-agent' },
+        directory: { kind: 'managed' },
         transcriptStorage: 'persisted',
       }),
     );
@@ -811,7 +811,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm_sticky' },
-        directory: { kind: 'path', path: '/tmp/sticky/voice-agent' },
+        directory: { kind: 'managed' },
       }),
     );
   });
@@ -897,7 +897,7 @@ describe('voiceConversationSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         executionTarget: { serverId: homeId, machineId: 'm_server' },
-        directory: { kind: 'path', path: '/tmp/server-happy/voice-agent' },
+        directory: { kind: 'managed' },
       }),
     );
   });
@@ -1351,7 +1351,7 @@ describe('voiceConversationSession', () => {
     });
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       executionTarget: { serverId: homeId, machineId: 'm1' },
-      directory: { kind: 'path', path: '/tmp/.happier/voice-agent' },
+      directory: { kind: 'managed' },
       transcriptStorage: 'persisted',
     }));
   });

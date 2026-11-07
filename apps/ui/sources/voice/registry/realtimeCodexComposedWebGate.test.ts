@@ -7,14 +7,18 @@ import type {
   BundledRealtimeProviderRuntimeHost,
 } from '@/voice/registry/bundledConversationRuntimeContract';
 import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  PluginProjectionV2Schema,
+  buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
+  createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+  PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
   FeaturesResponseSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { BundledVoiceRuntimeContribution } from '@/voice/session/types';
 import { installVoiceWebRtcBrowserBoundary } from '@/dev/testkit/harness/voiceWebRtcHarness';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -1460,6 +1464,7 @@ describe('realtime_codex normal web composed gate', () => {
       if (input.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) return createExistingSessionDirectoryPreflightResult(input.payload);
       const sessionId = spawnedSessionIds[events.filter(event => event.startsWith('spawn:')).length];
       if (!sessionId) throw new Error('unexpected trusted Global spawn');
+      const directory = SessionSpawnNewInputV2Schema.parse(input.payload).directory;
       events.push(`spawn:${sessionId}`);
       daemonSessions[sessionId] = createSessionFixture({
         id: sessionId,
@@ -1468,7 +1473,7 @@ describe('realtime_codex normal web composed gate', () => {
         encryptionMode: 'plain',
         metadata: {
           machineId: input.machineId,
-          path: input.payload.directory.path,
+          path: directory.kind === 'path' ? directory.path : '/daemon/managed/carrier',
           host: 'global.test.local',
           flavor: 'codex',
           connectedServices,

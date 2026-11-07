@@ -396,8 +396,9 @@ export async function readLocalVoiceMachinePrerequisites() {
 async function createVoiceConversationSessionFixture(raw: unknown) {
     const args = SessionSpawnNewInputV2Schema.parse(raw);
     const { machineId, serverId } = args.executionTarget;
-    if (args.directory.kind !== 'path') throw new Error('Expected Voice conversation path');
-    const directory = args.directory.path;
+    // The daemon owns managed directory materialization; this Socket fixture
+    // publishes its resolved location as ordinary Session metadata.
+    const directory = args.directory.kind === 'path' ? args.directory.path : '/daemon/managed/carrier';
     const spawnedAgentId = readBackendTargetRefV2(args.agentTarget).backendId;
     const sessionId = 'voice-home-session';
     const storage = await getStorage();

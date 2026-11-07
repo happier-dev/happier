@@ -6,6 +6,7 @@ import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionCreationTargetPreparationResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@/voice/persistence/voiceConversationSystemSessionLookup';
@@ -283,7 +284,7 @@ describe('local voice engine local conversation binding', () => {
         await lifecycle.dispose();
     }, 60_000);
 
-    it('uses the person\'s own UI Start admission despite Account Ask without creating an approval Artifact', async () => {
+    it('starts Home Voice in a managed directory without requesting approval to create the old Voice home path', async () => {
         await configureAgentMode();
         const storage = await getStorage();
         storage.__setState({ settings: { ...storage.getState().settings,
@@ -297,12 +298,20 @@ describe('local voice engine local conversation binding', () => {
             method: request.method, headers: request.headers,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
         }) ?? undefined);
+        // A fresh Machine has not created the old Voice-specific path. Keep
+        // the real Action preflight and policy beneath the Socket boundary.
+        const incumbent = machineRpcWithServerScope.getMockImplementation();
+        if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
+        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+            const result = await incumbent(request);
+            return request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+                ? SessionCreationTargetPreparationResultV1Schema.parse({ ...result, directoryCreationRequired: true })
+                : result;
+        });
         const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
         const lifecycle = createVoiceSessionLifecycleController();
         lifecycle.setConfiguredProviderId('local_conversation');
         try {
-            // Own UI admission is consumed by the Action owner (2fd4807035f);
-            // Account Ask still governs automation and other-person callers.
             await lifecycle.toggle(null);
             expect(lifecycle.getSnapshot()).toMatchObject({
                 status: 'connected', mode: 'listening', canStop: true,
@@ -310,9 +319,60 @@ describe('local voice engine local conversation binding', () => {
             expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
             expect(artifacts.list()).toEqual([]);
             expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW))
-                .toEqual([[expect.objectContaining({ machineId: 'machine-1', serverId: localVoiceHomeId })]]);
+                .toEqual([[expect.objectContaining({ machineId: 'machine-1', serverId: localVoiceHomeId,
+                    payload: expect.objectContaining({ directory: { kind: 'managed' } }),
+                })]]);
         } finally {
             await lifecycle.dispose();
+        }
+    }, 60_000);
+
+    it('keeps a required carrier approval visible during Start and stops preparation when its review is dismissed', async () => {
+        await configureAgentMode();
+        const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        setLocalVoiceHttpResponder(request => artifacts.handle(request.path, {
+            method: request.method, headers: request.headers,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+        }) ?? undefined);
+        const incumbent = machineRpcWithServerScope.getMockImplementation();
+        if (!incumbent) throw new Error('Missing canonical machine Socket boundary');
+        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+            const result = await incumbent(request);
+            return request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT
+                ? SessionCreationTargetPreparationResultV1Schema.parse({ ...result, directoryCreationRequired: true })
+                : result;
+        });
+        const { Modal } = await import('@/modal');
+        const shown = createDeferred<Parameters<typeof Modal.show>[0]>();
+        // Present through the real Modal owner, replacing only its mounted host.
+        const unregister = Modal.registerProvider({
+            showModal: config => { shown.resolve(config as Parameters<typeof Modal.show>[0]); return 'carrier-review'; },
+            hideModal: () => {}, hideAllModals: () => {}, updateCustomModalProps: () => {},
+        });
+        const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+        const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+        const lifecycle = createVoiceSessionLifecycleController();
+        lifecycle.setConfiguredProviderId('local_conversation');
+        setVoiceSessionLifecycleController(lifecycle);
+        const starting = lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 'session-1' });
+        try {
+            const review = await Promise.race([shown.promise, starting.then(() => {
+                throw new Error('Start settled without showing its required approval');
+            })]);
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true });
+            expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
+            expect(artifacts.list()).toHaveLength(1);
+            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+            review.onRequestClose?.();
+            await starting;
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+            expect(lifecycle.getSnapshot().errorCode).toBeUndefined();
+            expect(machineRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toBe(false);
+        } finally {
+            await lifecycle.dispose();
+            setVoiceSessionLifecycleController(null);
+            unregister();
         }
     }, 60_000);
 

@@ -19,7 +19,7 @@ type ApprovalReviewModalProps = CustomModalInjectedProps &
   Readonly<{
     artifactId: string;
     serverId: string;
-    /** The person closed the review without answering; the request stays open where it was made. */
+    /** The host owns withdrawal or reopening when the person closes the review. */
     onDismissed: () => void;
     onDecisionRecorded?: ApprovalReviewInput['onDecisionRecorded'];
   }>;
@@ -113,7 +113,7 @@ function ApprovalReviewModal(props: ApprovalReviewModalProps) {
 }
 
 /** Presents one approval in place; returns the modal id so its host can withdraw it. */
-function showApprovalReview(
+export function showApprovalReview(
   input: Readonly<{
     artifactId: string;
     serverId: string;
