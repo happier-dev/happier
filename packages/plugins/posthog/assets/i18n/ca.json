@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "No hi ha cap feit proyectat",
   "plugins.posthog.ui.noFacts.description": "Aquesta observació no conté cap fet visualitzable.",
   "plugins.posthog.ui.facts": "Fets",
+  "plugins.posthog.ui.story.firstSeen": "Vist per primer cop {age}",
   "plugins.posthog.ui.shortened": "Alguns detalls s'han abbreviat",
   "plugins.posthog.ui.shortened.description": "Obri aquest problema en el PostHog per llegir el text complet.",
   "plugins.posthog.ui.observation": "Observació",

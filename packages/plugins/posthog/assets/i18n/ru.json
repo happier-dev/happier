@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "Нет предполагаемых фактов",
   "plugins.posthog.ui.noFacts.description": "Эта наблюдение не содержала отображаемых фактов.",
   "plugins.posthog.ui.facts": "Факты",
+  "plugins.posthog.ui.story.firstSeen": "Впервые {age}",
   "plugins.posthog.ui.shortened": "Некоторые детали были сокращены",
   "plugins.posthog.ui.shortened.description": "Откройте вопрос в PostHog, чтобы прочитать полный текст.",
   "plugins.posthog.ui.observation": "Наблюдение",

@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "Nenhum fato projetado",
   "plugins.posthog.ui.noFacts.description": "Esta observação não carregou fatos exibíveis.",
   "plugins.posthog.ui.facts": "Fatos",
+  "plugins.posthog.ui.story.firstSeen": "Visto pela primeira vez {age}",
   "plugins.posthog.ui.shortened": "Alguns detalhes foram abreviados",
   "plugins.posthog.ui.shortened.description": "Abra a questão no PostHog para ler o texto completo.",
   "plugins.posthog.ui.observation": "Observação",

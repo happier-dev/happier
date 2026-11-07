@@ -28,6 +28,8 @@ import {
     Badge,
     Banner,
     Button,
+    Card,
+    CountedDisclosureItem,
     Divider,
     EmptyState,
     ErrorState,
@@ -239,6 +241,8 @@ function lastObservationDescription(
 
 /** The facts the spread states as tiles, so no other Overview row repeats them. */
 const SPREAD_FIELD_IDS: ReadonlySet<string> = new Set(['posthog/occurrences', 'posthog/users', 'posthog/first-seen']);
+/** The fact a reader triages an error by stays in the story; the other facts wait behind its one Facts line. */
+const STORY_LEAD_FIELD_IDS: ReadonlySet<string> = new Set(['posthog/severity']);
 
 /**
  * The spread from what PostHog stated: occurrences and users in the configured window, when
@@ -250,6 +254,8 @@ function posthogSpread(
     locale: string,
     nowMs: number,
     text: PluginTranslate,
+    /** The story says when it first appeared on its first chapter's line instead. */
+    firstSeenTile = true,
 ): Readonly<{ tiles: readonly TriageDetailSpreadTileV1[]; trend: TriageDetailTrendV1 | null }> {
     const field = (id: string) => model.body.fields.find((candidate) => candidate.id === id);
     const occurrences = field('posthog/occurrences');
@@ -264,7 +270,7 @@ function posthogSpread(
             id: 'users', label: text('plugins.posthog.ui.spread.users', 'Users affected'),
             value: formatNumber(locale, users.value, 'compact'),
         }]),
-        ...(firstSeen?.kind !== 'timestamp' ? [] : [{
+        ...(firstSeen?.kind !== 'timestamp' || !firstSeenTile ? [] : [{
             id: 'first-seen', label: posthogFactLabel(firstSeen, text),
             value: formatTimestamp(locale, firstSeen.atMs, 'relative', nowMs),
         }]),
@@ -282,6 +288,9 @@ function posthogSpread(
  * first one until they choose another) and its top application frame. It reads nothing:
  * the detail's one sample controller already holds it.
  */
+/** The frame's line gives way before its Open control does. */
+const FRAME_LINE_STYLE = Object.freeze({ flex: 1, minWidth: 0 });
+
 function SampledOccurrenceSummary({
     controller,
     onOpenStackTrace,
@@ -298,28 +307,41 @@ function SampledOccurrenceSummary({
     }
     if (controller.selectedEvent === undefined) return null;
     const frame = trace.topFrame;
+    const canOpenStack = trace.frames.length > 0 && onOpenStackTrace !== undefined;
+    // The exception is the thing itself (lab c7 error): its words and top frame in one card, the way to the whole
+    // trace a quiet press on the frame's line, and the sample it came from said once beneath.
     return (
         <Stack gap="small">
+            <Card padding="small">
+                <Stack gap="small">
+                    {trace.exceptionLabel === null ? null : <Text variant="code" value={trace.exceptionLabel} />}
+                    {frame === null && !canOpenStack ? null : (
+                        <Row gap="small" align="center">
+                            {frame === null ? null : (
+                                <Stack style={FRAME_LINE_STYLE}>
+                                    <Text variant="code" tone="secondary" numberOfLines={1}
+                                        value={frame.location === null ? frame.label : `${frame.label} — ${frame.location}`} />
+                                </Stack>
+                            )}
+                            {!canOpenStack ? null : (
+                                <Button
+                                    title="Open the stack trace"
+                                    titleKey="plugins.posthog.ui.openStack"
+                                    variant="plain"
+                                    size="small"
+                                    onPress={onOpenStackTrace}
+                                />
+                            )}
+                        </Row>
+                    )}
+                </Stack>
+            </Card>
             <Text
                 variant="micro"
                 tone="neutral"
                 valueKey="plugins.posthog.ui.showingSample"
                 fallback="Showing one sampled occurrence."
             />
-            {trace.exceptionLabel === null ? null : <Text variant="meta" value={trace.exceptionLabel} />}
-            {frame === null
-                ? null
-                : <Text variant="micro" tone="neutral" value={frame.location === null ? frame.label : `${frame.label} — ${frame.location}`} />}
-            {trace.frames.length === 0 || onOpenStackTrace === undefined
-                ? null
-                : (
-                    <Button
-                        title="Open the stack trace"
-                        titleKey="plugins.posthog.ui.openStack"
-                        variant="secondary"
-                        onPress={onOpenStackTrace}
-                    />
-                )}
         </Stack>
     );
 }
@@ -349,22 +371,31 @@ function OverviewPanel({
         );
         // The story answers these in the panels beside it; only the standalone tabs list them.
         const pendingFields = story ? [] : model.body.fields.filter((field) => field.kind === 'pending');
-        const entries: readonly MetadataEntry[] = model.body.fields.flatMap((field) => {
+        const entries: readonly (MetadataEntry & { lead: boolean })[] = model.body.fields.flatMap((field) => {
             if (field.kind === 'pending' || field.kind === 'status' || SPREAD_FIELD_IDS.has(field.id)) return [];
             const value = fieldValueText(field, locale, nowMs);
-            return value === null ? [] : [{ label: posthogFactLabel(field, text), value }];
+            return value === null ? [] : [{ label: posthogFactLabel(field, text), value, lead: STORY_LEAD_FIELD_IDS.has(field.id) }];
         });
         const disclosures = model.body.fields.flatMap(
             (field) => (field.kind === 'number' && field.disclosure !== null
                 ? [{ id: field.id, label: posthogFactLabel(field, text), disclosure: field.disclosure }]
                 : []),
         );
-        return { statusFields, pendingFields, entries, disclosures, spread: posthogSpread(model, locale, nowMs, text) };
-    }, [locale, model, nowMs, story]);
+        const firstSeen = model.body.fields.find((field) => field.id === 'posthog/first-seen');
+        const firstSeenLine = !story || firstSeen?.kind !== 'timestamp' ? null
+            : text('plugins.posthog.ui.story.firstSeen', 'First seen {age}', {
+                age: formatTimestamp(locale, firstSeen.atMs, 'relative', nowMs),
+            });
+        return { statusFields, pendingFields, entries, disclosures, firstSeenLine,
+            spread: posthogSpread(model, locale, nowMs, text, !story) };
+    }, [locale, model, nowMs, story, text]);
     const spread = <TriageDetailSpread tiles={projected.spread.tiles} trend={projected.spread.trend} locale={locale} nowMs={nowMs} />;
 
     return (
-            <TriageDetailStory kind={story ? 'error' : undefined} changes={story ? spread : undefined}>
+            <TriageDetailStory kind={story ? 'error' : undefined} changes={story ? spread : undefined}
+                {...(projected.firstSeenLine === null ? {} : {
+                    trailing: <Text variant="micro" tone="neutral" value={projected.firstSeenLine} />,
+                })}>
                 <SampledOccurrenceSummary controller={controller} onOpenStackTrace={onOpenStackTrace} />
                 {/*
                     Anything but a settled live read leaves these facts unconfirmed, and
@@ -415,9 +446,26 @@ function OverviewPanel({
                         </Row>
                     )}
                 {story ? null : spread}
-                {projected.entries.length > 0
+                {/* In the story the facts and the counts' caveats are reference, not the account of what happened:
+                    one Facts line holds them, so the chapter's preview never cuts a fact in half. */}
+                {story && projected.entries.some((entry) => entry.lead)
+                    ? <Metadata entries={projected.entries.filter((entry) => entry.lead)} /> : null}
+                {story ? (projected.entries.every((entry) => entry.lead) && projected.disclosures.length === 0 ? null : (
+                    <CountedDisclosureItem testID="posthog-facts" title={text('plugins.posthog.ui.facts', 'Facts')}
+                        count={projected.entries.filter((entry) => !entry.lead).length}>
+                        <Stack gap="small">
+                            {projected.entries.every((entry) => entry.lead) ? null
+                                : <Metadata entries={projected.entries.filter((entry) => !entry.lead)} />}
+                            {projected.disclosures.map((disclosure) => (
+                                <Text key={disclosure.id} variant="micro" tone="neutral">
+                                    {`${disclosure.label}: ${disclosure.disclosure}`}
+                                </Text>
+                            ))}
+                        </Stack>
+                    </CountedDisclosureItem>
+                )) : projected.entries.length > 0
                     ? <Metadata title="Facts" titleKey="plugins.posthog.ui.facts" entries={projected.entries} />
-                    : story ? null : (
+                    : (
                         <EmptyState
                             title="No projected facts"
                             titleKey="plugins.posthog.ui.noFacts"
@@ -425,7 +473,7 @@ function OverviewPanel({
                             descriptionKey="plugins.posthog.ui.noFacts.description"
                         />
                     )}
-                {projected.disclosures.map((disclosure) => (
+                {story ? null : projected.disclosures.map((disclosure) => (
                     <Text key={disclosure.id} variant="micro" tone="neutral">
                         {`${disclosure.label}: ${disclosure.disclosure}`}
                     </Text>
@@ -902,13 +950,16 @@ function AffectedSessionsPanel({
                     descriptionKey="plugins.posthog.ui.noSessions.description"
                 />
             )}
+            // The page a session was on is what tells one row from the next, so it leads, cut to one line; its count
+            // sits beneath it rather than in a third column a phone cannot give room to.
             renderItem={({ row, hasSubtitle }) => (
                 <Item
-                    title={text('plugins.posthog.ui.sampledSession', 'Sampled session')}
-                    {...(hasSubtitle ? { subtitle: row?.url ?? '\u00a0' } : {})}
-                    detail={row === null ? '\u00a0' : text(
+                    title={row === null ? '\u00a0' : hasSubtitle && row.url !== null ? row.url
+                        : text('plugins.posthog.ui.sampledSession', 'Sampled session')}
+                    titleNumberOfLines={1}
+                    subtitle={row === null ? '\u00a0' : text(
                         'plugins.posthog.ui.sampledOccurrences',
-                        '{count} sampled occurrence(s)',
+                        'Sampled occurrences: {count}',
                         { count: row.occurrenceCount },
                     )}
                     // Every candidate carries its own outcome, so a reader scanning rows

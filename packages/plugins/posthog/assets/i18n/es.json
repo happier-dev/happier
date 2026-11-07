@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "No hay hechos proyectados",
   "plugins.posthog.ui.noFacts.description": "Esta observación no llevaba hechos visibles.",
   "plugins.posthog.ui.facts": "Hechos",
+  "plugins.posthog.ui.story.firstSeen": "Visto por primera vez {age}",
   "plugins.posthog.ui.shortened": "Algunos detalles fueron abreviados",
   "plugins.posthog.ui.shortened.description": "Abra esta incidencia en PostHog para leer el texto completo.",
   "plugins.posthog.ui.observation": "Observación",

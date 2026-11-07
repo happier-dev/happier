@@ -327,6 +327,13 @@ afterEach(async () => {
     frameNavigation = null;
 });
 
+/** The story's one Facts line: its header is the press that unfolds the facts. */
+function openFacts(): void {
+    const header = document.querySelector<HTMLElement>('[data-testid="posthog-facts.header"] [role="button"], [data-testid="posthog-facts.header"][role="button"]');
+    if (header === null) throw new Error('No Facts line to open.');
+    header.click();
+}
+
 describe('the mounted PostHog Overview', () => {
     it('pauses unfinished root reads while Session hides the source and resumes safely', async () => {
         const overviewSignals: AbortSignal[] = [];
@@ -430,6 +437,8 @@ describe('the mounted PostHog Overview', () => {
                             value: { kind: 'number', value: 57, format: 'compact', approximate: true } },
                         { id: 'posthog/first-seen', label: 'First seen', importance: 'supplementary',
                             value: { kind: 'timestamp', atMs: firstSeenMs, format: 'relative' } },
+                        { id: 'posthog/last-seen', label: 'Last seen', importance: 'secondary',
+                            value: { kind: 'timestamp', atMs: firstSeenMs + 3 * 3_600_000, format: 'relative' } },
                         { id: 'posthog/severity', label: 'Severity', importance: 'secondary', value: { kind: 'detailOnly' } },
                     ] },
                     viewer: { involvement: [] },
@@ -450,9 +459,16 @@ describe('the mounted PostHog Overview', () => {
         const bodyText = document.body.textContent ?? '';
         expect(bodyText.match(/57/gu) ?? []).toHaveLength(1);
         expect(bodyText.match(/96/gu) ?? []).toHaveLength(1);
-        await expect(page.getByText('6 hours ago')).resolves.toBeDefined();
+        // When it first appeared is the chapter's own line (lab c7), not a third headline number.
+        await expect(page.getByText('First seen 6 hours ago')).resolves.toBeDefined();
+        await expect(page.queryByText('6 hours ago')).resolves.toBeUndefined();
+        // The facts and the counts' own caveats are reference, not the story: one Details line holds them, so the
+        // chapter's preview never cuts a fact in half.
+        await expect(page.queryByText('Last seen')).resolves.toBeUndefined();
         await act(async () => { await page.press(await page.getByRole('button', { name: 'Details' })); });
         await expect(page.getByText('9')).resolves.toBeDefined();
+        await act(async () => { openFacts(); });
+        await expect(page.getByText('Last seen')).resolves.toBeDefined();
         // The chrome the story removed: no observation metadata, no empty-facts state, no
         // pending-field badges (Severity is answered beside this panel).
         for (const gone of ['Observation', 'Observed', 'No projected facts', 'Read only in the detail plane:']) {
@@ -764,7 +780,7 @@ describe('the mounted PostHog Affected Sessions panel', () => {
         await selectTab(page, 'Affected sessions');
 
         await expect(page.getByText('Sampled session')).resolves.toBeDefined();
-        await expect(page.getByText('1 sampled occurrence(s)')).resolves.toBeDefined();
+        await expect(page.getByText('Sampled occurrences: 1')).resolves.toBeDefined();
         await expect(page.getByText(opaqueSessionId)).rejects.toBeDefined();
     });
 });

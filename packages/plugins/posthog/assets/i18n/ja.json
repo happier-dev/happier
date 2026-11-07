@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "プロジェクトされた事実はありません。",
   "plugins.posthog.ui.noFacts.description": "この観察に表示可能な事実はありません。",
   "plugins.posthog.ui.facts": "事実",
+  "plugins.posthog.ui.story.firstSeen": "初回検出 {age}",
   "plugins.posthog.ui.shortened": "一部の詳細が省略されました。",
   "plugins.posthog.ui.shortened.description": "PostHogでこの問題を開き、全文を読み取ってください。",
   "plugins.posthog.ui.observation": "観察",

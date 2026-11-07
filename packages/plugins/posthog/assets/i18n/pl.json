@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "Brak przewidzianych faktów",
   "plugins.posthog.ui.noFacts.description": "Ta obserwacja nie zawierała żadnych widocznych faktów.",
   "plugins.posthog.ui.facts": "Fakty",
+  "plugins.posthog.ui.story.firstSeen": "Pierwszy raz {age}",
   "plugins.posthog.ui.shortened": "Niektóre szczegóły zostały skrócone",
   "plugins.posthog.ui.shortened.description": "Otwórz kwestię w PostHog, aby odczytać pełny tekst.",
   "plugins.posthog.ui.observation": "Obserwacja",

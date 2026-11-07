@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "Keine projizierten Fakten",
   "plugins.posthog.ui.noFacts.description": "Diese Beobachtung enthielt keine darstellbaren Fakten.",
   "plugins.posthog.ui.facts": "Fakten",
+  "plugins.posthog.ui.story.firstSeen": "Zuerst gesehen {age}",
   "plugins.posthog.ui.shortened": "Einige Details wurden gekürzt",
   "plugins.posthog.ui.shortened.description": "Öffne das Problem in PostHog, um den vollständigen Text zu lesen.",
   "plugins.posthog.ui.observation": "Beobachtung",

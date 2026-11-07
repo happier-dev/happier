@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "Aucun faits projectés",
   "plugins.posthog.ui.noFacts.description": "Cette observation ne contient pas de faits affichables.",
   "plugins.posthog.ui.facts": "Faits",
+  "plugins.posthog.ui.story.firstSeen": "Vu pour la première fois {age}",
   "plugins.posthog.ui.shortened": "Certains détails ont été raccourcis",
   "plugins.posthog.ui.shortened.description": "Ouvre cette anomalie dans PostHog pour lire le texte complet.",
   "plugins.posthog.ui.observation": "Constat",

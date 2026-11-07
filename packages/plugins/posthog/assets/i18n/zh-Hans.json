@@ -198,6 +198,7 @@
   "plugins.posthog.ui.noFacts": "没有预测的事实",
   "plugins.posthog.ui.noFacts.description": "这个观察没有可显示的事实。",
   "plugins.posthog.ui.facts": "事实",
+  "plugins.posthog.ui.story.firstSeen": "首次出现 {age}",
   "plugins.posthog.ui.shortened": "一些细节被缩短",
   "plugins.posthog.ui.shortened.description": "在PostHog中打开问题以阅读完整文本。",
   "plugins.posthog.ui.observation": "观察",
