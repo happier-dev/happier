@@ -220,7 +220,10 @@ function captureAccountCredentialAuthority(
         && candidate.credentialSlotId === credentialSlotId,
     ) ?? null,
     secret: savedSecret?.status === 'ready' ? savedSecret.secret : null,
-    savedSecret,
+    // Local Settings hydration may reseal identical plaintext with a fresh
+    // nonce. The SavedSecret owner advances revision on edits; ciphertext is
+    // captured material, not an authority identity.
+    savedSecret: savedSecret ? { ...savedSecret, secret: null } : null,
     source,
   };
 }
@@ -257,7 +260,6 @@ function isSameAccountCredentialAuthority(
     && areAccountSettingsJsonValuesEqual(left.providerEnvelope, right.providerEnvelope)
     && areAccountSettingsJsonValuesEqual(left.binding, right.binding)
     && areAccountSettingsJsonValuesEqual(left.savedSecret, right.savedSecret)
-    && areAccountSettingsJsonValuesEqual(left.secret, right.secret)
     && areAccountSettingsJsonValuesEqual(left.source, right.source);
 }
 
