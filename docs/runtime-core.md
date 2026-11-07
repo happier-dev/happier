@@ -1067,6 +1067,14 @@ acquisition retains its typed failure, keeps observation unknown, and stops
 automatic readiness wakes. An explicit new native binding can acquire its own
 source; the failed binding is not automatically retried.
 
+In 0.3 development source, required terminal transcript follow binds before
+launch when the native Session identity is already known. A fresh terminal
+launches without a fabricated identity; the host observes the provider's existing
+identity publication and binds required follow once that evidence arrives.
+Terminal completion or Session retirement before publication fails admission
+closed. A refused follow binding stops the launched terminal through its existing
+cancellation signal; waiting for identity adds no timer.
+
 Claude terminal replies enter the same correlated committed-text channel as SDK
 replies before the host settles a child turn. The codec publishes only current
 primary reply facts admitted by ordered source follow, with their native fact
@@ -1737,8 +1745,11 @@ contract does not replace physical Stop settlement or authorize a launch from
 In development source, automatic launch refusal retains that same closed reason
 through the private launch-admission hook and the existing `launch_error` detail
 on `SPAWN_VALIDATION_FAILED`. It is not a daemon-connectivity failure. Pending
-activation preserves its retryable disposition and leaves the message queued;
-the client submit result retains the detail. The composer reads the canonical
+activation preserves its retryable disposition and leaves the message queued
+(the composer never marks it Blocked); the client submit result retains the detail.
+The daemon's automatic respawn treats a `held_by_person` or `archived` refusal as
+terminal: it logs one "Respawn suppressed" warning and stops, since only a
+person's Resume or unarchive can change that admission. The composer reads the canonical
 persisted admission to show “Stopped by you” with the existing Resume action,
 instead of a generic queued message or a retained Guard wake promise. None of
 these presentation facts can clear a hold or admit a launch. A loaded-daemon
@@ -1848,7 +1859,11 @@ The daemon's [managed activity inventory](../apps/cli/src/daemon/lifecycle/manag
 In 0.3 development source, passive publications refresh only the owner that
 invalidated its facts, retaining the other owners' latest projections within the
 inventory lifetime. An Automation claim observation therefore does not demand a
-fresh read of every settled Session. Explicit inventory and decision reads still
+fresh read of every settled Session. Within the Session owner the same rule is
+row-level: a runner's `/session-activity-changed` names its Session, so the
+passive refresh rereads only that runner's live work and keeps the others'
+latest successful observations; unattributed edges (process set, transport,
+startup webhook, exit) reread every runner. Explicit inventory and decision reads still
 query every live owner; concurrent full reads share only an in-flight observation
 at the same invalidation edge, never a completed or partial passive result.
 New owner edges capture immediately, and superseded observations cannot publish
