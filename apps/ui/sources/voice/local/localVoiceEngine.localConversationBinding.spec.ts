@@ -118,7 +118,7 @@ describe('local voice engine local conversation binding', () => {
         });
     }, 60_000);
 
-    it.each(['stt', 'tts'] as const)('refuses an offline daemon %s Machine before preparing a carrier on the online root Machine', async (surface) => {
+    it.each(['stt', 'tts'] as const)('explains an offline daemon %s Machine on Home Start before preparing a carrier on the online root Machine', async (surface) => {
         await configureAgentMode();
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
@@ -142,16 +142,27 @@ describe('local voice engine local conversation binding', () => {
         expect(resolveVoiceExecutionMachineSelectionFromState(storage.getState())).toEqual({
             kind: 'selected_unreachable', machineId: 'speech-offline',
         });
+        const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+        const { resolveVoiceMachineErrorTranslationKey } = await import('@/voice/runtime/machine/voiceMachineErrorCopy');
+        const lifecycle = createVoiceSessionLifecycleController();
+        lifecycle.setConfiguredProviderId('local_conversation');
         let failure: unknown;
-        try { await localVoiceEngine.toggleLocalVoiceTurn('session-1'); } catch (error) { failure = error; }
+        try {
+            await lifecycle.toggle(null).catch(error => { failure = error; });
 
-        expect(await getLocalConversationSnapshot()).toMatchObject({
-            status: 'error', canStop: false,
-            errorCode: 'execution_machine_unavailable', errorRecoveryAction: 'select_execution_machine',
-        });
-        expect(failure).toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
-        expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
-        expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
+            const snapshot = lifecycle.getSnapshot();
+            expect(snapshot).toMatchObject({
+                status: 'error', canStop: false,
+                errorCode: 'execution_machine_unavailable', errorRecoveryAction: 'select_execution_machine',
+            });
+            expect(resolveVoiceMachineErrorTranslationKey('execution_machine_unavailable', snapshot.errorMessage ?? undefined))
+                .toBe('voice.readiness.execution_machine_incompatible');
+            expect(failure).toMatchObject({ code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' });
+            expect(machineRpcWithServerScope.mock.calls.filter(([request]) => request.method === RPC_METHODS.SESSION_SPAWN_NEW)).toEqual([]);
+            expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
+        } finally {
+            await lifecycle.dispose();
+        }
     }, 60_000);
 
     it('settles Global Start with a typed machine refusal without a timer when device speech has no Agent machine', async () => {
@@ -561,7 +572,7 @@ describe('local voice engine local conversation binding', () => {
             import('@/dev/testkit/harness/sessionMetadataHttpBoundary'),
             import('@/voice/persistence/voiceTranscriptHistorySession'),
             import('@happier-dev/protocol/sessions/control/contract'),
-            import('@happier-dev/protocol'),
+            import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1'),
             import('@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary'),
             import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1'),
         ]);

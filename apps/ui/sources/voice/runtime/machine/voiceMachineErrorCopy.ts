@@ -39,6 +39,7 @@ export const VOICE_MACHINE_ERROR_TRANSLATION_KEYS = {
  * raw reason code or transport text is never shown.
  */
 export const VOICE_MACHINE_ERROR_REASON_TRANSLATION_KEYS = {
+    voice_agent_target_machine_offline: 'voice.readiness.execution_machine_incompatible',
     execution_machine_incompatible: 'voice.readiness.execution_machine_incompatible',
     execution_machine_missing: 'voice.readiness.execution_machine_missing',
     execution_machine_unknown: 'voice.readiness.execution_machine_unknown',
