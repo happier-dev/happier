@@ -21,6 +21,14 @@ export function useActiveDetailsPaneOpen(resourceScopeId: string | null): boolea
     return React.useSyncExternalStore(projection?.subscribe ?? subscribeToNothing, read, read);
 }
 
+/** The phone bar's answer: does this resource's active pane scope hold open terminals (a Project's Shells)? */
+export function useActiveTerminalsOpen(resourceScopeId: string | null): boolean {
+    const projection = React.useContext(AppPaneFileFrontContext);
+    const read = React.useCallback(() => (resourceScopeId ? projection?.readActiveTerminalsOpen(resourceScopeId) ?? false : false),
+        [projection, resourceScopeId]);
+    return React.useSyncExternalStore(projection?.subscribe ?? subscribeToNothing, read, read);
+}
+
 /**
  * A transcript chip's answer: is this file the front tab of the Session pane the opener would open it in?
  * The scope is derived exactly as `useWorkspaceFileOpener` derives it (Session + retained instance).

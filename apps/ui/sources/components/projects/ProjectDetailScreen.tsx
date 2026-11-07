@@ -3,14 +3,21 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { PopoverScope } from '@/components/ui/popover';
+import { PageBottomBarSeatProvider } from '@/components/ui/layout/useFloatingChromeClearance';
 
 import { t } from '@/text';
-import { useLocalSetting, useWorkspaceRefs } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys, writeProjectSelectionPreference } from '@/sync/domains/settings/projectSelectionPersistence';
+import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
+import { persistProjectSelectionUiState, useProjectSelectionUiState } from '@/sync/domains/state/projectSelectionUiState';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { SurfaceStateSizeProvider, useSurfaceStateCardSize } from '@/components/ui/surfaces/surfaceStateSize';
-import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
+import { ProjectPagePaneScopeHost } from './detail/PluginProjectPageBody';
+import { projectPageActionsKey } from './shell/ProjectShellHeader';
+import { ProjectPageCatalogProvider } from './navigation/useProjectPageCatalog';
+import { ProjectPhonePageStrip } from '@/components/navigation/mobile/chrome/bars/ProjectCockpitTabBar';
+import type { ProjectPageSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
+import { DetailsPaneSlotHost } from '@/components/appShell/panes/details/DetailsPaneSlot';
+import { DetailsPaneContentView } from '@/components/appShell/panes/details/DetailsPaneHost';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
@@ -26,7 +33,6 @@ import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
 import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
-import { projectPageActionsKey } from './shell/ProjectShellHeader';
 import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -56,20 +62,19 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     attachedDashboard?: ProjectAttachedDashboardSelection;
     recoveryToastKey?: string | null;
     page?: ProjectPageV1;
+    selection?: ProjectPageSelection;
     surface?: ProjectMobileSurface;
     activeWorktreeId?: string | null;
     activeRootPath?: string | null;
     isFocused?: boolean;
     showWorktrees?: boolean;
-    onSelectRootPath?: (path: string) => void;
+    onSelectRootPath?: (path: string) => void | boolean | Promise<boolean>;
     onSetShowWorktrees?: (nextValue: boolean) => void;
     onPluginSurfaceOpenChange?: (handler: PluginSurfaceOpenHandler | undefined) => void;
 }>) => {
     const { theme } = useUnistyles();
     const deviceType = useDeviceType();
     const enclosingStateSize = useSurfaceStateCardSize();
-    const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
-    const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const workspaceRef = useWorkspaceRefById(props.workspaceRefId, props.serverId);
     const destinationScopeId = useDestinationPaneScopeId(buildProjectPaneScopeId(props.workspaceRefId, workspaceRef?.serverId ?? props.serverId));
     const scopeId = props.paneScopeId ?? destinationScopeId;
@@ -79,7 +84,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const workspaceRefs = useWorkspaceRefs();
     const preferenceKeys = React.useMemo(() => workspaceRef
         ? resolveProjectSelectionPreferenceKeys(workspaceRefs, workspaceRef) : null, [workspaceRef, workspaceRefs]);
-    // This direct Project adapter is the one public target/currentness source
+    // This Project adapter is the one public target/currentness source
     // consumed by AppPane. Keep the projection lookup here rather than giving
     // AppPane a fallback lookup keyed by an opaque scope id.
     const pluginProjection = useScopedPluginUiProjection({
@@ -90,8 +95,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const localActiveRootPath = localSelection?.storageKey === preferenceKeys?.storageKey ? localSelection?.rootPath ?? null : null;
     const controlledActiveRootPath = props.activeRootPath ?? null;
     const workspaceRootPath = workspaceRef?.rootPath ?? '';
-    const persistedActiveRootPath = readProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys);
-    const persistedWorktreeId = readProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys);
+    const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = useProjectSelectionUiState(preferenceKeys);
     React.useEffect(() => {
         if (!workspaceRef || !preferenceKeys) return;
         if (controlledActiveRootPath != null) return;
@@ -123,6 +127,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         machineId: workspaceRef?.machineId ?? '',
         defaultRootPath: workspaceRootPath,
         requestedRootPath: requestedActiveRootPath,
+        refreshOnMount: props.selection?.kind !== 'plugin',
         requestedWorktreeId: props.activeWorktreeId ?? (workspaceRef != null
             && controlledActiveRootPath == null
             && localActiveRootPath == null
@@ -145,27 +150,26 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const handleSelectWorkspace = React.useCallback((workspaceRef: WorkspaceRefV1) => {
         navigateToSegment({ workspaceRef });
     }, [navigateToSegment]);
-    const handleSelectRootPath = React.useCallback((path: string) => {
+    const handleSelectRootPath = React.useCallback(async (path: string) => {
         const trimmedPath = path.trim();
         if (!trimmedPath || !workspaceRef || !preferenceKeys) return;
         const nextWorktreeId = trimmedPath === workspaceRef.rootPath
             ? null
             : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
+        const accepted = props.onSelectRootPath
+            ? await props.onSelectRootPath(trimmedPath)
+            : await navigateToSegment({ activeRootPath: trimmedPath, activeWorktreeId: nextWorktreeId, method: 'replace' });
+        if (accepted === false) return;
         if (controlledActiveRootPath == null) {
             setLocalSelection({ storageKey: preferenceKeys.storageKey, rootPath: trimmedPath });
         }
-        getStorage().getState().applyLocalSettings({
-            projectLastActiveRootPathByWorkspaceRefId: writeProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys, trimmedPath),
-            projectLastActiveWorktreeIdByWorkspaceRefId: writeProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys, nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL),
-        }, { source: 'ui' });
-        props.onSelectRootPath?.(trimmedPath);
+        persistProjectSelectionUiState(preferenceKeys, trimmedPath, nextWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL);
     }, [
         availableWorktrees,
         controlledActiveRootPath,
-        lastActiveRootPathByWorkspaceRefId,
-        lastActiveWorktreeIdByWorkspaceRefId,
         props.onSelectRootPath,
         props.workspaceRefId,
+        navigateToSegment,
         preferenceKeys,
         workspaceRef,
     ]);
@@ -175,10 +179,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         if (!workspaceRef || !preferenceKeys) return;
         if (requestedRootPath === resolvedActiveRootPath) return;
 
-        getStorage().getState().applyLocalSettings({
-            projectLastActiveRootPathByWorkspaceRefId: writeProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys, resolvedActiveRootPath),
-            projectLastActiveWorktreeIdByWorkspaceRefId: writeProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys, resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL),
-        }, { source: 'ui' });
+        persistProjectSelectionUiState(preferenceKeys, resolvedActiveRootPath, resolvedActiveWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL);
 
         if (controlledActiveRootPath == null) {
             setLocalSelection({ storageKey: preferenceKeys.storageKey, rootPath: resolvedActiveRootPath });
@@ -189,8 +190,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         }
     }, [
         controlledActiveRootPath,
-        lastActiveRootPathByWorkspaceRefId,
-        lastActiveWorktreeIdByWorkspaceRefId,
         props.isFocused,
         props.onSelectRootPath,
         props.workspaceRefId,
@@ -284,17 +283,25 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         ) : content
     ), [handleSelectRootPath, props.page, resolvedActiveRootPath, resolvedActiveWorktreeId, scopeId, workspaceRef]);
 
+    const selectedPage = React.useMemo<ProjectPageSelection>(() => props.selection
+        ?? { kind: 'builtin', page: props.page ?? 'overview' }, [props.selection, props.page]);
+
     if (!workspaceRef) {
         return <ProjectOpenResolutionPage resolution={props.workspaceResolution} />;
     }
 
     const mainSurface = deviceType === 'phone' ? props.surface ?? props.page ?? 'overview' : props.page ?? 'overview';
-    const widePage = mainSurface === 'overview' || mainSurface === 'code';
+    const widePage = props.selection?.kind === 'plugin' || mainSurface === 'overview' || mainSurface === 'code';
 
     return (
+        <ProjectPageCatalogProvider scopeId={scopeId} surface={mainSurface} workspaceRef={workspaceRef} activeRootPath={resolvedActiveRootPath}
+            activeWorktreeId={resolvedActiveWorktreeId} selection={selectedPage}>
         <ProjectAtmosphereFrame project={{ serverId: workspaceRef.serverId, projectKey: workspaceRef.projectKey ?? workspaceRef.id }} focused={props.isFocused} column={pageColumnRef}>
         <View style={{ flex: 1 }} {...pane.overlayFocusReturnCaptureProps}>
-            <AppPaneScopeHost
+            {/* The File page's kept key row and a selection's Ask bar stack through this seat, as in the Session cockpit. */}
+            <PageBottomBarSeatProvider>
+            <DetailsPaneSlotHost key={scopeId} renderHost={({ main, details, onCloseDetails }) => (
+            <ProjectPagePaneScopeHost
                 scopeId={scopeId}
                 selectedPaneTabKey={props.selectedPaneTabKey}
                 arrangement="honour"
@@ -309,12 +316,19 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 onPluginSurfaceOpenChange={props.onPluginSurfaceOpenChange}
                 detailsPaneEnabled
                 detailsPaneBuiltinAdapter={projectDetailsPaneAdapter}
+                destinationDetails={details ? {
+                    pane: <DetailsPaneContentView details={details} onClose={onCloseDetails} />,
+                    onClose: onCloseDetails,
+                    ...(details.companion ? { companion: true as const } : {}),
+                } : undefined}
                 surfaceScope={projectSurfaceScope!}
                 rightPaneBuiltinAdapter={projectRightPaneBuiltinAdapter}
                 bottomPaneBuiltinAdapter={projectBottomPaneAdapter}
                 rightSidebarAdapter={projectRightSidebarAdapter}
                 wrapScopeContent={wrapProjectScopeContent}
-                main={(
+                main={main}
+            />
+            )}>
                     <ListPresentationProvider value="page">
                         <PageColumnProvider value={widePage ? 'wide' : 'reading'}>
                             <View ref={pageColumnRef} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
@@ -326,6 +340,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                     <ProjectShellHeaderHost
                                         workspaceRef={workspaceRef}
                                         page={props.page ?? 'overview'}
+                                        selection={selectedPage}
                                         activeRootPath={resolvedActiveRootPath}
                                         activeWorktreeId={resolvedActiveWorktreeId}
                                         onSelectRootPath={handleSelectRootPath}
@@ -340,6 +355,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                     <ProjectPhoneAtmosphereHeader>
                                         <ProjectPhoneCheckoutRow
                                             workspaceRef={workspaceRef}
+                                            selection={selectedPage}
                                             activeRootPath={resolvedActiveRootPath}
                                             activeWorktreeId={resolvedActiveWorktreeId}
                                             onSelectRootPath={handleSelectRootPath}
@@ -347,6 +363,8 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                         />
                                     </ProjectPhoneAtmosphereHeader>
                                 ) : null}
+                                {/* Cockpit phones with page tabs at the top: the pinned pages, on every surface. */}
+                                {deviceType === 'phone' ? <ProjectPhonePageStrip workspaceRefId={workspaceRef.id} /> : null}
                                 {/* A phone's page cockpit is a phone host: its pages (the File page's key row and toolbar,
                                     state cards) take the phone composition, as the Session cockpit does. */}
                                 <SurfaceStateSizeProvider size={deviceType === 'phone' ? 'phone' : enclosingStateSize}>
@@ -356,6 +374,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                                     activeRootPath={resolvedActiveRootPath}
                                     activeWorktreeId={resolvedActiveWorktreeId}
                                     surface={mainSurface}
+                                    selection={selectedPage}
                                     layoutId={props.layoutId}
                                     attachedDashboard={props.attachedDashboard}
                                     isFocused={props.isFocused !== false}
@@ -366,11 +385,12 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                             </View>
                         </PageColumnProvider>
                     </ListPresentationProvider>
-                )}
-            />
+            </DetailsPaneSlotHost>
+            </PageBottomBarSeatProvider>
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />
         </View>
         </ProjectAtmosphereFrame>
+        </ProjectPageCatalogProvider>
     );
 });
 

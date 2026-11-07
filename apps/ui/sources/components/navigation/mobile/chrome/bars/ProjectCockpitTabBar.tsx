@@ -1,146 +1,127 @@
 import * as React from 'react';
-import { useWindowDimensions } from 'react-native';
-import { t } from '@/text';
-import { layout } from '@/components/ui/layout/layout';
-import { Icon } from '@/components/ui/icons/Icon';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { resolveFloatingTabBarSlotCount } from '@/components/ui/navigation/FloatingTabBarSurface';
-import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
-import { NavigationPlacementPinButton } from '@/components/ui/navigation/NavigationPlacementPinButton';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
-import { resolveNavigationOverflow, resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
-import { useSetting } from '@/sync/domains/state/storage';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { normalizeProjectMobileSurface, normalizeProjectPage, type ProjectMobileSurface, type ProjectPageV1 } from '@/components/workspaceCockpit/project/projectCockpitState';
-import { getRightSidebarTabLabel, resolveProjectRightSidebarTabs } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
-import { resolveRightSidebarMobileProjection, resolveRightSidebarMobileSurface } from '@/components/appShell/rightSidebar/rightSidebarMobileProjection';
+import { resolveDetailNavigationItems, resolveDetailPhoneNavigationItem, type ProjectDetailNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
 import type { ProjectPageDescriptor } from '@/components/projects/detail/projectPageCatalog';
 import { ProjectPageChromeCounts, type ProjectPageChromeDescriptor } from '@/components/projects/navigation/ProjectPageChromeCounts';
-import type { ProjectPageCatalogModel } from '@/components/projects/navigation/useProjectPageCatalog';
-import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
-import { Modal } from '@/modal';
-import { fireAndForget } from '@/utils/system/fireAndForget';
-import { CockpitTabBar, CockpitTabBarAction, type CockpitTabBarTabDefinition } from './CockpitTabBar';
+import { useOptionalProjectPageCatalog, type ProjectPageCatalogModel } from '@/components/projects/navigation/useProjectPageCatalog';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
+import { PROJECT_PHONE_NAVIGATION_ADDRESS, resolveProjectNavigationCustomizer } from '@/components/projects/navigation/projectNavigationCustomizer';
+import { CockpitTabBar, type CockpitTabBarTabDefinition } from './CockpitTabBar';
 import { sfSymbolForCockpitTabIcon } from './cockpitTabSymbols';
+import { PhonePageStripView } from './PhonePageStrip';
+import { selectProjectCockpitItem } from '../cockpitSelection';
+import { useDetailPhoneBarPresentation, useDetailPhonePlacement } from './detailPhoneNavigation';
+import { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
+import { usePresentedDetailNavigationChrome } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 
-export type ProjectNavigationPage = Pick<ProjectPageChromeDescriptor, 'id' | 'title' | 'icon' | 'disabledReason' | 'disabledReasonCode' | 'allowedPlacements' | 'count' | 'counts'>;
+export { PROJECT_PHONE_NAVIGATION_ADDRESS } from '@/components/projects/navigation/projectNavigationCustomizer';
+export type ProjectNavigationPage = ProjectPageChromeDescriptor;
 export type ProjectCockpitTabBarProps = Readonly<{
     workspaceRefId: string;
     pages: readonly ProjectPageDescriptor[];
+    /** The mounted Project's single list; standalone specimens resolve through the same owner. */
+    items?: readonly ProjectDetailNavigationItem[];
     countScope?: Pick<ProjectPageCatalogModel, 'context' | 'projection' | 'authority'>;
     activeSurface: ProjectMobileSurface;
     activePage?: ProjectPageV1;
     activePageId?: string;
     terminalTabAvailable?: boolean;
+    terminalsOpen?: boolean;
     onPagePress?: (id: string) => void;
     onSurfacePress: (surface: ProjectMobileSurface) => void;
 }>;
-
-/** The catalog supplies pages; existing placement and fit owners decide the phone's prefix. */
-export const ProjectCockpitTabBar = React.memo((props: ProjectCockpitTabBarProps) => {
-    const { preferences } = useNavigationSurfacePlacement('projectTabBar');
-    return props.countScope ? <ProjectPageChromeCounts {...props.countScope} pages={props.pages} preferences={preferences}>
-        {pages => <ProjectCockpitTabBarContent {...props} pages={pages} preferences={preferences} />}
-    </ProjectPageChromeCounts> : <ProjectCockpitTabBarContent {...props} preferences={preferences} />;
-});
-
 export type ProjectCockpitTabDefinition = CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }>;
+type PresentationProps = Omit<ProjectCockpitTabBarProps, 'pages'> & Readonly<{ pages: readonly ProjectNavigationPage[] }>;
 
-/** Descriptors and navigation stay identical across the RN and native presenters. */
-export function useProjectCockpitTabDefinitions(props: Omit<ProjectCockpitTabBarProps, 'pages'> & Readonly<{
-    pages: readonly ProjectNavigationPage[];
-}>) {
+/** Descriptor adaptation only. No page/tool join, platform admission or selection decision lives here. */
+export function useProjectCockpitTabDefinitions(props: PresentationProps) {
+    const fallback = React.useMemo(() => props.items ? undefined : resolveDetailNavigationItems({ scope: 'project', presentation: 'mobile',
+        terminalTabAvailable: props.terminalTabAvailable, projectPages: props.pages }),
+    [props.items, props.pages, props.terminalTabAvailable]);
+    const items = props.items ?? fallback!;
     const pagesById = React.useMemo(() => new Map(props.pages.map(page => [page.id, page])), [props.pages]);
-    const registry = resolveProjectRightSidebarTabs({ presentation: 'mobile',
-        activePage: props.activePage ?? normalizeProjectPage(props.activeSurface) ?? 'overview',
-        terminalTabAvailable: props.terminalTabAvailable === true });
-    const companions: readonly ProjectNavigationPage[] = [
-        ...resolveRightSidebarMobileProjection({ scope: 'project', tabs: registry }).flatMap(entry => {
-            const surface = normalizeProjectMobileSurface(entry.surface);
-            if (!surface || normalizeProjectPage(surface)) return [];
-            return [{ id: surface, title: getRightSidebarTabLabel(entry.tab), icon: entry.tab.icon, disabledReason: null }];
-        }),
-        { id: 'tabs', title: t('phoneNav.bar.openFiles'), icon: 'files', disabledReason: null },
-    ];
-    const activeId = normalizeProjectPage(props.activeSurface) ? props.activePageId ?? props.activeSurface : props.activeSurface;
-    const tabForPage = (page: ProjectNavigationPage): ProjectCockpitTabDefinition => ({
-        id: page.id, label: page.count ? `${page.title} ${page.count}` : page.title, icon: page.icon,
-        sfSymbol: sfSymbolForCockpitTabIcon(page.icon),
-        accessibilityLabel: page.count ? `${page.title}, ${page.count}` : page.title, disabled: page.disabledReason !== null,
+    const phone = React.useMemo(() => items.filter(item => item.phonePlacement !== 'none').map(item => ({ ...item,
+        ...pagesById.get(item.id), phonePlacement: item.id === 'terminal' && props.terminalsOpen ? 'bar' as const
+            : item.phonePlacement })).map(resolveDetailPhoneNavigationItem), [items, pagesById, props.terminalsOpen]);
+    const activeId = normalizeProjectPage(props.activeSurface) ? props.activePageId ?? props.activeSurface
+        : items.find(item => item.companion?.mobileSurfaces?.project === props.activeSurface)?.id ?? props.activeSurface;
+    // A phone cell names its page; the counts' words travel in the announcement (a long label wraps out of the cell).
+    const tabForPage = (page: Pick<ProjectNavigationPage, 'id' | 'title' | 'icon' | 'disabledReason' | 'disabledReasonCode' | 'count'>): ProjectCockpitTabDefinition => ({ id: page.id,
+        label: page.title, icon: page.icon, sfSymbol: sfSymbolForCockpitTabIcon(page.icon),
+        accessibilityLabel: page.count ? `${page.title}, ${page.count}` : page.title, disabled: Boolean(page.disabledReason),
         unavailableReason: page.disabledReason ? page.disabledReasonCode ? page.disabledReason
-            : resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: page.disabledReason }).body : undefined,
-    });
+            : resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: page.disabledReason }).body : undefined });
     const select = (id: string) => {
-        const page = pagesById.get(id);
-        if (page) {
-            if (page.disabledReason) return;
-            if (props.onPagePress) props.onPagePress(id);
-            else {
-                const builtin = normalizeProjectPage(id);
-                if (builtin) props.onSurfacePress(builtin);
-            }
+        const item = items.find(item => item.id === id);
+        if (!item || item.disabledReason) return;
+        if (item.navigation.kind !== 'companion') {
+            if (item.page && props.onPagePress) props.onPagePress(item.navigation.page);
+            else { const surface = normalizeProjectMobileSurface(item.navigation.page); if (surface) props.onSurfacePress(surface); }
         } else {
-            const surface = normalizeProjectMobileSurface(id);
-            if (surface) props.onSurfacePress(surface);
+            const surface = item.companion?.mobileSurfaces?.project;
+            const normalized = normalizeProjectMobileSurface(surface);
+            if (normalized) props.onSurfacePress(normalized);
         }
     };
-    return { companions, pagesById, registry, activeId, tabForPage, select };
+    return { items, phone, activeId, pagesById, tabForPage, select };
 }
 
-function ProjectCockpitTabBarContent(props: Omit<ProjectCockpitTabBarProps, 'pages'> & Readonly<{
-    pages: readonly ProjectNavigationPage[];
-    preferences: NavigationPlacementPreferences;
-}>) {
-    const [moreOpen, setMoreOpen] = React.useState(false);
-    const { preferences } = props;
-    const windowWidth = useWindowDimensions().width;
-    const tabMinWidth = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels')).tabMinWidth;
-    const slotCount = resolveFloatingTabBarSlotCount({ windowWidth, maxWidth: layout.maxWidth, tabMinWidth });
-    const placements = React.useMemo(() => resolveNavigationPlacements(props.pages, preferences), [props.pages, preferences]);
-    const { companions, pagesById, registry, activeId, tabForPage, select } = useProjectCockpitTabDefinitions(props);
-    const fit = resolveNavigationOverflow(placements.pinned, [...placements.overflow, ...companions],
-        { availableSize: slotCount, itemSize: 1 });
-    const overflowIds = new Set(fit.overflow.map(page => page.id));
-    const behindMore = [...placements.ordered.filter(page => overflowIds.has(page.id)), ...companions];
-    const activeBehindMore = fit.shown.some(page => page.id === activeId) ? null
-        : [...props.pages, ...companions].find(page => page.id === activeId) ?? null;
-    const retainedTab = !normalizeProjectPage(props.activeSurface) ? registry.find(tab =>
-        resolveRightSidebarMobileSurface(tab, 'project') === props.activeSurface) : undefined;
-    const activeMore = activeBehindMore ?? (retainedTab ? { title: getRightSidebarTabLabel(retainedTab), icon: retainedTab.icon } : null);
-    const tabs = fit.shown.map(tabForPage);
-    const customize = () => {
-        setMoreOpen(false);
-        fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
-            Modal.show({ component: NavigationPlacementCustomizer, props: { surfaceId: 'projectTabBar',
-                items: props.pages, testID: 'project-tabs-customizer' } });
-        }), { tag: 'ProjectCockpitTabBar.customize' });
-    };
-    const items: readonly DropdownMenuItem[] = [...behindMore.map(entry => {
-        const page = pagesById.get(entry.id);
-        const pinned = placements.effectivePlacements[entry.id] === 'pinned';
-        return { id: entry.id, title: entry.title, icon: <Icon name={entry.icon} size={18} />,
-            category: page ? 'pages' : 'companions', checked: entry.id === activeId,
-            disabled: entry.disabledReason !== null,
-            subtitle: entry.disabledReason ? entry.disabledReasonCode ? entry.disabledReason
-                : resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: entry.disabledReason }).body : entry.count,
-            testID: `project-cockpit-more-item:${entry.id}`,
-            rightElement: moreOpen && page && (page.allowedPlacements === undefined || page.allowedPlacements.includes(pinned ? 'overflow' : 'pinned'))
-                ? <NavigationPlacementPinButton surfaceId="projectTabBar" entryId={entry.id} pinned={pinned}
-                    label={t(pinned ? 'phoneNav.bar.removeFromBar' : 'phoneNav.bar.keepOnBar')} preferences={preferences}
-                    testID={`project-cockpit-pin:${entry.id}`} /> : undefined,
-        };
-    }), { id: 'customize', title: t('navigationPlacement.customize'), icon: <Icon name="sliders-horizontal" size={18} />,
-        testID: 'project-cockpit-more-customize' }];
+/** The shared top strip and bottom presenters consume this one phone placement projection. */
+export function useProjectPhoneNavigation(props: PresentationProps) {
+    const definitions = useProjectCockpitTabDefinitions(props);
+    const placement = useDetailPhonePlacement(definitions.phone, PROJECT_PHONE_NAVIGATION_ADDRESS, 'project');
+    return { ...definitions, ...placement };
+}
 
-    return <CockpitTabBar activeSurface={activeId} barTestId={`project-cockpit-tabbar-${props.workspaceRefId}`}
-        tabs={tabs} tabTestIdPrefix="project-cockpit-tab-" layout="fit" onSurfacePress={select}
-        trailing={<DropdownMenu open={moreOpen} onOpenChange={setMoreOpen} items={items}
-            selectedId={activeBehindMore?.id ?? null} onSelect={id => {
-                if (id === 'customize') { customize(); return; }
-                setMoreOpen(false); select(id);
-            }} matchTriggerWidth={false} placement="top" trigger={({ open, toggle }) =>
-                <CockpitTabBarAction testID="project-cockpit-tab-more" label={activeBehindMore?.count
-                    ? `${activeBehindMore.title}, ${activeBehindMore.count}` : activeMore?.title ?? t('common.more')}
-                    icon={activeMore?.icon ?? 'dots-three'} selected={activeMore !== null} expanded={open} onPress={toggle} />}
-        />} />;
+/** Floating and native chrome share placement, top mode and their single More menu. */
+export function useProjectCockpitBarPresentation(props: PresentationProps, native = false) {
+    const definitions = useProjectPhoneNavigation(props);
+    const customizer = React.useMemo(() => resolveProjectNavigationCustomizer({ items: definitions.items,
+        phoneItems: definitions.phone, device: 'phone' }), [definitions.items, definitions.phone]);
+    const presentation = useDetailPhoneBarPresentation({ items: definitions.items, placement: definitions,
+        address: PROJECT_PHONE_NAVIGATION_ADDRESS, pageKind: 'project', activeId: definitions.activeId,
+        select: definitions.select, customizer, native });
+    return { ...definitions, ...presentation, customizer };
+}
+
+/**
+ * Cockpit phones with Project page tabs at the top: the pinned pages scroll in one strip under the Project
+ * header, from the same phone projection the bar uses; the bar keeps companions and the single More.
+ */
+export const ProjectPhonePageStrip = React.memo(function ProjectPhonePageStrip(props: Readonly<{ workspaceRefId: string }>) {
+    const environmentNavigation = usePresentedDetailNavigationChrome()?.pageKind === 'environment';
+    const catalog = useOptionalProjectPageCatalog();
+    const { cockpitEnabled } = useMobileWorkspaceExperienceState();
+    const { preferences } = useNavigationSurfacePlacement(PROJECT_PHONE_NAVIGATION_ADDRESS);
+    const execute = useMountedScopeActionCommand(catalog?.authority?.scope ?? null);
+    if (environmentNavigation || !catalog || !cockpitEnabled) return null;
+    return <ProjectPageChromeCounts context={catalog.context} projection={catalog.projection}
+        authority={catalog.authority} pages={catalog.pages} preferences={preferences}>
+        {pages => <ProjectPhonePageStripContent workspaceRefId={props.workspaceRefId} pages={pages} items={catalog.items}
+            activeSurface={catalog.activeSurface} activePageId={catalog.activePageId}
+            terminalTabAvailable={catalog.terminalTabAvailable}
+            onPagePress={id => selectProjectCockpitItem(execute, catalog, id, 'main')}
+            onSurfacePress={surface => selectProjectCockpitItem(execute, catalog, surface)} />}
+    </ProjectPageChromeCounts>;
+});
+function ProjectPhonePageStripContent(props: PresentationProps) {
+    const navigation = useProjectPhoneNavigation(props);
+    if (navigation.topPages.length === 0) return null;
+    return <PhonePageStripView tabs={navigation.topPages.map(navigation.tabForPage)} activeId={navigation.activeId}
+        onSelect={navigation.select} testID="project-phone-page-strip" />;
+}
+
+export const ProjectCockpitTabBar = React.memo((props: ProjectCockpitTabBarProps) => {
+    const { preferences } = useNavigationSurfacePlacement(PROJECT_PHONE_NAVIGATION_ADDRESS);
+    return props.countScope ? <ProjectPageChromeCounts {...props.countScope} pages={props.pages} preferences={preferences}>
+        {pages => <ProjectCockpitTabBarContent {...props} pages={pages} />}
+    </ProjectPageChromeCounts> : <ProjectCockpitTabBarContent {...props} />;
+});
+function ProjectCockpitTabBarContent(props: PresentationProps) {
+    const presentation = useProjectCockpitBarPresentation(props);
+    return <CockpitTabBar activeSurface={presentation.activeId} barTestId={`project-cockpit-tabbar-${props.workspaceRefId}`}
+        tabs={presentation.shown.map(presentation.tabForPage)} tabTestIdPrefix="project-cockpit-tab-" layout={presentation.layout}
+        onSurfacePress={presentation.select} trailing={presentation.menu} />;
 }
