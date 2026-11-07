@@ -7,7 +7,12 @@ import type {
 import { teamCredentialSourceLocatorKeyV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
@@ -34,6 +39,7 @@ function SourceBrokerPlacementEditor(props: Readonly<{
     pending: boolean;
     disabled: boolean;
     onSave: (placement: TeamCredentialBrokerPlacementV1 | null, expectedRevision: number) => Promise<boolean>;
+    onCancel: () => void;
 }>) {
     const [draft, setDraft] = React.useState<TeamCredentialBrokerPlacementV1 | null>(props.row.brokerPlacement);
     const basisRevision = React.useRef(props.row.revision);
@@ -60,17 +66,28 @@ function SourceBrokerPlacementEditor(props: Readonly<{
                 disabled={props.disabled}
                 onChange={chooseDraft}
             />
-            <ItemGroup>
-                <Item
-                    testID={`shared-with-teams:broker:${props.row.id}:save`}
-                    title={t('common.save')}
-                    disabled={!changed || props.disabled}
-                    loading={props.pending}
-                    onPress={() => void props.onSave(draft, basisRevision.current).then((saved) => {
-                        if (!saved) basisRevision.current = latestRevision.current;
-                    })}
-                    showChevron={false}
-                />
+            {/* The editor's own decision closes it: Cancel and Save as buttons, never a list row. */}
+            <ItemGroup surface="none">
+                <View style={styles.editorActions}>
+                    <RoundButton
+                        testID={`shared-with-teams:broker:${props.row.id}:cancel`}
+                        size="small"
+                        display="secondary"
+                        title={t('common.cancel')}
+                        disabled={props.pending}
+                        onPress={props.onCancel}
+                    />
+                    <RoundButton
+                        testID={`shared-with-teams:broker:${props.row.id}:save`}
+                        size="small"
+                        title={t('common.save')}
+                        disabled={!changed || props.disabled}
+                        loading={props.pending}
+                        onPress={() => void props.onSave(draft, basisRevision.current).then((saved) => {
+                            if (!saved) basisRevision.current = latestRevision.current;
+                        })}
+                    />
+                </View>
             </ItemGroup>
         </>
     );
@@ -202,6 +219,29 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
             setPendingId(null);
         }
     }, [approval, props.scope, reload]);
+    const remove = React.useCallback(async (row: TeamCredentialSourceResourceAdministrationV1) => {
+        if (!rowsCurrentRef.current) return;
+        const signal = actionLifetime.current?.signal;
+        if (!signal || signal.aborted) return;
+        setPendingId(row.id);
+        try {
+            const outcome = await deleteTeamCredentialResource({ scope: props.scope, resourceId: row.id, expectedRevision: row.revision, signal });
+            if (signal.aborted) return;
+            if (outcome.kind === 'failed') {
+                await reload();
+                setError(credentialFailureMessage(outcome.failure));
+            } else {
+                fireAndForget(reload(), { tag: 'SharedWithTeamsSourceAdministration.revalidate' });
+            }
+        } catch (cause) {
+            if (signal.aborted) return;
+            if (isTeamActionApprovalPendingError(cause)) approval.requestApproval(cause.registration);
+            await reload();
+            if (!isTeamActionApprovalPendingError(cause)) setError(t('teams.errors.generic'));
+        } finally {
+            setPendingId(null);
+        }
+    }, [approval, props.scope, reload]);
     const openRow = rows?.find((row) => row.id === openId) ?? null;
     // Nothing shared is the quiet, healthy state: the page's own share action is the way in, so a
     // section that only says "none" (or a loading row for it) is not shown. A share, a failure or a
@@ -222,79 +262,42 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 onPress={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.scope.serverId)}`)}
                 showChevron={false}
             /> : null}
-            {rows?.map((row) => (
-                <React.Fragment key={row.id}>
+            {rows?.map((row) => {
+                const busy = !rowsCurrent || pendingId === row.id || approval.approvalPending;
+                // A row's operations live in its ⋯ menu; the row itself names the Team share and its state.
+                const actions: ItemAction[] = [
+                    ...(row.capabilities.updateBrokerPlacement ? [{ id: `shared-with-teams:broker-location:${row.id}`,
+                        title: t('teams.credentials.sourceAdministration.changeBroker'), icon: 'server' as const,
+                        disabled: approval.approvalPending, onPress: () => setOpenId(row.id) }] : []),
+                    ...(row.capabilities.updateDeliveryPolicy && row.deliveryPolicy.preferredAllowedModes.includes('direct')
+                        && !row.deliveryPolicy.preferredAllowedModes.includes('vendor-native') ? [{
+                        id: `shared-with-teams:narrow:${row.id}`, title: t('teams.credentials.edit.ceilingBrokeredOnly'), icon: 'key' as const,
+                        disabled: busy, onPress: () => { void update(row, { deliveryPolicy: { preferredAllowedModes: ['brokered'] } }); } }] : []),
+                    ...(row.enabled && row.capabilities.disable ? [{ id: `shared-with-teams:disable:${row.id}`,
+                        title: t('common.disable'), icon: 'stop' as const, disabled: busy,
+                        onPress: () => { void update(row, { enabled: false }); } }] : []),
+                    ...(!row.enabled && row.capabilities.enable ? [{ id: `shared-with-teams:enable:${row.id}`,
+                        title: t('common.enable'), icon: 'play' as const, disabled: busy,
+                        onPress: () => { void update(row, { enabled: true }); } }] : []),
+                    ...(row.capabilities.delete ? [{ id: `shared-with-teams:delete:${row.id}`,
+                        title: t('teams.credentials.delete.action'), icon: 'trash' as const, destructive: true, disabled: busy,
+                        onPress: () => { void remove(row); } }] : []),
+                ];
+                return (
                     <Item
+                        key={row.id}
                         testID={`shared-with-teams:resource:${row.id}`}
                         title={row.displayName}
                         subtitle={sharedState === null ? resourceStateLabel(row.readiness) : undefined}
-                        selected={openId === row.id}
-                        accessibilityExpanded={openId === row.id}
-                        onPress={() => setOpenId((current) => current === row.id ? null : row.id)}
+                        showChevron={false}
+                        rightElement={actions.length > 0 ? (
+                            <ItemRowActions title={row.displayName} actions={actions} overflowOnly
+                                overflowTriggerTestID={`shared-with-teams:more:${row.id}`} />
+                        ) : undefined}
+                        rightElementOutsidePressable
                     />
-                    {openId === row.id && row.capabilities.updateDeliveryPolicy && row.deliveryPolicy.preferredAllowedModes.includes('direct') && !row.deliveryPolicy.preferredAllowedModes.includes('vendor-native') ? (
-                        <Item
-                            testID={`shared-with-teams:narrow:${row.id}`}
-                            title={t('teams.credentials.edit.ceilingBrokeredOnly')}
-                            disabled={!rowsCurrent || pendingId === row.id || approval.approvalPending}
-                            onPress={() => void update(row, { deliveryPolicy: { preferredAllowedModes: ['brokered'] } })}
-                            showChevron={false}
-                        />
-                    ) : null}
-                    {openId === row.id && row.enabled && row.capabilities.disable ? (
-                        <Item
-                            testID={`shared-with-teams:disable:${row.id}`}
-                            title={t('common.disable')}
-                            disabled={!rowsCurrent || pendingId === row.id || approval.approvalPending}
-                            onPress={async () => {
-                                await update(row, { enabled: false });
-                            }}
-                            showChevron={false}
-                        />
-                    ) : null}
-                    {openId === row.id && !row.enabled && row.capabilities.enable ? (
-                        <Item
-                            testID={`shared-with-teams:enable:${row.id}`}
-                            title={t('common.enable')}
-                            disabled={!rowsCurrent || pendingId === row.id || approval.approvalPending}
-                            onPress={() => void update(row, { enabled: true })}
-                            showChevron={false}
-                        />
-                    ) : null}
-                    {openId === row.id && row.capabilities.delete ? (
-                        <Item
-                            testID={`shared-with-teams:delete:${row.id}`}
-                            title={t('teams.credentials.delete.action')}
-                            destructive
-                            disabled={!rowsCurrent || pendingId === row.id || approval.approvalPending}
-                            onPress={async () => {
-                                if (!rowsCurrentRef.current) return;
-                                const signal = actionLifetime.current?.signal;
-                                if (!signal || signal.aborted) return;
-                                setPendingId(row.id);
-                                try {
-                                    const outcome = await deleteTeamCredentialResource({ scope: props.scope, resourceId: row.id, expectedRevision: row.revision, signal });
-                                    if (signal.aborted) return;
-                                    if (outcome.kind === 'failed') {
-                                        await reload();
-                                        setError(credentialFailureMessage(outcome.failure));
-                                    } else {
-                                        fireAndForget(reload(), { tag: 'SharedWithTeamsSourceAdministration.revalidate' });
-                                    }
-                                } catch (cause) {
-                                    if (signal.aborted) return;
-                                    if (isTeamActionApprovalPendingError(cause)) approval.requestApproval(cause.registration);
-                                    await reload();
-                                    if (!isTeamActionApprovalPendingError(cause)) setError(t('teams.errors.generic'));
-                                } finally {
-                                    setPendingId(null);
-                                }
-                            }}
-                            showChevron={false}
-                        />
-                    ) : null}
-                </React.Fragment>
-            ))}
+                );
+            })}
             {nextCursor ? <Item testID="shared-with-teams:load-more" title={t('common.next')} disabled={!rowsCurrent || loadingMore} loading={loadingMore} onPress={() => void loadMore()} showChevron={false} /> : null}
             {error && rows === null ? (
                 <Item testID="shared-with-teams:retry" title={t('common.retry')} onPress={() => void reload()} showChevron={false} />
@@ -308,6 +311,7 @@ export const SharedWithTeamsSourceAdministration = React.memo(function SharedWit
                 pending={pendingId === openRow.id || approval.approvalPending}
                 disabled={!rowsCurrent || pendingId === openRow.id || approval.approvalPending}
                 onSave={(brokerPlacement, expectedRevision) => update(openRow, { brokerPlacement }, expectedRevision)}
+                onCancel={() => setOpenId(null)}
             />
         ) : null}
         </>
@@ -323,3 +327,11 @@ export const SharedWithTeamsForSource = React.memo(function SharedWithTeamsForSo
         ? <SharedWithTeamsSourceAdministration scope={resolution.scope} source={props.source} />
         : null;
 });
+
+const styles = StyleSheet.create((theme) => ({
+    editorActions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: theme.space.s8,
+    },
+}));

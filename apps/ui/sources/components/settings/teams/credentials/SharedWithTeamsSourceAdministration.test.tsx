@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema, type MachinePoolViewV1 } from '@happier-dev/protocol';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { type MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCredentialResourceFixture, teamCredentialSourceResourceFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -46,7 +48,40 @@ function selectBrokerMachine(
     act(() => selection.selectTarget(row.candidate.target));
 }
 
+type RowScreen = Awaited<ReturnType<typeof renderScreen>>;
+/** Opens a row's ⋯ menu (where its actions live) unless it is already open. */
+async function openRowMenu(screen: RowScreen, rowId: string): Promise<void> {
+    await vi.waitFor(() => expect(screen.findByTestId(`shared-with-teams:more:${rowId}`), screen.getTextContent()).not.toBeNull());
+    // The trigger says whether its menu is open; a closing menu can keep its last items on screen.
+    const open = screen.findAllByTestId(`shared-with-teams:more:${rowId}`)
+        .some((node) => node.props.accessibilityState?.expanded === true);
+    if (!open) await screen.pressByTestIdAsync(`shared-with-teams:more:${rowId}`);
+}
+/** Whether a ⋯ menu action is shown unavailable (its row's write is still settling or held). */
+function menuActionDisabled(screen: RowScreen, testID: string): boolean {
+    return screen.findAllByTestId(testID).some((node) => node.props.disabled === true);
+}
+/** Opens the row's ⋯ menu and expects that action to be shown unavailable. */
+async function expectMenuActionDisabled(screen: RowScreen, rowId: string, action: string): Promise<void> {
+    await openRowMenu(screen, rowId);
+    await vi.waitFor(() => expect(menuActionDisabled(screen, `shared-with-teams:${action}:${rowId}`)).toBe(true));
+}
+/** Chooses one action from a row's ⋯ menu. */
+async function pressRowAction(screen: RowScreen, rowId: string, action: string): Promise<void> {
+    await openRowMenu(screen, rowId);
+    await vi.waitFor(() => expect(screen.findByTestId(`shared-with-teams:${action}:${rowId}`)).not.toBeNull());
+    await screen.pressByTestIdAsync(`shared-with-teams:${action}:${rowId}`);
+    // The menu closes first, then runs the action.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+}
+
+// The component and its menu's Popover load once before the per-test budget starts.
+beforeAll(async () => { await import('./SharedWithTeamsSourceAdministration'); }, 300_000);
+// A row's ⋯ menu opens in a Popover, which measures against the web window.
+let restorePopoverGlobals: (() => void) | null = null;
+afterEach(() => { restorePopoverGlobals?.(); restorePopoverGlobals = null; });
 beforeEach(async () => {
+    restorePopoverGlobals = withPopoverWebGlobals();
     poolProjection.pools = [];
     machineSelection.controller.reset();
     await harness.reset();
@@ -103,20 +138,22 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync(`shared-with-teams:resource:${row.id}`);
+        // Broker location opens its editor below the list; the operation then comes from the row's ⋯ menu.
+        await pressRowAction(screen, row.id, 'broker-location');
         const refresh = createDeferred<void>();
         harness.answer(serverId, LIST_PATH, {
             ...(refreshFails ? { status: 503 } : { body: { resources: operation === 'delete' ? [] : [{ ...row, revision: row.revision + 1, deliveryPolicy: { preferredAllowedModes: ['brokered'] } }] } }),
             respondAfter: refresh.promise,
         });
         const control = `shared-with-teams:${operation}:${row.id}`;
-        act(() => screen.pressByTestId(control));
+        await pressRowAction(screen, row.id, operation);
         try {
             await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH)).toHaveLength(2));
+            await openRowMenu(screen, row.id);
             await vi.waitFor(() => {
                 const node = screen.findByTestId(control);
                 expect(node).not.toBeNull();
-                expect(Boolean(node?.props.disabled)).toBe(true);
+                expect(menuActionDisabled(screen, control)).toBe(true);
                 const save = screen.findAllByTestId(`shared-with-teams:broker:${row.id}:save`)[0];
                 expect(save?.props.loading).toBe(false);
             });
@@ -126,7 +163,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             await act(async () => { refresh.resolve(); });
         }
         if (refreshFails) {
-            expect(screen.findByTestId(control)?.props.disabled).toBe(true);
+            await expectMenuActionDisabled(screen, row.id, operation);
             await screen.pressByTestIdAsync(control);
             expect(harness.requestsFor(operation === 'delete' ? '/v1/teams/credential-resources/delete' : UPDATE_PATH)).toHaveLength(1);
         } else {
@@ -178,7 +215,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
+        await openRowMenu(screen, 'resource-1');
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids).toContain('shared-with-teams:narrow:resource-1');
         expect(ids).toContain('shared-with-teams:disable:resource-1');
@@ -206,7 +243,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
+        await openRowMenu(screen, 'resource-1');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('shared-with-teams:narrow:resource-1');
     });
@@ -230,11 +267,11 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
-        await screen.pressByTestIdAsync('shared-with-teams:narrow:resource-1');
+        await pressRowAction(screen, 'resource-1', 'narrow');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:approval')).not.toBeNull());
 
-        expect(screen.findByTestId('shared-with-teams:disable:resource-1')?.props.disabled).toBe(true);
+        await openRowMenu(screen, 'resource-1');
+        await expectMenuActionDisabled(screen, 'resource-1', 'disable');
 
         const refresh = createDeferred<void>();
         const readsBeforeApproval = harness.requestsFor(LIST_PATH).length;
@@ -246,13 +283,13 @@ describe('SharedWithTeamsSourceAdministration', () => {
             await expect(decideApprovalAsInbox(serverId, artifactId!, 'approve')).resolves.toMatchObject({ ok: true });
             await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH).length).toBeGreaterThan(readsBeforeApproval));
             await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:approval')).toBeNull());
-            expect(screen.findByTestId('shared-with-teams:narrow:resource-1')?.props.disabled).toBe(true);
+            await expectMenuActionDisabled(screen, 'resource-1', 'narrow');
             await screen.pressByTestIdAsync('shared-with-teams:narrow:resource-1');
             expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1);
         } finally {
             await act(async () => { refresh.resolve(); });
         }
-        expect(screen.findByTestId('shared-with-teams:narrow:resource-1')?.props.disabled).toBe(true);
+        await expectMenuActionDisabled(screen, 'resource-1', 'narrow');
     });
 
     it('submits one exact eligible Machine placement when the row grants that operation', async () => {
@@ -282,12 +319,17 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
+        await pressRowAction(screen, 'resource-1', 'broker-location');
         selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));
         await screen.pressByTestIdAsync('shared-with-teams:broker:resource-1:save');
+        await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1));
         expect(JSON.stringify(harness.requestsFor(UPDATE_PATH).at(-1)?.input)).toContain('"brokerPlacement":{"kind":"machine","machineId":"machine-exact"}');
+        // The editor closes with its own Cancel button; the row itself is not a disclosure.
+        expect(screen.findByTestId('shared-with-teams:resource:resource-1')?.props.onPress).toBeUndefined();
+        await screen.pressByTestIdAsync('shared-with-teams:broker:resource-1:cancel');
+        expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')).toBeNull();
     });
 
     it('keeps the original revision as the CAS basis when a dirty broker draft receives a newer row', async () => {
@@ -321,17 +363,18 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
+        await pressRowAction(screen, 'resource-1', 'broker-location');
         selectBrokerMachine(screen, 'machine-exact');
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled)
             .toBe(false));
 
         harness.answer(serverId, LIST_PATH, { body: { resources: [{ ...initial, revision: 4 }] } });
-        await screen.pressByTestIdAsync('shared-with-teams:narrow:resource-1');
+        await pressRowAction(screen, 'resource-1', 'narrow');
         await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1));
         await vi.waitFor(() => expect(screen.findByTestId('shared-with-teams:broker:resource-1:save')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('shared-with-teams:broker:resource-1:save');
 
+        await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(2));
         expect(harness.requestsFor(UPDATE_PATH).at(-1)?.input).toMatchObject({
             expectedRevision: 3,
             brokerPlacement: { kind: 'machine', machineId: 'machine-exact' },
@@ -370,7 +413,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             scope={{ serverId, accountId: 'owner' }}
             source={{ v: 1, kind: 'provider_connection', connectionId: CONNECTION_ID }}
         />);
-        await screen.pressByTestIdAsync('shared-with-teams:resource:resource-1');
+        await pressRowAction(screen, 'resource-1', 'broker-location');
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON()))
             .toContain(`shared-with-teams:broker:resource-1:machine_pool:${poolId}`));
         await screen.pressByTestIdAsync(`shared-with-teams:broker:resource-1:machine_pool:${poolId}`);
@@ -378,6 +421,7 @@ describe('SharedWithTeamsSourceAdministration', () => {
             .toBe(false));
         await screen.pressByTestIdAsync('shared-with-teams:broker:resource-1:save');
 
+        await vi.waitFor(() => expect(harness.requestsFor(UPDATE_PATH)).toHaveLength(1));
         expect(harness.requestsFor(UPDATE_PATH).at(-1)?.input).toMatchObject({
             expectedRevision: 3,
             brokerPlacement: { kind: 'machine_pool', poolId },
