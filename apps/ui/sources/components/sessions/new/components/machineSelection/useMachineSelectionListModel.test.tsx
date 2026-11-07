@@ -288,6 +288,9 @@ describe('useMachineSelectionListModel', () => {
         { purpose: 'session', ownership: 'shared', managedWake: 'starting' },
     ] as const)('allows an exact $ownership $managedWake $purpose row without inventing a guest worker status', async ({ purpose, ownership, managedWake }) => {
         const machine: Machine = { ...createMachine('sleeping'), active: false, activeAt: 1,
+            ...(purpose === 'session' ? { managedInputRuntime: {
+                nativeReady: false, wakeState: managedWake, newSessionWake: { kind: 'available' as const },
+            } } : {}),
             ...(ownership === 'shared' ? { isShared: true, access: {
                 custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready',
             } } : {}) };

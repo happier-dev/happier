@@ -1,4 +1,5 @@
-import type { MachinePoolViewV1, ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1} from '@happier-dev/protocol/machines/pools/v1';
+import type { ProjectWorkerStatusResultV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -19,6 +20,45 @@ import { describeMachineLockedReason } from '@/utils/sessions/machineDisplayName
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import type { ManagedMachineDestinationProjection } from './managedMachineSelection';
+import type { ProjectWorkerNoAcceptanceFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+
+export type MachineDestinationCopySetupAction = Readonly<{
+    kind: 'worker_copy_setup';
+    workerCopy: NonNullable<ProjectWorkerNoAcceptanceFailureDetailsV1['workerCopy']>;
+}>;
+
+/** Status and Run refusal are two producer shapes for the same explicit recovery. */
+export function resolveMachineDestinationWorkerRefusal(
+    refusal: Extract<ProjectWorkerStatusResultV1, { eligible: false }> | ProjectWorkerNoAcceptanceFailureDetailsV1,
+): Readonly<{ eligible: false; reason: 'needs_copy'; action: MachineDestinationCopySetupAction }>
+    | Readonly<{ eligible: false; reason: 'worker_refused' }> {
+    const reason = 'explanation' in refusal ? refusal.explanation : refusal.reason;
+    return reason === 'worker_copy_missing' && refusal.workerCopy
+        ? { eligible: false, reason: 'needs_copy', action: { kind: 'worker_copy_setup', workerCopy: refusal.workerCopy } }
+        : { eligible: false, reason: 'worker_refused' };
+}
+
+/** Opens Sync's existing creator and approval; never selects a worker or retries Run. */
+export function describeMachineDestinationCopySetupAction(
+    action: MachineDestinationCopySetupAction,
+    workspace: Pick<WorkspaceAddressV1, 'serverId' | 'workspaceId' | 'machineId'> & Partial<Pick<WorkspaceAddressV1, 'rootPath'>>,
+    machineName: string,
+): Readonly<{ label: string; onPress: () => Promise<void> }> {
+    return {
+        label: t('projectWorkers.setUpCopy', { machine: machineName }),
+        onPress: async () => {
+            const [{ openWorkspaceSyncWorkerCopySetup }, { openWorkspaceSyncRelationshipDetails }] = await Promise.all([
+                import('@/components/workspaces/sync/openWorkspaceSyncAddMachine'),
+                import('@/components/workspaces/sync/openWorkspaceSyncRelationshipDetails'),
+            ]);
+            openWorkspaceSyncWorkerCopySetup(workspace, {
+                kind: 'no_worker_can_accept', reason: 'worker_copy_missing', unavailable: 'ask', workerCopy: action.workerCopy,
+            } satisfies ProjectWorkerNoAcceptanceFailureDetailsV1,
+            summary => openWorkspaceSyncRelationshipDetails(summary, workspace.workspaceId));
+        },
+    };
+}
 
 /** Current admitted projection facts, supplied on demand; never inferred from CPU or Session count. */
 export type MachineDestinationPlacementFacts = Readonly<{
@@ -37,11 +77,10 @@ export function resolveMachineDestinationPurposeEligibility(
     machine?: MachineDisplayRenderable,
     scope?: MachineReachabilityScope | null,
 ): Readonly<{ eligible: true; managedWake?: 'asleep' | 'starting'; worker?: Extract<ProjectWorkerStatusResultV1, { eligible: true }> }>
-    | Readonly<{ eligible: false; reason: 'shared_unsupported' | 'access_unavailable' | 'content_unavailable' | 'machine_unavailable' | 'worker_status_unavailable' | 'worker_refused'; worker?: ProjectWorkerStatusResultV1; statusFailed?: true }> {
+    | (Extract<ReturnType<typeof resolveMachineDestinationWorkerRefusal>, { reason: 'needs_copy' }> & Readonly<{ worker: ProjectWorkerStatusResultV1 }>)
+    | Readonly<{ eligible: false; reason: 'new_session_wake_unavailable'; newSessionWake?: NonNullable<Machine['managedInputRuntime']>['newSessionWake']; worker?: never }>
+    | Readonly<{ eligible: false; reason: 'access_unavailable' | 'content_unavailable' | 'machine_unavailable' | 'worker_status_unavailable' | 'worker_refused'; worker?: ProjectWorkerStatusResultV1; statusFailed?: true }> {
     const shared = machine?.isShared === true || facts?.ownership === 'shared';
-    if (shared && (
-        purpose === 'workflow' || purpose === 'trigger' || purpose === 'background' || purpose === 'boards'
-    )) return { eligible: false, reason: 'shared_unsupported' };
     // Boards retain owned unreadable items; they do not dispatch work or disclose locked content.
     if (purpose !== 'boards' && machine?.availability?.kind === 'locked') {
         return { eligible: false, reason: 'content_unavailable' };
@@ -50,12 +89,25 @@ export function resolveMachineDestinationPurposeEligibility(
         return { eligible: false, reason: 'access_unavailable' };
     }
     if (shared && machine?.metadata === null) return { eligible: false, reason: 'content_unavailable' };
-    if (purpose === 'finite' && facts?.managedWake && !machine?.revokedAt && !machine?.replacedByMachineId)
-        return { eligible: true, managedWake: facts.managedWake };
-    if (shared && machine && !resolveMachinePickerPresence(machine, undefined, scope).selectable) return { eligible: false, reason: 'machine_unavailable' };
+    const presence = machine ? resolveMachinePickerPresence(machine, undefined, scope) : undefined;
+    const managedWake = purpose === 'session' && !presence?.selectable ? machine?.managedInputRuntime?.wakeState
+        : purpose === 'finite' ? facts?.managedWake : undefined;
+    if (managedWake && !machine?.revokedAt && !machine?.replacedByMachineId) {
+        if (purpose === 'session' && machine?.managedInputRuntime?.newSessionWake?.kind !== 'available') {
+            return { eligible: false, reason: 'new_session_wake_unavailable', newSessionWake: machine?.managedInputRuntime?.newSessionWake };
+        }
+        return { eligible: true, managedWake };
+    }
+    if (shared && presence && !presence.selectable) return { eligible: false, reason: 'machine_unavailable' };
     if (purpose === 'finite' || purpose === 'service-start') {
         if (!facts?.worker) return { eligible: false, reason: 'worker_status_unavailable', ...(facts?.workerStatusFailed ? { statusFailed: true as const } : {}) };
-        if (!facts.worker.eligible) return { eligible: false, reason: 'worker_refused', worker: facts.worker };
+        if (!facts.worker.eligible) {
+            // A stale copy refusal must not offer setup on an offline destination.
+            const refusal = !machine || presence?.selectable
+                ? resolveMachineDestinationWorkerRefusal(facts.worker)
+                : { eligible: false as const, reason: 'worker_refused' as const };
+            return { ...refusal, worker: facts.worker };
+        }
         return { eligible: true, worker: facts.worker };
     }
     return { eligible: true };
@@ -75,6 +127,9 @@ export function describeMachineDestinationWorkerFacts(
     purpose: MachineDestinationPurposeV1 = 'finite',
     machineName?: string,
 ): string | undefined {
+    if (purpose === 'session' && eligibility.eligible && eligibility.managedWake)
+        return eligibility.managedWake === 'asleep' ? t('managedWake.startsOnSend')
+            : t('managedWake.starting', { machine: machineName ?? '' });
     // A retained managed worker (FX13): INT's power words, and what choosing it does for this Run.
     if (eligibility.eligible && eligibility.managedWake === 'asleep')
         return `${t('managedPower.asleep')} · ${t('projectWorkers.wakeForRun')}`;
@@ -129,8 +184,10 @@ export function describeMachineDestinationEligibility(
     purpose?: MachineDestinationPurposeV1,
 ): string | undefined {
     if (eligibility.eligible) return undefined;
-    if (eligibility.reason === 'shared_unsupported') return t('machines.destinations.sharedPurposeUnsupported');
-    if (eligibility.reason === 'worker_status_unavailable' || eligibility.reason === 'worker_refused') {
+    if (eligibility.reason === 'new_session_wake_unavailable') {
+        return eligibility.newSessionWake?.kind === 'unavailable' ? t('managedWake.startBeforeSend') : t('common.unavailable');
+    }
+    if (eligibility.reason === 'worker_status_unavailable' || eligibility.reason === 'worker_refused' || eligibility.reason === 'needs_copy') {
         return describeMachineDestinationWorkerFacts(eligibility, subject, purpose);
     }
     if (machine.access?.accessState === 'key_pending') return t('machines.destinations.pendingKey');
@@ -295,8 +352,9 @@ export function buildMachineDestinationModel(
 
         machineRowCount += machineRows.length;
         for (const row of machineRows) {
-            if (!resolveMachineDestinationPurposeEligibility(purpose, params.resolveMachinePlacementFacts?.(row, group.serverId), row, (params.scopesByServerId?.get(group.serverId) ?? params.scopesByServerId?.get(resolveServerProfileScopeIdForIdentifier(group.serverId)))).eligible) continue;
-            if (!resolveMachinePickerPresence(row, undefined, (params.scopesByServerId?.get(group.serverId) ?? params.scopesByServerId?.get(resolveServerProfileScopeIdForIdentifier(group.serverId)))).selectable) continue;
+            const eligibility = resolveMachineDestinationPurposeEligibility(purpose, params.resolveMachinePlacementFacts?.(row, group.serverId), row, (params.scopesByServerId?.get(group.serverId) ?? params.scopesByServerId?.get(resolveServerProfileScopeIdForIdentifier(group.serverId))));
+            if (!eligibility.eligible) continue;
+            if (!eligibility.managedWake && !resolveMachinePickerPresence(row, undefined, (params.scopesByServerId?.get(group.serverId) ?? params.scopesByServerId?.get(resolveServerProfileScopeIdForIdentifier(group.serverId)))).selectable) continue;
             selectableMachineCount += 1;
             // Recent/favorite rows can be plain Machine records, so the Home-qualified candidate is
             // resolved from this group's own list instead of trusting the rendered row's shape.

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit';
-import { ProjectWorkerStatusResultV1Schema, type MachinePoolViewV1, type ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
+import { ProjectWorkerStatusResultV1Schema, type ProjectWorkerStatusResultV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { type MachinePoolViewV1} from '@happier-dev/protocol/machines/pools/v1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import {
@@ -152,14 +153,22 @@ describe('buildMachineDestinationModel', () => {
             .toEqual({ eligible: false, reason: 'worker_refused', worker: refused });
     });
 
-    it.each(['workflow', 'trigger', 'background', 'boards'] as const)('keeps shared Machines visible but unclaimable for %s', (purpose) => {
-        const model = buildMachineDestinationModel({
-            purpose,
-            groups: [group()],
-            resolveMachinePlacementFacts: () => ({ ownership: 'shared' }),
-        });
-        expect(model.machineRowCount).toBe(1);
-        expect(model.soleSelectableDestination).toBeNull();
+    it.each(['finite', 'service-start'] as const)('offers copy setup without admitting an unrunnable %s worker', purpose => {
+        const worker = { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'worker_copy_missing',
+            workerCopy: { serverId: 'server-a', sourceWorkspaceRefId: 'source', sourceMachineId: 'source-machine',
+                targetMachineId: 'machine-1' } } satisfies ProjectWorkerStatusResultV1;
+        const facts = { ownership: 'owned', worker } as const;
+        expect(resolveMachineDestinationPurposeEligibility(purpose, facts, machine('machine-1')))
+            .toMatchObject({ eligible: false, reason: 'needs_copy', action: { kind: 'worker_copy_setup', workerCopy: worker.workerCopy } });
+        expect(buildMachineDestinationModel({ purpose, groups: [group()], resolveMachinePlacementFacts: () => facts })
+            .soleSelectableDestination).toBeNull();
+        expect(resolveMachineDestinationPurposeEligibility(purpose, facts, machine('machine-1', { active: false, activeAt: 0 })))
+            .not.toHaveProperty('action');
+        expect(resolveMachineDestinationPurposeEligibility(purpose, { ownership: 'owned', worker: {
+            eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'forbidden',
+        } }, machine('machine-1'))).toEqual({ eligible: false, reason: 'worker_refused', worker: {
+            eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'forbidden',
+        } });
     });
 
     it('does not infer finite capability or load from Session presence', () => {
@@ -175,19 +184,6 @@ describe('buildMachineDestinationModel', () => {
             });
             expect(model.soleSelectableDestination?.machine.id).toBe('machine-1');
         }
-    });
-
-    it.each(['workflow', 'trigger', 'background', 'boards'] as const)('keeps shared %s targets visible but unsupported', (purpose) => {
-        const shared = machine('shared', { isShared: true, access: {
-            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
-            resourceMode: 'plain', accessState: 'ready',
-        } });
-        const model = buildMachineDestinationModel({ groups: [group({ machines: [shared] })], purpose });
-        expect(model.machineRowCount).toBe(1);
-        expect(resolveMachineDestinationPurposeEligibility(purpose, undefined, shared)).toEqual({
-            eligible: false, reason: 'shared_unsupported',
-        });
-        expect(model.soleSelectableDestination).toBeNull();
     });
 
     it('keeps a ready shared permission visible but disabled until current content is hydrated', () => {
@@ -209,7 +205,7 @@ describe('buildMachineDestinationModel', () => {
         }, shared)).toEqual({ eligible: false, reason: 'machine_unavailable' });
     });
 
-    it.each(['session', 'finite', 'service-start'] as const)('admits a ready shared exact target for %s', (purpose) => {
+    it.each(['session', 'finite', 'service-start', 'workflow', 'trigger', 'background', 'boards'] as const)('admits a ready shared exact target for %s', (purpose) => {
         const shared = machine('shared', { isShared: true, access: {
             custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
             resourceMode: 'plain', accessState: 'ready',
@@ -219,6 +215,30 @@ describe('buildMachineDestinationModel', () => {
             resolveMachinePlacementFacts: () => ({ ownership: 'shared', worker: eligibleWorker('shared') }),
         })
             .soleSelectableDestination?.machine).toBe(shared);
+    });
+
+    it.each(['asleep', 'starting'] as const)('admits a shared %s Session from its admitted wake fact', managedWake => {
+        const shared = machine('shared', { active: false, activeAt: 0, isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
+            resourceMode: 'plain', accessState: 'ready',
+        }, managedInputRuntime: { nativeReady: false, wakeState: managedWake, newSessionWake: { kind: 'available' } } });
+        const facts = { ownership: 'shared', managedWake } as const;
+        const eligibility = resolveMachineDestinationPurposeEligibility('session', facts, shared);
+        expect(eligibility).toEqual({ eligible: true, managedWake });
+        expect(describeMachineDestinationWorkerFacts(eligibility, undefined, 'session', 'Shared machine'))
+            .toBe(managedWake === 'asleep' ? t('managedWake.startsOnSend')
+                : t('managedWake.starting', { machine: 'Shared machine' }));
+        expect(buildMachineDestinationModel({ purpose: 'session', groups: [group({ machines: [shared] })],
+            managedMachineProjection: { state: 'unavailable', rowCount: 0 },
+            resolveMachinePlacementFacts: () => facts }).soleSelectableDestination?.machine).toBe(shared);
+        expect(resolveMachineDestinationPurposeEligibility('session', facts, { ...shared, managedInputRuntime: undefined }))
+            .toEqual({ eligible: false, reason: 'machine_unavailable' });
+        for (const blocked of [
+            { ...shared, metadata: null },
+            { ...shared, access: { ...shared.access!, accessState: 'key_pending' as const } },
+            { ...shared, revokedAt: 1 },
+            { ...shared, replacedByMachineId: 'replacement' },
+        ]) expect(resolveMachineDestinationPurposeEligibility('session', facts, blocked).eligible).toBe(false);
     });
 
     it.each(['key_pending', 'refused'] as const)('does not turn online shared %s into a usable destination', (accessState) => {
