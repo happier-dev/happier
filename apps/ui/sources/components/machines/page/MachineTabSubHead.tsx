@@ -9,6 +9,7 @@ import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useClaimSettingsBack } from '@/components/settings/shell/SettingsModalFloatingControls';
+import { useNavigationChromeShowsBack } from '@/components/ui/layout/navigationTitleChrome';
 
 /**
  * The head of every page a machine pushes, one anatomy (FA1 #9): the way back named for where it returns, the
@@ -31,6 +32,11 @@ export function MachineTabSubHead(props: Readonly<{
     aside?: string | null;
     /** The page's one sentence under its name, when it has one. */
     description?: string | null;
+    /**
+     * What the page states first, from its own facts (lab `mc-acsay`: "shop-prod is open to the internet on 22, 80
+     * and 443." then a quiet clause), in place of a purpose sentence once the facts can say it.
+     */
+    lead?: MachinePageLead | null;
     testID?: string;
     /**
      * `tab` (default): under the machine's header and tabs. `page`: the page's own head (a This machine page), so it
@@ -41,7 +47,10 @@ export function MachineTabSubHead(props: Readonly<{
     children?: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const back = props.back;
+    // One Back per page: under a phone bar that already draws one (in-app history), the crumb steps aside, as a
+    // PageHeader's does; a deep link without history keeps it.
+    const chromeShowsBack = useNavigationChromeShowsBack();
+    const back = props.underNativeChrome && chromeShowsBack ? null : props.back;
     // Its crumb is the page's one Back: inside Settings the shell's floating back steps aside.
     useClaimSettingsBack(back !== null);
     return (
@@ -66,6 +75,12 @@ export function MachineTabSubHead(props: Readonly<{
                 </View>
             )}
             {props.description ? <Text style={styles.description}>{props.description}</Text> : null}
+            {props.lead ? (
+                <Text testID={props.testID ? `${props.testID}-lead` : undefined} style={styles.lead}>
+                    <Text style={styles.leadStatement}>{props.lead.statement}</Text>
+                    {props.lead.detail ? ` ${props.lead.detail}` : null}
+                </Text>
+            ) : null}
             {props.children}
         </ItemGroup>
     );
@@ -76,6 +91,7 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         alignSelf: 'flex-start',
+        maxWidth: '100%',
         gap: theme.space.s2,
         minHeight: 28,
         marginLeft: -2,
@@ -84,6 +100,8 @@ const styles = StyleSheet.create((theme) => ({
         opacity: 0.6,
     },
     backText: {
+        // One line that ends in an ellipsis: a long Machine name shrinks inside the crumb instead of running off a phone.
+        flexShrink: 1,
         ...Typography.default('medium'),
         ...happierPageTextMetrics('meta'),
         color: theme.colors.text.secondary,
@@ -114,6 +132,16 @@ const styles = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('pageDescription'),
         color: theme.colors.text.secondary,
         marginTop: theme.space.s4,
+    },
+    lead: {
+        ...Typography.variant('heading', 'regular'),
+        color: theme.colors.text.secondary,
+        marginTop: theme.space.s4,
+        maxWidth: PAGE_LIST_METRICS.columnMaxWidthPx.reading,
+    },
+    leadStatement: {
+        ...Typography.variant('heading', 'semiBold'),
+        color: theme.colors.text.primary,
     },
     title: {
         ...Typography.default('semiBold'),

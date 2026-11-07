@@ -7,6 +7,7 @@ import type {
   MachineReachabilityInspectInputV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { MachineNetworkExposureFacts } from './networkExposureFacts';
 import { projectMachineNetworkAccessFacts, type MachineNetworkAccessFacts } from './networkAccessFacts';
 import { relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -35,25 +36,29 @@ export type MachineNetworkFacts = Readonly<{
   observation: MachineReachabilityObservationV1 | null;
   /** Derived once from these admitted fields by useMachineNetworkFacts. */
   access?: MachineNetworkAccessFacts | null;
+  /** Admitted, last-observed Domain listeners and effective Docker bindings, with explicit unknowns. */
+  exposure?: MachineNetworkExposureFacts | null;
   /** Supplied only for a demanded, exactly bound Account; null means no completed reply in this lifetime. */
   lastAnsweredAtMs?: number | null;
 }>;
 export type MachineNetworkRead =
   | Readonly<{ kind: 'unrequested' | 'pending' | 'settled' }>
   | Readonly<{ kind: 'failed'; failure: Extract<ActionExecuteResult, { ok: false }> }>;
-export type MachineNetworkSurfaceState = 'loading' | 'ready' | 'needsSetup' | 'unavailable';
+export type MachineNetworkSurfaceState = 'loading' | 'ready' | 'needsSetup' | 'unavailable' | 'needsManage';
 
 /** Presentation only: field identities, admission and native truth stay with their producers. */
 export function presentMachineNetwork(input: Readonly<{
   facts: MachineNetworkFacts;
   read: MachineNetworkRead;
   reachable: boolean | null;
+  /** A Use grantee: inspect is Manage-only, so no read is demanded and none is awaited. */
+  needsManage?: boolean;
 }>) {
   const observation = input.facts.observation;
   const failure = input.read.kind === 'failed' ? input.read.failure : null;
   const coldOffline = input.read.kind === 'unrequested' && input.reachable === false;
-  const awaitingFirstRead = observation === null && input.read.kind !== 'settled' && !failure && !coldOffline;
-  const state: MachineNetworkSurfaceState = failure ? 'unavailable'
+  const awaitingFirstRead = !input.needsManage && observation === null && input.read.kind !== 'settled' && !failure && !coldOffline;
+  const state: MachineNetworkSurfaceState = input.needsManage ? 'needsManage' : failure ? 'unavailable'
     : awaitingFirstRead ? 'loading'
       : !observation ? 'unavailable'
         : !input.facts.posture ? 'needsSetup' : 'ready';
@@ -82,14 +87,20 @@ export type MachineNetworkHeadline =
   /** `services`: a public ingress that needs no inbound port (a tunnel). */
   | Readonly<{ kind: 'closed'; services: string | null }>;
 
-export function presentNetworkHeadline(facts: MachineNetworkFacts): MachineNetworkHeadline | null {
+export function presentNetworkHeadline(facts: MachineNetworkFacts, providerTitle?: MachineNetworkProviderTitle): MachineNetworkHeadline | null {
   const access = facts.access ?? projectMachineNetworkAccessFacts(facts);
-  if (access?.ssh.state !== 'open') return null;
-  const endpoints = access.ssh.endpoints;
-  const ports = endpoints?.length ? [...new Set(endpoints.map(endpoint => endpoint.port))].sort((a, b) => a - b) : null;
-  // SSH closure and a ready ingress capability cannot prove that no joined
-  // service is exposed. P40/P41 own that still-unanswered exposure operand.
-  return { kind: 'open', ports, ssh: true, services: null };
+  const ssh = access?.ssh.state === 'open';
+  const servicePorts = facts.exposure?.ports.filter(port => port.audience === 'internet' && port.domainId !== undefined) ?? [];
+  if (!ssh && servicePorts.length === 0) return null;
+  const endpoints = access?.ssh.endpoints;
+  const knownPorts = [...(ssh ? endpoints?.map(endpoint => endpoint.port) ?? [] : []),
+    ...servicePorts.flatMap(endpoint => typeof endpoint.port === 'number' ? [endpoint.port] : [])];
+  const ports = ssh && !endpoints?.length ? null : [...new Set(knownPorts)].sort((a, b) => a - b);
+  const publicDomainIds = new Set(servicePorts.map(port => port.domainId));
+  const domain = facts.exposure?.domains?.find(candidate => candidate.provider && publicDomainIds.has(candidate.domainId));
+  // The same catalog resolver names rows and the lead; absent declarations remain unnamed.
+  const services = domain?.provider ? providerTitle?.(domain.provider) ?? null : null;
+  return { kind: 'open', ports, ssh, services };
 }
 
 /** Both preview and refresh use the same host inspect Action. */

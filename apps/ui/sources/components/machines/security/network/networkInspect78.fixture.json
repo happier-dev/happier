@@ -1,0 +1,154 @@
+{
+  "machineId": "eadc2422-b42b-478d-97b1-af9b530d5f08",
+  "metadataVersion": 82,
+  "posture": {
+    "revision": 0,
+    "management": {
+      "providers": [],
+      "publicSsh": {
+        "kind": "open",
+        "port": 22,
+        "sourceCidrs": [
+          "0.0.0.0/0",
+          "::/0"
+        ]
+      }
+    },
+    "defaultServiceIngress": {
+      "kind": "none"
+    }
+  },
+  "selections": [],
+  "observation": {
+    "revision": 11,
+    "management": {
+      "daemon": "ready",
+      "providers": [],
+      "publicSsh": "open"
+    },
+    "privateNetworks": [],
+    "ingress": [],
+    "nativeFirewall": {
+      "status": "available",
+      "ownedTable": "absent",
+      "externalInterfaces": [
+        "eno8303"
+      ],
+      "privateInterfaces": [],
+      "retainedSshEndpoints": [
+        {
+          "interfaceName": "eno8303",
+          "hostAddress": "0.0.0.0",
+          "port": 22,
+          "sourceCidrs": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "interfaceName": "tailscale0",
+          "hostAddress": "0.0.0.0",
+          "port": 22,
+          "sourceCidrs": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "interfaceName": "br-bdd0050e7346",
+          "hostAddress": "0.0.0.0",
+          "port": 22,
+          "sourceCidrs": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "interfaceName": "br-680b03793bae",
+          "hostAddress": "0.0.0.0",
+          "port": 22,
+          "sourceCidrs": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "interfaceName": "br-e2131bc73e5c",
+          "hostAddress": "0.0.0.0",
+          "port": 22,
+          "sourceCidrs": [
+            "0.0.0.0/0"
+          ]
+        },
+        {
+          "interfaceName": "eno8303",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "tailscale0",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "br-bdd0050e7346",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "br-680b03793bae",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "br-e2131bc73e5c",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "veth38954e0",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "vethc6c73cb",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "veth74fe6d4",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        },
+        {
+          "interfaceName": "veth2d498d5",
+          "hostAddress": "::",
+          "port": 22,
+          "sourceCidrs": [
+            "::/0"
+          ]
+        }
+      ]
+    }
+  }
+}

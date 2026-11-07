@@ -4,12 +4,14 @@ import {
   MachineReachabilityObservationV1Schema,
   MachineReachabilityPlanV1Schema,
   MachineReachabilityPostureV1Schema,
+  type MachineReachabilityPostureV1,
 } from '@happier-dev/protocol';
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
@@ -19,6 +21,7 @@ import {
   type MachineNetworkFacts,
   type MachineNetworkRead,
 } from './networkSurface';
+import type { MachineNetworkExposureFacts } from './networkExposureFacts';
 import type { MachineNetworkViewModel } from './MachineNetworkSection';
 import type { MachineNetworkReview } from './useMachineNetworkReview';
 
@@ -87,7 +90,10 @@ async function render(
   network: MachineNetworkViewModel,
   online: boolean | null,
   review: MachineNetworkReview = { kind: 'idle' },
-  controls: Partial<Record<'onApply' | 'onPrepare', () => void>> = {},
+  controls: Partial<Record<'onApply' | 'onPrepare' | 'onCancel', () => void> & {
+    onPrepareChange: (change: unknown) => void;
+    onDraft: (next: MachineReachabilityPostureV1 | null) => void;
+  }> = {},
 ) {
   const { MachineNetworkView } = await import('./MachineNetworkSection');
   const draft =
@@ -104,10 +110,11 @@ async function render(
       controls: {
         review,
         draft,
-        onDraft: vi.fn(),
+        onDraft: controls.onDraft ?? vi.fn(),
         onPrepare: controls.onPrepare ?? vi.fn(),
+        onPrepareChange: controls.onPrepareChange ?? vi.fn(),
         onApply: controls.onApply ?? vi.fn(),
-        onCancel: vi.fn(),
+        onCancel: controls.onCancel ?? vi.fn(),
         onOpenApproval: vi.fn(),
       },
     }),
@@ -193,6 +200,106 @@ describe('Machine → Network page', () => {
     ).toBe(false);
   });
 
+  it('warns before closing SSH without independent recovery and can keep saved SSH without applying', async () => {
+    const saved = MachineReachabilityPostureV1Schema.parse({
+      ...posture,
+      management: { ...posture.management, publicSsh: { kind: 'open', port: 2222, sourceCidrs: ['192.0.2.0/24'] } },
+    });
+    const proposed = MachineReachabilityPostureV1Schema.parse({
+      ...(plan.basis.change.kind === 'posture' ? plan.basis.change.posture : posture),
+      defaultServiceIngress: { kind: 'provider', selection: { provider: { kind: 'builtin', id: 'caddy' }, config: {}, credentialRefs: [] } },
+    });
+    const reviewed = MachineReachabilityPlanV1Schema.parse({
+      ...plan, basis: { ...plan.basis, change: { kind: 'posture', posture: proposed } },
+    });
+    const onDraft = vi.fn();
+    const onCancel = vi.fn();
+    const onApply = vi.fn();
+    const screen = await render(
+      { ...model({ kind: 'settled' }, true), facts: { ...facts, posture: saved } },
+      true,
+      { kind: 'review', plan: reviewed },
+      { onDraft, onCancel, onApply },
+    );
+    const warning = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+      testID: 'machine-network-ssh-recovery-warning',
+    });
+    expect(warning?.props.kind).toBe('warning');
+    expect(warning?.props.accessibilitySemantics).toBe('alert');
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, {
+      testID: 'machine-network-apply',
+    })?.props.disabled).toBe(false);
+    const keep = findTestInstanceByTypeWithProps(screen, RoundButton, {
+      testID: 'machine-network-keep-ssh',
+    });
+    expect(keep).toBeTruthy();
+    screen.pressByTestId('machine-network-keep-ssh');
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onDraft).toHaveBeenCalledWith({
+      ...proposed, management: { ...proposed.management, publicSsh: saved.management.publicSsh },
+    });
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it('uses the reviewed recovery and SSH choice rather than an unreviewed local draft for the warning', async () => {
+    const recovered = MachineReachabilityPostureV1Schema.parse({
+      ...posture,
+      management: { ...posture.management, publicSsh: { kind: 'closed' }, independentRecovery: { kind: 'providerConsole', evidence: 'userAttested' } },
+    });
+    for (const proposed of [posture, recovered]) {
+      const reviewed = MachineReachabilityPlanV1Schema.parse({
+        ...plan, basis: { ...plan.basis, change: { kind: 'posture', posture: proposed } },
+      });
+      const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'review', plan: reviewed });
+      expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+        testID: 'machine-network-ssh-recovery-warning',
+      })).toBeUndefined();
+      expect(findTestInstanceByTypeWithProps(screen, RoundButton, {
+        testID: 'machine-network-keep-ssh',
+      })).toBeUndefined();
+      expect(findTestInstanceByTypeWithProps(screen, RoundButton, {
+        testID: 'machine-network-cancel',
+      })).toBeTruthy();
+    }
+  });
+
+  it('names and warns about the reviewed native SSH closure when saved metadata already says closed', async () => {
+    const closed = MachineReachabilityPostureV1Schema.parse({
+      ...posture, management: { ...posture.management, publicSsh: { kind: 'closed' } },
+    });
+    const reviewed = MachineReachabilityPlanV1Schema.parse({
+      ...plan,
+      basis: {
+        ...plan.basis,
+        change: { kind: 'posture', posture: closed },
+        nativeFirewall: {
+          status: 'available', ownedTable: 'present', externalInterfaces: ['eth0'], privateInterfaces: [],
+          retainedSshEndpoints: [{ interfaceName: 'eth0', hostAddress: '203.0.113.12', port: 2222, sourceCidrs: ['0.0.0.0/0'] }],
+        },
+        firewallTransition: { setupRevision: 4, dockerEngineIds: [], intent: { v: 1, kind: 'retainSsh', caddy: {}, publicSsh: { kind: 'closed' } } },
+      },
+    });
+    const onDraft = vi.fn();
+    const onCancel = vi.fn();
+    const onApply = vi.fn();
+    const screen = await render(
+      { ...model({ kind: 'settled' }, true), facts: { ...facts, posture: closed } },
+      true,
+      { kind: 'review', plan: reviewed },
+      { onDraft, onCancel, onApply },
+    );
+    expect(findTestInstanceByTypeWithProps(screen, Item, {
+      testID: 'machine-network-change-public-ssh',
+    })?.props.detail).toBe('machineDetailPage.network.off');
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+      testID: 'machine-network-ssh-recovery-warning',
+    })?.props.kind).toBe('warning');
+    screen.pressByTestId('machine-network-keep-ssh');
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onDraft).not.toHaveBeenCalled();
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
   it('marks the saved ingress provider chosen and keeps every observed capability with its state', async () => {
     const caddy = { provider: { kind: 'builtin' as const, id: 'caddy' }, config: {}, credentialRefs: [] };
     const withIngress: MachineNetworkFacts = {
@@ -263,7 +370,7 @@ describe('Machine → Network page', () => {
     } });
     const screen = await renderScreen(React.createElement(MachineNetworkView, {
       network: { ...network, facts: { ...network.facts, observation: withManagement } }, machineName: 'shop-prod', online: true,
-      controls: { review: { kind: 'review', plan: reviewed }, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
+      controls: { review: { kind: 'review', plan: reviewed }, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(), onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
     }));
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-manage-tailscale' })?.props.titleQualifier).toBe('Tailscale');
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-change-ingress' })?.props.detail).toBe('Caddy');
@@ -280,7 +387,7 @@ describe('Machine → Network page', () => {
           review: { kind: 'review', plan },
           draft: null,
           onDraft: vi.fn(),
-          onPrepare: vi.fn(),
+          onPrepare: vi.fn(), onPrepareChange: vi.fn(),
           onApply: vi.fn(),
           onCancel: vi.fn(),
           onOpenApproval: vi.fn(),
@@ -301,7 +408,7 @@ describe('Machine → Network page', () => {
         machineName: 'shop-prod',
         online: true,
         controls: {
-          review: { kind: 'idle' }, draft, onDraft: vi.fn(), onPrepare: vi.fn(),
+          review: { kind: 'idle' }, draft, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
           onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn(),
         },
       }),
@@ -332,5 +439,118 @@ describe('Machine → Network page', () => {
     expect(addresses?.props.rightElement?.props.values).toEqual(['100.101.7.12', 'fd7a:115c:a1e0::6b01:70c']);
   });
 
+  it('groups the ports the exposure owner reports by who reaches them, and says what it has not read', async () => {
+    const exposure: MachineNetworkExposureFacts = {
+      domains: null, services: null,
+      ports: [
+        { audience: 'internet', hostAddress: '203.0.113.7', port: 2205, protocol: 'tcp', interfaceName: 'eth0', sourceCidrs: ['0.0.0.0/0'] },
+        { audience: 'privateNetwork', hostAddress: '100.101.7.12', port: 5432, protocol: 'tcp', serviceId: 'svc-db', networkIdentity: 'tail3c1' },
+        { audience: 'thisMachine', hostAddress: '127.0.0.1', port: 6379, protocol: 'tcp', serviceId: 'svc-cache' },
+        { audience: 'unknown', hostAddress: null, port: 8080, protocol: 'tcp', serviceId: 'svc-web' },
+      ],
+    };
+    const screen = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, exposure } }, true);
+    const row = (audience: string) => findTestInstanceByTypeWithProps(screen, Item, { testID: `machine-network-ports-${audience}` });
+    expect(row('internet')?.props.rightElement?.props.ports).toEqual(['2205']);
+    expect(row('internet')?.props.subtitle).toBe('machineDetailPage.network.portsSsh');
+    expect(row('privateNetwork')?.props.rightElement?.props.ports).toEqual(['5432']);
+    expect(row('thisMachine')?.props.rightElement?.props.ports).toEqual(['6379']);
+    // A port whose audience the owner could not classify is said so, never filed under a guess.
+    expect(row('unknown')?.props.rightElement?.props.ports).toEqual(['8080']);
+    // Services and Domains not read yet: one honest row, never an empty list read as "none".
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ports-unread' })).toBeTruthy();
 
+    const read = await render({ ...model({ kind: 'settled' }, true),
+      facts: { ...facts, exposure: { domains: [], services: [], ports: [] } } }, true);
+    expect(findTestInstanceByTypeWithProps(read, Item, { testID: 'machine-network-ports-unread' })).toBeFalsy();
+    expect(findTestInstanceByTypeWithProps(read, Item, { testID: 'machine-network-ports-none' })).toBeTruthy();
+  });
+
+  it('offers Leave only for a network whose exact saved selection is known, and reviews that exact change', async () => {
+    const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: { profile: 'work' }, credentialRefs: [] };
+    const onPrepareChange = vi.fn();
+    const withSelection = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, selections: [selection] } }, true,
+      { kind: 'idle' }, { onPrepareChange });
+    const leave = findTestInstanceByTypeWithProps(withSelection, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' });
+    leave?.props.onPress();
+    expect(onPrepareChange).toHaveBeenCalledWith({ kind: 'privateNetwork', intent: 'leave', selection });
+
+    const unknown = await render(model({ kind: 'settled' }, true), true);
+    expect(findTestInstanceByTypeWithProps(unknown, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' })).toBeFalsy();
+  });
+
+  it('offers Set up for a network that is not on yet, joining with its saved selection', async () => {
+    const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: {}, credentialRefs: [] };
+    const stopped = MachineReachabilityObservationV1Schema.parse({ ...observation,
+      privateNetworks: observation.privateNetworks.map(network => ({ ...network, state: 'stopped' })) });
+    const onPrepareChange = vi.fn();
+    const screen = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, selections: [selection], observation: stopped } }, true,
+      { kind: 'idle' }, { onPrepareChange });
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' })).toBeFalsy();
+    findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-join' })?.props.onPress();
+    expect(onPrepareChange).toHaveBeenCalledWith({ kind: 'privateNetwork', intent: 'join', selection });
+  });
+
+  it('dates a confirmed console, and lets the person confirm it through the reviewed change', async () => {
+    const confirmedAtMs = Date.UTC(2026, 9, 21, 9, 0);
+    const confirmed = MachineReachabilityPostureV1Schema.parse({ ...posture, management: { ...posture.management,
+      independentRecovery: { kind: 'providerConsole', evidence: 'userAttested', confirmedAtMs } } });
+    const dated = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, posture: confirmed } }, true);
+    expect(findTestInstanceByTypeWithProps(dated, Item, { testID: 'machine-network-recovery' })?.props.subtitle)
+      .toBe('machineDetailPage.network.recoveryConsole · machineDetailPage.network.recoveryConfirmedOn');
+
+    const onPrepareChange = vi.fn();
+    const unset = await render(model({ kind: 'settled' }, true), true, { kind: 'idle' }, { onPrepareChange });
+    findTestInstanceByTypeWithProps(unset, RoundButton, { testID: 'machine-network-recovery-confirm' })?.props.onPress();
+    const change = onPrepareChange.mock.calls[0]?.[0];
+    expect(change?.kind).toBe('posture');
+    expect(change?.posture.management.independentRecovery).toMatchObject({ kind: 'providerConsole', evidence: 'userAttested' });
+  });
+
+  it('names a private-network change in the review card', async () => {
+    const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: {}, credentialRefs: [] };
+    const leavePlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: { ...plan.basis, currentSelections: [selection],
+      change: { kind: 'privateNetwork', intent: 'leave', selection } } });
+    const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'review', plan: leavePlan });
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-change-private-network' })?.props.detail)
+      .toBe('machineDetailPage.network.leaveNetwork');
+  });
+
+  it('tells a Use grantee that Network needs Manage, with no retry and no stale facts', async () => {
+    const read: MachineNetworkRead = { kind: 'unrequested' };
+    const network: MachineNetworkViewModel = {
+      ...presentMachineNetwork({ facts: { posture: null, selections: null, observation: null }, read, reachable: true, needsManage: true }),
+      read, approval: null, refresh: vi.fn(async () => {}),
+    } satisfies MachineNetworkViewModel;
+    const screen = await render(network, true);
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-needs-manage' });
+    expect(card?.props.kind).toBe('denied');
+    expect(card?.props.action).toBeUndefined();
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-unavailable' })).toBeFalsy();
+  });
+
+  it('keeps facts already published to a Use grantee above the needs-Manage card, read-only and naming the owner', async () => {
+    const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: {}, credentialRefs: [] };
+    const read: MachineNetworkRead = { kind: 'unrequested' };
+    const published = { ...facts, selections: [selection] };
+    const network = {
+      ...presentMachineNetwork({ facts: published, read, reachable: true, needsManage: true }),
+      read, approval: null, refresh: vi.fn(async () => {}),
+    } satisfies MachineNetworkViewModel;
+    const { MachineNetworkView } = await import('./MachineNetworkSection');
+    const screen = await renderScreen(React.createElement(MachineNetworkView, {
+      network, machineName: 'shop-prod', online: true, ownerName: 'Mara',
+      controls: { review: { kind: 'idle' }, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
+        onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() },
+    }));
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-private-tailscale:tail3c1' })).toBeTruthy();
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' })).toBeFalsy();
+    // With facts on screen, one quiet line under the headline explains the read-only page; no hero under it.
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-needs-manage' })).toBeFalsy();
+    const line = findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-needs-manage-line' });
+    expect(line?.props.reason).toBe('machineDetailPage.network.needsManageLineAskOwner');
+    expect(line?.props.action).toBeUndefined();
+    // The SSH row states its value; there is no control a Use grantee could mistake for live.
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })?.props.rightElement).toBeUndefined();
+  });
 });

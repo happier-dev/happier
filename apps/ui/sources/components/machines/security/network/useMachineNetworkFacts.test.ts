@@ -120,7 +120,8 @@ describe('M-P21E Network field hook preparation against the real publication own
       return useMachineNetworkFacts({ machineId: 'network-0', serverId, enabled: true });
     });
     const initial = hook.getCurrent();
-    expect(initial.access?.joinablePrivateNetworkSelections).toEqual([retainedNetwork]);
+    expect(initial.access?.privateNetworkJoin).toEqual({ kind: 'available',
+      actionId: 'machines.reachability.configure', selections: [retainedNetwork] });
     let first = rows[0]!;
     renders = 0;
     for (let index = 0; index < 10; index++) {

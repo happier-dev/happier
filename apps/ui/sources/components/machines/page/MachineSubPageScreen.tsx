@@ -8,9 +8,12 @@ import { MachineAgentsSection } from '@/components/machines/agents/MachineAgents
 import { MachineDetailsSection } from '@/components/machines/details/MachineDetailsSection';
 import { MachineDoctorPageBody } from '@/components/machines/doctorSnapshot/MachineDoctorPageBody';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
+import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
+import { useMachineNetworkLead } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineTerminalPageBody } from '@/components/machines/terminal/MachineTerminalPageBody';
 import { MachineComputerUseSection } from '@/components/machines/computer/MachineComputerUseSection';
+import { MachineComputerScreen } from '@/components/computer/MachineComputerScreen';
 import { MachineAlertsPage } from '@/components/machines/vitals/MachineAlertsPage';
 import { MachineDirectConnectionSection } from '@/components/settings/connections/DirectConnectionSettings';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -50,7 +53,7 @@ export function MachineSubPageScreen() {
     const params = useLocalSearchParams<{ page?: string }>();
     const page = params.page;
     const hostedInCollection = useHappierCollectionLayout() !== null;
-    // Under a phone's title chrome the head keeps the shorter top inset; its crumb stays (the chrome draws no back of its own here).
+    // Under a phone's title chrome the head keeps the shorter top inset; the head drops its crumb when that bar draws a Back.
     const underChrome = useNavigationTitleChromeShowsTitle();
     const [refreshKey, bumpRefreshKey] = React.useReducer((value: number) => value + 1, 0);
     const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -76,6 +79,13 @@ export function MachineSubPageScreen() {
         headerBackTitle: backLabel,
     } as const), [language, hostedInCollection, backLabel]);
 
+    // Network leads with what its facts say (lab reachability: "shop-prod is open to the internet on 22, 80 and 443.").
+    const networkLead = useMachineNetworkLead({
+        serverId: target.serverId, machineId: target.machine?.id ?? '', machineName: target.machineSentenceName,
+        enabled: page === 'network' && Boolean(target.machine),
+        needsManage: target.machine?.isShared === true && target.machine.access?.role !== 'manage',
+    });
+
     const pageHref = target.machineId ? machinePageHref({ door, target: { machineId: target.machineId, serverId: target.serverId || undefined } }) : null;
     const goBack = React.useCallback(() => {
         if (!pageHref) return;
@@ -97,8 +107,10 @@ export function MachineSubPageScreen() {
                 description={target.machine && page === 'sharing'
                     ? t(target.machine.isShared ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine: target.machineSentenceName })
                     : target.machine && page === 'computer' ? t('computerUse.providers.pageDescription', { machine: target.machineSentenceName })
+                    : target.machine && page === 'network' && !networkLead ? t('machineDetailPage.network.description', { machine: target.machineSentenceName })
                     : target.machine && page === 'security' ? t('machineDetailPage.security.description', { machine: target.machineSentenceName })
                     : null}
+                lead={page === 'network' ? networkLead : null}
             />
             {target.machine ? (
                 <MachineSubPageBody page={page} target={target} machine={target.machine} refreshKey={refreshKey} />
@@ -137,7 +149,8 @@ function MachineSubPageBody(props: Readonly<{
         case 'sharing':
             return activeAccountScope && areServerProfileIdentifiersEquivalent(activeAccountScope.serverId, serverId) ? (
                 <>
-                    <MachineSharingSection machineId={machine.id} machineName={target.machineSentenceName} scope={activeAccountScope} online={target.online} />
+                    <MachineSharingSection machineId={machine.id} machineName={target.machineSentenceName} scope={activeAccountScope} online={target.online}
+                        shared={machine.isShared === true} />
                     {/* Who else works here is read by the machine for its owner and managers only (D8). */}
                     {!machine.isShared || machine.access?.role === 'manage' ? (
                         <MachineWorkSummaryReader machineId={machine.id} machineName={target.machineSentenceName} scope={activeAccountScope}
@@ -151,9 +164,17 @@ function MachineSubPageBody(props: Readonly<{
         case 'terminal':
             return <MachineTerminalPageBody machine={machine} serverId={serverId} isServerSwitching={target.isServerSwitching} refreshKey={props.refreshKey} />;
         case 'computer':
-            return <MachineComputerUseSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} online={target.online === true} />;
+            return <>
+                <MachineComputerScreen serverId={serverId} machineId={machine.id} />
+                <MachineComputerUseSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} online={target.online === true} />
+            </>;
         case 'connection':
             return <MachineDirectConnectionSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} />;
+        case 'network':
+            return <MachineNetworkSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
+                online={target.online} refreshKey={props.refreshKey}
+                needsManage={machine.isShared === true && machine.access?.role !== 'manage'}
+                ownerName={machine.isShared === true ? machine.access?.custodian.displayName?.trim() || null : null} />;
         case 'security':
             return <MachineSecuritySection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
                 installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey}
@@ -164,7 +185,7 @@ function MachineSubPageBody(props: Readonly<{
         case 'doctor':
             return <MachineDoctorPageBody machine={machine} serverId={serverId} switchReady={target.switchReady} refreshKey={props.refreshKey} />;
         case 'details':
-            return <MachineDetailsSection machine={machine} serverId={serverId} />;
+            return <MachineDetailsSection machine={machine} serverId={serverId} lastSeenAtOnOpen={target.lastSeenAtOnOpen} />;
         case 'alerts':
             return <MachineAlertsPage serverId={serverId} machine={machine} machineName={target.machineSentenceName} />;
     }

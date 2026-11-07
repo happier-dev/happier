@@ -32,6 +32,13 @@ const absent: MachineNetworkFacts = { posture: null, selections: null, observati
 const facts: MachineNetworkFacts = { posture, selections: [], observation };
 
 describe('M-P21E Network data preparation', () => {
+  it('settles a Use grantee on needs-Manage instead of loading or a failed read', () => {
+    for (const current of [absent, facts]) {
+      expect(presentMachineNetwork({ facts: current, read: { kind: 'unrequested' }, reachable: true, needsManage: true }))
+        .toMatchObject({ state: 'needsManage', failure: null, refreshing: false });
+    }
+  });
+
   it('keeps an unanswered first read loading, distinguishes settled empty from failed', () => {
     expect(presentMachineNetwork({ facts: absent, read: { kind: 'pending' }, reachable: true }))
       .toMatchObject({ state: 'loading', privateNetworkState: 'loading' });

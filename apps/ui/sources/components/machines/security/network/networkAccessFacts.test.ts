@@ -24,10 +24,13 @@ describe('Network admitted access facts', () => {
     const missing = { ...network, provider: { kind: 'builtin' as const, id: 'missing-provider' } };
     const result = projectMachineNetworkAccessFacts({ posture, selections: [ingress, missing, network], observation });
     expect(result?.privateNetworks).toEqual([]);
-    expect(result?.joinablePrivateNetworkSelections).toEqual([network]);
-    expect(result?.joinablePrivateNetworkSelections?.[0]).toBe(network);
-    expect(projectMachineNetworkAccessFacts({ posture, selections: [], observation })?.joinablePrivateNetworkSelections).toEqual([]);
-    expect(projectMachineNetworkAccessFacts({ posture, selections: null, observation })?.joinablePrivateNetworkSelections).toBeNull();
+    expect(result?.privateNetworkJoin).toEqual({ kind: 'available',
+      actionId: 'machines.reachability.configure', selections: [network] });
+    if (result?.privateNetworkJoin.kind === 'available') expect(result.privateNetworkJoin.selections[0]).toBe(network);
+    expect(projectMachineNetworkAccessFacts({ posture, selections: [], observation })?.privateNetworkJoin)
+      .toEqual({ kind: 'none', reason: 'no_joinable_private_networks' });
+    expect(projectMachineNetworkAccessFacts({ posture, selections: null, observation })?.privateNetworkJoin)
+      .toEqual({ kind: 'unavailable', reason: 'selections_unavailable' });
   });
 
   it('uses the exact contributed catalog declaration for retained plugin Join choices without inferring membership', () => {
@@ -41,10 +44,12 @@ describe('Network admitted access facts', () => {
       } },
     } });
     const input = { posture, selections: [other, network], observation };
-    expect(projectMachineNetworkAccessFacts(input)?.joinablePrivateNetworkSelections).toEqual([]);
+    expect(projectMachineNetworkAccessFacts(input)?.privateNetworkJoin)
+      .toEqual({ kind: 'unavailable', reason: 'provider_catalog_unavailable' });
     const result = projectMachineNetworkAccessFacts({ ...input, accessProviders: providerProjection.familiesById.accessProviders });
-    expect(result?.joinablePrivateNetworkSelections).toEqual([network]);
-    expect(result?.joinablePrivateNetworkSelections?.[0]).toBe(network);
+    expect(result?.privateNetworkJoin).toEqual({ kind: 'available',
+      actionId: 'machines.reachability.configure', selections: [network] });
+    if (result?.privateNetworkJoin.kind === 'available') expect(result.privateNetworkJoin.selections[0]).toBe(network);
     expect(result?.privateNetworks).toEqual([]);
   });
 

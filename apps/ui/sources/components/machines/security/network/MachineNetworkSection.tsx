@@ -10,6 +10,7 @@ import {
   type MachineIngressCapabilityV1,
   type MachineReachabilityPostureV1,
 } from '@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1';
+import type { MachineReachabilityChangeV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -38,7 +39,9 @@ import {
   type MachineNetworkReview,
 } from './useMachineNetworkReview';
 
-import { presentNetworkHeadline, resolveMachineNetworkProviderTitle, type MachineNetworkProviderTitle } from './networkSurface';
+import { resolveMachineNetworkProviderTitle, type MachineNetworkProviderTitle } from './networkSurface';
+import type { MachineNetworkExposureFacts, MachineNetworkPortFact } from './networkExposureFacts';
+import { buildNetworkConsoleConfirmationChange, projectMachineNetworkAccessFacts } from './networkAccessFacts';
 import { useMachineNetworkProviderTitle } from './useMachineNetworkProviderTitle';
 
 type ReviewControls = Readonly<{
@@ -47,6 +50,8 @@ type ReviewControls = Readonly<{
   draft: MachineReachabilityPostureV1 | null;
   onDraft: (next: MachineReachabilityPostureV1 | null) => void;
   onPrepare: () => void;
+  /** Prepare one exact change the person chose (join, leave, confirm the console) through the same review. */
+  onPrepareChange: (change: MachineReachabilityChangeV1) => void;
   onApply: () => void;
   onCancel: () => void;
   onOpenApproval: (artifactId: string) => void;
@@ -64,6 +69,10 @@ export function MachineNetworkSection(
     machineName: string;
     online: boolean | null;
     refreshKey: number;
+    /** The viewer holds Use, not Manage, on this shared Machine. */
+    needsManage: boolean;
+    /** The owner's public name when the share carries one: who to ask for Manage. */
+    ownerName?: string | null;
   }>,
 ) {
   const router = useRouter();
@@ -72,6 +81,7 @@ export function MachineNetworkSection(
     machineId: props.machineId,
     enabled: true,
     reachable: props.online,
+    needsManage: props.needsManage,
   });
   const controller = useMachineNetworkReview({
     serverId: props.serverId,
@@ -105,6 +115,9 @@ export function MachineNetworkSection(
     onPrepare: () => {
       if (draft) void prepare({ kind: 'posture', posture: draft });
     },
+    onPrepareChange: (change) => {
+      void prepare(change);
+    },
     onApply: () => {
       void apply();
     },
@@ -120,6 +133,7 @@ export function MachineNetworkSection(
       providerTitle={providerTitle}
       machineName={props.machineName}
       online={props.online}
+      ownerName={props.ownerName ?? null}
       controls={controls}
     />
   );
@@ -135,11 +149,40 @@ export function MachineNetworkView(
     online: boolean | null;
     controls: ReviewControls;
     providerTitle?: MachineNetworkProviderTitle;
+    ownerName?: string | null;
   }>,
 ) {
   const { network, machineName: machine } = props;
   const providerTitle = props.providerTitle ?? resolveMachineNetworkProviderTitle;
   const observation = network.facts.observation;
+  // Home admits the Network read only for Manage. A Use grantee gets the reason and who to ask, never a Retry
+  // that cannot succeed; facts already published to them stay visible above it, read-only.
+  const needsManage = network.state === 'needsManage';
+  const needsManageCard = needsManage ? (
+    <ItemGroup surface="none">
+      <SurfaceStateCard
+        testID="machine-network-needs-manage"
+        kind="denied"
+        title={t('machineDetailPage.network.needsManageTitle', { machine })}
+        reason={props.ownerName
+          ? t('machineDetailPage.network.needsManageAskOwner', { machine, owner: props.ownerName })
+          : t('machineDetailPage.network.needsManageReason', { machine })}
+      />
+    </ItemGroup>
+  ) : null;
+  if (needsManage && !observation) return needsManageCard;
+  // With facts on screen the page is read-only; one quiet line under the headline says why, before the controls.
+  const needsManageLine = needsManage ? (
+    <ItemGroup surface="none">
+      <SurfaceFreshnessLine
+        testID="machine-network-needs-manage-line"
+        glyph="lock"
+        reason={props.ownerName
+          ? t('machineDetailPage.network.needsManageLineAskOwner', { owner: props.ownerName })
+          : t('machineDetailPage.network.needsManageLine')}
+      />
+    </ItemGroup>
+  ) : null;
   if (network.state === 'loading') {
     return (
       <ItemGroup surface="none">
@@ -180,9 +223,10 @@ export function MachineNetworkView(
       </ItemGroup>
     );
   }
-  const editable = props.online === true && network.facts.posture !== null;
+  const editable = props.online === true && network.facts.posture !== null && !needsManage;
   return (
     <View testID="machine-network">
+      {needsManageLine}
       <NetworkFreshness
         network={network}
         machineName={machine}
@@ -204,8 +248,10 @@ export function MachineNetworkView(
       />
       <PrivateNetworksGroup
         providerTitle={providerTitle}
-        networks={observation.privateNetworks}
+        network={network}
         machineName={machine}
+        controls={props.controls}
+        editable={editable}
       />
       <PortsGroup
         network={network}
@@ -338,7 +384,8 @@ function ManagementGroup(
         )}
         showChevron={false}
         rightElement={
-          savedSsh?.kind === 'open' && draft ? (
+          // A Use grantee reads the value in the subtitle; no switch that looks live.
+          savedSsh?.kind === 'open' && draft && props.network.state !== 'needsManage' ? (
             <Switch
               testID="machine-network-public-ssh-switch"
               value={draftSsh?.kind === 'open'}
@@ -363,7 +410,29 @@ function ManagementGroup(
           testID="machine-network-recovery"
           icon={<Icon name="lifebuoy" />}
           title={t('machineDetailPage.network.recoveryTitle')}
-          subtitle={`${t(RECOVERY_KIND_KEYS[recovery.kind])} · ${t(RECOVERY_EVIDENCE_KEYS[recovery.evidence])}`}
+          subtitle={`${t(RECOVERY_KIND_KEYS[recovery.kind])} · ${recovery.confirmedAtMs !== undefined
+            ? t('machineDetailPage.network.recoveryConfirmedOn', { date: formatAsOfTime(recovery.confirmedAtMs) })
+            : t(RECOVERY_EVIDENCE_KEYS[recovery.evidence])}`}
+          showChevron={false}
+        />
+      ) : posture ? (
+        // No way back in is known: say so, and let the person confirm the provider's console through the review.
+        <Item
+          testID="machine-network-recovery"
+          icon={<Icon name="lifebuoy" />}
+          title={t('machineDetailPage.network.recoveryTitle')}
+          subtitle={t('machineDetailPage.network.recoveryUnset')}
+          // On a phone the button moves beneath its explanation instead of squeezing it.
+          accessoryLayout="adaptive"
+          rightElement={props.editable && props.controls.review.kind === 'idle' && props.controls.draft === null ? (
+            <RoundButton
+              testID="machine-network-recovery-confirm"
+              size="small"
+              display="secondary"
+              title={t('machineDetailPage.network.recoveryConfirm')}
+              onPress={() => props.controls.onPrepareChange(buildNetworkConsoleConfirmationChange(posture, Date.now()))}
+            />
+          ) : undefined}
           showChevron={false}
         />
       ) : null}
@@ -564,31 +633,41 @@ function RadioMark(props: Readonly<{ selected: boolean; disabled: boolean }>) {
 function PrivateNetworksGroup(
   props: Readonly<{
     providerTitle: MachineNetworkProviderTitle;
-    networks: readonly MachinePrivateNetworkObservationV1[];
+    network: MachineNetworkViewModel;
     machineName: string;
+    controls: ReviewControls;
+    editable: boolean;
   }>,
 ) {
+  const facts = props.network.facts;
+  const entries = (facts.access ?? projectMachineNetworkAccessFacts(facts))?.privateNetworks ?? [];
+  // Membership changes go through the same one review; never while another change is pending.
+  const canChange = props.editable && props.controls.review.kind === 'idle' && props.controls.draft === null;
   return (
     <ItemGroup
       title={t('machineDetailPage.network.privateTitle')}
       description={t('machineDetailPage.network.privateDescription')}
     >
-      {props.networks.length === 0 ? (
+      {entries.length === 0 ? (
         <Item
           testID="machine-network-private-empty"
           icon={<Icon name="tree-structure" />}
           title={t('machineDetailPage.network.privateEmpty')}
-          subtitle={t('machineDetailPage.network.privateEmptySubtitle', {
-            machine: props.machineName,
-          })}
+          subtitle={t('machineDetailPage.network.privateEmptySubtitle')}
           showChevron={false}
         />
       ) : (
-        props.networks.map((network) => (
+        entries.map(({ network, selection }) => (
           <PrivateNetworkRows
             key={privateNetworkKey(network)}
             providerTitle={props.providerTitle}
             network={network}
+            // Only the exact saved selection can be echoed back; without it there is nothing truthful to offer.
+            onChange={canChange && selection
+              ? () => props.controls.onPrepareChange({
+                  kind: 'privateNetwork', intent: network.state === 'ready' ? 'leave' : 'join', selection,
+                })
+              : undefined}
           />
         ))
       )}
@@ -596,7 +675,12 @@ function PrivateNetworksGroup(
   );
 }
 
-function PrivateNetworkRows(props: Readonly<{ network: MachinePrivateNetworkObservationV1; providerTitle: MachineNetworkProviderTitle }>) {
+function PrivateNetworkRows(props: Readonly<{
+  network: MachinePrivateNetworkObservationV1;
+  providerTitle: MachineNetworkProviderTitle;
+  /** Leave when it is on, Set up when it is not; absent when no exact saved selection exists. */
+  onChange?: () => void;
+}>) {
   const { network } = props;
   const provider = props.providerTitle(network.provider) ?? t('machineDetailPage.network.privateTitle');
   const key = privateNetworkKey(network);
@@ -617,6 +701,15 @@ function PrivateNetworkRows(props: Readonly<{ network: MachinePrivateNetworkObse
         subtitle={[provider === title ? null : provider, t(PROVIDER_STATE_KEYS[network.state])]
           .filter(Boolean)
           .join(' · ')}
+        rightElement={props.onChange ? (
+          <RoundButton
+            testID={`machine-network-private-${key}-${network.state === 'ready' ? 'leave' : 'join'}`}
+            size="small"
+            display="secondary"
+            title={t(network.state === 'ready' ? 'machineDetailPage.network.leave' : 'machineDetailPage.network.setUp')}
+            onPress={props.onChange}
+          />
+        ) : undefined}
         showChevron={false}
       />
       {network.dnsName ? (
@@ -669,55 +762,97 @@ function PortsGroup(
     machineName: string;
   }>,
 ) {
-  const internet = presentNetworkHeadline(props.network.facts);
-  if (!internet) return null;
-  const ports = internet.kind === 'open' ? internet.ports : null;
+  if (!props.network.facts.observation) return null;
+  const exposure = props.network.facts.exposure ?? null;
+  const machine = props.machineName;
+  const audiences = groupPortsByAudience(exposure);
+  // Services or Domains the owner has not read leave ports unaccounted for; say so instead of implying "none".
+  const unread = !exposure || exposure.services === null || exposure.domains === null;
   return (
     <ItemGroup
       title={t('machineDetailPage.network.portsTitle')}
-      description={t('machineDetailPage.network.portsDescription', { machine: props.machineName })}
+      description={t('machineDetailPage.network.portsDescription')}
     >
-      <Item
-        testID="machine-network-ports-internet"
-        icon={<Icon name="globe" />}
-        title={t('machineDetailPage.network.portsInternet')}
-        subtitle={describeInternetAudience(internet)}
-        detail={internet.kind === 'closed'
-          ? t('machineDetailPage.network.portsNothing')
-          : ports === null ? t('machineDetailPage.network.portsOpen') : undefined}
-        rightElement={ports && ports.length > 0 ? <PortChips ports={ports} /> : undefined}
-        accessoryLayout="adaptive"
-        mode="info"
-        showChevron={false}
-      />
-      <Item
-        testID="machine-network-ports-services-unknown"
-        icon={<Icon name="info" />}
-        title={t('machineDetailPage.network.portsServicesUnknown')}
-        subtitle={t('machineDetailPage.network.portsServicesUnknownSubtitle', { machine: props.machineName })}
-        showChevron={false}
-      />
+      {audiences.map((group) => (
+        <Item
+          key={group.audience}
+          testID={`machine-network-ports-${group.audience}`}
+          icon={<Icon name={PORT_AUDIENCE_ICONS[group.audience]} />}
+          title={t(PORT_AUDIENCE_TITLE_KEYS[group.audience])}
+          subtitle={group.labels.length > 0
+            ? joinList(group.labels)
+            : t(PORT_AUDIENCE_SUBTITLE_KEYS[group.audience], { machine })}
+          rightElement={<PortChips ports={group.ports} />}
+          accessoryLayout="adaptive"
+          mode="info"
+          showChevron={false}
+        />
+      ))}
+      {unread ? (
+        <Item
+          testID="machine-network-ports-unread"
+          icon={<Icon name="info" />}
+          title={t('machineDetailPage.network.portsServicesUnknown')}
+          subtitle={t('machineDetailPage.network.portsServicesUnknownSubtitle', { machine })}
+          showChevron={false}
+        />
+      ) : audiences.length === 0 ? (
+        <Item
+          testID="machine-network-ports-none"
+          icon={<Icon name="lock" />}
+          title={t('machineDetailPage.network.portsNone')}
+          subtitle={t('machineDetailPage.network.portsNoneSubtitle', { machine })}
+          showChevron={false}
+        />
+      ) : null}
     </ItemGroup>
   );
 }
 
-function describeInternetAudience(internet: NonNullable<ReturnType<typeof presentNetworkHeadline>>): string {
-  if (internet.kind === 'closed') {
-    return internet.services
-      ? t('machineDetailPage.network.portsClosedWithTunnel', { provider: internet.services })
-      : t('machineDetailPage.network.portsClosed');
-  }
-  if (internet.ssh && internet.services) return t('machineDetailPage.network.portsSshAndServices', { provider: internet.services });
-  if (internet.services) return t('machineDetailPage.network.portsServices', { provider: internet.services });
-  return t('machineDetailPage.network.portsSsh');
+type PortAudience = MachineNetworkPortFact['audience'];
+const PORT_AUDIENCE_ORDER: readonly PortAudience[] = ['internet', 'privateNetwork', 'thisMachine', 'unknown'];
+const PORT_AUDIENCE_ICONS = { internet: 'globe', privateNetwork: 'tree-structure', thisMachine: 'lock', unknown: 'info' } as const;
+const PORT_AUDIENCE_TITLE_KEYS = {
+  internet: 'machineDetailPage.network.portsInternet',
+  privateNetwork: 'machineDetailPage.network.portsPrivate',
+  thisMachine: 'machineDetailPage.network.portsThisMachine',
+  unknown: 'machineDetailPage.network.portsUnknown',
+} as const;
+const PORT_AUDIENCE_SUBTITLE_KEYS = {
+  internet: 'machineDetailPage.network.portsInternetSubtitle',
+  privateNetwork: 'machineDetailPage.network.portsPrivateSubtitle',
+  thisMachine: 'machineDetailPage.network.portsThisMachineSubtitle',
+  unknown: 'machineDetailPage.network.portsUnknownSubtitle',
+} as const;
+
+/** One row per audience the owner reported, in reach order: its ports and what answers on them. */
+function groupPortsByAudience(exposure: MachineNetworkExposureFacts | null) {
+  return PORT_AUDIENCE_ORDER.flatMap((audience) => {
+    const facts = exposure?.ports.filter((port) => port.audience === audience) ?? [];
+    if (facts.length === 0) return [];
+    const ports = [...new Set(facts.map((port) => String(port.port)))]
+      .sort((a, b) => Number(a) - Number(b) || a.localeCompare(b));
+    const labels = [...new Set(facts.flatMap((port) => {
+      if (port.domainId !== undefined) {
+        const domain = exposure?.domains?.find((candidate) => candidate.domainId === port.domainId);
+        return domain ? [domain.hostname] : [];
+      }
+      if (port.serviceId !== undefined) {
+        const row = exposure?.services?.find((candidate) => candidate.service.serviceId === port.serviceId);
+        return row ? [row.service.name] : [];
+      }
+      return port.interfaceName !== undefined ? [t('machineDetailPage.network.portsSsh')] : [];
+    }))];
+    return [{ audience, ports, labels }];
+  });
 }
 
 /** Port numbers as mono chips: read, not copied. */
-function PortChips(props: Readonly<{ ports: readonly number[] }>) {
+function PortChips(props: Readonly<{ ports: readonly string[] }>) {
   return (
     <View style={styles.values}>
       {props.ports.map((port) => (
-        <InlineCode key={port}>{String(port)}</InlineCode>
+        <InlineCode key={port}>{port}</InlineCode>
       ))}
     </View>
   );
@@ -839,10 +974,31 @@ function NetworkReviewFoot(
   const saved = props.network.facts.posture;
   // The card states what the host was asked to plan (and then planned), never a local copy of it.
   const change = review.kind === 'preparing' ? review.change : plan?.basis.change ?? null;
+  const firewallIntent = plan?.basis.firewallTransition?.intent;
+  const reviewedPublicSsh = firewallIntent?.kind === 'retainSsh' ? firewallIntent.publicSsh : null;
+  const sshClosureWarning =
+    review.kind === 'review' && change?.kind === 'posture' &&
+    (reviewedPublicSsh?.kind === 'closed' ||
+      saved?.management.publicSsh.kind === 'open' && change.posture.management.publicSsh.kind === 'closed') &&
+    !change.posture.management.independentRecovery
+      ? change.posture
+      : null;
   const changes =
-    change?.kind === 'posture' && saved
-      ? describePostureChanges(saved, change.posture, props.providerTitle)
-      : [];
+    change?.kind === 'posture'
+      ? describePostureChanges(saved, change.posture, props.providerTitle, reviewedPublicSsh)
+      : change?.kind === 'privateNetwork'
+        ? [{
+            key: 'private-network',
+            // The network by its own name, as its row above names it; the provider when it has none.
+            title: (() => {
+              const joined = props.network.facts.observation?.privateNetworks
+                .find((candidate) => accessProviderRefsEqualV1(candidate.provider, change.selection.provider));
+              return joined?.displayName ?? joined?.networkIdentity
+                ?? props.providerTitle(change.selection.provider) ?? t('machineDetailPage.network.privateTitle');
+            })(),
+            value: t(change.intent === 'leave' ? 'machineDetailPage.network.leaveNetwork' : 'machineDetailPage.network.joinNetwork'),
+          }]
+        : [];
   return (
     <>
     <ItemGroup
@@ -887,6 +1043,18 @@ function NetworkReviewFoot(
         />
       ) : null}
     </ItemGroup>
+    {sshClosureWarning ? (
+      <ItemGroup surface="none">
+        <SurfaceStateCard
+          testID="machine-network-ssh-recovery-warning"
+          kind="warning"
+          layout="inline"
+          accessibilitySemantics="alert"
+          title={t('machineDetailPage.network.sshRecoveryWarningTitle', { machine })}
+          reason={t('machineDetailPage.network.sshRecoveryWarningBody')}
+        />
+      </ItemGroup>
+    ) : null}
     {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it. */}
     <ItemGroup surface="none">
       <SectionButtonRow>
@@ -899,11 +1067,19 @@ function NetworkReviewFoot(
           onPress={props.controls.onApply}
         />
         <RoundButton
-          testID="machine-network-cancel"
+          testID={sshClosureWarning ? 'machine-network-keep-ssh' : 'machine-network-cancel'}
           size="small"
           display="secondary"
-          title={t('common.cancel')}
-          onPress={props.controls.onCancel}
+          title={t(sshClosureWarning ? 'machineDetailPage.network.keepSshOpen' : 'common.cancel')}
+          onPress={() => {
+            props.controls.onCancel();
+            if (sshClosureWarning && saved?.management.publicSsh.kind === 'open') {
+              props.controls.onDraft({
+                ...sshClosureWarning,
+                management: { ...sshClosureWarning.management, publicSsh: saved.management.publicSsh },
+              });
+            }
+          }}
         />
       </SectionButtonRow>
     </ItemGroup>
@@ -912,24 +1088,25 @@ function NetworkReviewFoot(
 }
 
 function describePostureChanges(
-  saved: MachineReachabilityPostureV1,
+  saved: MachineReachabilityPostureV1 | null,
   next: MachineReachabilityPostureV1,
   providerTitle: MachineNetworkProviderTitle,
+  reviewedPublicSsh: MachineReachabilityPostureV1['management']['publicSsh'] | null,
 ) {
   const changes: { key: string; title: string; value: string }[] = [];
-  if (saved.management.publicSsh.kind !== next.management.publicSsh.kind) {
+  if (reviewedPublicSsh || saved && saved.management.publicSsh.kind !== next.management.publicSsh.kind) {
     changes.push({
       key: 'public-ssh',
       title: t('machineDetailPage.network.publicSsh'),
       value: t(
-        next.management.publicSsh.kind === 'open'
+        (reviewedPublicSsh ?? next.management.publicSsh).kind === 'open'
           ? 'machineDetailPage.network.on'
           : 'machineDetailPage.network.off',
       ),
     });
   }
   if (
-    JSON.stringify(saved.defaultServiceIngress) !==
+    saved && JSON.stringify(saved.defaultServiceIngress) !==
     JSON.stringify(next.defaultServiceIngress)
   ) {
     changes.push({
@@ -939,6 +1116,14 @@ function describePostureChanges(
         next.defaultServiceIngress.kind === 'none'
           ? t('machineDetailPage.network.nothingPublic')
           : providerTitle(next.defaultServiceIngress.selection.provider) ?? t('machineDetailPage.network.ingressSaved'),
+    });
+  }
+  const recovery = next.management.independentRecovery;
+  if (saved && recovery && JSON.stringify(saved.management.independentRecovery) !== JSON.stringify(recovery)) {
+    changes.push({
+      key: 'recovery',
+      title: t('machineDetailPage.network.recoveryTitle'),
+      value: t(RECOVERY_KIND_KEYS[recovery.kind]),
     });
   }
   return changes;
@@ -972,7 +1157,7 @@ function describePublicSsh(
   if (desired && observed === 'unknown')
     return `${said} · ${t('machineDetailPage.network.notConfirmed', { machine })}`;
   if (desired && saved && observed !== saved.kind)
-    return `${said} · ${t(observed === 'open' ? 'machineDetailPage.network.observedOpen' : 'machineDetailPage.network.observedClosed', { machine })}`;
+    return `${said} · ${t(observed === 'open' ? 'machineDetailPage.network.observedOpen' : 'machineDetailPage.network.observedClosed')}`;
   return said;
 }
 

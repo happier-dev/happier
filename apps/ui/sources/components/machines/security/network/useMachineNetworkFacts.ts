@@ -6,6 +6,7 @@ import { useMachineLastAnsweredAt } from '@/sync/domains/machines/reachability/u
 import { projectMachineNetworkAccessFacts } from './networkAccessFacts';
 import { captureDaemonMergedProjectionReader } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readPublishedDaemonProjectionFamily } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import type { MachineReachabilityInspectResultV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 
 const ACCESS_PROVIDER_SECTIONS = ['familiesById.accessProviders'] as const;
 
@@ -15,11 +16,18 @@ export function useMachineNetworkFacts(input: Readonly<{
   serverId: string;
   enabled: boolean;
   scope?: ServerAccountScope | null;
+  /** The same Account's completed native read; a push may arrive after its Action reply. */
+  inspection?: MachineReachabilityInspectResultV1 | null;
 }>): MachineNetworkFacts {
   const options = { enabled: input.enabled, serverId: input.serverId };
-  const posture = useMachineField(input.machineId, 'metadata', 'reachabilityPosture', options);
-  const selections = useMachineField(input.machineId, 'metadata', 'accessProviderSelections', options);
-  const observation = useMachineField(input.machineId, 'daemonState', 'reachability', options);
+  const publishedPosture = useMachineField(input.machineId, 'metadata', 'reachabilityPosture', options);
+  const publishedSelections = useMachineField(input.machineId, 'metadata', 'accessProviderSelections', options);
+  const publishedObservation = useMachineField(input.machineId, 'daemonState', 'reachability', options);
+  const inspection = input.enabled ? input.inspection : null;
+  const posture = publishedPosture ?? inspection?.posture ?? null;
+  const selections = publishedSelections ?? inspection?.selections ?? null;
+  const observation = !publishedObservation || inspection && inspection.observation.revision > publishedObservation.revision
+    ? inspection?.observation ?? publishedObservation : publishedObservation;
   const lastAnsweredAtMs = useMachineLastAnsweredAt(input.scope, input.machineId, input.enabled);
   const needsPluginChoices = input.enabled && Boolean(selections?.some(selection => !('kind' in selection.provider)));
   // The visible provider-title reader owns catalog demand. This field projection
