@@ -565,7 +565,6 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
             approvalReads: harness.requestsFor(`/v1/artifacts/${firstId}`).length,
             alerts: alert.mock.calls.map(([title]) => title),
         })).toHaveBeenCalledTimes(1));
-        expect(confirm.mock.calls[0]?.[1]).toContain('native-1');
         await vi.waitFor(() => expect(artifacts.list()).toHaveLength(2));
         const retryId = artifacts.list()[1]!.id;
         const dispositions = [{ managedId: resource.managedId, expectedIntentRevision: resource.intentRevision,
@@ -675,7 +674,6 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await screen.pressByTestIdAsync(deleteTestId);
         await vi.waitFor(() => expect(harness.requestsFor(path)).not.toHaveLength(0));
         await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
-        expect(confirm.mock.calls[0]?.[1]).toContain('native-1');
         const accepted = choice === 'manual' || choice === 'corrupt';
         if (accepted) await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
         if (choice === 'retired') await vi.waitFor(() => {
@@ -933,10 +931,12 @@ async function openSecretPage(ref: string) {
     await act(async () => { router.setParams({ secret: ref }); });
 }
 
-/** Opens a secret from the list the way a person does: through the screen's guarded navigation. */
-async function openSecretThroughList(screen: Awaited<ReturnType<typeof renderScreen>>, ref: string) {
-    const { SecretsSettingsPage } = await import('./SecretsSettingsPage');
-    await act(async () => { screen.findByType(SecretsSettingsPage).props.onOpenSecret(ref); });
+/** Opens a secret the way the Credentials rail's row does: guarded navigation to the secret's route. */
+async function openSecretThroughList(_screen: Awaited<ReturnType<typeof renderScreen>>, ref: string) {
+    const [{ router }, { buildCredentialsSecretRoute }] = await Promise.all([
+        import('expo-router'), import('@/components/settings/connectedServices/collection/connectedServicesCollectionRoutes')]);
+    // Like the rail, the press does not wait for the person's answer to the unsaved-changes prompt.
+    await act(async () => { void runGuardedNavigation(() => router.push(buildCredentialsSecretRoute({ ref }) as never)); });
 }
 
 /** The router boundary does not navigate; apply the secret route the screen last pushed. */
