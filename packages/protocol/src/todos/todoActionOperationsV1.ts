@@ -2,7 +2,7 @@ import { createTodoItemV1, updateTodoItemV1, transitionTodoItemV1, resolveTodoSt
 import { resolveAnchoredListMoveV1 } from '../actions/anchoredListOrderV1.js';
 import { TodoReorderInputV1Schema, type ListReorderOutputV1 } from '../actions/listReorderAction.js';
 import { InternalTaskCreateInputSchema, InternalTaskEditInputSchema, InternalTaskTransitionInputSchema,
-  InternalTaskReadInputSchema, InternalTaskShareInputSchema, InternalTaskUnshareInputSchema, InternalTaskGrantsInputSchema, InternalTaskPrepareInputSchema,
+  InternalTaskReadInputSchema, InternalTaskListInputSchema, InternalTaskShareInputSchema, InternalTaskUnshareInputSchema, InternalTaskGrantsInputSchema, InternalTaskPrepareInputSchema,
   InternalTaskLabelSetColorInputSchema, InternalTaskLabelClearColorInputSchema,
   type InternalTaskActionId, type InternalTaskActionOutput, type InternalTaskScope } from '../actions/internalTaskActions.js';
 import { createTaskResourceClientV1, TaskResourceClientErrorV1, type TaskResourceClientOptionsV1, type OpenedTaskResourceV1 } from './taskResourceClientV1.js';
@@ -90,13 +90,14 @@ export async function executeInternalTaskAction(args: Readonly<{
       return { status: 'applied', scope: args.scope, labelCatalog: projectTodoLabelColorsV1(Object.keys(colors), { v: 1, colors }) };
     }
     if (args.actionId === 'tasks.internal.list') {
+      const input = InternalTaskListInputSchema.parse(args.input);
       const catalog = (await readLabelCatalog()).value;
       const labelCatalog = projectTodoLabelColorsV1(Object.keys(catalog.colors), catalog);
       const withColors = <T extends TodoItemV1>(todo: T) => ({ ...todo, labelColors: projectTodoLabelColorsV1(todo.labels ?? [], catalog) });
       if (resources) {
         try {
-          const result = await resources.list();
-          const indexRow = await args.port.read('todo.index');
+          const result = await resources.list(input);
+          const indexRow = input.selection === undefined ? await args.port.read('todo.index') : { value: null };
           args.requireCurrent();
           const index = indexRow.value === null ? { undoneOrder: [], completedOrder: [] } : indexSchema.parse(indexRow.value);
           const { undoneOrder, completedOrder } = resolveTodoIndexForItemsV1(result.tasks.filter(task => task.resource.ownerAccountId === args.scope.accountId).map(task => task.todo), index);
@@ -104,6 +105,7 @@ export async function executeInternalTaskAction(args: Readonly<{
             ...(result.unavailableTasks.length ? { unavailableTasks: result.unavailableTasks } : {}) };
         } catch (error) { if (!(error instanceof TaskResourceClientErrorV1) || error.code !== 'task_resource_unsupported') throw error; }
       }
+      if (input.selection !== undefined) throw new TaskResourceClientErrorV1('task_selection_unsupported', 'failed');
       const rows = await args.port.list('todo.');
       args.requireCurrent();
       const todos = rows.filter(row => row.key !== 'todo.index').map(row => project(parseTodo(row.key.slice(5), row.value)));
@@ -127,7 +129,7 @@ export async function executeInternalTaskAction(args: Readonly<{
     if (taskId === 'index') return { status: 'refused', reason: 'invalid_task_id' };
     const key = `todo.${taskId}`;
     const ownerAccountId = addressed?.ownerAccountId ?? args.scope.accountId;
-    const createFields = create ? { ...create.fields,
+    const createFields = create ? { ...create.fields, createdBy: create.fields.createdBy ?? args.scope.accountId,
       parentId: taskParentId(create.fields.parentId, args.scope.accountId, args.scope.accountId),
       blockedBy: taskBlockers(create.fields.blockedBy, args.scope.accountId, args.scope.accountId) } : null;
     const editFields = edit ? { ...edit.fields, parentId: taskParentId(edit.fields.parentId, ownerAccountId, args.scope.accountId),
@@ -179,7 +181,10 @@ export async function executeInternalTaskAction(args: Readonly<{
       const index = indexRow.value === null ? { undoneOrder: [], completedOrder: [] } : indexSchema.parse(indexRow.value);
       let undoneOrder = index.undoneOrder;
       let completedOrder = index.completedOrder;
-      if (created) undoneOrder = [...undoneOrder, taskId];
+      if (created) {
+        if (todo.done) completedOrder = [taskId, ...completedOrder];
+        else undoneOrder = [...undoneOrder, taskId];
+      }
       else if (existing!.done !== todo.done) {
         undoneOrder = undoneOrder.filter(id => id !== taskId);
         completedOrder = completedOrder.filter(id => id !== taskId);

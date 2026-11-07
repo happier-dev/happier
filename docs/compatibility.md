@@ -32,6 +32,22 @@ Matching development Protocol, Home and UI load together: older strict developme
 wake readers reject the additional field. This is an optional read hint with no
 new capability gate, wire epoch, database schema or released compatibility adapter.
 
+## Session row-only change wakes (unreleased 0.3)
+
+Secondary Home routing reuses the existing `sessionSystemRecords` fact. For a
+Session-only wake, an explicit empty array proves that every coalesced Session
+publication passed the canonical strict row-hint classifier. Unknown or
+membership-changing writes retain a Session record target. The Home change
+planner combines this existing proof with retained row membership to select
+exact row reads. Missing proof, mixed domains, unknown rows and recovery retain
+snapshot refreshes.
+
+This changes no envelope, wire epoch, capability gate or persistence format.
+Older publishers may omit the existing proof; new readers remain conservative.
+The inspected 0.2 frontier at `ead3f779118d6a3d17e167517a64660f9e2c2c0d` has
+no Account-change wake in `packages/protocol/src/updates.ts` (no local changes to
+that file), so this routing correction needs no released compatibility adapter.
+
 ## Launcher observation scopes (unreleased 0.3)
 
 The closed V1 local-service inventory watch request accepts optional `launcherScopes`,
@@ -876,6 +892,16 @@ closed development response extensions are optional for older Home responses;
 absence is unknown, not a positive readiness fact. They add no Todo field,
 profile endpoint, recipient authorization rule or plaintext compatibility copy.
 
+The development Task list accepts optional `selection: { kind: 'ids', tasks:
+[{ ownerAccountId, taskId }] }`. The resource client sends it as a JSON query
+field on `/v1/tasks`; the server applies the owner-qualified set before reading
+content and acknowledges it with `selectionApplied: true`. A selected read
+without that acknowledgement fails as `task_selection_unsupported` before
+opening bodies, so an older Home cannot silently return its entire inventory
+as a selected answer. Omitting the selector preserves the existing request and
+response. Parent and Session relations remain inside encrypted Task content;
+this extension adds no persisted metadata or relation index.
+
 ### Retired workspace replication files (0.3 development)
 
 The 0.3 daemon leaves 0.2's `<activeServerDir>/workspace-replication` files at
@@ -1201,8 +1227,27 @@ user. It does not establish per-member separation or confidentiality for selecte
 credentials, Direct-delivered keys or readable Session context. Unknown,
 desired-only and applying state cannot upgrade that claim. MI-2 is now being
 integrated, not yet verified as a complete usable journey. Its explicit reviewed
-`memberProvisioning: 'linuxUsersV1'` opt-in is distinct from historical
+`memberProvisioning: 'linuxUsersV1'` policy is distinct from historical
 `enabled: true`; an old preference does not authorize member provisioning.
+Following the 2026-11-07 owner ruling, new dedicated managed Machines (cloud,
+Lima and Lume) select that reviewed member policy at the enrollment producer.
+Existing Machine metadata and enrollment-record parsing stay unchanged, with no
+migration. Separate users off retains shared-Agent placement when Agent isolation
+is enabled.
+
+The preceding 0.3 Protocol at `f85e44aed3b76272a8afdbc2cee871059e19d86a`
+already accepts the optional `linuxUsersV1` value in policy, preview and set
+inputs, so this default adds no field to those contracts. An older guest CLI
+using those schemas can parse the new creation child, but its older enrollment
+producer still compares against the shared-Agent default and refuses that child.
+Home, controller and guest must load the updated enrollment producer together
+for new dedicated enrollment. This preserves a typed policy refusal rather than
+silently claiming member separation on an older guest. The inspected 0.2 frontier
+at `b92a92801425868f22ac911d0f11327c37e1f43f` has no isolation or managed
+enrollment Actions; its CLI Machine metadata reader drops unknown fields. That
+reader can ignore the metadata safely but cannot establish member separation or
+execute these children. Guests predating the member-policy contract need an
+update for this flow; ignoring the policy is not evidence of isolation.
 The daemon-private reverse binding pins the qualified Home/Machine/installation/
 Account tuple to its native UID and home. Restart or regrant must reuse that
 verified binding, never reassign its private files to a newly selected UID.
@@ -1237,8 +1282,16 @@ and `inbox.get` expose the same transient item and deletion-time context; its
 page and native notification destination resolve through the Inbox focus
 registry. Matching development Action readers must refresh with the producer.
 The headless CLI retains its explicit unavailable live-item coverage. No
-persisted state, wire epoch, reminder preference or released-client contract
-changes.
+Inbox state, wire epoch or released-client contract changes.
+
+The deletion-reminder lead time is the deliberate Account preference
+`managedMachineDeletionReminderLeadTimeMs`, defaulting to two days when absent.
+The existing Settings Actions expose it as
+`machines.defaults.deletionReminderLeadTime`, also rendered on Machine defaults.
+Inbox attention and native notification scheduling subscribe to that key;
+editing it updates the existing notification schedule. Unknown Account keys
+remain preserved by older readers. This additive development preference needs
+no migration, scheduler or additional deadline store.
 
 The current app-shell `inbox.get` read requires `serverId` beside `sessionId` on
 each closed `lead` root. The mounted model preserves that Home even for an
@@ -2994,6 +3047,14 @@ Artifacts use the anchor; filesystem access and plugin grants use the exact
 checkout. Home-qualified local checkout preferences read bare-id predecessor
 values only when canonical resolution proves their unique Home.
 
+The optional SCM SDK checkout-discovery `parentRootPath` carries a host-proven
+main checkout or bare repository root. Hosts consume it only for discovery of
+the current exact checkout; older contributions may omit it. New linked refs
+inherit through the existing parent Workspace contract, after exact accepted
+refs and explicit parent addresses have taken precedence. The field introduces
+no persisted row shape or Session metadata format, and independent local clones
+gain no association from it.
+
 Canonical writes are strict. Stored ref readers drop unknown fields recursively
 while validating known identity and enrichment fields. These are development
 source contracts, not a released row-storage rollout or loaded-runtime QA claim;
@@ -3453,6 +3514,24 @@ The inspected `../0.2` predecessor at
 or reader. Omission retains the existing disabled default. The earlier 0.3
 required-cap reader was development-only; update managed server and daemon
 support together rather than inventing policy limits to satisfy stale output.
+
+### SCM native workspace observation (development)
+
+`scm.workspace.watch.v1` adds a closed Machine request and response contract over
+the existing cancellable parked RPC transport. A retained observation request
+holds one shared native subscription per admitted directory; revision requests
+return readiness or change facts without repository content. Unavailable replies
+preserve the native error code and reason. Cancellation releases observation.
+Machine admission and its filesystem policy remain the authority.
+
+The wire operation is V1, independently of package SemVer. All request, result
+and nested reason objects are closed; unknown fields and status variants reject.
+No persisted format or protocol epoch changes. The clean scoped 0.2 predecessor
+at `ead3f779118d6a3d17e167517a64660f9e2c2c0d` has no workspace watch operation in
+`packages/protocol/src/rpc.ts` or `scm.ts`. A new UI receiving method-not-found
+settles watch availability and retains the existing visible refresh fallback;
+matching development Protocol, daemon and UI enable native observation. No
+predecessor adapter, retry timer or new stream protocol is added.
 
 ### SCM status snapshot transport (development)
 
@@ -4864,12 +4943,13 @@ changes during the read; the next request must pass admission again. Missing
 census support or unknown coverage remains observably incomplete. Access-loss
 cleanup closes interactive terminals, not admitted finite work or Project
 services. A requester Session finishes its admitted turn, then a refused
-reconnect ends its runner rather than retrying forever. Final clean physical exit
-retires that requester's private credential file through the existing custody
-owner; a crash or live replacement retains recovery custody until a later
-recovery receives a definite authorization refusal, which retires only that
-Session's requester file. A cancelled recovery or unavailable Home retains the
-file. Existing full-loss cleanup requests keep their shape. The closed,
+reconnect ends its runner rather than retrying forever. Physical exit, including
+Stop, retains that requester's private credential file so the Session remains
+resumable. A later recovery that receives a definite authorization refusal, or
+a Session deletion observed by the daemon's existing deletion subscription,
+retires only that Session's requester file through the existing custody owner.
+A cancelled recovery or unavailable Home retains the file. Existing full-loss
+cleanup requests keep their shape. The closed,
 development-only V1 request also accepts optional `remainingRole: 'use'` for
 Manage withdrawal: only Machine-custody interactive terminals close, without
 retiring the member identity or Project/Session Use terminals. This lifecycle
@@ -6872,6 +6952,44 @@ the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 encrypted Browser Action envelopes add optional non-content
+`browserSessionId` routing. The shared sealer derives it from the Browser operand;
+Home's authorization mint admits a Use guest only to Sessions they own or can
+access through sharing. The opener refuses a routing/operand mismatch, including
+an omitted projection for a Session-addressed command. Session-less operations
+retain their existing addressing. Matching Protocol, UI/SDK producers, Home and
+daemon readers reload together: older strict development readers reject the
+field, and the new opener refuses older unprojected Session-addressed commands.
+This is a direct development cut with no persisted format, epoch, fallback or
+per-step Session reauthorization.
+
+The unreleased Triage aggregate `entries/list-v1` and `tasks/list-v1` catalog
+summaries carry the existing opaque `configurationRowId`; selected requests
+pair that address with `sourceInstanceId` in `sourceInstances`. Both nested
+objects remain closed. Matching Triage Action and mounted UI readers reload
+together: this replaces the internal id-only selection directly, without a
+catalog-scanning compatibility fallback, persisted format, source-plugin ABI
+change, or new wire epoch.
+
+The unreleased 0.3 Triage source entry snapshot adds optional `branches`
+(`{ head, base }`, closed, bounded display text) for pull and merge requests.
+The snapshot object is `additive-open/drop`, so an older Triage reader drops it
+and a newer reader treats its absence (older sources, list scans) as unknown.
+GitHub's exact read is the only producer today. A retained copy of a snapshot
+carries it as the same optional member. No epoch, gate or adapter is added.
+
+Unreleased 0.3 Session directory preflight accepts the optional literal-true
+`prepareAgentIsolationMember` launch intent. Deliberate Session launch sets it
+so the existing `sessionPreparation` owner prepares the admitted requesting
+person before the native folder read. Background folder and isolation-status
+reads omit it and remain read-only. The operand grants no requester, Home,
+Machine or OS-user selection. The closed request requires matching Protocol,
+CLI and UI development readers to reload together; older strict development
+readers reject it. The inspected `../0.2` source at
+`ead3f779118d6a3d17e167517a64660f9e2c2c0d` has no directory-preflight contract.
+This direct development cut adds no persisted format, wire epoch, capability
+gate or reverse-development adapter.
 
 Unreleased 0.3 Workflow approval origins retain the exact accepted Run-start
 authorization while correlating each leaf with its own invocation request ID.

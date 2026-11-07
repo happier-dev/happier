@@ -16,6 +16,13 @@ export const TaskResourceAddressV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type TaskResourceAddressV1 = z.infer<typeof TaskResourceAddressV1Schema>;
 
+/** Selection is additive; omission retains the incumbent Account inventory. */
+export const TaskResourceSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('ids'), tasks: z.array(TaskResourceAddressV1Schema),
+}));
+export type TaskResourceSelectionV1 = z.infer<typeof TaskResourceSelectionV1Schema>;
+export const TaskResourcesListQueryV1Schema = lazyZodSchema(() => z.strictObject({ selection: z.optional(z.string()) }));
+
 /** Content-free AccountChange identity; the kv change owner retains delivery/cursor semantics. */
 export function buildTaskResourceChangeEntityIdV1(address: TaskResourceAddressV1): string {
   return `task:${encodeURIComponent(address.ownerAccountId)}:${encodeURIComponent(address.taskId)}`;
@@ -50,6 +57,7 @@ export type TaskResourceUnavailableV1 = z.infer<typeof TaskResourceUnavailableV1
 export const TaskResourcesListResponseV1Schema = lazyZodSchema(() => z.strictObject({
   tasks: z.array(TaskResourceV1Schema),
   unavailableTasks: z.optional(z.array(TaskResourceUnavailableV1Schema)),
+  selectionApplied: z.optional(z.literal(true)),
 }));
 export type TaskResourcesListResponseV1 = z.infer<typeof TaskResourcesListResponseV1Schema>;
 export const TaskResourceMutateRequestV1Schema = lazyZodSchema(() => z.strictObject({

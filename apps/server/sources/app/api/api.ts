@@ -1,15 +1,22 @@
-import fastify, { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
+import { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
+import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import {
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+} from '@happier-dev/protocol/actions/externalActionApi';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
-import { SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1 } from '@happier-dev/protocol/server/http/connectionLifetimeV1';
 import { SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
-import { log, logger } from "@/utils/logging/log";
+import { log } from "@/utils/logging/log";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { onShutdown } from "@/utils/process/shutdown";
 import { Fastify } from "./types";
+import { installHomeIrohIngress } from './irohIngress';
 import { registerEphemeralRunnerRoutes } from "@/app/ephemeralRunner/routes";
 import { authRoutes } from "./routes/auth/authRoutes";
 import { pushRoutes } from "./routes/push/pushRoutes";
@@ -39,12 +46,14 @@ import { enableOptionalStatics } from "./utils/enableOptionalStatics";
 import { userRoutes } from "./routes/user/userRoutes";
 import { feedRoutes } from "./routes/feed/feedRoutes";
 import { kvRoutes } from "./routes/kv/kvRoutes";
+import { taskRoutes } from './routes/todos/taskRoutes';
 import { publicShareRoutes } from "./routes/share/publicShareRoutes";
 import { featuresRoutes } from "./routes/features/featuresRoutes";
 import { sessionPendingRoutes } from "./routes/session/pendingRoutes";
 import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagnosticsRoutes";
 import { automationRoutes } from "./routes/automations/automationRoutes";
-import { resolveApiRateLimitPluginOptions, resolveApiTrustProxy } from "./utils/apiRateLimitPolicy";
+import { resolveApiRateLimitPluginOptions } from "./utils/apiRateLimitPolicy";
+import { createApiServer } from './apiServer';
 import { enableApiCompression } from "./utils/enableApiCompression";
 import { liveActivityTargetsRoutes } from "./routes/activity/liveActivityTargetsRoutes";
 import { liveActivityRemoteUpdateRoutes } from "./routes/activity/liveActivityRemoteUpdateRoutes";
@@ -98,9 +107,15 @@ export function resolveApiListenHost(env: Record<string, string | undefined>): s
 
 export const DEFAULT_API_CORS_MAX_AGE_SECONDS = 600;
 export const API_CORS_ALLOWED_HEADERS = [
+    CHANGES_AFTER_CURSOR_HTTP_HEADER,
     'authorization',
     'content-type',
+    'x-happier-request-purpose',
     AUTHORITY_CEILING_HEADER_V1,
+    EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+    EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+    EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+    EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
     ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
     'idempotency-key',
     'if-none-match',
@@ -108,6 +123,9 @@ export const API_CORS_ALLOWED_HEADERS = [
     SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
 ];
 export const API_CORS_EXPOSED_HEADERS = [
+    ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER,
+    ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER,
+    CHANGES_AFTER_CURSOR_HTTP_HEADER,
     'server-timing',
     'x-happier-retry-reason',
     'etag',
@@ -237,6 +255,7 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
     userRoutes(typed);
     feedRoutes(typed);
     kvRoutes(typed);
+    taskRoutes(typed);
     publicShareRoutes(typed);
     automationRoutes(typed);
     liveActivityTargetsRoutes(typed);
@@ -294,14 +313,8 @@ export async function startApi(params: Readonly<{
     log('Starting API...');
 
     // Start API
-    const trustProxy = resolveApiTrustProxy(process.env);
-    const app = fastify({
-        loggerInstance: logger,
-        bodyLimit: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
-        keepAliveTimeout: SERVER_HTTP_KEEP_ALIVE_TIMEOUT_MS_V1,
-        forceCloseConnections: 'idle',
-        ...(typeof trustProxy !== "undefined" ? { trustProxy } : null),
-    });
+    const app = createApiServer();
+    const irohIngress = installHomeIrohIngress(app);
     enableContentTypeParsers(app);
     await enableApiCompression(app);
     app.register(import('@fastify/cors'), createApiCorsOptions(process.env));
@@ -349,6 +362,9 @@ export async function startApi(params: Readonly<{
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
     await app.listen({ port, host: resolveApiListenHost(process.env) });
+    await irohIngress.listen().catch(() => {
+        log({ module: 'iroh', level: 'warn' }, 'Home Iroh ingress unavailable; ordinary HTTP remains available');
+    });
     const automationReplyHandoffWorker = startAutomationReplyHandoffWorker({
         dispatch: async (request) => await typed.forwardAutomationReplyHandoffToMachine(request),
     });

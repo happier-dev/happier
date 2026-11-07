@@ -15,9 +15,17 @@ import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRel
 import { observeTriageSourceSessionLinks } from '../sessions/sessionLinksObservation.js';
 import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../ui/navigation/location.js';
 import { isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
-import { getInternalTasks } from '../internalTasks/source.js';
+import { getInternalTasks, readInternalTaskList, type TaskList } from '../internalTasks/source.js';
 
 type WorkItemContext = Pick<TriageDataActionContext, 'services' | 'signal' | 'invokedAtMs'>;
+// The Board creates a fresh context for each surface load, and passes that same
+// context to discovery and resolution. Keep only that operation's admitted read.
+const taskSurfaceReads = new WeakMap<WorkItemContext, Promise<TaskList | null>>();
+function taskListForSurface(context: WorkItemContext) {
+    let read = taskSurfaceReads.get(context);
+    if (read === undefined) { read = readInternalTaskList(context); taskSurfaceReads.set(context, read); }
+    return read;
+}
 type ResolvedWorkItem = Readonly<{
     item: PluginWorkItemV1;
     entryRef: TriageEntryRefV1;
@@ -42,17 +50,17 @@ export async function findLinkedTriageWorkItems(request: PluginWorkItemsFindLink
     context.signal.throwIfAborted();
     const sessionIds = [...new Set(request.sessionIds)];
     if (sessionIds.length === 0) return { itemIds: [], complete: true };
-    const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
-    const [{ sources }, reads] = await Promise.all([
-        relations.readSources(), Promise.all(sessionIds.map(sessionId => relations.read({ sessionId }))),
+    const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)), undefined, () => taskListForSurface(context));
+    const [{ sources }, read] = await Promise.all([
+        relations.readSources(), relations.readSessions(sessionIds),
     ]);
     context.signal.throwIfAborted();
     // The relation owner supplies both proven links and coverage, including partial reads.
-    const itemIds = [...new Set(reads.flatMap(read => read.links.flatMap(link => {
+    const itemIds = [...new Set(read.links.flatMap(link => {
         const kind = sources.get(renderSourceQualifiedId(link.entryRef.source))?.descriptor.kinds.find(kind => kind.id === link.entryRef.kindId);
         return kind?.task === true ? [buildTriageEntryRouteSegmentV1(link.entryRef)] : [];
-    })))];
-    return { itemIds, complete: reads.every(read => read.kind === 'complete') };
+    }))];
+    return { itemIds, complete: read.kind === 'complete' };
 }
 
 export async function observeTriageWorkItems(request: PluginWorkItemsWatchRequestV1, changed: () => void, context: TriageDataActionContext): Promise<Disposable> {
@@ -95,7 +103,7 @@ async function readWorkItems(request: PluginWorkItemsResolveRequestV1, context: 
         return entryRef === null ? [] : [{ itemId, entryRef }];
     });
     if (entries.length === 0) return result;
-    const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)));
+    const relations = createTriageSourceSessionRelations(context, bindCorpusCollections(requireTriageAccountStorage(context)), undefined, () => taskListForSurface(context));
     const view = await relations.readSources();
     const tasks = entries.flatMap(entry => {
         const source = view.sources.get(renderSourceQualifiedId(entry.entryRef.source));
@@ -111,7 +119,8 @@ async function readWorkItems(request: PluginWorkItemsResolveRequestV1, context: 
                 entryId: demand.task.entryRef.entryId } } satisfies TriageGetInputV1 }] : []));
     // This plugin's task source composes its own admitted list once for both
     // observations and links. Other sources retain their targeted operations.
-    const native = new Map((await getInternalTasks(internal.map(demand => demand.input), context))
+    const native = new Map((await getInternalTasks(internal.map(demand => demand.input), context,
+        internal.length === 0 ? undefined : await taskListForSurface(context)))
         .map((result, index) => [internal[index]!.task, result]));
     const external = tasks.filter(task => !native.has(task));
     const externalLinks = external.length === 0 ? []

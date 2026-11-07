@@ -8,18 +8,18 @@ import { buildTriageEntryRouteSegmentV1, TriageSourceDescriptorV1Schema } from '
 import { PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
-import { resolveTriageWorkItems } from './runtime.js';
+import { findLinkedTriageWorkItems, resolveTriageWorkItems } from './runtime.js';
 
 describe('internal task Work Items batch', () => {
-    it('opens the task inventory once for selected tasks, sharing observations and Session links', async () => {
+    it('shares one 1,000-Task surface read across Board Session-set discovery and resolution', async () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const source = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.source;
         // The existing Board census observed 57 singleton task reads. Include
         // unrelated tasks so per-entry inventory reopening is visible in cost.
-        const todos = Array.from({ length: 60 }, (_, index) => ({
+        const todos = Array.from({ length: 1_000 }, (_, index) => ({
             id: `task-${index}`, title: `Task ${index}`, done: false, createdAt: index, updatedAt: 100,
             ...(index === 0 ? { parentId: 'task-1' } : {}),
-            linkedSessions: { session: { title: 'Current work', linkedAt: 3, session: { ...scope, sessionId: 'session' } },
+            linkedSessions: { session: { title: 'Current work', linkedAt: 3, session: { ...scope, sessionId: index < 3 ? 'session' : 'unrelated' } },
                 foreign: { title: 'Other Home', linkedAt: 4, session: { ...scope, serverId: 'other-home', sessionId: 'foreign' } } },
         }));
         const rows = new Map<string, { value: unknown; version: number }>(todos.map(todo => [`todo.${todo.id}`, { value: todo, version: 1 }]));
@@ -72,15 +72,20 @@ describe('internal task Work Items batch', () => {
             kindId: 'task', collisionScope: 'personal', entryId: todo.id }));
         try {
             run = async context => {
+                const sessionIds = ['session', ...Array.from({ length: 59 }, (_, index) => `empty-${index}`)];
+                const linked = await findLinkedTriageWorkItems({ serverId: scope.serverId, sessionIds }, context);
+                expect(linked).toEqual({ itemIds, complete: true });
+                expect({ inventories, bodiesOpened, exactReads }).toEqual({ inventories: 1, bodiesOpened: 1_000, exactReads: 0 });
                 const first = await resolveTriageWorkItems({ serverId: scope.serverId, itemIds }, context);
                 expect(itemIds.map(id => first[id]?.title)).toEqual(['Task 0', 'Task 1', 'Task 2']);
                 expect(first[itemIds[0]!]!.parentItemId).toBe(itemIds[1]);
                 expect(first[itemIds[0]!]!.linkedSessions).toEqual([{ serverId: scope.serverId, sessionId: 'session' }]);
-                expect({ inventories, bodiesOpened, exactReads }).toEqual({ inventories: 1, bodiesOpened: 60, exactReads: 0 });
+                expect({ inventories, bodiesOpened, exactReads }).toEqual({ inventories: 1, bodiesOpened: 1_000, exactReads: 0 });
                 rows.set('todo.task-0', { value: { ...todos[0]!, title: 'Updated task', linkedSessions: {} }, version: 2 });
-                const second = await resolveTriageWorkItems({ serverId: scope.serverId, itemIds }, context);
+                // A refresh creates a new surface-load context, as the Board host does.
+                const second = await resolveTriageWorkItems({ serverId: scope.serverId, itemIds }, { ...context });
                 expect(second[itemIds[0]!]!).toMatchObject({ title: 'Updated task', linkedSessions: [] });
-                expect({ inventories, bodiesOpened, exactReads }).toEqual({ inventories: 2, bodiesOpened: 120, exactReads: 0 });
+                expect({ inventories, bodiesOpened, exactReads }).toEqual({ inventories: 2, bodiesOpened: 2_000, exactReads: 0 });
             };
             await kit.invokeAction('sources/read-configured-v1', { v: 1 }, { surface: 'agent' });
         } finally { await kit.dispose(); }

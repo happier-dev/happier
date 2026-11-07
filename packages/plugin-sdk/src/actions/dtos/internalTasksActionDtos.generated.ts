@@ -74,7 +74,15 @@ export type InternalTasksActionInputById = {
         };
         ownerAccountId?: string | undefined;
     };
-    readonly "tasks.internal.list": Record<string, never>;
+    readonly "tasks.internal.list": {
+        selection?: undefined | {
+            kind: 'ids';
+            tasks: {
+                ownerAccountId: string;
+                taskId: string;
+            }[];
+        };
+    };
     readonly "tasks.internal.create": {
         fields: {
             title: string;

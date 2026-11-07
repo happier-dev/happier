@@ -82,7 +82,7 @@ describe('registered internal Happier task source', () => {
         lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, filters }, assembledAtMs: 100,
       });
       const window = fold();
-      const facets = planTriageFilterFacetsV1({ configuredSources: [{ ...instance.instance, available: true }],
+      const facets = planTriageFilterFacetsV1({ configuredSources: [{ ...instance.instance, configurationRowId: instance.instance.sourceInstanceId, available: true }],
         facetCensus: window.facetCensus, filters: TRIAGE_LIST_NO_FILTERS_V1,
         inventory: planTriageTaskViewInventoryV1(() => INTERNAL_TASK_DESCRIPTOR_V1.kinds) });
       const scopes = facets.find(facet => facet.facet === 'scopes')!;
@@ -106,20 +106,21 @@ describe('registered internal Happier task source', () => {
       expect(calls).toEqual([{ id: 'tasks.internal.list', input: {} }]);
     }, { status: 'ok', scope, todos, undoneOrder: todos.map(task => task.id), completedOrder: [] });
   });
-  it('returns the same owner-qualified children on detail and list with one relation read and no per-child reads', async () => {
+  it('returns owner-qualified children with one exact read and one shared list at 1,000 Tasks', async () => {
     const parent = { ...predecessor, state: 'unstarted' };
     const children = [
       { ...parent, id: 'child-open', parentId: parent.id },
       { ...parent, id: 'child-done', parentId: parent.id, state: 'completed', done: true },
     ];
     const list = { status: 'ok', scope, todos: [parent, ...children,
-      { ...children[0], id: 'foreign-child', ownerAccountId: 'other' }],
+      { ...children[0], id: 'foreign-child', ownerAccountId: 'other' },
+      ...Array.from({ length: 996 }, (_, index) => ({ ...parent, id: `unrelated-${index}` }))],
       undoneOrder: [parent.id, children[0]!.id], completedOrder: [children[1]!.id] };
     await withSource(async (kit, calls) => {
       const scan = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
         v: 1, instance, page: { kind: 'initial', limit: 20 },
       }));
-      if (scan.kind !== 'complete' || scan.observations[0]?.kind !== 'present') throw new Error('Expected parent');
+      if (scan.kind !== 'page' || scan.observations[0]?.kind !== 'present') throw new Error('Expected the parent on the first page');
       const before = calls.length;
       const detail = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
       expect(detail).toMatchObject({ kind: 'present', snapshot: { relations: { children: {

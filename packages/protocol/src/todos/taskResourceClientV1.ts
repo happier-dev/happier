@@ -7,7 +7,7 @@ import {
   TaskResourceV1Schema, TaskResourcesListResponseV1Schema, TaskAccessGrantsListResponseV1Schema,
   TaskAccessGrantMutationResponseV1Schema, TaskAccessRecipientCensusResponseV1Schema,
   TaskRecipientKeyEnvelopeCommitResponseV1Schema, TaskResourceErrorResponseV1Schema,
-  type TaskResourceV1, type TaskResourceAddressV1, type TaskAccessGrantSetRequestV1, type TaskResourceContentV1,
+  type TaskResourceV1, type TaskResourceAddressV1, type TaskAccessGrantSetRequestV1, type TaskResourceContentV1, type TaskResourceSelectionV1,
 } from './taskResourceV1.js';
 
 export class TaskResourceClientErrorV1 extends Error {
@@ -105,14 +105,19 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     if (resource.ownerAccountId !== address.ownerAccountId || resource.taskId !== address.taskId) fail('task_content_invalid');
     return open(resource);
   };
-  const list = async (filter?: Readonly<{ ownerAccountId: string }>) => {
-    const result = TaskResourcesListResponseV1Schema.parse(await request('GET', '/v1/tasks'));
-    const resources = result.tasks.filter(task => !filter || task.ownerAccountId === filter.ownerAccountId);
+  const list = async (filter?: Readonly<{ ownerAccountId?: string; selection?: TaskResourceSelectionV1 }>) => {
+    const selection = filter?.selection;
+    const result = TaskResourcesListResponseV1Schema.parse(await request('GET', selection === undefined ? '/v1/tasks'
+      : `/v1/tasks?selection=${encodeURIComponent(JSON.stringify(selection))}`));
+    // Older servers can ignore unknown query fields. Never open their inventory
+    // or mistake it for a selected answer.
+    if (selection !== undefined && result.selectionApplied !== true) throw new TaskResourceClientErrorV1('task_selection_unsupported', 'failed');
+    const resources = result.tasks.filter(task => filter?.ownerAccountId === undefined || task.ownerAccountId === filter.ownerAccountId);
     const opened = await Promise.allSettled(resources.map(open));
     // Per-row failures must not swallow the invocation's Account/currentness refusal.
     options.requireCurrent();
     const tasks: OpenedTaskResourceV1[] = [];
-    const unavailableTasks = (result.unavailableTasks ?? []).filter(task => !filter || task.ownerAccountId === filter.ownerAccountId);
+    const unavailableTasks = (result.unavailableTasks ?? []).filter(task => filter?.ownerAccountId === undefined || task.ownerAccountId === filter.ownerAccountId);
     opened.forEach((outcome, index) => {
       if (outcome.status === 'fulfilled') tasks.push(outcome.value);
       else {
