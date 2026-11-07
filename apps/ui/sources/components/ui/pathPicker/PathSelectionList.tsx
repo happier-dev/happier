@@ -149,6 +149,8 @@ export type PathSelectionListProps = Readonly<{
      * not a path: `onSelect` runs instead of `onCommit`. `selected` marks it when the draft has no folder.
      */
     noFolderOption?: Readonly<{ selected: boolean; onSelect: () => void }>;
+    /** A caller's own choices for this path (a seeded draft's saved projects), listed before every other row. */
+    leadingSections?: ReadonlyArray<SelectionListSectionDescriptor>;
 }>;
 
 type FavoriteAccessoryFactory = (absolutePath: string, optionTestIdPrefix: string) => React.ReactNode | undefined;
@@ -282,6 +284,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         onToggleFavorite,
         maxHeight,
         noFolderOption,
+        leadingSections,
     } = props;
     const noFolderSelected = noFolderOption?.selected === true;
     const onSelectNoFolder = noFolderOption?.onSelect;
@@ -581,6 +584,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             }],
         }] : [];
         const sections: ReadonlyArray<SelectionListSectionDescriptor> = [
+            ...(leadingSections ?? []),
             ...noFolderSection,
             {
                 kind: 'dynamic',
@@ -665,6 +669,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         renderFavoriteAccessoryStatic,
         projectDirectoryOptions,
         onSelectNoFolder,
+        leadingSections,
         // FR4-9: the dynamic section's resolverKey reads `serverId` from the
         // current render, so make memoization depend on it too.
         serverId,

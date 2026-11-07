@@ -43,6 +43,20 @@ describe('New Session draft presentation subscription', () => {
         await hook.unmount();
     });
 
+    it('names the item a draft was opened from, and only an item, not pasted media', async () => {
+        writeNewSessionDraft({ scope, draftId, materializationIntent: 'seeded', patch: { text: '', attachments: [
+            { v: 1, instanceId: 'pasted', presentation: { label: 'screenshot.png' }, content: { kind: 'staged' } },
+            { v: 1, instanceId: 'entry', presentation: { label: 'Keep the accepted checkout' } },
+        ] as never } });
+        const hook = await renderHook(() => useNewSessionDraftPresentation(scope, draftId));
+        expect(hook.getCurrent()?.subjectLabel).toBe('Keep the accepted checkout');
+        await act(async () => {
+            writeNewSessionDraft({ scope, draftId, materializationIntent: 'userEdit', patch: { attachments: [] as never } });
+        });
+        expect(hook.getCurrent()?.subjectLabel).toBeNull();
+        await hook.unmount();
+    });
+
     it('observes first materialization and retires the previous Account selection', async () => {
         const hook = await renderHook(({ selectedScope }) => useNewSessionDraftPresentation(selectedScope, draftId), { initialProps: { selectedScope: scope } });
         expect(hook.getCurrent()).toBeNull();

@@ -1,7 +1,6 @@
 import { t } from '@/text';
 import type { AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 
-export const NEW_SESSION_SEEDED_PLACEMENT_CHIP_KEY = 'new-session-seeded-placement';
 export const NEW_SESSION_TRIGGERS_CHIP_KEY = 'new-session-triggers';
 
 export function getNewSessionCheckoutActionChipPlacement(): AgentInputControlPlacement {
@@ -13,10 +12,6 @@ export function getNewSessionOrganizationActionChipPlacement(id: 'organization' 
     return id === 'organization'
         ? { id, title: t('sessionsList.sectionTitle'), icon: 'list', defaultPlacement: options?.chosen ? 'pinned' : 'overflow' }
         : { id, title: t('settingsSession.sessionList.tagsTitle'), icon: 'tag', defaultPlacement: 'hidden' };
-}
-
-export function getNewSessionSeededPlacementActionChipPlacement(): AgentInputControlPlacement {
-    return { id: `path:${NEW_SESSION_SEEDED_PLACEMENT_CHIP_KEY}`, title: t('newSession.recipeComposerDirectory'), icon: 'folder', defaultPlacement: 'overflow' };
 }
 
 export function getNewSessionTriggersActionChipPlacement(): AgentInputControlPlacement {

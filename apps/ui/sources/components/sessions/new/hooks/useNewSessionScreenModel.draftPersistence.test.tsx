@@ -2193,13 +2193,14 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             model = nextModel;
         }, { draftId });
 
-        const chip = model?.simpleProps?.agentInputExtraActionChips?.find(
+        // One where-it-runs control: the candidates lead the folder chip's own picker, with no second chip.
+        expect(model?.simpleProps?.agentInputExtraActionChips?.find(
             (entry: any) => entry?.key === 'new-session-seeded-placement',
-        );
-        const popover = chip?.collapsedOptionsPopover;
-        if (!popover || popover.presentation !== 'list') throw new Error('expected seeded placement list');
-        const section = popover.rootStep.sections[0];
-        if (!section || section.kind !== 'static') throw new Error('expected seeded placement options');
+        )).toBeUndefined();
+        const requestClose = vi.fn();
+        const content = model?.simpleProps?.pathPopover?.renderContent?.({ requestClose });
+        const section = content?.props?.leadingSections?.[0];
+        if (!section || section.kind !== 'static') throw new Error('expected seeded placement options in the folder picker');
 
         // Presentation alone never turns the first candidate into a target.
         expect(routerSetParamsMock).not.toHaveBeenCalled();
@@ -2221,10 +2222,10 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             selectedPath: '/worktrees/web',
             executionTarget: { kind: 'machine', target: { serverId: 'server-web', machineId: 'machine-web' } },
         }));
+        expect(requestClose).toHaveBeenCalled();
         await settleNewSessionScreenModel();
-        expect(model?.simpleProps?.agentInputExtraActionChips?.find(
-            (entry: any) => entry?.key === 'new-session-seeded-placement',
-        )).toBeUndefined();
+        const settled = model?.simpleProps?.pathPopover?.renderContent?.({ requestClose: () => {} });
+        expect(settled?.props?.leadingSections ?? []).toHaveLength(0);
 
         await hook.unmount();
     });

@@ -31,6 +31,7 @@ import type {
 import { readAgentInputImageNumbers } from '../agentInputContracts';
 import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge';
 import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
 
 /** A draft image the composer already holds as a direct URI (the draft owns and revokes it). */
 type ComposerAttachmentImagePreviewItem = Readonly<{ key: string; uri: string; title: string; mimeType?: string }>;
@@ -654,12 +655,16 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
 
     const resolveAttachmentError = (item: AgentInputAttachmentsRowItem): string | null => {
         if (item.status === 'error') return item.error?.trim() || t('common.error');
-        if (item.availability === 'unavailable') return t('common.unavailable');
         if (item.availability === 'invalid') return t('errors.invalidFormat');
         return null;
     };
+    // An item that cannot be read right now (its source is offline, signed out) keeps its last-known name: the
+    // reason is in its accessible name and tooltip, not a red alarm on the chip.
+    const resolveAttachmentNote = (item: AgentInputAttachmentsRowItem): string | null => (
+        item.availability === 'unavailable' ? item.availabilityReason?.trim() || t('common.unavailable') : null
+    );
     const resolveAttachmentAccessibilityLabel = (item: AgentInputAttachmentsRowItem): string => {
-        const error = resolveAttachmentError(item);
+        const error = resolveAttachmentError(item) ?? resolveAttachmentNote(item);
         const label = item.accessibilityLabel ?? item.label;
         return error ? `${label}: ${error}` : label;
     };
@@ -776,15 +781,19 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
             const icon = badge.icon?.(theme.colors.text.secondary) ?? (
                 <Icon name={badge.attachmentType === 'folder' ? 'folder' : 'file'} size={14} color={theme.colors.text.secondary} />
             );
+            const note = resolveAttachmentNote(badge);
+            const labelText = (
+                <Text
+                    numberOfLines={1}
+                    style={styles.attachmentChipText}
+                >
+                    {badge.label}
+                </Text>
+            );
             const previewContent = (
                 <>
                     {icon}
-                    <Text
-                        numberOfLines={1}
-                        style={styles.attachmentChipText}
-                    >
-                        {badge.label}
-                    </Text>
+                    {note ? <Tooltip label={note} accessibilityLabel={resolveAttachmentAccessibilityLabel(badge)} testID={`agent-input-attachment-note:${badge.key}`} focusable={false}>{labelText}</Tooltip> : labelText}
                     {badge.detail ? (
                         <Text numberOfLines={1} style={styles.attachmentChipDetail}>{badge.detail}</Text>
                     ) : null}

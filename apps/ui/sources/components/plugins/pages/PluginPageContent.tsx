@@ -38,6 +38,7 @@ import {
 } from '@/components/plugins/pages/pluginPageNavigation';
 import { createPluginPageLocationOwner, type PluginPageLocationOwner } from '@/components/plugins/pages/pluginPageLocation';
 import { pluginPageTargetKey } from './pluginPageRoute';
+import { FloatingChromeClearedFrame } from '@/components/ui/layout/FloatingChromeClearedFrame';
 import {
     PluginPageHeaderActions,
     resolvePluginPageHeaderActions,
@@ -438,7 +439,10 @@ export function PluginPageContent(props: Readonly<{
     // Visibility pauses the plugin renderer, not the page's physical pane owner. Opening an
     // approval retains this destination; unmounting renderContent would cancel its pending command.
     const pageContent = isVisible ? (
-                <View testID="plugin-app-page-host" style={pageContentFrameStyle}>
+                // The page body clears the shell's floating bottom chrome (a phone's tab bar, a docked New Session over
+                // it): the plugin owns its scrolling, so its host keeps what that chrome covers within reach.
+                // A pinned footer inside it (a pushed detail's actions) then clears that chrome once, not again (D17).
+                <FloatingChromeClearedFrame testID="plugin-app-page-host" style={pageContentFrameStyle}>
                     <HappierColumnEdgeContext.Provider value={PLUGIN_PAGE_COLUMN_EDGE_PX}>
                     <PluginPageBackStepProvider owner={locationOwner}>
                     <NavigationLargeTitleProvider largeTitle={largeTitle}>
@@ -471,7 +475,7 @@ export function PluginPageContent(props: Readonly<{
                     </NavigationLargeTitleProvider>
                     </PluginPageBackStepProvider>
                     </HappierColumnEdgeContext.Provider>
-                </View>
+                </FloatingChromeClearedFrame>
     ) : <React.Fragment />;
 
     return renderPage(

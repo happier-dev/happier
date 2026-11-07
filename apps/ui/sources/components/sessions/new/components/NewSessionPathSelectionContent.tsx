@@ -45,6 +45,8 @@ export type NewSessionPathSelectionContentProps = Readonly<{
     maxHeight?: number;
     /** Offers "No folder" first (the composer's picker); see `PathSelectionList`. */
     noFolderOption?: React.ComponentProps<typeof PathSelectionList>['noFolderOption'];
+    /** Choices listed first (a seeded draft's saved projects); see `PathSelectionList`. */
+    leadingSections?: React.ComponentProps<typeof PathSelectionList>['leadingSections'];
 }>;
 
 export function NewSessionPathSelectionContent(props: NewSessionPathSelectionContentProps) {
@@ -119,6 +121,7 @@ export function NewSessionPathSelectionContent(props: NewSessionPathSelectionCon
                 onToggleFavorite={handleToggleFavorite}
                 maxHeight={props.maxHeight}
                 noFolderOption={props.noFolderOption}
+                leadingSections={props.leadingSections}
                 heightBehavior={
                     props.maxHeight === undefined
                         ? undefined

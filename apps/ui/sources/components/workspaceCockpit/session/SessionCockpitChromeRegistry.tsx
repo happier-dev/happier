@@ -102,6 +102,9 @@ export const SessionCockpitBottomChromeHeightContext = React.createContext(0);
 const SessionCockpitBottomChromeHeightSetterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
 // One shell-owned floating band (the phone Voice Island), measured independently of the bar.
 const SessionCockpitFloatingBottomChromeHeightContext = React.createContext(0);
+// The shell's own bar, which no subtree rebases: zero means this window has no bar (a desktop), so a page
+// clears the floating band itself; under a bar a rebased subtree's screen already lifts content past the band.
+const SessionCockpitShellBarHeightContext = React.createContext(0);
 const SessionCockpitFloatingBottomChromeReporterContext = React.createContext<SessionCockpitBottomChromeHeightSetter>(NOOP_SET_BOTTOM_CHROME_HEIGHT);
 /**
  * The composer band that floats **above** the bottom chrome, published separately from it.
@@ -291,6 +294,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                 <SessionCockpitBottomChromeHeightContext.Provider value={bottomChromeHeight}>
                     <SessionCockpitFloatingBottomChromeReporterContext.Provider value={setFloatingBottomChromeHeight}>
                         <SessionCockpitFloatingBottomChromeHeightContext.Provider value={floatingBottomChromeHeight}>
+                        <SessionCockpitShellBarHeightContext.Provider value={bottomChromeHeight}>
                             <SessionCockpitComposerChromeReporterContext.Provider value={reportComposerChromeHeight}>
                                 <SessionCockpitComposerChromeHeightContext.Provider value={composerChromeHeight}>
                                 <SessionCockpitComposerChromeTopContext.Provider value={composerChromeTop}>
@@ -312,6 +316,7 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                                 </SessionCockpitComposerChromeTopContext.Provider>
                                 </SessionCockpitComposerChromeHeightContext.Provider>
                             </SessionCockpitComposerChromeReporterContext.Provider>
+                        </SessionCockpitShellBarHeightContext.Provider>
                         </SessionCockpitFloatingBottomChromeHeightContext.Provider>
                     </SessionCockpitFloatingBottomChromeReporterContext.Provider>
                 </SessionCockpitBottomChromeHeightContext.Provider>
@@ -369,7 +374,9 @@ export function useSessionCockpitComposerBottomChromeHeight(): number {
 export function useSessionCockpitPageBottomClearance(): number {
     const bar = useSessionCockpitBottomChromeHeight();
     const floating = React.useContext(SessionCockpitFloatingBottomChromeHeightContext);
-    return bar > 0 ? bar + floating : 0;
+    const shellBar = React.useContext(SessionCockpitShellBarHeightContext);
+    if (bar > 0) return bar + floating;
+    return shellBar === 0 ? floating : 0;
 }
 
 /** The shell withdraws its measured floating band on suppression, container change or unmount. */

@@ -455,6 +455,10 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
     ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
     const showDraftActions = Boolean(draftScope && exactDraft?.materialized === true);
+    // An empty composer opened from an item asks about that item; an embedding page's own question wins.
+    const subjectLabel = exactDraft?.subjectLabel ?? null;
+    const inputPlaceholder = props.inputPlaceholder
+        ?? (subjectLabel ? t('newSession.seededInputPlaceholder', { subject: subjectLabel }) : undefined);
     // Start another stays available mid-launch: the launch outlives this draft's screen.
     // Delete waits for the whole launch, including before the daemon publishes custody.
     const renderStatusTrailingActions = React.useCallback((state: Readonly<{ isCreating: boolean }>) => (
@@ -482,7 +486,7 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             launchHandOffRef={launchHandOffRef}
             automationExactTurnRetarget={props.automationExactTurnRetarget ?? null}
             fixedDirectoryIntent={props.fixedDirectoryIntent}
-            inputPlaceholder={props.inputPlaceholder}
+            inputPlaceholder={inputPlaceholder}
             composerControlPreset={props.composerControlPreset}
         />
     );

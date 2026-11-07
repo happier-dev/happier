@@ -60,6 +60,7 @@ describe('composer attachment row projection', () => {
         expect(items[0]).toMatchObject({
             kind: 'badge',
             availability: 'unavailable',
+            availabilityReason: 'Plugin is unavailable',
             label: 'Issue #42',
             testID: 'composer-attachment:issue-42',
         });

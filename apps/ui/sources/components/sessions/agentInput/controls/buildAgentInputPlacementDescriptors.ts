@@ -14,7 +14,7 @@ import {
     getTemporaryComputerTeamAccessActionChipPlacement,
 } from '../definitions/agentInputActionChipPlacements';
 import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/capabilitiesActionChipPlacement';
-import { getNewSessionSeededPlacementActionChipPlacement, getNewSessionTriggersActionChipPlacement } from '@/components/sessions/new/newSessionActionChipPlacements';
+import { getNewSessionTriggersActionChipPlacement } from '@/components/sessions/new/newSessionActionChipPlacements';
 import { getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinitions } from '@/components/sessions/runs/launcher/executionRunStartChipPlacements';
 import { getWorkflowContextChipDefinitions, getWorkflowStartVisibilityChipPlacement, getWorkflowStartWhereChipPlacement, getWorkflowStepOptionsChipPlacement } from '@/components/workflows/workflowComposerControlPlacements';
 
@@ -137,7 +137,6 @@ function getStaticFactoryDefinitions(context: AgentInputPlacementContext): reado
         { controlId: 'shortcuts', placement: getWorkflowStepOptionsChipPlacement(), contexts: ['workflow'] },
         { controlId: 'sessionAccess', placement: getTemporaryComputerTeamAccessActionChipPlacement(), contexts: ['newSession'] },
         { controlId: 'sessionAccess', placement: getWorkflowStartVisibilityChipPlacement(), contexts: ['workflow'] },
-        { controlId: 'path', placement: getNewSessionSeededPlacementActionChipPlacement(), contexts: ['newSession'] },
         { controlId: 'machine', placement: getWorkflowStartWhereChipPlacement(), contexts: ['workflow'] },
         { controlId: 'automation', placement: getNewSessionTriggersActionChipPlacement(), contexts: ['newSession'] },
     ];

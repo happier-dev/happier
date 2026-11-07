@@ -66,8 +66,6 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     agentOptionState?: Record<string, unknown> | null;
     setAgentOptionStateForCurrentAgent: (key: string, next: unknown) => void;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
-    /** One-shot unresolved placement offered by a host-seeded New Session draft. */
-    seededPlacementActionChip?: AgentInputExtraActionChip | null;
     organizationPlacementActionChips?: readonly AgentInputExtraActionChip[];
     sessionAccess?: Parameters<typeof useNewSessionAgentInputExtraActionChips>[0]['sessionAccess'];
     showAutomationActionChips: boolean;
@@ -227,7 +225,6 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         setAgentOptionState: params.setAgentOptionStateForCurrentAgent,
         selectedMachineId: params.selectedMachineId,
         connectedServicesAuthChip: params.connectedServicesAuthChip,
-        seededPlacementActionChip: params.seededPlacementActionChip,
         showAutomationActionChips: params.showAutomationActionChips,
         showInitialTriggers: params.showInitialTriggers,
         initialTriggers: params.initialTriggers,

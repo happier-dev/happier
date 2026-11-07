@@ -882,7 +882,7 @@ describe('AgentInputAttachmentsRow', () => {
     ).toBeTruthy();
   });
 
-  it('announces unavailable or invalid attachments while retaining their localized removal affordance', async () => {
+  it('names an unreadable item quietly, with its reason only in its label, and still alarms an invalid one', async () => {
     const onRemove = vi.fn();
     const screen = await renderScreen(
       <AgentInputAttachmentsRow
@@ -893,6 +893,7 @@ describe('AgentInputAttachmentsRow', () => {
               key: 'unavailable-issue',
               label: 'Unavailable issue',
               availability: 'unavailable',
+              availabilityReason: 'The source could not be read',
               testID: 'unavailable-issue',
               removeAccessibilityLabel: 'Remove unavailable issue',
               onRemove: () => onRemove('unavailable'),
@@ -911,13 +912,13 @@ describe('AgentInputAttachmentsRow', () => {
       />,
     );
 
+    // An item that cannot be read right now keeps its last-known name: no red alarm on the chip.
     expect(
-      screen.findByTestId('agent-input-attachment-error:unavailable-issue')
-        ?.props,
-    ).toMatchObject({
-      accessibilityLabel: 'common.unavailable',
-      accessibilityRole: 'alert',
-    });
+      screen.findByTestId('agent-input-attachment-error:unavailable-issue'),
+    ).toBeFalsy();
+    expect(
+      screen.tree.root.findAll((node) => node.props.accessibilityLabel === 'Unavailable issue: The source could not be read').length,
+    ).toBeGreaterThan(0);
     expect(
       screen.findByTestId('agent-input-attachment-error:invalid-issue')?.props,
     ).toMatchObject({

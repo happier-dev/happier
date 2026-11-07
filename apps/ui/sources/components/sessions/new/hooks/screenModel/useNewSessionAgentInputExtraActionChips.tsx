@@ -40,7 +40,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
      */
     selectedMachineId: string | null;
     connectedServicesAuthChip?: AgentInputExtraActionChip | null;
-    seededPlacementActionChip?: AgentInputExtraActionChip | null;
     showAutomationActionChips: boolean;
     showInitialTriggers?: boolean;
     initialTriggers?: SessionInitialTriggerV1[];
@@ -137,9 +136,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
             chips.push(automationActionChip);
         }
         if (triggersActionChip) chips.push(triggersActionChip);
-        if (params.seededPlacementActionChip) {
-            chips.push(params.seededPlacementActionChip);
-        }
         if (serverPickerActionChip) {
             chips.push(serverPickerActionChip);
         }
@@ -171,7 +167,6 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
         params.connectedServicesAuthChip,
         params.capabilitiesChip,
         params.organizationPlacementActionChips,
-        params.seededPlacementActionChip,
         params.onActionShortcutPress,
         params.selectedMachineId,
         params.selectedMachineIsWindows,
