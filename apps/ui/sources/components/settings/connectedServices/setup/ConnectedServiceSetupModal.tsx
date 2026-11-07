@@ -1,17 +1,9 @@
-import { ConnectedServiceSetupPanel, type ConnectedServiceSetupTarget } from './ConnectedServiceSetupPanel';
-import { buildConnectedServiceSetupCatalog } from './buildConnectedServiceSetupCatalog';
-import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
-import { StyleSheet } from 'react-native-unistyles';
-import { View } from 'react-native';
-import * as React from 'react';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
-import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
-import type { ConnectSheetKeyBindingTarget } from './connectSheetKeyBindings';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
@@ -20,6 +12,9 @@ import { t } from '@/text';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import type { ConnectSheetKeyBindingTarget } from './connectSheetKeyBindings';
+import type { DaemonNpmRegistryProfileSnapshotV1 } from '@happier-dev/protocol/rpc/npmRegistryProfiles';
+import type { PluginUiOpenConnectedAccountsResultV1 } from '@happier-dev/protocol/plugins/ui/client';
 
 import { ConnectSheetContent } from './ConnectSheetContent';
 
@@ -46,8 +41,21 @@ export type ConnectSheetKeyRequest = Readonly<{
     bindingTarget?: ConnectSheetKeyBindingTarget;
     anchor?: PopoverAnchor;
 }>;
-export type ConnectSheetRequest = ConnectSheetAccountRequest | ConnectSheetKeyRequest;
-export type ConnectSheetResult = ConnectSheetAccountResult | ConnectSheetKeyResult;
+export type ConnectSheetNpmRegistryRequest = Readonly<{
+    service: Readonly<{ kind: 'npm-registry-profile' }>;
+    scope?: AccountSettingsScope | null;
+    current?: string;
+    projectDir?: string;
+    targetSelection?: MachineAdministrationTargetSelectionV1;
+    anchor?: PopoverAnchor;
+    onOperationError?: (code: string) => void;
+}>;
+export type ConnectSheetNpmRegistryResult = Readonly<{
+    kind: 'connected' | 'selected';
+    profile: DaemonNpmRegistryProfileSnapshotV1['profiles'][number];
+}> | Readonly<{ kind: 'dismissed' }>;
+export type ConnectSheetRequest = ConnectSheetAccountRequest | ConnectSheetKeyRequest | ConnectSheetNpmRegistryRequest;
+export type ConnectSheetResult = ConnectSheetAccountResult | ConnectSheetKeyResult | ConnectSheetNpmRegistryResult;
 
 export type ConnectSheetContentProps = CustomModalInjectedProps & Readonly<{
     request: ConnectSheetRequest;
@@ -60,6 +68,7 @@ export type ConnectSheetContentProps = CustomModalInjectedProps & Readonly<{
  * wide screens and a sheet on phones through the modal owner.
  */
 export function presentConnectSheet(request: ConnectSheetKeyRequest): Promise<ConnectSheetKeyResult>;
+export function presentConnectSheet(request: ConnectSheetNpmRegistryRequest): Promise<ConnectSheetNpmRegistryResult>;
 export function presentConnectSheet(request: ConnectSheetAccountRequest): Promise<ConnectSheetAccountResult>;
 export function presentConnectSheet(request: ConnectSheetRequest): Promise<ConnectSheetResult> {
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -91,52 +100,3 @@ export function presentConnectSheet(request: ConnectSheetRequest): Promise<Conne
         }
     });
 }
-
-function ConnectedServiceSetupModalContent(props: CustomModalInjectedProps & Readonly<{
-    initialTarget: ConnectedServiceSetupTarget;
-}>) {
-    const { indexModel } = useConnectedServicesIndex({ agents: 'cached' });
-    const catalog = React.useMemo(() => buildConnectedServiceSetupCatalog(indexModel), [indexModel]);
-    const [target, setTarget] = React.useState(props.initialTarget);
-    const { onClose } = props;
-    return (
-        <View style={styles.frame}>
-            <ConnectedServiceSetupPanel
-                testID="connected-service-setup-modal"
-                chrome="card"
-                target={target}
-                catalog={catalog}
-                onTargetChange={setTarget}
-                onClose={onClose}
-                onConnected={onClose}
-            />
-        </View>
-    );
-}
-
-/**
- * The setup panel where there is no page to grow in (lab AM/AMp): a popover's or a session banner's
- * "Sign in again", or Connect from a surface without room. Same panel, same controller; a modal on
- * wide screens and a sheet on phones through the modal owner.
- */
-export function openConnectedServiceSetupModal(target: ConnectedServiceSetupTarget): void {
-    let modalId: string | null = null;
-    const close = () => {
-        if (!modalId) return;
-        Modal.hide(modalId);
-        modalId = null;
-    };
-    modalId = Modal.show({
-        component: ConnectedServiceSetupModalContent,
-        onRequestClose: close,
-        props: { initialTarget: target },
-    });
-}
-
-const styles = StyleSheet.create(() => ({
-    frame: {
-        width: '100%',
-        maxWidth: 640,
-        alignSelf: 'center',
-    },
-}));
