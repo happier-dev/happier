@@ -27,6 +27,9 @@ describe('daemon startup wait defaults', () => {
   it('aligns replacement verification with daemon startup by default', () => {
     expect(DEFAULT_DAEMON_RESTART_VERIFY_TIMEOUT_MS).toBe(DEFAULT_DAEMON_START_WAIT_TIMEOUT_MS);
     expect(readDaemonRestartVerifyTimeoutMs()).toBe(60_000);
+
+    process.env.HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS = '180000';
+    expect(readDaemonRestartVerifyTimeoutMs()).toBe(180_000);
   });
 
   it('honors the daemon restart verification timeout env override', () => {

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -9,6 +9,9 @@ import { generateProtocolExports, prepareProtocolExports, watchProtocolExports }
 import { readWorkspacePackages, resolveWorkspaceSource } from '../../cli-common/sourceRuntimeEntries.mjs';
 import { captureBuildInputFiles } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
+import { withPatchedProcessEnv } from '../../../apps/stack/scripts/testkit/core/env_scope.mjs';
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
 
 test('publishes newly added source subpaths without hand-editing the manifest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'protocol-derived-exports-'));
@@ -76,6 +79,51 @@ test('publishes newly added source subpaths without hand-editing the manifest', 
 
 test('published exports match the current compiled public source inventory', async () => {
   await generateProtocolExports({ check: true });
+});
+
+test('local preparation publishes once for concurrent callers and leaves current manifests untouched', async () => {
+  const packageRoot = await mkdtemp(join(tmpdir(), 'protocol-preparation-'));
+  // Model authoring preparation, before native compiler admission. The outer
+  // test reader is admitted; inheriting that marker would forbid lock waits.
+  const restoreEnv = withPatchedProcessEnv(null, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: undefined });
+  try {
+    await mkdir(join(packageRoot, 'src'));
+    const sideEffects = ['./src/zodRuntimePolicy.ts', './dist/zodRuntimePolicy.js'];
+    const manifestPath = join(packageRoot, 'package.json');
+    await writeFile(manifestPath, JSON.stringify({ name: '@happier-dev/protocol', sideEffects, exports: {} }));
+    await writeFile(join(packageRoot, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+    await writeFile(join(packageRoot, 'export-aliases.json'), '{}');
+    await writeFile(join(packageRoot, 'src/added.ts'), 'export const value = 1;');
+    const preparations = await Promise.allSettled(Array.from({ length: 2 }, () => prepareProtocolExports({ packageRoot, env: {} })));
+    for (const preparation of preparations) {
+      if (preparation.status === 'rejected') throw preparation.reason;
+    }
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    expect(manifest.exports['./added'].default).toBe('./dist/added.js');
+    expect(manifest.sideEffects).toEqual(sideEffects);
+    const marker = new Date('2020-01-01T00:00:00Z');
+    await utimes(manifestPath, marker, marker);
+    await withWorkspaceBundleLock(async () => {
+      const restoreAdmittedEnv = withPatchedProcessEnv(null, {
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0',
+      });
+      try {
+        await prepareProtocolExports({ packageRoot, env: {} });
+        expect((await stat(manifestPath)).mtimeMs).toBe(marker.getTime());
+        await writeFile(join(packageRoot, 'src/later.ts'), 'export const later = 2;');
+        await expect(prepareProtocolExports({ packageRoot, env: {} }))
+          .rejects.toMatchObject({ code: 'EWORKSPACEBUNDLELOCKBUSY' });
+      } finally {
+        restoreAdmittedEnv();
+      }
+    }, { lockPath: resolveWorkspacePackageBuildLockPath(packageRoot, { name: '@happier-dev/protocol' }) });
+    await prepareProtocolExports({ packageRoot, env: {} });
+    expect(JSON.parse(await readFile(manifestPath, 'utf8')).exports['./later'].default).toBe('./dist/later.js');
+    await generateProtocolExports({ packageRoot, check: true });
+  } finally {
+    restoreEnv();
+    await rm(packageRoot, { recursive: true, force: true });
+  }
 });
 
 test.each([

@@ -43,20 +43,29 @@ export async function deriveProtocolExports(packageRoot) {
 }
 
 export async function generateProtocolExports({ packageRoot = defaultPackageRoot, check = false, signal } = {}) {
-  const run = async () => {
+  if (!check) signal?.throwIfAborted();
+  const readProjection = async () => {
     const manifestPath = join(packageRoot, 'package.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     const exports = await deriveProtocolExports(packageRoot);
-    if (JSON.stringify(manifest.exports) === JSON.stringify(exports)) return manifest;
-    if (check) throw new Error('Protocol exports are stale. Run pnpm --filter @happier-dev/protocol generate:exports.');
+    return { manifestPath, manifest, exports, current: JSON.stringify(manifest.exports) === JSON.stringify(exports) };
+  };
+  const projection = await readProjection();
+  // Current exports are a read: a compiler publishing dist must not hold up
+  // unrelated remote dispatch merely because it owns the package build lock.
+  if (projection.current) return projection.manifest;
+  if (check) throw new Error('Protocol exports are stale. Run pnpm --filter @happier-dev/protocol generate:exports.');
+  return withWorkspaceBundleLock(async () => {
+    // The manifest may have changed while waiting for the writer. Read its
+    // current fields under that same publication owner before replacing it.
+    const { manifestPath, manifest, exports, current } = await readProjection();
+    if (current) return manifest;
     const temporaryPath = `${manifestPath}.${randomUUID()}.tmp`;
     const generatedManifest = { ...manifest, exports };
     await writeFile(temporaryPath, `${JSON.stringify(generatedManifest, null, 2)}\n`);
     await rename(temporaryPath, manifestPath);
     return generatedManifest;
-  };
-  if (check) return run();
-  return withWorkspaceBundleLock(run, {
+  }, {
     signal,
     lockPath: resolveWorkspacePackageBuildLockPath(packageRoot, { name: '@happier-dev/protocol' }),
     heldLockValue: process.env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
