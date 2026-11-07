@@ -120,7 +120,9 @@ it.each([false, true])('completes a Claude terminal child through the shared Ses
     } finally { unsubscribeController?.(); unsubscribe(); await host.dispose(); }
 });
 
-it.each([true, false])('retains real Claude SDK streamed text once in the completed input result (streaming=%s)', async streamed => {
+it.each([
+    { streamed: true, quota: false }, { streamed: false, quota: false }, { streamed: false, quota: true },
+])('retains Claude SDK text and refuses a terminal provider quota despite trailing success ($streamed, quota=$quota)', async ({ streamed, quota }) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-claude-run-text-'));
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
     reloadConfiguration();
@@ -185,7 +187,7 @@ it.each([true, false])('retains real Claude SDK streamed text once in the comple
         sendAcp: async () => {}, parentProvider: 'claude', runs, backendSupportsResume: true,
         writeActivityMarker: async () => {}, getNowMs: () => 2,
     }));
-    const text = 'BACKGROUND DONE';
+    const text = quota ? "You've hit your weekly limit · resets Nov 10, 9pm (Europe/Amsterdam)" : 'BACKGROUND DONE';
     try {
         await expect(sendBackendLongLivedRun({ runId, params: { message: 'Return the marker', localInputId: 'exact-input' },
             runs, controllers, budgetRegistry: null, createRuntime: () => host, maxTurns: null, getNowMs: () => 2,
@@ -200,12 +202,21 @@ it.each([true, false])('retains real Claude SDK streamed text once in the comple
             await vi.waitFor(() => expect(ctrl.buffer).toBe(text));
         }
         await sdk.emit({ type: 'assistant', uuid: 'assistant-row', session_id: 'native-claude', parent_tool_use_id: null,
+            ...(quota ? { isApiErrorMessage: true, apiError: 'usage_limit_reached', resetsAt: 1_794_340_800 } : {}),
             message: { id: 'native-message', role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text }] } });
         await sdk.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'native-claude', uuid: 'result-row',
             result: text, num_turns: 1, total_cost_usd: 0, duration_ms: 10, duration_api_ms: 8 });
-        await vi.waitFor(() => expect(runs.get(runId)?.inputTurns?.last?.state).toBe('completed'));
+        await vi.waitFor(() => expect(runs.get(runId)?.inputTurns?.last).toBeDefined());
         const response = ExecutionRunGetResponseSchema.parse({ run: runs.get(runId) });
-        expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'completed', result: { kind: 'text', value: text } });
+        if (quota) {
+            expect(response.run).toMatchObject({ error: { runtimeIssueV1: {
+                source: 'usage_limit', usageLimit: { resetAtMs: 1_794_340_800_000 },
+            } } });
+            expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'failed' });
+            expect(response.run.inputTurns?.last).not.toHaveProperty('result');
+        } else {
+            expect(response.run.inputTurns?.last).toMatchObject({ inputIds: ['exact-input'], state: 'completed', result: { kind: 'text', value: text } });
+        }
     } finally {
         unsubscribe();
         await host.dispose();

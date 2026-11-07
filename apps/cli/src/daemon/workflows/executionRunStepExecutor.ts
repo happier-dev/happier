@@ -203,8 +203,8 @@ function projectObservation(
 ): WorkflowStepExecutionResult {
   switch (observation.kind) {
     case 'completed': return { kind: 'completed', result: observation.result, resultEncoding: 'typed' };
-    case 'failed': return { kind: 'failed', code: observation.code,
-      ...(observation.message ? { message: observation.message } : {}) };
+    case 'failed':
+    case 'needs_attention': return observation;
     case 'cancelled': return { kind: 'cancelled', ...(observation.code ? { code: observation.code } : {}) };
     case 'outcome_uncertain': return { kind: 'outcome_uncertain', code: observation.code };
   }

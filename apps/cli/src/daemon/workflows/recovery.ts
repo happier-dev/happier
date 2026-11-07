@@ -75,7 +75,7 @@ export type WorkflowInvocationRecoveryObservation = (
   | Readonly<{ kind: 'unresolved'; code?: string; waitForCompletion?: () => Promise<void>;
     setupConsentOutput?: Readonly<{ operation: ActionOperationSnapshotV1 }> }>
   | Readonly<{ kind: 'completed'; result: JsonValue; usage?: WorkflowUsageV1 }>
-  | Readonly<{ kind: 'needs_attention'; code: 'session_input_result_unavailable'; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'failed'; code: string; message?: string; failureCause?: ActionFailureCauseV1; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'stopped'; code: string }>
@@ -366,8 +366,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
         ...(observation.kind !== 'unresolved' && observation.usage ? { usage: observation.usage } : {}),
         ...(observation.kind !== 'completed' && observation.code ? { reason: observation.code,
           ...(observation.kind === 'failed' && observation.failureCause ? { failureCause: observation.failureCause } : {}),
-          ...(observation.kind === 'failed' && observation.runtimeIssueV1 ? { runtimeIssueV1: observation.runtimeIssueV1 } : {}),
-          ...(observation.kind === 'failed' && observation.message !== undefined ? { reasonMessage: observation.message } : {}) } : {}),
+          ...((observation.kind === 'failed' || observation.kind === 'needs_attention') && observation.runtimeIssueV1 ? { runtimeIssueV1: observation.runtimeIssueV1 } : {}),
+          ...((observation.kind === 'failed' || observation.kind === 'needs_attention') && observation.message !== undefined ? { reasonMessage: observation.message } : {}) } : {}),
       }, { previousLifecycle: currentLifecycle, lifecycle, observedAtMs: Date.now() }),
       ...(observation.kind === 'completed' && (reviewRequired || generation) && !progress.review?.resultSource
         ? { review: { ...progress.review, resultSource: { kind: 'execution_input' as const } } } : {}),

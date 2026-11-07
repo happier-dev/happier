@@ -3361,6 +3361,12 @@ an absent reset time stays absent. Source Session hydration binds the issue to
 the observed failed turn. This adds no error classifier or process-loss detector;
 loaded-runtime validation remains a separate gate.
 
+In current development source, a failed Session input or detached Run input with
+a typed usage-limit issue projects the Workflow leaf as `needs_attention` and
+interrupts the Run. The existing Run detail and Needs you projections retain the
+provider's reset time and recovery details; they do not schedule an automatic
+retry.
+
 In current development source, the existing connected-service home reclamation
 scheduler also sweeps execution-run isolation homes. It reads live Run markers
 and retained Run records through the execution registry, and uses the canonical

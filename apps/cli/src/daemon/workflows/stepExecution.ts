@@ -27,8 +27,12 @@ export type WorkflowSessionInputObservation = (
   | Readonly<{ kind: 'completed'; result: string; usage?: SessionInputUsageV1 }>
   | Readonly<{ kind: 'failed'; code: string; message: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
   | Readonly<{ kind: 'cancelled'; usage?: SessionInputUsageV1 }>
-  | Readonly<{ kind: 'needs_attention'; code: 'session_input_result_unavailable'; usage?: SessionInputUsageV1 }>
+  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
 ) & Readonly<{ replyOutcome?: SessionMessageReplyOutcomeV1 }>;
+
+function workflowInputFailureKind(issue: SessionRuntimeIssueV1 | undefined): 'failed' | 'needs_attention' {
+  return issue?.source === 'usage_limit' ? 'needs_attention' : 'failed';
+}
 
 /** Classifies the exact Session outcome; cancellation custody stays with its caller. */
 export function classifyWorkflowSessionInputResult(
@@ -61,7 +65,7 @@ export function classifyWorkflowSessionInputResult(
       ...(result.usage ? { usage: result.usage } : {}),
     };
     case 'failed': return {
-      kind: 'failed', code: 'session_input_failed', message: result.message,
+      kind: workflowInputFailureKind(result.runtimeIssueV1), code: 'session_input_failed', message: result.message,
       ...reply,
       ...(result.runtimeIssueV1 ? { runtimeIssueV1: result.runtimeIssueV1 } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
@@ -78,6 +82,7 @@ export type WorkflowDetachedExecutionRunObservation =
   | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'completed'; result: string | import('@happier-dev/protocol').JsonValue }>
   | Readonly<{ kind: 'failed'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1 }>
+  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
 
@@ -213,7 +218,7 @@ export async function observeWorkflowDetachedExecutionRunInput(params: Readonly<
   if (turn.state === 'cancelled') return { kind: 'cancelled', code: 'execution_run_input_cancelled' };
   if (turn.state === 'failed') {
     return {
-      kind: 'failed',
+      kind: workflowInputFailureKind(response.run.error?.runtimeIssueV1),
       code: response.run.error?.code ?? 'execution_run_input_failed',
       ...(response.run.error?.message ? { message: response.run.error.message } : {}),
       ...(response.run.error?.runtimeIssueV1 ? { runtimeIssueV1: response.run.error.runtimeIssueV1 } : {}),

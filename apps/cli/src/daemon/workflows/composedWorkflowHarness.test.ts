@@ -3043,6 +3043,7 @@ describe.each(['plain', 'e2ee'] as const)('composed exact result live/recovery p
     const ordinaryFact = openRowProgress(ordinary, ordinaryIndex, runCrypto);
     expect(ordinaryFact.replyOutcome).toEqual(observed.kind === 'fulfilled' ? observed.outcome : undefined);
     if (observed.kind === 'failed' && 'runtimeIssueV1' in observed) {
+      expect(ordinaryIndex.lifecycle).toBe('needs_attention');
       expect(ordinaryFact.reason).toMatchObject({ code: 'session_input_failed', runtimeIssueV1: observed.runtimeIssueV1 });
     } else {
       expect(ordinaryFact.reason ?? {}).not.toHaveProperty('runtimeIssueV1');

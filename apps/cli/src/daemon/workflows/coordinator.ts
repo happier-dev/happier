@@ -186,7 +186,7 @@ export type WorkflowStepExecutionResult = (
       resultEncoding?: 'raw_text' | 'typed';
     }>
   | Readonly<{ kind: 'failed'; code: string; message?: string; reasonDetails?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['details']; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
-  | Readonly<{ kind: 'needs_attention'; code: string; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string; usage?: WorkflowUsageV1 }>
 ) & Readonly<{ replyOutcome?: WorkflowProgressEnvelopeV1['replyOutcome'] }>;
@@ -2657,11 +2657,11 @@ async function executeStepBlock(
       key,
       lifecycle: failStopClosure ? 'cancelled' : execution.kind,
       reason,
-      ...(execution.kind === 'failed' && execution.runtimeIssueV1 && reason === execution.code
+      ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.runtimeIssueV1 && reason === execution.code
         ? { runtimeIssueV1: execution.runtimeIssueV1 } : {}),
       ...(execution.kind === 'failed' && execution.reasonDetails && reason === execution.code
         ? { reasonDetails: execution.reasonDetails } : {}),
-      ...(execution.kind === 'failed' && execution.message !== undefined
+      ...((execution.kind === 'failed' || execution.kind === 'needs_attention') && execution.message !== undefined
         ? { reasonMessage: execution.message } : {}),
       ...(execution.usage ? { usage: execution.usage } : {}),
       ...(execution.replyOutcome ? { replyOutcome: execution.replyOutcome } : {}),

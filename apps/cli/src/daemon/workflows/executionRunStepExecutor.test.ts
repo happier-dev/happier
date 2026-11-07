@@ -146,6 +146,48 @@ function baseParams(overrides: Record<string, unknown> = {}) {
 }
 
 describe('workflow detached Execution Run step executor', () => {
+  it.each([1_794_340_800_000, null])('settles a detached refusal with quota attention and its reported reset (%s)', async resetAtMs => {
+    const runtimeIssueV1 = {
+      v: 1, scope: 'primary_session', status: 'failed', code: 'claude.usage_limit', source: 'usage_limit', occurredAt: 100,
+      usageLimit: { v: 1, resetAtMs, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' },
+    } as const;
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const params = baseParams({ execution: { agentTarget: CLAUDE_TARGET, permissionMode: 'default',
+      conversation: { kind: 'fresh' } } });
+    let localInputId = '';
+    let reads = 0;
+    // Only the native Run transport is substituted; observation and step projection are real.
+    const actionExecutor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async (_sessionId, request) => {
+        localInputId = String(request.localInputId);
+        return { runId: 'quota-child', callId: 'call', sidechainId: 'sidechain' };
+      },
+      executionRunGet: async () => {
+        reads++;
+        const { run } = completedRun('quota-child', localInputId, 'unused');
+        return { run: { ...run, status: 'failed', error: { code: runtimeIssueV1.code,
+          message: 'Weekly usage limit reached', runtimeIssueV1 },
+          inputTurns: { occurrenceId: run.inputTurns.occurrenceId, last: {
+            turnId: `turn-${localInputId}`, inputIds: [localInputId], state: 'failed',
+          } },
+        } };
+      },
+    });
+    const executeStep = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext, resolveSharedRunConversation: async () => null,
+      resolveProducerConversation: async () => null });
+    const coordinator = createWorkflowCoordinator({ store, executeStep,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+    await expect(coordinator.run({ runId: params.runId,
+      definition: { version: 1, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: { kind: 'detached_run' }, authorization: params.authorization,
+    })).resolves.toEqual({ state: 'interrupted', reason: runtimeIssueV1.code });
+    expect(store.list().find(row => row.blockId === params.step.id))
+      .toMatchObject({ lifecycle: 'needs_attention', reason: runtimeIssueV1.code, runtimeIssueV1 });
+    expect(reads).toBe(1);
+  });
+
   it.each(['execution_run_target_unavailable', 'execution_run_protocol_unsupported'] as const)(
     'retains the typed prelaunch refusal %s through Action admission and Workflow persistence', async errorCode => {
       const store = createInMemoryWorkflowCoordinatorStore();
