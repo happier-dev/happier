@@ -17,7 +17,7 @@ const release: BotTemplateReleaseV1 = {
         v: 1, identity: { name: 'Example', description: '' }, instructions: { markdown: 'Full instructions\nLast instruction' },
         memoryRules: [{ key: 'memory', text: 'Remember reusable rules', topic: 'Review' }],
         skills: [{ key: 'review', title: 'Review', bundleSchemaId: 'skills.skill_md_v1', entries: [
-            { path: 'SKILL.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('---\nname: review\ndescription: Review\n---\nComplete skill instructions')) },
+            { path: 'SKILL.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('---\nname: review\ndescription: Review pull requests for risk\n---\nComplete skill instructions')) },
             { path: 'run.sh', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('echo full-script')), unixMode: 0o755 },
             { path: 'reference.bin', contentKind: 'binary', contentBase64: 'AP+A' },
         ] }],
@@ -33,18 +33,57 @@ const release: BotTemplateReleaseV1 = {
 };
 
 describe('BotTemplatePreview', () => {
-    it('discloses complete instructions, memory, carried text, executable mode and MCP literals before creation', async () => {
+    it('opens complete instructions on demand while keeping memory, carried files and MCP literals reviewable before creation (lab R2 / SF1)', async () => {
         const screen = await renderScreen(<BotTemplatePreview content={release.content} />);
+        expect(screen.getTextContent()).not.toContain('Last instruction');
+        expect(screen.getTextContent()).not.toContain('Complete skill instructions');
+        await screen.pressByTestIdAsync('bot-template-instructions-disclosure');
+        await screen.pressByTestIdAsync('bot-template-skill:review');
         await screen.pressByTestIdAsync('bot-template:file:review:run.sh');
         const text = screen.getTextContent();
         for (const value of ['Last instruction', 'Remember reusable rules', 'Complete skill instructions', 'echo full-script', '755', '/opt/review', '--unsafe-mode=false', 'Review API token', 'Remote review unavailable', 'https://review.example/mcp']) {
             expect(text).toContain(value);
         }
+        await screen.pressByTestIdAsync('bot-template-instructions-disclosure');
+        expect(screen.getTextContent()).not.toContain('Last instruction');
+    });
+
+    it('leaves needs to the setup controls while keeping carried content openable', async () => {
+        const screen = await renderScreen(<BotTemplatePreview content={release.content} showNeeds={false} />);
+        expect(screen.findByTestId('bot-template-need:mcpServers:mcp')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Complete skill instructions');
+        await screen.pressByTestIdAsync('bot-template-skill:review');
+        expect(screen.getTextContent()).toContain('Complete skill instructions');
+    });
+
+    it('reads instructions and skills as documents, never as raw Markdown or front matter (F4)', async () => {
+        const content = { ...release.content, instructions: { markdown: '# Coffee Companion\n\nBe **curious**.' } };
+        const screen = await renderScreen(<BotTemplatePreview content={content} />);
+        // A skill is one readable row: its title and what it is for, from its own front matter.
+        expect(screen.getTextContent()).toContain('Review pull requests for risk');
+        await screen.pressByTestIdAsync('bot-template-instructions-disclosure');
+        await screen.pressByTestIdAsync('bot-template-skill:review');
+        const text = screen.getTextContent();
+        // Instructions render through the shared Markdown renderer rather than as plain text.
+        expect(screen.findByTestId('bot-template-instructions-document')).not.toBeNull();
+        expect(text).toContain('Coffee Companion');
+        expect(text).toContain('Complete skill instructions');
+        expect(text).not.toContain('name: review');
+        // SKILL.md is the skill itself, not a carried file box beside it.
+        expect(screen.findByTestId('bot-template:file:review:SKILL.md')).toBeNull();
+    });
+
+    it('keeps "Try it with" and "What it needs" in place when the template has neither (F4)', async () => {
+        const empty = { ...release.content, firstTask: undefined, needs: { software: [], connectedAccounts: [], mcpServers: [] } };
+        const screen = await renderScreen(<BotTemplatePreview content={empty} />);
+        expect(screen.findByTestId('bot-template-first-task-empty')).not.toBeNull();
+        expect(screen.findByTestId('bot-template-needs-empty')).not.toBeNull();
     });
 
     it('opens a carried binary companion and offers download before creating a saved skill', async () => {
         const download = vi.fn();
         const screen = await renderScreen(<BotTemplatePreview content={release.content} onDownloadFile={download} />);
+        await screen.pressByTestIdAsync('bot-template-skill:review');
         expect(screen.getTextContent()).toContain('reference.bin');
         await screen.pressByTestIdAsync('bot-template:file:review:reference.bin');
         await screen.pressByTestIdAsync('bot-template:file:review:reference.bin:download');

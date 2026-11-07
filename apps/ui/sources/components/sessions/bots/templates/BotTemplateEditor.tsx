@@ -38,6 +38,9 @@ import { BotTemplateMemorySection, BotTemplateSkillsSection } from './BotTemplat
 import { BotTemplateNeedsSection } from './BotTemplateNeedsSection';
 import { BotTemplateAgentSection } from './BotTemplateAgentSection';
 import { requestBotTemplateDraft } from './openBotTemplate';
+import { storage } from '@/sync/domains/state/storageStore';
+import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 const styles = StyleSheet.create(theme => ({
     root: { flex: 1, minHeight: 0 },
@@ -51,8 +54,10 @@ export function BotTemplateEditor(props: Readonly<{ artifactId: string; serverId
     const editor = useBotTemplateEditor(props.artifactId, props.serverId);
     const createTemplate = props.sourceSessionId && editor.errorCode === 'artifact_not_found'
         ? { label: t('botTemplates.createTemplate'), onPress: async () => {
-            const result = await requestBotTemplateDraft(editor.execute, props.sourceSessionId!);
-            if (!result.ok) await Modal.alert(t('common.error'), t('botTemplates.unavailable'));
+            // Read at the press: the editor holds only the source Session's id, never a live subscription to it.
+            const session = selectHomeQualifiedSession(storage.getState(), props.sourceSessionId!, props.serverId, getActiveServerSnapshot().serverId);
+            const result = session ? await requestBotTemplateDraft(editor.execute, session, props.serverId) : null;
+            if (!result?.ok) await Modal.alert(t('common.error'), t('botTemplates.unavailable'));
         } } : null;
     if (!editor.buffer || !editor.scope) return <SurfaceStateCard testID="bot-template-load" kind={editor.failed ? 'error' : 'loading'}
         title={editor.errorCode === 'update_required' ? t('connect.updateRequiredTitle')

@@ -6,6 +6,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { PageHeader, type PageHeaderTextEditor } from '@/components/ui/layout/PageHeader';
 import { PAGE_HEADER_MARK_SLOT_SIZE_PX, PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Text } from '@/components/ui/text/Text';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { t } from '@/text';
 
@@ -31,9 +33,11 @@ export function BotTemplateHeader(props: Readonly<{
     const author = props.presentation ? props.presentation.ownerDisplayName ?? undefined : props.author;
     const sharing = props.presentation ? props.presentation.shared === true ? t('botTemplates.shared')
         : props.presentation.shared === false ? t('botTemplates.private') : undefined : props.sharing;
+    // Versions read as "v1.2" wherever a template names one (the update offer says "v1.3 available").
+    const version = `v${props.version}`;
     const byline = author && sharing
-        ? t('botTemplates.byline', { author, version: props.version, sharing })
-        : [author, props.version, sharing].filter(Boolean).join(' · ');
+        ? t('botTemplates.byline', { author, version, sharing })
+        : [author, version, sharing].filter(Boolean).join(' · ');
     return <PageHeader title={props.identity.name}
         description={props.descriptionPlacement === 'body' ? undefined : props.identity.description}
         titleEditor={props.titleEditor} descriptionEditor={props.descriptionPlacement === 'body' ? undefined : props.descriptionEditor}
@@ -41,15 +45,20 @@ export function BotTemplateHeader(props: Readonly<{
             ?? <SessionBotFace facts={{ seed: props.identity.name, face: props.identity.face ?? null }}
                 size={PAGE_HEADER_MARK_SLOT_SIZE_PX.page} motion={false} />}</PageHeaderMarkSlot>}
         details={<View style={styles.identityLines}>
-            <Text variant="body" style={styles.byline} testID="bot-template-byline">{byline}</Text>
-            {props.identity.madeFromName ? <Text variant="meta" style={styles.madeFrom}>
-                {t('botTemplates.madeFrom', { name: props.identity.madeFromName })}</Text> : null}
+            {/* The byline leads with the author's own mark (lab r2 R10 header); a template with no known author has none. */}
+            <View style={styles.bylineRow}>
+                {author ? <Avatar id={author} monogram={author} title size={ICON_SIZE.md} /> : null}
+                <Text variant="body" style={styles.byline} testID="bot-template-byline">{byline}</Text>
+            </View>
+            <Text variant="meta" style={styles.madeFrom}>{props.identity.madeFromName
+                ? t('botTemplates.madeFrom', { name: props.identity.madeFromName }) : t('botTemplates.title')}</Text>
         </View>}
         actions={props.actions} actionsPlacement="page" status={props.status} alwaysShowTitle testID="bot-template-header" />;
 }
 
 const styles = StyleSheet.create(theme => ({
     identityLines: { gap: theme.space.s2 },
-    byline: { color: theme.colors.text.secondary },
+    bylineRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    byline: { flexShrink: 1, color: theme.colors.text.secondary },
     madeFrom: { color: theme.colors.text.tertiary },
 }));

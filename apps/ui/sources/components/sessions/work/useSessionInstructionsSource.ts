@@ -7,7 +7,8 @@ import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/prom
 import { useTranscriptApprovalArtifactsForSession } from '@/sync/store/hooks';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readPromptDocInstructionWriteFacts, type PromptDocInstructionWriteFacts } from '@/components/approvals/promptDocApprovalModel';
-import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import {
   useServerCredentialAccountScopeBindings,
   type ServerCredentialAccountScopeBinding,
@@ -66,7 +67,8 @@ const INACTIVE: DisplayState = {
 const NO_RETRY = async () => {};
 const NO_SELECTION = { ref: null, status: 'none' } as const;
 
-function selectInstructions(metadata: unknown): Readonly<{
+/** The Session's own Instructions document ref, read from its owner metadata (a Bot's "Give a copy…" seeds from it too). */
+export function selectSessionInstructionsRef(metadata: unknown): Readonly<{
   ref: PromptDocArtifactRefV1 | null;
   status: 'none' | 'malformed' | 'wrong_kind';
 }> {
@@ -101,7 +103,7 @@ export function useSessionInstructionsSource(
 ): SessionInstructionsSource {
   const selected = React.useMemo(
     () =>
-      params.enabled ? selectInstructions(params.ownerMetadata) : NO_SELECTION,
+      params.enabled ? selectSessionInstructionsRef(params.ownerMetadata) : NO_SELECTION,
     [params.enabled, params.ownerMetadata],
   );
   const ref = selected.ref;
@@ -150,6 +152,8 @@ export function useSessionInstructionsSource(
     key: string;
     display: DisplayState;
   }> | null>(null);
+  const loadedRef = React.useRef(loaded);
+  loadedRef.current = loaded;
   const pending = React.useRef<Readonly<{
     key: string;
     controller: AbortController;
@@ -274,6 +278,18 @@ export function useSessionInstructionsSource(
     };
   }, [documentBinding, key, operationBinding, readable]);
   React.useEffect(() => {
+    if (!readable || !documentHome || !ref) return;
+    return subscribeHomeAccountChange(event => {
+      if (!areServerProfileIdentifiersEquivalent(event.serverId, documentHome)) return;
+      if (event.changeKinds && !event.changeKinds.includes('artifact')) return;
+      if (event.entityIds && !event.entityIds.includes(ref.artifactId)) return;
+      void refresh();
+    }, { serverIds: [documentHome], reconnect: { readNotCurrent: () => {
+      const current = loadedRef.current;
+      return current?.key !== key || current.display.status !== 'ready';
+    } } });
+  }, [documentHome, key, readable, ref?.artifactId, refresh]);
+  React.useEffect(() => {
     if (readable) void refresh();
     return () => {
       pending.current?.controller.abort();
@@ -348,12 +364,6 @@ export function useSessionInstructionsDetail(
   const writeFacts = React.useMemo(() => source.document && params.access === 'readable'
     ? readPromptDocInstructionWriteFacts(source.document, requests) : undefined,
   [params.access, requests, source.document]);
-  // The approval settlement, not clicking Approve, makes the current body worth re-reading.
-  const acceptedBodyVersion = writeFacts?.acceptedRevision?.bodyVersion;
-  const displayedBodyVersion = source.document?.revision.bodyVersion;
-  React.useEffect(() => {
-    if (acceptedBodyVersion !== undefined && displayedBodyVersion !== undefined && acceptedBodyVersion > displayedBodyVersion) void source.retry();
-  }, [acceptedBodyVersion, displayedBodyVersion, source.retry]);
   return React.useMemo(() => ({ ...source, ...(writeFacts ? { writeFacts } : {}) }), [source, writeFacts]);
 }
 
