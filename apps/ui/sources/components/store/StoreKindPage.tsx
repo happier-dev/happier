@@ -455,16 +455,26 @@ function RegistryDirectory(
 const registryReference = (item: RegistryCatalogItemSummary) => ({ type: 'registryItem' as const, kind: item.kind,
   sourceId: item.sourceId, itemId: item.itemId, ...(item.version ? { version: item.version } : {}) });
 
+/**
+ * A host that embeds this catalog list to pick one item (Deployments → Add a service or database) receives the
+ * row's press and its + here, instead of the Store opening the listing. Absent, rows open as the Store does.
+ */
+export const StoreRegistryItemSelectContext = React.createContext<((item: RegistryCatalogItemSummary) => void) | null>(null);
+
 /** A row opens its exact listing (S40 §4.5): the pane beside the page, or its own page on a phone. */
 export function useOpenRegistryItem(): (item: RegistryCatalogItemSummary) => void {
+  const select = React.useContext(StoreRegistryItemSelectContext);
   const openListing = useOpenStoreListing();
-  return React.useCallback((item: RegistryCatalogItemSummary) => openListing(registryReference(item)), [openListing]);
+  const open = React.useCallback((item: RegistryCatalogItemSummary) => openListing(registryReference(item)), [openListing]);
+  return select ?? open;
 }
 
 /** The row's + adds through the Store's one open owner, seeded at this exact item. */
 export function useAddRegistryItem(): (item: RegistryCatalogItemSummary) => void {
+  const select = React.useContext(StoreRegistryItemSelectContext);
   const openReference = useStoreOpenReference();
-  return React.useCallback((item: RegistryCatalogItemSummary) => openReference(registryReference(item)), [openReference]);
+  const add = React.useCallback((item: RegistryCatalogItemSummary) => openReference(registryReference(item)), [openReference]);
+  return select ?? add;
 }
 
 /** The directory key of the selected listing, so the row its pane shows reads selected. */

@@ -35,8 +35,9 @@ export type DeploymentRestoreSheetInput = Readonly<{
   name: string;
   /** Where the restore runs, by name. */
   machine: string;
-  backup: DeploymentRetainedBackup;
-  operands: DeploymentRestoreOperands;
+  /** The backup to restore; with `loadChoices` it is the person's pick instead. */
+  backup?: DeploymentRetainedBackup;
+  operands?: DeploymentRestoreOperands;
   /**
    * One step through the restore Action; the sheet is its designed confirmation. The request id names the
    * Action operation whose pushed phases the sheet shows while the restore runs.
@@ -47,10 +48,28 @@ export type DeploymentRestoreSheetInput = Readonly<{
   ) => Promise<DeploymentBackupRestoreResultV1>;
   /** A held approval continues on the page's one approval handle. */
   onApproval: (artifactId: string) => void;
+  /**
+   * The restore points to choose from, read when the sheet opens. Without it the sheet restores `backup`.
+   * A point the restore Action can't admit yet is listed but not selectable.
+   */
+  loadChoices?: (signal: AbortSignal) => Promise<readonly DeploymentRestoreChoice[]>;
 }>;
+
+/** One backup the person can pick; `restore` is null when the restore Action can't restore it yet. */
+export type DeploymentRestoreChoice = Readonly<{
+  snapshotId: string;
+  takenAtMs: number;
+  kind: 'beforeMigration' | 'scheduled';
+  restore: Readonly<{ backup: DeploymentRetainedBackup; operands: DeploymentRestoreOperands }> | null;
+}>;
+type Choices =
+  | Readonly<{ status: 'loading' }>
+  | Readonly<{ status: 'ready'; choices: readonly DeploymentRestoreChoice[] }>
+  | Readonly<{ status: 'failed' }>;
 
 type Settled = Exclude<DeploymentBackupRestoreResultV1, { kind: 'prepared' }>;
 type Step =
+  | Readonly<{ kind: 'choose' }>
   | Readonly<{ kind: 'check' }>
   | Readonly<{ kind: 'prepared'; preparation: DeploymentRestorePreparation }>
   | Readonly<{ kind: 'settled'; result: Settled }>;
@@ -129,13 +148,29 @@ function backupLabel(
 function DeploymentRestoreSheet(
   props: DeploymentRestoreSheetInput & CustomModalInjectedProps,
 ) {
-  const [step, setStep] = React.useState<Step>({ kind: 'check' });
+  const [step, setStep] = React.useState<Step>({ kind: props.loadChoices ? 'choose' : 'check' });
+  const [target, setTarget] = React.useState<Readonly<{ backup: DeploymentRetainedBackup; operands: DeploymentRestoreOperands }> | null>(
+    props.backup && props.operands ? { backup: props.backup, operands: props.operands } : null);
+  const [choices, setChoices] = React.useState<Choices>({ status: 'loading' });
+  const [choicesGeneration, setChoicesGeneration] = React.useState(0);
+  const { loadChoices } = props;
+  // Opening the sheet is the demand: one read of the restore points, again only on Retry.
+  React.useEffect(() => {
+    if (!loadChoices) return;
+    const controller = new AbortController();
+    setChoices({ status: 'loading' });
+    loadChoices(controller.signal).then(
+      (loaded) => { if (!controller.signal.aborted) setChoices({ status: 'ready', choices: loaded }); },
+      () => { if (!controller.signal.aborted) setChoices({ status: 'failed' }); },
+    );
+    return () => controller.abort();
+  }, [loadChoices, choicesGeneration]);
   const [busy, setBusy] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
   const [steps, setSteps] = React.useState<readonly RestoreStep[]>([]);
   const stopObserving = React.useRef<(() => void) | null>(null);
   React.useEffect(() => () => stopObserving.current?.(), []);
-  const { onClose, onApproval, restore, operands, backup } = props;
+  const { onClose, onApproval, restore } = props;
 
   const run = async (input: DeploymentUiRestoreInput) => {
     if (busy) return;
@@ -175,11 +210,11 @@ function DeploymentRestoreSheet(
       setBusy(false);
     }
   };
-  const check = () => run({ ...operands, mode: 'prepare' });
+  const check = () => target ? run({ ...target.operands, mode: 'prepare' }) : Promise.resolve();
   const replace = () =>
-    step.kind === 'prepared'
+    step.kind === 'prepared' && target
       ? run({
-          ...operands,
+          ...target.operands,
           mode: 'confirm',
           prepareOperationId: step.preparation.prepareOperationId,
         })
@@ -197,7 +232,7 @@ function DeploymentRestoreSheet(
       </ModalCardFooterActions>
     ) : (
       <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.restore.cancel', disabled: busy }}>
-        {step.kind === 'prepared' ? (
+        {step.kind === 'choose' ? null : step.kind === 'prepared' ? (
           <RoundButton
             testID="project-deployments.restore.confirm"
             size="normal"
@@ -230,10 +265,12 @@ function DeploymentRestoreSheet(
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
   const preparation = step.kind === 'prepared' ? step.preparation : null;
-  const takenAtMs = preparation?.takenAtMs ?? backup.takenAtMs;
+  // Every step after Choose holds a chosen backup; an unchosen sheet only ever shows Choose.
+  const backup = target?.backup ?? null;
+  const takenAtMs = preparation?.takenAtMs ?? backup?.takenAtMs ?? null;
   const database = preparation ?? backup;
   const facts: Array<Readonly<{ key: string; label: string; value: string }>> =
-    [
+    !backup || !database ? [] : [
       {
         key: 'backup',
         label: t('projects.deployments.restoreBackup'),
@@ -282,6 +319,44 @@ function DeploymentRestoreSheet(
       ))}
     </ItemGroup>
   ) : null;
+
+  if (step.kind === 'choose') {
+    return (
+      <ListPresentationProvider value="page" pageInsets="contained">
+        <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
+          <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.restoreChooseLead', { name: props.name })}</Text>
+          <ItemGroup testID="project-deployments.restore.choices" title={t('projects.deployments.restoreChooseTitle')}>
+            {choices.status === 'loading' ? (
+              <SurfaceStateCard testID="project-deployments.restore.choices.loading" size="line" kind="loading"
+                title={t('projects.deployments.loading')} />
+            ) : choices.status === 'failed' ? (
+              <SurfaceStateCard testID="project-deployments.restore.choices.failed" size="line" kind="error"
+                title={t('projects.deployments.restoreChooseFailed')}
+                action={{ label: t('common.retry'), onPress: () => setChoicesGeneration((value) => value + 1) }} />
+            ) : choices.choices.length === 0 ? (
+              <SurfaceStateCard testID="project-deployments.restore.choices.empty" size="line" kind="empty"
+                title={t('projects.deployments.databaseRestoreNone')} />
+            ) : choices.choices.map((choice) => {
+              const kind = choice.kind === 'beforeMigration'
+                ? t('projects.deployments.restorePointBeforeMigration') : t('projects.deployments.restorePointScheduled');
+              const chosen = choice.restore;
+              return (
+                <Item
+                  key={choice.snapshotId}
+                  testID={`project-deployments.restore.choice.${choice.snapshotId}`}
+                  title={formatAsOfTime(choice.takenAtMs)}
+                  subtitle={chosen ? kind : t('projects.deployments.restorePointNotYet', { kind })}
+                  disabled={!chosen}
+                  {...(chosen ? { onPress: () => { setTarget(chosen); setStep({ kind: 'check' }); } } : { mode: 'info' as const })}
+                />
+              );
+            })}
+          </ItemGroup>
+          {setChrome ? null : footer}
+        </View>
+      </ListPresentationProvider>
+    );
+  }
 
   if (step.kind === 'settled') {
     const { result } = step;

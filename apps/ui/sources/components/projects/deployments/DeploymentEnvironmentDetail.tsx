@@ -52,7 +52,6 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
-import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -86,6 +85,7 @@ import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentVariablesPanel } from './DeploymentVariablesPanel';
 import { DeploymentDataCard } from './DeploymentDataCard';
+import { showDeploymentAddSheet } from './DeploymentDatabasePage';
 import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { showDeploymentLinkMachineSheet } from './DeploymentLinkMachineSheet';
@@ -879,8 +879,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={props.onOpenDatabase}
                 onVariables={() => openTab('variables')}
                 onBackups={() => openTab('settings', 'backups')}
-                onAdd={() => router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', query: 'database',
-                  machine: { serverId: props.serverId, machineId: detail.environment.controllerMachineId } }) as never)} />
+                // P10: the Add sheet opens over the Environment, in place; it never leaves for Store.
+                onAdd={() => { if (lifetime) showDeploymentAddSheet({ detail, lifetime, review: props.review, machineName }); }} />
               {triggerSubject ? (
                 <SubjectTriggersSection subject={triggerSubject}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}

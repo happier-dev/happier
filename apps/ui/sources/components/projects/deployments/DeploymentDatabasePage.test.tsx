@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import {
   createDeploymentEnvironmentDetailV1,
+  createDeploymentEnvironmentHeaderV1,
   createDeploymentReceiptDetailV1,
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentBackupActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
-import { DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
   act,
   renderScreen,
@@ -69,14 +70,17 @@ const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
 const { default: nacl } = await import('tweetnacl');
 
 afterEach(async () => {
+  const { Modal } = await import('@/modal');
+  Modal.hideAll();
   actionOperationStore.reset();
-  standardCleanup();
+  await standardCleanup();
   await homes.reset();
 });
 
 const shown = { mounted: true, visible: true, focused: true };
 const noReview = { pendingId: null, request: () => {}, open: () => {} };
 const page = 'project-deployments.database';
+let homeCount = 0;
 const snapshotId = 'c'.repeat(64);
 
 function manifest(environmentId: string, id: string, time: string) {
@@ -112,10 +116,16 @@ async function renderDatabase(
     database?: string;
     retainedBackup?: boolean;
     restore?: React.ComponentProps<typeof DeploymentDatabasePage>['restore'];
+    setBindings?: React.ComponentProps<typeof DeploymentDatabasePage>['setBindings'];
+    /** The Environment shares the database on a private network (its saved export). */
+    shared?: boolean;
   }> = {},
 ) {
   const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
-  const serverIdentityId = 'srv_database';
+  await homes.reset();
+  // A fresh Home per case.
+  const serverIdentityId = `srv_database_${++homeCount}`;
+  const machineId = `machine-${homeCount}`;
   const serverId = await homes.addHome({
     name: 'Database',
     serverUrl: 'https://database-page.test',
@@ -126,14 +136,14 @@ async function renderDatabase(
   const account = await captureLazyActionAccountContext(serverId);
   const machine = {
     ...createPlainMachineRowFixture({
-      id: 'machine-a',
+      id: machineId,
       accountId: 'account-owner',
     }),
     installationId: 'installation-a',
     installationPublicKey: encodeBase64(installation.publicKey),
   };
   homes.answer(serverId, '/v1/machines', { body: [machine] });
-  homes.answer(serverId, 'GET /v1/machines/machine-a', { body: { machine } });
+  homes.answer(serverId, `GET /v1/machines/${machineId}`, { body: { machine } });
   const base = createDeploymentEnvironmentDetailV1();
   const environmentId = base.environment.id;
   const backup = {
@@ -156,10 +166,14 @@ async function renderDatabase(
     ],
     retention: { kind: 'keepEverything' as const },
   };
-  const detail = createDeploymentEnvironmentDetailV1({
+  const authored = createDeploymentEnvironmentDetailV1({
     content: {
       ...base.content,
       backup,
+      ...(input.shared ? { ownServer: { rollout: 'recreate' as const, autoRestorePreviousRelease: true, serviceExports: [
+        { key: 'database', service: 'postgres', containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork' as const,
+          privateNetwork: 'shop-net' },
+      ] } } : {}),
       template: {
         templateRef: {
           sourceId: 'apps',
@@ -182,6 +196,11 @@ async function renderDatabase(
       },
     },
   });
+  // Each case uses its own Home and Machine.
+  const detail = { ...authored, targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
+    ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines) ? { machines: [machineId] } : {}),
+    ...('members' in row.targetLink && Array.isArray(row.targetLink.members)
+      ? { members: row.targetLink.members.map((member) => ({ ...member, machineId })) } : {}) } })) } as typeof authored;
   const plain = createDeploymentReceiptDetailV1();
   const receipt = input.retainedBackup
     ? createDeploymentReceiptDetailV1({
@@ -203,7 +222,7 @@ async function renderDatabase(
               services: ['app'],
               profiles: [],
               members: [
-                { machineId: 'machine-a', installationId: 'installation-a' },
+                { machineId, installationId: 'installation-a' },
               ],
               bindings: [],
               images: [],
@@ -252,6 +271,7 @@ async function renderDatabase(
   for (const actionId of [
     'deployments.backups.history',
     'deployments.backups.run',
+    'deployments.backups.inventory',
   ] as const) {
     homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, {
       select: (body) => {
@@ -299,7 +319,16 @@ async function renderDatabase(
         return respond(
           actionId,
           envelope,
-          actionId === 'deployments.backups.run'
+          actionId === 'deployments.backups.inventory'
+            ? { kind: 'inventory', environmentId, configRevision: 1, repositoryId: 'a'.repeat(64), snapshots: [
+              { snapshot: manifest(environmentId, snapshotId, '2026-11-01T12:00:00Z').snapshot,
+                source: { sourceId: 'database', kind: 'dump' },
+                verification: { kind: 'verified', backupOperationId: 'pre-migration', configRevision: 1 } },
+              { snapshot: manifest(environmentId, 'f'.repeat(64), '2026-11-06T03:00:00Z').snapshot,
+                source: { sourceId: 'database', kind: 'dump' },
+                verification: { kind: 'verified', backupOperationId: 'nightly', configRevision: 1 } },
+            ] }
+            : actionId === 'deployments.backups.run'
             ? {
                 kind: 'verified',
                 operationId: 'manual-backup',
@@ -331,7 +360,10 @@ async function renderDatabase(
     transport: {
       listEnvironments: async () => ({
         ok: true,
-        value: { items: [], nextCursor: null },
+        value: { items: [
+          { environment: detail.environment, title: 'Shop database' },
+          { environment: createDeploymentEnvironmentHeaderV1({ id: 'environment-web', revision: 4 }), title: 'Shop web' },
+        ], nextCursor: null },
       }),
       readEnvironment: async () => ({ ok: true, value: detail }),
       listHistory: async () => ({
@@ -354,6 +386,7 @@ async function renderDatabase(
         lifetime={account.accountLifetime}
         review={noReview}
         restore={input.restore ?? null}
+        setBindings={input.setBindings ?? null}
         onBack={back}
         onNavigate={navigate}
       />
@@ -378,6 +411,7 @@ async function renderDatabase(
     effects,
     environmentId,
     serverIdentityId,
+    machineId,
     navigate,
     back,
     dispose: async () => {
@@ -442,7 +476,7 @@ describe('Environment → Data → Database page (P9)', () => {
       // The agent path is the same Action with the same published input.
       expect(DeploymentBackupActionInputSchemasV1['deployments.backups.history'].parse(history)).toEqual({
         serverId: view.serverIdentityId, environmentId: view.environmentId, expectedRevision: 1, configRevision: 1,
-        machineId: 'machine-a', installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a',
+        machineId: view.machineId, installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a',
       });
       await view.screen.pressByTestIdAsync(`${page}.controls.run`);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
@@ -450,6 +484,42 @@ describe('Environment → Data → Database page (P9)', () => {
     } finally {
       await view.dispose();
     }
+  });
+
+  it('connects an app in another Environment through the shared chooser and one bindings.set, the Action an agent uses', async () => {
+    const sets: unknown[] = [];
+    const view = await renderDatabase({ shared: true, setBindings: async (input) => {
+      sets.push(DeploymentActionInputSchemasV1['deployments.bindings.set'].parse({ ...input, serverId: 'home' }));
+      return { ok: true };
+    } });
+    try {
+      // Opening reads the backup history; let it settle so no native read outlives this case.
+      expect(await view.settle(`${page}.history.empty`)).not.toBeNull();
+      expect(await view.settle(`${page}.connect`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`${page}.connect`);
+      // The source itself is never a destination.
+      expect(await view.settle('project-deployments.connect.destination:environment-web')).not.toBeNull();
+      expect(view.screen.findByTestId(`project-deployments.connect.destination:${view.environmentId}`)).toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.connect.destination:environment-web');
+      await view.screen.pressByTestIdAsync('project-deployments.connect.confirm');
+      expect(await view.settle('project-deployments.connect.connected')).not.toBeNull();
+      expect(sets).toEqual([{ serverId: 'home', environmentId: 'environment-web', expectedRevision: 4, remove: [], set: [{
+        purpose: 'variable', name: 'DATABASE_URL', phase: 'runtime',
+        source: { kind: 'reference', environmentId: view.environmentId, export: 'database', via: 'auto' },
+      }] }]);
+    } finally { await view.dispose(); }
+  });
+
+  it('says what Connect needs when the database is not shared with other Environments', async () => {
+    const view = await renderDatabase({ setBindings: async () => ({ ok: true }) });
+    try {
+      // Opening reads the backup history; let it settle so no native read outlives this case.
+      expect(await view.settle(`${page}.history.empty`)).not.toBeNull();
+      await view.settle(`${page}.connect`);
+      await view.screen.pressByTestIdAsync(`${page}.connect`);
+      expect(await view.settle('project-deployments.connect.needsShare')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.connect.confirm')).toBeNull();
+    } finally { await view.dispose(); }
   });
 
   it('says so when the database is no longer in the Environment and leads back to Overview', async () => {
@@ -576,8 +646,13 @@ describe('Environment → Data → Database page (P9)', () => {
       restore: restore as never,
     });
     try {
+      // Opening reads the backup history; let it settle so no native read outlives this case.
+      expect(await view.settle(`${page}.history.empty`)).not.toBeNull();
       expect(await view.settle(`${page}.restore`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.restore`);
+      // The sheet lists the inventory: the kept pre-migration capture and a scheduled run's snapshot.
+      expect(await view.settle(`project-deployments.restore.choice.${snapshotId}`)).not.toBeNull();
+      await view.screen.pressByTestIdAsync(`project-deployments.restore.choice.${'f'.repeat(64)}`);
       expect(
         await view.settle('project-deployments.restore.check'),
       ).not.toBeNull();
@@ -602,6 +677,12 @@ describe('Environment → Data → Database page (P9)', () => {
         'prepare',
         'confirm',
       ]);
+      // A scheduled snapshot names its exact run on both steps; the same restore Action an agent calls.
+      for (const [input] of restore.mock.calls) {
+        expect(DeploymentActionInputSchemasV1['deployments.backups.restore'].parse({ ...input, serverId: 'home' })).toMatchObject({
+          deploymentId: 'deployment-a', restoreBackupId: 'f'.repeat(64), backupOperationId: 'nightly',
+        });
+      }
     } finally {
       releaseConfirm();
       await view.dispose();

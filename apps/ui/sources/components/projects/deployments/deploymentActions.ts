@@ -5,6 +5,7 @@ import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deplo
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildDeploymentBackupActionInputV1, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -90,6 +91,15 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 'deployments.backups.inventory', buildDeploymentBackupActionInputV1('deployments.backups.inventory', {
                     ...input, serverId: lifetime.scope.serverId,
                 })));
+        },
+        /**
+         * Add a catalog template to this existing Environment (P10): `preview` returns the review and capacity facts,
+         * `apply` writes the definition and starts the deploy. Partial progress arrives as the typed refusal.
+         */
+        async instantiateTemplate(input: Omit<DeploymentTemplateInstantiateInputV1, 'serverId'>, operation?: UiActionOperation) {
+            assertCurrent();
+            return DeploymentTemplateInstantiateResultV1Schema.parse(await execute('deployments.templates.instantiate',
+                { ...input, serverId: lifetime.scope.serverId }, operation));
         },
         /** Retained backup, check and cleanup receipts for the Database page; a read, never an effect. */
         async backupHistory(input: Omit<DeploymentBackupInventoryInputV1, 'serverId'>) {
