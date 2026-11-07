@@ -30,6 +30,16 @@ describe('TmuxUtilities tmux subprocess environment', () => {
         });
     });
 
+    it('hides captured tmux control commands at process creation', async () => {
+        vi.resetModules();
+        const { TmuxUtilities } = await import('@/integrations/tmux');
+
+        await new TmuxUtilities('happy').executeTmuxCommand(['list-sessions']);
+
+        expect(getLastSpawnCall()?.options?.windowsHide).toBe(true);
+        expect(getLastSpawnCall()?.options?.shell).toBe(false);
+    });
+
     it('passes TMUX_TMPDIR to tmux subprocess env when provided', async () => {
         vi.resetModules();
         const { TmuxUtilities } = await import('@/integrations/tmux');
