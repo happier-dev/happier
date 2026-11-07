@@ -1456,21 +1456,28 @@ export function resolvePluginUiClientWorkItemsRegistration(input: Readonly<{
     const findLinked = captured.findLinked;
     const watch = captured.watch;
     const runtime = Object.freeze<PluginWorkItemsRuntime>({
-        resolve: (request, context) => invoke(request.serverId, context.signal, signal => captured.resolve(request, { signal })),
-        ...(findLinked ? { findLinked: (request: Parameters<typeof findLinked>[0], context: Parameters<typeof findLinked>[1]) => invoke(request.serverId, context.signal, signal => findLinked(request, { signal })) } : {}),
-        ...(watch ? { watch: (request: Parameters<typeof watch>[0], onChange: () => void) => {
+        resolve: (request, context) => invoke(request.serverId, context.signal, signal => captured.resolve(request, { ...context, signal })),
+        ...(findLinked ? { findLinked: (request: Parameters<typeof findLinked>[0], context: Parameters<typeof findLinked>[1]) => invoke(request.serverId, context.signal, signal => findLinked(request, { ...context, signal })) } : {}),
+        ...(watch ? { watch: (request: Parameters<typeof watch>[0], onChange: () => void, context: Parameters<typeof watch>[2]) => {
             assertCurrent();
             assertHome(request.serverId);
+            const subscription = new AbortController();
+            const lifetime = mergeAbortSignals([context.signal, registration.lifecycle.signal, subscription.signal]);
             let stopped = false;
-            const cleanup = watch(request, () => { if (!stopped && registration.lifecycle.isCurrent() && !registration.lifecycle.signal.aborted) onChange(); });
+            let cleanup: () => void;
+            try {
+                throwIfAborted(lifetime.signal);
+                cleanup = watch(request, () => { if (!stopped && !lifetime.signal.aborted && registration.lifecycle.isCurrent()) onChange(); }, { ...context, signal: lifetime.signal });
+            } catch (error) { lifetime.dispose(); throw error; }
             const stop = () => {
                 if (stopped) return;
                 stopped = true;
-                registration.lifecycle.signal.removeEventListener('abort', stop);
-                cleanup();
+                lifetime.signal.removeEventListener('abort', stop);
+                subscription.abort();
+                try { cleanup(); } finally { lifetime.dispose(); }
             };
-            registration.lifecycle.signal.addEventListener('abort', stop, { once: true });
-            if (registration.lifecycle.signal.aborted || !registration.lifecycle.isCurrent()) stop();
+            lifetime.signal.addEventListener('abort', stop, { once: true });
+            if (lifetime.signal.aborted || !registration.lifecycle.isCurrent()) stop();
             return stop;
         } } : {}),
     });
