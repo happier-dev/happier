@@ -1,6 +1,6 @@
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { FeaturesResponseSchema, type BrowserEventV1 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 import { createBrowserAutomationDaemonService } from '../automation/service';
 import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
@@ -12,6 +12,19 @@ import { createBrowserDaemonControlBroker } from './broker';
 import { createBrowserDaemonControlRoutes } from './routes';
 
 describe('browser daemon control routes', () => {
+  it('validates the external adapter result once across broker and route', async () => {
+    const broker = createBrowserDaemonControlBroker();
+    broker.registerAdapter({ adapterKind: 'chromiumSidecar', ownsView: () => true,
+      supportsOpenView: () => true,
+      dispatchCommand: command => ({ v: 1, commandId: command.commandId,
+        status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }) });
+    const parse = vi.spyOn(BrowserCommandDispatchResultV1Schema, 'safeParse');
+    try {
+      expect(await createBrowserDaemonControlRoutes({ broker }).dispatchCommand({ kind: 'focusView',
+        commandId: 'focus', browserSessionId: 'session', viewId: 'view' })).toMatchObject({ status: 'dispatched' });
+      expect(parse).toHaveBeenCalledTimes(1);
+    } finally { parse.mockRestore(); }
+  });
   it('contains held page metadata through CDP events, inventories and the actual Agent focus Action while preserving private human state', async () => {
     const view = { browserSessionId: 'browser_session_1', viewId: 'view_1' };
     const owners = createBrowserAutomationOwnerRegistry();

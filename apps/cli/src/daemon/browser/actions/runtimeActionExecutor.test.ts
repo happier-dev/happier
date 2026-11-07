@@ -1,6 +1,7 @@
 import { snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import type {
   BrowserCommandV1,
+  BrowserEventV1,
   RuntimeActionExecuteArgs,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,12 @@ import { createBrowserContextRoutes } from '../context/routes';
 import { createCdpBrowserContextSource } from '../context/cdp/source';
 import { createBrowserSidecarCdpControlAdapter } from '../sidecar/controlAdapter';
 import { createBrowserDaemonRuntimeActionExecutor } from './runtimeActionExecutor';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '../../../../../../packages/tests/src/testkit/actionExecutorBoundary';
+import { createBrowserDaemonControlBroker } from '../control/broker';
+import { createBrowserDaemonControlRoutes } from '../control/routes';
+import { createDaemonControlApp } from '../../controlServer';
+import { ActionIdSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
 
 type BrowserDaemonRuntimeActionExecutorModule = Readonly<{
   createBrowserDaemonRuntimeActionExecutor?: (input: Readonly<{
@@ -148,7 +155,8 @@ function automationRequest(actionKind: string, payload: Record<string, unknown> 
 async function createRealAutomationPath(name: string, featureGate: BrowserDaemonFeatureGate = allowAllBrowserGate()) {
   const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const element = { id: 'submit', nodeType: 1, tagName: 'BUTTON', textContent: name, children: [], parentElement: null,
-    getAttribute: () => null, getBoundingClientRect: () => ({ left: 20, top: 14, width: 40, height: 20 }), scrollIntoView: () => {}, focus: () => {} };
+    getAttribute: () => null, getBoundingClientRect: () => ({ left: 20, top: 14, width: 40, height: 20 }),
+    getClientRects: () => [{ left: 20, top: 14, width: 40, height: 20 }], scrollIntoView: () => {}, focus: () => {} };
   const document = { body: { innerText: 'Welcome back' }, querySelectorAll: (selector: string) => selector.startsWith('#') && selector !== '#submit' ? [] : [element], querySelector: (selector: string) => selector === '#submit' ? element : null };
   // Chromium's page realm and screenshot persistence are the only mocked system boundaries.
   const boundary = { openPage: async () => ({ targetId: 'target_1', sessionId: 'session_1' }), dispatchBrowserCommand: async () => ({}),
@@ -178,6 +186,95 @@ async function createRealAutomationPath(name: string, featureGate: BrowserDaemon
 }
 
 describe('daemon browser runtime action executor', () => {
+  it('reads a populated timeline through the public Action executor and MCP tool', async () => {
+    const path = await createRealAutomationPath('Submit');
+    const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'control-token', runtimeActionExecute: path.execute });
+    try {
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: async args => {
+        const response = await app.inject({ method: 'POST', url: '/browser/runtime-actions/execute',
+          headers: { 'x-happier-daemon-token': 'control-token' }, payload: { actionId: args.actionId,
+            input: args.input, sessionId: browserAutomationView.browserSessionId, approvalAdmitted: true } });
+        expect(response.statusCode).toBe(200);
+        return response.json().result;
+      } }));
+      const context = { surface: 'mcp', authority: 'account_automation', bypassApprovals: true } as const;
+      const request = { ...automationRequest('snapshot'), navigationGeneration: path.navigationGeneration };
+      expect(await executor.execute('browser.automation.snapshot', request, context)).toMatchObject({ ok: true });
+      expect(await executor.execute('browser.automation.click', {
+        ...request, automationRequestId: 'stale-click', actionKind: 'click', navigationGeneration: path.navigationGeneration + 1,
+      }, context)).toMatchObject({ ok: true, result: { status: 'failed', errorCode: 'stale_navigation' } });
+      expect(await executor.execute('browser.automation.timeline.get', {
+        ...request, automationRequestId: 'read-timeline', actionKind: 'getActionTimeline',
+      }, context)).toMatchObject({ ok: true, result: { entries: [
+        expect.objectContaining({ actionKind: 'snapshot' }), expect.objectContaining({ actionKind: 'click', reasonCode: 'stale_navigation' }),
+      ] } });
+      const { createSessionDaemonAuthorityFixture } = await import('@/mcp/runtime/sessionDaemonAuthority.testkit');
+      const daemon = await createSessionDaemonAuthorityFixture({ sessionId: browserAutomationView.browserSessionId,
+        execute: operation => executor.execute(ActionIdSchema.parse(operation.actionId), operation.input, context) });
+      try {
+        const { RpcHandlerManager } = await import('@/api/rpc/RpcHandlerManager');
+        const { createHappierMcpServer } = await import('@/mcp/createHappierMcpServer');
+        const mcp = createHappierMcpServer({ sessionId: browserAutomationView.browserSessionId,
+          rpcHandlerManager: new RpcHandlerManager({ scopePrefix: browserAutomationView.browserSessionId, encryptionMode: 'plain' }),
+          updateMetadata: () => undefined,
+          getServerBinding: () => ({ serverId: 'browser_home', serverUrl: 'https://browser-home.example.test' }),
+          getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({
+            features: { browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, automation: { enabled: true } } },
+          }) }),
+          getPermissionMode: () => 'yolo', getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0,
+          getActiveTurnAdmissionWitness: () => ({ turnId: 'browser-turn', inputId: 'browser-input', userMessageSeq: 1, userMessageSeqs: [1] }),
+          getActiveTurnPermissionWitness: () => ({ turnId: 'browser-turn', workDepth: 0, causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo',
+          } }),
+        }, { authorityScope: 'session', sessionCredentials: { token: 'session-fixture', encryption: null } });
+        try {
+          const result = await mcp.executeTool({ toolName: 'action_execute', args: { actionId: 'browser.automation.timeline.get',
+            input: { ...request, automationRequestId: 'mcp-timeline', actionKind: 'getActionTimeline' } } });
+          expect(result, JSON.stringify(result))
+            .toMatchObject({ ok: true, result: { entries: [
+              expect.objectContaining({ actionKind: 'snapshot' }), expect.objectContaining({ actionKind: 'click', reasonCode: 'stale_navigation' }),
+            ] } });
+        } finally { await mcp.mcp.close(); }
+      } finally { await daemon.close(); }
+    } finally {
+      path.service.dispose();
+      path.control.dispose();
+      await app.close();
+    }
+  });
+
+  it('sets an existing sidecar target through the public Action and retains its native page', async () => {
+    const path = await createRealAutomationPath('Submit');
+    try {
+      const broker = createBrowserDaemonControlBroker();
+      broker.registerAdapter(path.control);
+      const execute = createBrowserDaemonRuntimeActionExecutor({ featureGate: allowAllBrowserGate(),
+        control: createBrowserDaemonControlRoutes({ broker, automation: () => path.service }) });
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute: execute }));
+      const target = { kind: 'externalUrl', targetId: 'changed', url: 'https://example.test/changed' } as const;
+      const before = path.control.resolvePageHandle(browserAutomationView);
+      const events: BrowserEventV1[] = [];
+      path.control.subscribeBrowserEvents(event => events.push(event));
+      expect(await executor.execute('browser.target.set', { kind: 'setTarget', commandId: 'set-target',
+        ...browserAutomationView, target }, { surface: 'mcp', authority: 'account_automation', bypassApprovals: true }))
+        .toMatchObject({ ok: true, result: { status: 'dispatched' } });
+      expect(path.calls).toContainEqual(expect.objectContaining({ method: 'Page.navigate', params: { url: target.url } }));
+      expect(path.control.resolvePageHandle(browserAutomationView)).toEqual(before);
+      expect(path.control.listViews?.(browserAutomationView.browserSessionId)[0]?.events)
+        .toContainEqual(expect.objectContaining({ kind: 'viewOpened', target }));
+      expect(events).toContainEqual(expect.objectContaining({ kind: 'targetChanged', target }));
+      await path.service.getInputControl(browserAutomationView).beginConfidentialityHold();
+      expect(await executor.execute('browser.target.set', { kind: 'setTarget', commandId: 'held-target',
+        ...browserAutomationView, target }, { surface: 'mcp', authority: 'account_automation', bypassApprovals: true }))
+        .toMatchObject({ ok: false, errorCode: 'permission_denied' });
+      expect(path.calls.filter(call => call.method === 'Page.navigate')).toHaveLength(1);
+    } finally {
+      path.service.dispose();
+      path.control.dispose();
+    }
+  });
 
   it('fails closed before daemon dispatch when a browser Action id carries another command kind', async () => {
     const mod = await loadRuntimeActionExecutor();
@@ -294,7 +391,7 @@ describe('daemon browser runtime action executor', () => {
       input: { ...automationRequest('click', { selector: 'role=button[name="Save"]' }), navigationGeneration: path.navigationGeneration },
     }));
 
-    expect(result).toMatchObject({ status: 'succeeded' });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'succeeded' });
     const pressed = path.calls.find((call) => (
       call.method === 'Input.dispatchMouseEvent' && call.params?.type === 'mousePressed'
     ));

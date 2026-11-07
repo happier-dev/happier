@@ -777,8 +777,21 @@ export function createBrowserSidecarCdpControlAdapter(
                     return dispatchPage(command, 'Page.reload', undefined, scope);
                 case 'stop':
                     return dispatchPage(command, 'Page.stopLoading', undefined, scope);
-                case 'setTarget':
-                    return failed(command, 'unsupported_command', 'Browser sidecar CDP setTarget is not backed.');
+                case 'setTarget': {
+                    if (command.target.kind !== 'externalUrl') {
+                        return failed(command, 'unsupported_command', 'Browser sidecar supports only external URL targets.');
+                    }
+                    const view = readBoundView(command);
+                    if (!view) return failed(command, 'view_not_found', 'Browser sidecar does not own this view.');
+                    const result = await dispatchPage(command, 'Page.navigate', { url: command.target.url }, scope);
+                    if (result.status !== 'dispatched') return result;
+                    view.target = command.target;
+                    const event = BrowserEventV1Schema.parse({ kind: 'targetChanged', eventId: `cdp:${++eventSequence}`,
+                        occurredAt: Date.now(), browserSessionId: view.browserSessionId, viewId: view.viewId,
+                        navigationGeneration: view.state.navigationGeneration, target: view.target });
+                    publishEvent(event);
+                    return { ...result, events: [...result.events, event] };
+                }
                 case 'setViewport':
                     try {
                         await viewportOwner.setEmulation(command, command.emulation, scope);

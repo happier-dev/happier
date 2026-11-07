@@ -108,6 +108,25 @@ function createTransport(overrides: Partial<SidecarCdpControlTransport> = {}): S
 }
 
 describe('browser sidecar CDP control adapter', () => {
+    it('retains the current target when native target navigation is not acknowledged', async () => {
+        const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
+            transport: createTransport({ dispatchPageCommand: async input => {
+                if (input.method === 'Page.navigate') throw new Error('CDP connection lost');
+                return {};
+            } }) });
+        const open = externalOpenViewCommand();
+        await adapter.dispatchCommand(open);
+        const handle = adapter.resolvePageHandle(open);
+        const result = await adapter.dispatchCommand({ kind: 'setTarget', commandId: 'change-target',
+            browserSessionId: open.browserSessionId, viewId: open.viewId,
+            target: { kind: 'externalUrl', targetId: 'changed', url: 'https://browser.example.test/changed' } });
+        expect(result).toMatchObject({ status: 'failed', completion: 'unknown' });
+        expect(adapter.resolvePageHandle(open)).toEqual(handle);
+        expect(adapter.listViews?.(open.browserSessionId)[0]?.events)
+            .toContainEqual(expect.objectContaining({ kind: 'viewOpened', target: open.target }));
+        adapter.dispose();
+    });
+
     it('publishes current adapter and diagnostic facts for every discovered view', async () => {
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser_session_1', sidecarId: 'sidecar_1',
             transport: createTransport() });

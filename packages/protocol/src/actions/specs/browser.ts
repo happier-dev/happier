@@ -168,6 +168,14 @@ const BrowserAnnotationDraftCommentResultSchema = lazyZodSchema(() => z.strictOb
   v: z.literal(1), actionId: z.literal('browser.context.annotation.setDraftComment'), status: z.literal('draftUpdated'),
 }));
 
+const BrowserAnnotationStartResultSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), actionId: z.literal('browser.context.annotation.start'), status: z.literal('started'),
+}));
+
+const BrowserAnnotationCancelResultSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), actionId: z.literal('browser.context.annotation.cancel'), status: z.literal('cancelled'),
+}));
+
 function draftHintFields(field: ActionInputFieldHint): readonly ActionInputFieldHint[] {
   return [
     { path: 'browserSessionId', title: 'Browser session', widget: 'text', required: true },
@@ -482,8 +490,8 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.context.captureSelectedElement': typeof BrowserContextRouteResultV1Schema;
   'browser.context.captureNetworkSummary': typeof BrowserContextRouteResultV1Schema;
   'browser.context.captureConsoleSummary': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.start': typeof BrowserContextRouteResultV1Schema;
-  'browser.context.annotation.cancel': typeof BrowserContextRouteResultV1Schema;
+  'browser.context.annotation.start': typeof BrowserAnnotationStartResultSchema;
+  'browser.context.annotation.cancel': typeof BrowserAnnotationCancelResultSchema;
   'browser.context.annotation.attachDraft': typeof BrowserAnnotationDraftCommitResultSchema;
   'browser.context.annotation.setDraftComment': typeof BrowserAnnotationDraftCommentResultSchema;
   'browser.context.attachToComposer': typeof BrowserContextAttachmentV1Schema;
@@ -523,8 +531,8 @@ const browserRuntimeOutputGeneralSchemas: Readonly<typeof BROWSER_EXTENSION_ACTI
   'browser.context.captureSelectedElement': BrowserContextRouteResultV1Schema,
   'browser.context.captureNetworkSummary': BrowserContextRouteResultV1Schema,
   'browser.context.captureConsoleSummary': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.start': BrowserContextRouteResultV1Schema,
-  'browser.context.annotation.cancel': BrowserContextRouteResultV1Schema,
+  'browser.context.annotation.start': BrowserAnnotationStartResultSchema,
+  'browser.context.annotation.cancel': BrowserAnnotationCancelResultSchema,
   'browser.context.annotation.attachDraft': BrowserAnnotationDraftCommitResultSchema,
   'browser.context.annotation.setDraftComment': BrowserAnnotationDraftCommentResultSchema,
   'browser.context.attachToComposer': BrowserContextAttachmentV1Schema,
