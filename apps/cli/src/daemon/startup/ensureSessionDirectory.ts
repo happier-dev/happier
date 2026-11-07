@@ -1,4 +1,5 @@
 import fs from 'fs/promises';
+import { constants } from 'node:fs';
 
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
@@ -15,9 +16,19 @@ export async function ensureSessionDirectory(opts: {
   approvedNewDirectoryCreation: boolean;
 }): Promise<EnsureSessionDirectoryResult> {
   try {
-    await fs.access(opts.directory);
+    await fs.access(opts.directory, constants.X_OK);
+    if (!(await fs.stat(opts.directory)).isDirectory()) {
+      return { ok: false, response: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+        errorMessage: 'The working directory is not a folder. Choose a different folder.' } };
+    }
     return { ok: true, directoryCreated: false };
-  } catch {
+  } catch (accessError: unknown) {
+    if (!(accessError && typeof accessError === 'object' && 'code' in accessError && accessError.code === 'ENOENT')) {
+      return { ok: false, response: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DIRECTORY_CREATE_FAILED,
+        errorMessage: accessError && typeof accessError === 'object' && 'code' in accessError && accessError.code === 'ENOTDIR'
+          ? 'A file already exists at this path or in the parent path. Cannot create a directory here. Please choose a different location.'
+          : 'The Agent cannot enter this working directory. Choose an accessible folder.' } };
+    }
     if (!opts.approvedNewDirectoryCreation) {
       return {
         ok: false,

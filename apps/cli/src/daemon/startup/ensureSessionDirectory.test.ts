@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureSessionDirectory } from './ensureSessionDirectory';
 
@@ -23,6 +23,21 @@ afterEach(async () => {
 });
 
 describe('ensureSessionDirectory', () => {
+  it('refuses a directory the runtime cannot traverse instead of offering mkdir approval', async () => {
+    const access = vi.spyOn(fs, 'access').mockRejectedValueOnce(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    try {
+      const result = await ensureSessionDirectory({ directory: '/daemon/private', approvedNewDirectoryCreation: false });
+      expect(result).toMatchObject({ ok: false, response: { type: 'error', errorCode: 'DIRECTORY_CREATE_FAILED' } });
+    } finally { access.mockRestore(); }
+  });
+
+  it('refuses a file as the working directory', async () => {
+    const root = await createTempRoot();
+    const path = join(root, 'file');
+    await fs.writeFile(path, 'data');
+    expect(await ensureSessionDirectory({ directory: path, approvedNewDirectoryCreation: false }))
+      .toMatchObject({ ok: false, response: { type: 'error' } });
+  });
   it('returns existing directory without creating it again', async () => {
     const root = await createTempRoot();
     const directory = join(root, 'existing');
