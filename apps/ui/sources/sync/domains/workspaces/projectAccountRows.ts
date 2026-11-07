@@ -1,14 +1,22 @@
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { StoreApi } from 'zustand/vanilla';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceRefResolutionContextV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
+import type { WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ProjectAccountAuthoringSessionV1, ProjectAccountOrganizationV1, ProjectAccountRowKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { subscribeStoragePaths } from '@/sync/domains/state/storageSubscriptions';
 import { resolveWorkspaceRefById } from './workspaceRefs';
+import { workerCopyStatusKey } from './workerCopyStatus';
 
 export type ProjectAccountRowsStatus = 'idle' | 'loading' | 'ready' | 'error' | 'locked' | 'refused';
+/** Ephemeral proof from exact row reads; it does not establish census coverage or freshness. */
+export type ProjectAccountRowsMaterialization = Readonly<{
+    absentPhysicalKeys: readonly string[];
+    refreshSucceeded: boolean;
+}>;
 export type ProjectOrganizationRow = Readonly<{
     key: Extract<ProjectAccountRowKeyV1, { kind: 'project-organization' }>;
     revision: number;
@@ -18,12 +26,14 @@ export type ProjectAccountRowsSnapshot = Readonly<{
     scope: ServerAccountScope;
     status: ProjectAccountRowsStatus;
     coverage: 'unknown' | 'partial' | 'complete';
-    /** When the rows were last read successfully; a failed refresh labels the retained rows with it. */
+    /** When the complete census was last read successfully; exact row reads retain it. */
     lastReadyAtMs?: number;
     workspaceRefs: readonly WorkspaceRefV1[];
     /** Producer-owned index over these exact refs; status/Account admission remains with readers. */
     sessionProjectKeyResolver?: WorkspaceRefResolutionContextV1['sessionProjectKeyResolver'];
     relationships: readonly WorkspaceSyncRelationshipV1[];
+    /** Ephemeral, producer-set invalidations for an exact source checkout and worker. */
+    workerCopyStatusRevisions?: Readonly<Record<string, number>>;
     organizations: readonly ProjectOrganizationRow[];
     /** Server-owned display relationships; absence retains the older hydrated-Session fallback. */
     authoringSessionsByPhysicalKey?: Readonly<Record<string, ProjectAccountAuthoringSessionV1>>;
@@ -49,7 +59,7 @@ const projectRowsReader: ProjectRowsReader = {
     getInitialState: read,
     subscribe: listener => subscribeRegisteredStorageState((state, previous) => listener(
         readCurrentProjectAccountRows(state), previous ? readCurrentProjectAccountRows(previous) : null,
-    )) ?? (() => {}),
+    ), { projectAccountRows: true, profileScope: true }) ?? (() => {}),
 };
 const unavailableProjectRowsReader: ProjectRowsReader = {
     getState: () => null,
@@ -62,6 +72,29 @@ export function useProjectAccountRows<T>(select: (rows: ProjectAccountRowsSnapsh
 export function useProjectAccountRows<T>(select?: (rows: ProjectAccountRowsSnapshot | null) => T, enabled = true) {
     return useStoreWithEqualityFn(enabled ? projectRowsReader : unavailableProjectRowsReader,
         rows => select ? select(rows) : rows);
+}
+
+/** An unrelated Project push never invokes the demanded worker's snapshot reader. */
+export function useProjectWorkerCopyStatusRevisions(scope: ServerAccountScope | null, sourceWorkspaceRefId: string | null, machineIdsKey: string): ReadonlyMap<string, number> {
+    const machineIds = JSON.parse(machineIdsKey) as string[];
+    const select = (rows: ProjectAccountRowsSnapshot | null, machineId: string) => scope && sourceWorkspaceRefId && rows
+        && areServerAccountScopesEqual(rows.scope, scope)
+        ? rows.workerCopyStatusRevisions?.[workerCopyStatusKey(sourceWorkspaceRefId, machineId)] ?? 0 : 0;
+    const subscribe = useCallback((listener: () => void) => {
+        if (!scope || !sourceWorkspaceRefId || machineIdsKey === '[]') return () => {};
+        const ids = JSON.parse(machineIdsKey) as string[];
+        return subscribeStoragePaths([
+            ...ids.map(id => ['state', 'projectAccountRows', 'workerCopyStatusRevisions', workerCopyStatusKey(sourceWorkspaceRefId, id)]),
+            ['state', 'projectAccountRows', 'scope'], ['state', 'profileScope'],
+        ], event => { if (event.kind === 'state') listener(); });
+    }, [scope, sourceWorkspaceRefId, machineIdsKey]);
+    const readRevision = () => {
+        const rows = read();
+        return machineIds.reduce((sum, id) => sum + select(rows, id), 0);
+    };
+    useSyncExternalStore(subscribe, readRevision, readRevision);
+    const rows = read();
+    return new Map(machineIds.map(id => [id, select(rows, id)]));
 }
 
 /** The complete opened checkout census, shared by subscriptions and pure projections. */

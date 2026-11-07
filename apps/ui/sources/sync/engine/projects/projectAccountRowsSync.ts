@@ -1,6 +1,7 @@
 import {
     ProjectAccountRowPayloadV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountWorkspaceRefV1Schema,
-    buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowListResponseV1,
+    buildProjectAccountRowPhysicalKeyV1, parseProjectAccountRowPhysicalKeyV1,
+    type ProjectAccountRowListResponseV1, type ProjectAccountRowReadResponseV1,
     type ProjectAccountRowMutationRequestV1, type ProjectAccountRowMutationResponseV1,
     type ProjectAccountRowPayloadV1, type ProjectAccountRowV1, type ProjectAccountRowKeyV1,
     type ProjectAccountOrganizationV1, type ProjectAccountAuthoringSessionV1,
@@ -11,11 +12,12 @@ import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/w
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
     type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
-import type { ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
+import type { ProjectAccountRowsSnapshot, ProjectAccountRowsMaterialization } from '@/sync/store/domains/projectAccountRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 export type ProjectAccountRowsTransport = Readonly<{
+    read(key: ProjectAccountRowKeyV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowReadResponseV1>;
     list(options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowListResponseV1>;
     mutate(input: ProjectAccountRowMutationRequestV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowMutationResponseV1>;
 }>;
@@ -25,7 +27,7 @@ function failure(code: string): Error & { code: string } { return Object.assign(
 /** One Account/Home-owned materialization of the reserved physical rows. */
 export function createProjectAccountRowsSync(options: Readonly<{
     scope: ServerAccountScope; transport: ProjectAccountRowsTransport; cipher: ProjectAccountRowCipherV1;
-    isCurrent(): boolean; apply(snapshot: ProjectAccountRowsSnapshot, source: 'census' | 'projection'): void;
+    isCurrent(): boolean; apply(snapshot: ProjectAccountRowsSnapshot, source: 'census' | 'projection', materialization?: ProjectAccountRowsMaterialization): void;
     onRefreshFailure?(error: unknown): void;
     readRecency?(ref: WorkspaceRefV1): number | undefined;
     writeRecency?(ref: WorkspaceRefV1, timestamp: number): Promise<void>;
@@ -62,26 +64,29 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const snapshot = parseProjectAccountSnapshotV1({ workspaceRefs, relationships });
         return { ...snapshot, scope: options.scope, status: 'ready', coverage: 'complete', organizations, revisionsByPhysicalKey, authoringSessionsByPhysicalKey };
     }
-    function observe(rows: readonly ProjectAccountRowV1[], source: 'census' | 'projection' = 'projection'): ProjectAccountRowsSnapshot {
+    function observe(rows: readonly ProjectAccountRowV1[], source: 'census' | 'projection' = 'projection', materialization?: ProjectAccountRowsMaterialization): ProjectAccountRowsSnapshot {
         assertCurrent();
-        const incoming = rows.map(row => ({ row, payload: row.content === null ? null : options.cipher.open(row.key, row.content) }));
         const merged = new Map(opened.map(item => [buildProjectAccountRowPhysicalKeyV1(item.row.key), item]));
+        for (const key of materialization?.absentPhysicalKeys ?? []) merged.delete(key);
         const seen = new Set<string>();
-        for (const item of incoming) {
-            const key = buildProjectAccountRowPhysicalKeyV1(item.row.key);
+        for (const row of rows) {
+            const key = buildProjectAccountRowPhysicalKeyV1(row.key);
             if (seen.has(key)) throw failure('project_account_duplicate_row');
             seen.add(key);
             const prior = merged.get(key);
-            if (!prior || item.row.revision >= prior.row.revision) {
+            if (!prior || row.revision >= prior.row.revision) {
+                const payload = row.content === null ? null
+                    : prior && areAccountSettingsJsonValuesEqual(prior.row.content, row.content)
+                        ? prior.payload : options.cipher.open(row.key, row.content);
                 // Legacy-shaped structural acknowledgements omit this server-owned leaf.
                 // The relation changes only through its record operation, or checkout deletion.
-                const authoringSession = item.row.content !== null ? item.row.authoringSession ?? prior?.row.authoringSession : undefined;
-                merged.set(key, authoringSession ? { ...item, row: { ...item.row, authoringSession } } : item);
+                const authoringSession = row.content !== null ? row.authoringSession ?? prior?.row.authoringSession : undefined;
+                merged.set(key, { row: authoringSession ? { ...row, authoringSession } : row, payload });
             }
         }
         const next = [...merged.values()];
-        const snapshot = project(next); // Open and validate the whole census before disclosing any row.
-        assertCurrent(); opened = next; options.apply(snapshot, source); return snapshot;
+        const snapshot = project(next); // Validate the complete admitted topology before disclosing any row.
+        assertCurrent(); opened = next; options.apply(snapshot, source, materialization); return snapshot;
     }
     async function refresh(signal?: AbortSignal): Promise<ProjectAccountRowsSnapshot> {
         signal?.throwIfAborted();
@@ -98,6 +103,44 @@ export function createProjectAccountRowsSync(options: Readonly<{
             if (options.isCurrent()) options.onRefreshFailure?.(error);
             throw error;
         } finally { if (refreshInFlight === task) refreshInFlight = null; }
+    }
+    /** Exact change hints patch the admitted census; failed keys never become checkpoint proof. */
+    async function refreshKeys(physicalKeys: readonly string[], signal?: AbortSignal): Promise<ReadonlySet<string>> {
+        assertCurrent(); signal?.throwIfAborted();
+        const results = await Promise.allSettled([...new Set(physicalKeys)].map(async physicalKey => {
+            const key = parseProjectAccountRowPhysicalKeyV1(physicalKey);
+            if (!key) throw failure('project_account_row_invalid');
+            const result = await options.transport.read(key, { signal });
+            if (result.status === 'present') return { physicalKey, row: result.row };
+            if (result.status === 'deleted') return { physicalKey, row: { key, revision: result.revision, content: null } };
+            if (result.status === 'absent') return { physicalKey, row: null };
+            throw failure(`project_account_rows_${result.status}`);
+        }));
+        assertCurrent(); signal?.throwIfAborted();
+        const completed = new Set<string>();
+        const rows: ProjectAccountRowV1[] = [];
+        const absentPhysicalKeys: string[] = [];
+        let failed = false;
+        for (const result of results) {
+            if (result.status === 'rejected') {
+                failed = true;
+                options.onRefreshFailure?.(result.reason);
+            } else {
+                completed.add(result.value.physicalKey);
+                if (result.value.row) rows.push(result.value.row);
+                else absentPhysicalKeys.push(result.value.physicalKey);
+            }
+        }
+        // An auth/mode failure can retire the owner through its existing failure callback.
+        assertCurrent();
+        if (completed.size === 0) return completed;
+        try {
+            observe(rows, 'projection', { absentPhysicalKeys, refreshSucceeded: !failed });
+        } catch (error: unknown) {
+            if (options.isCurrent()) options.onRefreshFailure?.(error);
+            throw error;
+        }
+        return completed;
     }
     function rowFor(key: ProjectAccountRowKeyV1) { const id = buildProjectAccountRowPhysicalKeyV1(key); return opened.find(item => buildProjectAccountRowPhysicalKeyV1(item.row.key) === id); }
     function mutation(payload: ProjectAccountRowPayloadV1 | null, key: ProjectAccountRowKeyV1) {
@@ -118,14 +161,12 @@ export function createProjectAccountRowsSync(options: Readonly<{
         if (result.status === 'conflict') return 'conflict';
         if (result.status !== 'updated') throw failure(`project_account_rows_${result.status}`);
         assertAcknowledgement(request, result);
-        const changed = new Map(result.rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row]));
-        observe([...opened.map(item => changed.get(buildProjectAccountRowPhysicalKeyV1(item.row.key)) ?? item.row),
-            ...result.rows.filter(row => !rowFor(row.key))]);
+        observe(result.rows);
         return 'updated';
     }
-    /** Caller-revision organization intents (Hide/Show and context) do not retry a stale decision. */
+    /** Functional intents use the fresh row; explicit caller revisions never retry a stale decision. */
     async function mutateOrganizationAtRevision(input: Readonly<{
-        serverId: string; projectKey: string; expectedRevision: number | 'absent'; signal?: AbortSignal;
+        serverId: string; projectKey: string; expectedRevision?: number | 'absent'; signal?: AbortSignal;
         mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
     }>) {
         if (input.serverId !== options.scope.serverId) throw failure('project_account_scope_mismatch');
@@ -133,7 +174,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const key = { kind: 'project-organization' as const, serverId: input.serverId, projectKey: input.projectKey };
         const previous = rowFor(key);
         const observed = previous?.row.revision ?? 'absent';
-        if (observed !== input.expectedRevision) return { status: 'conflict' as const, revision: observed === 'absent' ? -1 : observed };
+        if (input.expectedRevision !== undefined && observed !== input.expectedRevision) return { status: 'conflict' as const, revision: observed === 'absent' ? -1 : observed };
         const payload = previous?.payload;
         const before = payload && !('id' in payload.value) && !('relationships' in payload.value) ? payload.value : {};
         const value = ProjectAccountOrganizationV1Schema.parse(input.mutate(before));
@@ -148,14 +189,13 @@ export function createProjectAccountRowsSync(options: Readonly<{
         assertAcknowledgement(request, result);
         const row = result.rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
         if (!row?.content) throw failure('project_account_row_acknowledgement_invalid');
-        const acknowledged = options.cipher.open(key, row.content);
-        if (acknowledged.key.kind !== 'project-organization' || 'id' in acknowledged.value || 'relationships' in acknowledged.value) throw failure('project_account_row_acknowledgement_invalid');
+        // The acknowledgement matches the exact locally sealed intent above. Its
+        // parsed value is also the receipt when a newer projection already won.
         // An accepted effect receipt remains true after navigation; only the current Home gets its projection.
         if (options.isCurrent()) {
-            const changed = new Map(result.rows.map(row => [buildProjectAccountRowPhysicalKeyV1(row.key), row]));
-            observe([...opened.map(item => changed.get(buildProjectAccountRowPhysicalKeyV1(item.row.key)) ?? item.row), ...result.rows.filter(row => !rowFor(row.key))]);
+            observe(result.rows);
         }
-        return { status: 'updated' as const, revision: row.revision, value: acknowledged.value };
+        return { status: 'updated' as const, revision: row.revision, value };
     }
     async function mutateWorkspaceMetadata(input: Readonly<{
         serverId: string; workspaceId: string; label?: string | null; pinned?: boolean; signal?: AbortSignal;
@@ -187,9 +227,9 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return { workspaceRef: nextRef, organization: nextOrganization };
         }
     }
-    /** Source creation records provenance only on the exact checkout already accepted by this Account. */
-    async function recordWorkspaceSource(
-        address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal,
+    /** Accepted Source/SCM observations patch only the exact checkout already owned by this Account. */
+    async function recordWorkspaceFacts(
+        address: WorkspaceAddressV1, facts: Pick<WorkspaceRefV1, 'source' | 'repositoryIdentity'>, signal?: AbortSignal,
     ): Promise<Readonly<{ ok: true; workspaceRefId: string }> | Extract<WorkspaceRefAccountMutationResult, { ok: false }>> {
         if (!areServerProfileIdentifiersEquivalent(address.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
         while (true) {
@@ -199,11 +239,14 @@ export function createProjectAccountRowsSync(options: Readonly<{
             if (resolved.kind === 'ambiguous') return { ok: false, code: 'workspace_ref_ambiguous' };
             if (resolved.kind === 'invalid') return { ok: false, code: 'workspace_ref_invalid' };
             const existing = resolved.ref;
+            // Navigation never overwrites a retained identity. A new ordinary SCM
+            // observation can fill a missing one; changed-identity decisions stay upstream.
+            if (facts.repositoryIdentity && existing.repositoryIdentity) return { ok: true, workspaceRefId: existing.id };
             const { lastOpenedAtMs: _recency, ...accepted } = existing;
-            const structural = ProjectAccountWorkspaceRefV1Schema.parse({ ...accepted, source });
+            const structural = ProjectAccountWorkspaceRefV1Schema.parse({ ...accepted, ...facts });
             if (areAccountSettingsJsonValuesEqual(accepted, structural)) return { ok: true, workspaceRefId: existing.id };
             assertProjectAccountSnapshotTransition(before, { ...before,
-                workspaceRefs: before.workspaceRefs.map(ref => ref === existing ? { ...ref, source: structural.source } : ref),
+                workspaceRefs: before.workspaceRefs.map(ref => ref === existing ? { ...ref, ...facts } : ref),
             });
             const key = { kind: 'workspace-ref' as const, serverId: existing.serverId, id: existing.id };
             const request = { mutations: [mutation({ key, value: structural }, key)], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
@@ -267,7 +310,12 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
         }
     }
-    return { refresh, mutateRef, mutateWorkspaceMetadata, recordWorkspaceSource, mutateOrganizationAtRevision,
+    return { refresh, refreshKeys, mutateRef, mutateWorkspaceMetadata,
+        recordWorkspaceSource: (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
+            recordWorkspaceFacts(address, { source }, signal),
+        recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>
+            recordWorkspaceFacts(address, { repositoryIdentity }, signal),
+        mutateOrganizationAtRevision,
         refreshRecency: (reader?: typeof options.readRecency) => {
             assertCurrent();
             if (reader) readRecency = reader;

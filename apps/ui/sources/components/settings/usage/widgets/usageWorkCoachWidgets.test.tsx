@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
@@ -414,6 +415,9 @@ describe('Work and Coach widget bodies', () => {
       const workSlice = { ...slice, work: namedWork };
       const screen = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice} id="usage_project_ledger" testID="label-ledger" />);
       await act(async () => { await owner.refresh(); });
+      expect(storage.getState().projectAccountRows?.organizations, JSON.stringify({
+        profileScope: storage.getState().profileScope, rows: storage.getState().projectAccountRows,
+      })).toContainEqual(expect.objectContaining({ key: rowKey, value: { label: 'Human project' } }));
       expect(screen.getTextContent()).toContain('Human project');
       expect(screen.getTextContent()).not.toContain(opaque);
       const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId));

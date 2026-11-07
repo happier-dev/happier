@@ -30,7 +30,7 @@ import {
     type NormalizedPluginCollectionUiQueryDescriptorV1,
     type PluginCollectionUiQueryRequestV1,
 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
-import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema,
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, buildProjectAccountRowPhysicalKeyV1, ProjectAccountRowChangeHintV1Schema, ProjectAccountRowReadRequestV1Schema,
     type ProjectAccountRowListResponseV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { SESSION_DRAFT_V2_ROUTE_LIST, SessionDraftListResponseV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
@@ -580,16 +580,26 @@ describe('sync AccountChange catch-up projection', () => {
         }
     });
 
-    it.each([503, 500])('keeps the cursor below a failed Project census and recovers the page (%s)', async status => {
-        let failCensus = false;
+    it.each([503, 500])('keeps the cursor below failed exact Project reads and recovers the page (%s)', async status => {
+        let failExactReads = false;
         let listReads = 0;
+        let exactReads = 0;
         let census = createPlainProjectAccountRowListFixture();
-        const heldCensus = createDeferred<Response>();
-        await restoreTestAccount({ physicalRequest: url => {
-            if (new URL(url).pathname !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return undefined;
-            listReads++;
-            return failCensus ? heldCensus.promise : Promise.resolve(jsonResponse(census));
+        const heldRead = createDeferred<Response>();
+        await restoreTestAccount({ physicalRequest: (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                listReads++;
+                return Promise.resolve(jsonResponse(census));
+            }
+            if (path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return undefined;
+            exactReads++;
+            if (failExactReads) return heldRead.promise.then(response => response.clone());
+            const { key } = ProjectAccountRowReadRequestV1Schema.parse(JSON.parse(String(init?.body)));
+            const row = census.rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
+            return Promise.resolve(jsonResponse(row ? { status: 'present', row } : { status: 'absent' }));
         } });
+        await syncRuntime!.refreshProjectAccountRows();
         const runtime = syncRuntime! as unknown as SyncAccountChangeWakeSchedulingHarness;
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
         const scope = getActiveServerAccountScope();
@@ -603,44 +613,98 @@ describe('sync AccountChange catch-up projection', () => {
             changes: [{ cursor: 1, changedAt: 1, kind: 'account', entityId: 'self', hint: { profileVersion: 1 } }, ...changes], nextCursor: 9,
         });
         listReads = 0;
-        failCensus = true;
+        failExactReads = true;
         await runtime.handleUpdate(accountChangeWake('project-failed-page'));
-        await waitForHomeGovernance(() => expect(listReads).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(exactReads).toBe(8));
         expect(Number(runtime.changesCursor)).toBeLessThan(2);
-        heldCensus.resolve(Response.json({ error: 'unavailable' }, { status }));
+        heldRead.resolve(Response.json({ error: 'unavailable' }, { status }));
         await runtime.resumeInFlight;
         expect(runtime.changesCursor).toBe('1');
         const { storage } = await import('./domains/state/storage');
         expect(storage.getState().projectAccountRows?.workspaceRefs ?? []).toHaveLength(0);
-        expect(listReads).toBe(1);
+        expect(listReads).toBe(0);
 
         census = createPlainProjectAccountRowListFixture({ workspaceRefs: changes.map((_, index) => ({
             id: `failed-project-${index}`, serverId: scope.serverId, machineId: 'machine',
             rootPath: `/recovered-${index}`, createdAtMs: 1, label: 'Recovered',
         })) });
         changesResponse.mockResolvedValueOnce({ changes, nextCursor: 9 });
-        failCensus = false;
+        failExactReads = false;
         listReads = 0;
         await runtime.handleUpdate(accountChangeWake('project-recovered-page'));
         await runtime.resumeInFlight;
         expect(storage.getState().projectAccountRows?.workspaceRefs).toHaveLength(8);
         expect(storage.getState().projectAccountRows?.workspaceRefs.every(ref => ref.label === 'Recovered')).toBe(true);
         expect(runtime.changesCursor).toBe('9');
-        expect(listReads).toBe(1);
+        expect(listReads).toBe(status === 500 ? 1 : 0);
+        expect(exactReads).toBe(16);
     });
 
-    it.each(['default', 1, 8] as const)('reads one Project census per changed page through Sync (concurrency: %s)', async concurrency => {
+    it('reads one complete Project census on initial load and a genuine reconnect, keeping ordinary wakes quiet', async () => {
+        let listReads = 0;
+        let exactReads = 0;
+        let census = createPlainProjectAccountRowListFixture();
+        await restoreTestAccount({ physicalRequest: (url) => {
+            const path = new URL(url).pathname;
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                listReads++;
+                return Promise.resolve(jsonResponse(census));
+            }
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) {
+                exactReads++;
+                return Promise.resolve(jsonResponse({ status: 'absent' }));
+            }
+            return undefined;
+        } });
+        const runtime = syncRuntime! as unknown as SyncAccountChangeWakeSchedulingHarness;
+        const { storage } = await import('./domains/state/storage');
+        const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
+        const scope = getActiveServerAccountScope();
+        if (!scope) throw new Error('Expected restored Project Account scope');
+        await waitForHomeGovernance(() => expect(storage.getState().projectAccountRows?.status).toBe('ready'));
+        expect(listReads).toBe(1);
+        const socket = sockets.at(-1);
+        if (!socket) throw new Error('Expected focused Account transport');
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        census = createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'reconnected-project',
+            serverId: scope.serverId, machineId: 'machine', rootPath: '/reconnected', createdAtMs: 1, label: 'Recovered' }] });
+        listReads = 0;
+        socket.connected = false;
+        for (const listener of socket.listeners('disconnect')) listener('transport close');
+        socket.connected = true;
+        for (const listener of socket.listeners('connect')) listener();
+        await runtime.resumeInFlight;
+        expect(listReads).toBe(1);
+        expect(storage.getState().projectAccountRows?.workspaceRefs).toMatchObject([{ id: 'reconnected-project', label: 'Recovered' }]);
+        await runtime.resumeSync('changes-catch-up');
+        await runtime.resumeSync('changes-catch-up');
+        expect(listReads).toBe(1);
+        expect(exactReads).toBe(0);
+    });
+
+    it.each(['default', 1, 8] as const)('reads only hinted Project rows through Sync (concurrency: %s)', async concurrency => {
         if (concurrency !== 'default') {
             vi.stubEnv('EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON', JSON.stringify({ resumeConcurrencyLimit: concurrency }));
         }
         let listReads = 0;
+        const exactReads: string[] = [];
         let census: ProjectAccountRowListResponseV1 = createPlainProjectAccountRowListFixture();
         // Only HTTP is replaced: socket admission, Sync, planner/applier, row
         // opening and the consumer's actual store remain real.
-        await restoreTestAccount({ physicalRequest: url => {
-            if (new URL(url).pathname !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return undefined;
-            listReads++;
-            return Promise.resolve(jsonResponse(census));
+        await restoreTestAccount({ physicalRequest: (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
+                listReads++;
+                return Promise.resolve(jsonResponse(census));
+            }
+            if (path !== `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`) return undefined;
+            const { key } = ProjectAccountRowReadRequestV1Schema.parse(JSON.parse(String(init?.body)));
+            exactReads.push(buildProjectAccountRowPhysicalKeyV1(key));
+            if (census.status !== 'listed') throw new Error('Expected listed Project fixture');
+            const row = census.rows.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
+            return Promise.resolve(jsonResponse(!row ? { status: 'absent' } : row.content === null
+                ? { status: 'deleted', revision: row.revision } : { status: 'present', row }));
         } });
         const sync = syncRuntime!;
         const runtime = sync as unknown as SyncAccountChangeWakeSchedulingHarness;
@@ -654,6 +718,7 @@ describe('sync AccountChange catch-up projection', () => {
         census = createPlainProjectAccountRowListFixture({ workspaceRefs: refs.slice(0, 2) });
         await sync.refreshProjectAccountRows();
         expect(storage.getState().projectAccountRows?.workspaceRefs).toHaveLength(2);
+        expect(listReads).toBeGreaterThan(0);
 
         const listed = createPlainProjectAccountRowListFixture({ workspaceRefs: refs
             .filter((_, index) => index !== 1)
@@ -693,8 +758,11 @@ describe('sync AccountChange catch-up projection', () => {
         await runtime.resumeInFlight;
         expect(storage.getState().projectAccountRows?.workspaceRefs.find(ref => ref.id === refs[0]!.id)?.label).toBe('Later');
         expect(runtime.changesCursor).toBe('9');
-        expect(listReads).toBe(1);
-        expect(firstPageListReads).toBe(1);
+        expect(listReads).toBe(0);
+        expect(firstPageListReads).toBe(0);
+        expect(exactReads).toHaveLength(9);
+        expect(new Set(exactReads.slice(0, 8))).toEqual(new Set(changes.map(change => change.entityId)));
+        expect(exactReads[8]).toBe(buildProjectAccountRowPhysicalKeyV1(laterKey));
     });
 
     it.each(['detailed', 'blocked'] as const)('delivers a Discussion message from the socket change feed to the mounted thread (%s)', async phase => {

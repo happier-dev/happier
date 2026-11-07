@@ -1,6 +1,7 @@
 import {
     PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema,
     ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema,
+    ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema, buildProjectAccountRowPhysicalKeyV1,
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { ProjectAccountRowsTransport } from '@/sync/engine/projects/projectAccountRowsSync';
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -10,11 +11,11 @@ import type { ServerFetch } from '@/sync/http/client';
 /** Credential and Home are captured by the incumbent Account request context. */
 export function createApiProjectAccountRowsTransport(options: Readonly<{ request: ServerFetch }>): ProjectAccountRowsTransport {
     let includeAuthoringSession = true;
-    async function post(operation: 'list' | 'mutate', input: unknown, signal?: AbortSignal): Promise<unknown> {
+    async function post(operation: 'list' | 'read' | 'mutate', input: unknown, signal?: AbortSignal): Promise<unknown> {
         signal?.throwIfAborted();
         const response = await options.request(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/${operation}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
-        }, { recoveryRead: operation === 'list' ? 'unbounded' : false }).catch((error: unknown) => {
+        }, { recoveryRead: operation === 'mutate' ? false : 'unbounded' }).catch((error: unknown) => {
             if (operation === 'mutate' && classifyHomeDomainHttpMutationFailureV1({ error, issued: true, aborted: signal?.aborted === true }) === 'outcome_unknown') {
                 throw Object.assign(new Error('Project mutation settlement is unknown'), { code: 'outcome_unknown' });
             }
@@ -34,6 +35,14 @@ export function createApiProjectAccountRowsTransport(options: Readonly<{ request
         return await response.json();
     }
     return {
+        read: async (key, options) => {
+            const result = ProjectAccountRowReadResponseV1Schema.parse(await post('read',
+                ProjectAccountRowReadRequestV1Schema.parse({ key, ...(includeAuthoringSession ? { includeAuthoringSession: true } : {}) }), options?.signal));
+            if (result.status === 'present' && buildProjectAccountRowPhysicalKeyV1(result.row.key) !== buildProjectAccountRowPhysicalKeyV1(key)) {
+                throw new Error('Project row identity mismatch');
+            }
+            return result;
+        },
         list: async (options) => ProjectAccountRowListResponseV1Schema.parse(await post('list', includeAuthoringSession ? { includeAuthoringSession: true } : {}, options?.signal)),
         mutate: async (input, options) => ProjectAccountRowMutationResponseV1Schema.parse(await post('mutate', ProjectAccountRowMutationRequestV1Schema.parse(input), options?.signal)),
     };

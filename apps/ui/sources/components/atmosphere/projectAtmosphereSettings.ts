@@ -1,4 +1,4 @@
-import type { HomeAtmosphere, ProjectAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { HomeAtmosphere, ProjectAtmosphere, AtmospherePresentation } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { projectAtmosphereEdit } from './look/projectAtmosphereEdit';
@@ -10,6 +10,7 @@ type ProjectAtmosphereContext = Readonly<{
     signal?: AbortSignal;
     isCurrent(): boolean;
 }>;
+const pendingWrites = new Map<string, Promise<void>>();
 
 /** Project Settings and Look share the same captured row/CAS boundary. */
 export async function readProjectAtmosphereSetting(context: ProjectAtmosphereContext) {
@@ -26,18 +27,31 @@ export async function readProjectAtmosphereSetting(context: ProjectAtmosphereCon
 export async function mutateProjectAtmosphereSetting(context: ProjectAtmosphereContext & Readonly<{
     readHome(): Promise<HomeAtmosphere>;
     edit: 'home' | ((value: ProjectAtmosphere) => ProjectAtmosphere);
+    /** The actual available Home picture when a person materializes an inherited presentation. */
+    shownHomePicture?: AtmospherePresentation['picture']['ref'];
 }>) {
-    const current = await readProjectAtmosphereSetting(context);
-    if (!current) return { status: 'unavailable' as const };
-    const home = await context.readHome();
-    if (!context.isCurrent()) return { status: 'unavailable' as const };
-    const result = await context.rows.mutateOrganization({ ...context.target, expectedRevision: current.row?.revision ?? 'absent', signal: context.signal,
-        mutate: value => {
-            if (!context.isCurrent()) throw new Error('project_account_scope_changed');
-            return { ...value, atmosphere: context.edit === 'home' ? 'home'
-                : projectAtmosphereEdit(home, value.atmosphere, context.edit) };
-        } });
-    if (!context.isCurrent()) return { status: 'unavailable' as const };
-    return result.status === 'updated' ? { status: 'updated' as const, value: result.value.atmosphere ?? 'home' as const }
-        : { status: 'conflict' as const };
+    if (!context.isCurrent() || !context.scope || context.scope.serverId !== context.target.serverId)
+        return { status: 'unavailable' as const };
+    // The row's order survives closing or reopening an editor, and applies to every Settings ingress.
+    const key = JSON.stringify([context.scope.serverId, context.scope.accountId, context.target.projectKey]);
+    const previous = pendingWrites.get(key) ?? Promise.resolve();
+    const result = previous.then(async () => {
+        if (!context.isCurrent()) return { status: 'unavailable' as const };
+        // Literal inheritance stores no Home content; only an override edit consumes that baseline.
+        const home = context.edit === 'home' ? undefined : await context.readHome();
+        if (!context.isCurrent()) return { status: 'unavailable' as const };
+        const result = await context.rows.mutateOrganization({ ...context.target, signal: context.signal,
+            mutate: value => {
+                if (!context.isCurrent()) throw new Error('project_account_scope_changed');
+                return { ...value, atmosphere: context.edit === 'home' ? 'home'
+                    : projectAtmosphereEdit(home!, value.atmosphere, context.edit, context.shownHomePicture) };
+            } });
+        if (!context.isCurrent()) return { status: 'unavailable' as const };
+        return result.status === 'updated' ? { status: 'updated' as const, value: result.value.atmosphere ?? 'home' as const }
+            : { status: 'conflict' as const };
+    });
+    const settled = result.then(() => {}, () => {});
+    pendingWrites.set(key, settled);
+    void settled.then(() => { if (pendingWrites.get(key) === settled) pendingWrites.delete(key); });
+    return result;
 }

@@ -1,6 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { AutomationRefreshOptions } from '@/sync/engine/automations/syncAutomations';
 import {
+    AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID,
     classifyChangeForCheckpoint,
     changeRequiresSavedSecretCatalogRefresh,
     getChangeSessionDraftHint,
@@ -11,6 +12,7 @@ import {
     type PlannedChangeActions,
 } from './changesPlanner';
 import { runTasksWithLimit } from './runTasksWithLimit';
+import { materializeProjectAccountRowPage } from './projectAccountRowPage';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { canonicalSessionDraftAddressV2, type SessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { readSessionUpdatedMessageChangeHintV1, isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
@@ -59,7 +61,6 @@ export async function applyPlannedChangeActions(params: {
         /** Refresh exactly the Artifact rows named by this durable Account-change page. */
         artifacts?: (artifactIds: readonly string[]) => Promise<void>;
         friends?: () => Promise<void>;
-        friendRequests?: () => Promise<void>;
         feed?: () => Promise<void>;
         automations?: (options?: AutomationRefreshOptions) => Promise<void>;
         sessions?: (context: SessionListInvalidationContext) => Promise<void>;
@@ -92,9 +93,10 @@ export async function applyPlannedChangeActions(params: {
     applyTodoSocketUpdates: (changes: TodoSocketUpdate[]) => Promise<void>;
     kvBulkGet: (credentials: AuthCredentials, keys: string[]) => Promise<{ values: TodoSocketUpdate[] }>;
     convergePendingForSession?: (sessionId: string) => Promise<void>;
-    materializeSessionDraft?: (address: SessionDraftAddressV2) => Promise<void>;
+    materializeSessionDraft?: (address: SessionDraftAddressV2, revision: number) => Promise<void>;
     materializeAuthoringMemory?: (key: string) => Promise<void>;
-    materializeProjectAccountRow?: (physicalKey: string) => Promise<void>;
+    /** Exact row materialization supplies checkpoint proof for each applied key. */
+    materializeProjectAccountRows?: (keys: readonly string[]) => Promise<ReadonlySet<string>>;
 }): Promise<PlannedChangesApplyResult> {
     const { planned } = params;
     const retiredResult = (): PlannedChangesApplyResult => ({
@@ -170,7 +172,7 @@ export async function applyPlannedChangeActions(params: {
     const completedSessionDraftAddresses = new Set<string>();
     const failedSessionDraftAddresses = new Set<string>();
     const completedAuthoringMemoryKeys = new Set<string>();
-    const completedProjectAccountRowKeys = new Set<string>();
+    let completedProjectAccountRowKeys: ReadonlySet<string> = new Set();
     const listHydrationSessionIds = Array.from(new Set(
         planned.sessionIdsToCatchUp
             .map((sessionId) => String(sessionId ?? '').trim())
@@ -230,7 +232,6 @@ export async function applyPlannedChangeActions(params: {
     }
     if (planned.invalidate.friends) {
         tasks.push(() => params.invalidate.friends?.() ?? Promise.resolve());
-        tasks.push(() => params.invalidate.friendRequests?.() ?? Promise.resolve());
     }
     if (planned.invalidate.feed) tasks.push(() => params.invalidate.feed?.() ?? Promise.resolve());
     if (planned.invalidate.automations) {
@@ -238,7 +239,7 @@ export async function applyPlannedChangeActions(params: {
         // The canonical status writer names this sentinel and never writes Runs.
         // Unknown, mixed and ordinary Automation ids retain the full recovery read.
         const summariesOnly = automationChanges.length > 0
-            && automationChanges.every(change => change.entityId === 'automation-source-status');
+            && automationChanges.every(change => change.entityId === AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID);
         tasks.push(() => params.invalidate.automations?.(summariesOnly ? { summariesOnly: true } : undefined) ?? Promise.resolve());
     }
     if (planned.invalidate.pets) {
@@ -387,7 +388,7 @@ export async function applyPlannedChangeActions(params: {
         });
     }
 
-    for (const address of planned.sessionDraftAddresses ?? []) {
+    for (const { address, revision } of planned.sessionDrafts ?? []) {
         tasks.push(async () => {
             const key = canonicalSessionDraftAddressV2(address);
             try {
@@ -395,7 +396,7 @@ export async function applyPlannedChangeActions(params: {
                     failedSessionDraftAddresses.add(key);
                     return;
                 }
-                await params.materializeSessionDraft(address);
+                await params.materializeSessionDraft(address, revision);
                 completedSessionDraftAddresses.add(key);
             } catch {
                 failedSessionDraftAddresses.add(key);
@@ -415,15 +416,11 @@ export async function applyPlannedChangeActions(params: {
         });
     }
 
-    for (const key of planned.projectAccountRowKeys ?? []) {
+    if (planned.projectAccountRowKeys?.length) {
         tasks.push(async () => {
-            try {
-                if (!params.materializeProjectAccountRow) return;
-                await params.materializeProjectAccountRow(key);
-                completedProjectAccountRowKeys.add(key);
-            } catch {
-                // The existing checkpoint remains below this unmaterialized row.
-            }
+            completedProjectAccountRowKeys = await materializeProjectAccountRowPage(
+                planned.projectAccountRowKeys ?? [], params.materializeProjectAccountRows,
+            );
         });
     }
 

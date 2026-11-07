@@ -6,15 +6,24 @@ import { createProjectAccountRowsSync, type ProjectAccountRowsTransport } from '
 import type { ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
 import { buildProjectsListGroups } from '@/components/projects/projectsListGrouping';
 
-function harness() {
-    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null,
-        randomBytes: () => { throw new Error('Plain rows must be keyless'); } });
+function harness(mode: 'plain' | 'e2ee' = 'plain') {
+    const cipher = createProjectAccountRowCipherV1({ mode,
+        material: mode === 'e2ee' ? { type: 'dataKey', machineKey: new Uint8Array(32).fill(3) } : null,
+        randomBytes: length => new Uint8Array(length).fill(4) });
+    let opens = 0;
     const rows = new Map<string, ProjectAccountRowV1>();
     let projection: ProjectAccountRowsSnapshot | null = null;
     let current = true;
+    let listReads = 0;
+    const exactReads: string[] = [];
     const requests: Parameters<ProjectAccountRowsTransport['mutate']>[0][] = [];
     const transport = {
-        list: async () => ({ status: 'listed', rows: [...rows.values()], coverage: 'complete' }),
+        read: async key => {
+            exactReads.push(buildProjectAccountRowPhysicalKeyV1(key));
+            const row = rows.get(buildProjectAccountRowPhysicalKeyV1(key));
+            return row ? { status: 'present', row } : { status: 'absent' };
+        },
+        list: async () => { listReads++; return { status: 'listed', rows: [...rows.values()], coverage: 'complete' }; },
         mutate: async (input) => {
             requests.push(input);
             for (const item of [...input.expectedRefs, ...input.mutations]) {
@@ -31,16 +40,60 @@ function harness() {
     rows.set(buildProjectAccountRowPhysicalKeyV1(key), { key, revision: 0, content: cipher.seal({ key, value: ref }) });
     const recencyWrites: Array<{ refId: string; timestamp: number; committed: boolean }> = [];
     let recent: number | undefined;
-    const owner = createProjectAccountRowsSync({ scope: { serverId: 'home', accountId: 'account' }, transport, cipher,
+    const owner = createProjectAccountRowsSync({ scope: { serverId: 'home', accountId: 'account' }, transport,
+        cipher: { ...cipher, open: (key, content) => { opens += 1; return cipher.open(key, content); } },
         isCurrent: () => current, apply: (snapshot) => { projection = snapshot; },
         readRecency: () => recent,
         writeRecency: async (ref, timestamp) => { recent = timestamp; recencyWrites.push({ refId: ref.id, timestamp,
             committed: rows.has(buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId: ref.serverId, id: ref.id })) }); },
     });
-    return { owner, rows, transport, requests, recencyWrites, projection: () => projection, retire: () => { current = false; } };
+    return { owner, rows, transport, requests, recencyWrites, cipher, opens: () => opens, exactReads, listReads: () => listReads,
+        projection: () => projection, retire: () => { current = false; } };
 }
 
 describe('Project Account row sync owner', () => {
+    it.each(['plain', 'e2ee'] as const)('opens only changed row content across refresh and one-row commits in %s', async mode => {
+        const h = harness(mode);
+        for (let i = 0; i < 32; i += 1) {
+            const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: `project-${i}` };
+            h.rows.set(buildProjectAccountRowPhysicalKeyV1(key), { key, revision: 0,
+                content: h.cipher.seal({ key, value: { label: `Project ${i}` } }) });
+        }
+        await h.owner.refresh();
+        expect(h.opens()).toBe(33);
+        const before = h.opens();
+        // A transport refresh produces new row/envelope objects with the same admitted bytes.
+        for (const [id, row] of h.rows) h.rows.set(id, structuredClone(row));
+        await h.owner.refresh();
+        expect(h.opens() - before).toBe(0);
+        await h.owner.mutateWorkspaceMetadata({ serverId: 'home', workspaceId: 'ref', label: 'Renamed' });
+        expect(h.opens() - before).toBe(1);
+        expect(h.projection()?.workspaceRefs[0]?.label).toBe('Renamed');
+        expect(h.projection()?.organizations).toHaveLength(32);
+        const organization = await h.owner.mutateOrganizationAtRevision({ serverId: 'home', projectKey: 'project-0',
+            expectedRevision: 0, mutate: value => ({ ...value, hidden: true }) });
+        expect(organization).toMatchObject({ status: 'updated', value: { label: 'Project 0', hidden: true } });
+        expect(h.opens() - before).toBe(2);
+        expect(h.projection()?.organizations.find(row => row.key.projectKey === 'project-0')?.value.hidden).toBe(true);
+        const changedKey = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'project-1' };
+        const changedId = buildProjectAccountRowPhysicalKeyV1(changedKey);
+        const missingId = buildProjectAccountRowPhysicalKeyV1({ ...changedKey, projectKey: 'absent' });
+        const listsBeforeHint = h.listReads();
+        h.rows.set(changedId, { key: changedKey, revision: 1,
+            content: h.cipher.seal({ key: changedKey, value: { label: 'Changed remotely' } }) });
+        expect(await h.owner.refreshKeys([changedId, missingId])).toEqual(new Set([changedId, missingId]));
+        expect(h.exactReads).toEqual([changedId, missingId]);
+        expect(h.listReads()).toBe(listsBeforeHint);
+        expect(h.opens() - before).toBe(3);
+        expect(h.projection()?.organizations.find(row => row.key.projectKey === 'project-1')?.value.label).toBe('Changed remotely');
+        const accepted = h.projection();
+        const wrongMode = harness(mode === 'plain' ? 'e2ee' : 'plain');
+        h.rows.set(changedId, { key: changedKey, revision: 2,
+            content: wrongMode.cipher.seal({ key: changedKey, value: { label: 'Must remain private' } }) });
+        await expect(h.owner.refreshKeys([changedId])).rejects.toThrow();
+        expect(h.projection()).toBe(accepted);
+    });
+
     it('projects server-visible authoring ids on cold refresh and retains them through legacy-shaped mutation acknowledgements', async () => {
         const h = harness();
         const key = { kind: 'workspace-ref' as const, serverId: 'home', id: 'ref' };
@@ -55,6 +108,22 @@ describe('Project Account row sync owner', () => {
         expect(h.projection()?.workspaceRefs[0]?.label).toBe('Renamed');
     });
 
+    it('retains a newly observed missing repository identity without replacing accepted facts or creating a checkout', async () => {
+        const h = harness();
+        const address = { serverId: 'home', workspaceId: 'ref', machineId: 'machine', rootPath: '/repo' };
+        const identity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/repo' };
+        expect(await h.owner.recordWorkspaceRepositoryIdentity(address, identity)).toEqual({ ok: true, workspaceRefId: 'ref' });
+        expect((await h.owner.refresh()).workspaceRefs).toMatchObject([{ id: 'ref', projectKey: 'anchor', repositoryIdentity: identity }]);
+        expect(h.requests).toHaveLength(1);
+        expect(h.requests[0]).toMatchObject({ topologyChange: false, expectedRefs: [], mutations: [{ expectedRevision: 0 }] });
+        await h.owner.recordWorkspaceRepositoryIdentity(address, { ...identity, repository: 'different/repo' });
+        expect(h.requests).toHaveLength(1);
+        expect((await h.owner.refresh()).workspaceRefs[0]?.repositoryIdentity).toEqual(identity);
+        expect(await h.owner.recordWorkspaceRepositoryIdentity({ ...address, workspaceId: 'missing' }, identity))
+            .toEqual({ ok: false, code: 'workspace_ref_not_found' });
+        expect(h.requests).toHaveLength(1);
+        expect((await h.owner.refresh()).workspaceRefs).toHaveLength(1);
+    });
     it('writes and reloads atmosphere through the organization owner while preserving label and pin', async () => {
         const h = harness();
         const key = { kind: 'project-organization' as const, serverId: 'home', projectKey: 'anchor' };

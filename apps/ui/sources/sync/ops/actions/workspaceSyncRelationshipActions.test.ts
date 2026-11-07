@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// Genuine boundary: the Account row sync engine that reads rows back from the Home.
-const refreshProjectAccountRows = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('@/sync/sync', () => ({ sync: { refreshProjectAccountRows } }));
-
 import {
     disableWorkspaceSyncRelationshipAction,
     enableWorkspaceSyncRelationshipAction,
@@ -45,25 +41,4 @@ describe('workspace Sync relationship Action adapters', () => {
         });
     });
 
-    it.each([
-        ['disable', disableWorkspaceSyncRelationshipAction, { v: 1 as const, relationshipId: 'relationship-a', enabled: false as const }],
-        ['enable', enableWorkspaceSyncRelationshipAction, { v: 1 as const, relationshipId: 'relationship-a', enabled: true as const }],
-        ['terminate', terminateWorkspaceSyncRelationship, { v: 1 as const, relationshipId: 'relationship-a', terminated: true as const }],
-    ] as const)('reads the Account rows back after a settled %s so the list drops or updates the link', async (_name, run, output) => {
-        refreshProjectAccountRows.mockClear();
-        await run(input, null, async () => ({ ok: true as const, result: output }));
-        expect(refreshProjectAccountRows).toHaveBeenCalledOnce();
-    });
-
-    it('does not read rows back after a refused lifecycle Action or a flush, and keeps the Action outcome if the read fails', async () => {
-        refreshProjectAccountRows.mockClear();
-        await terminateWorkspaceSyncRelationship(input, null, async () => ({ ok: false as const, errorCode: 'target_bootstrap_required', error: 'refused' }));
-        await flushWorkspaceSyncRelationshipAction(input, null, async () => ({ ok: true as const, result: { v: 1, relationshipId: 'relationship-a', status } }));
-        expect(refreshProjectAccountRows).not.toHaveBeenCalled();
-
-        refreshProjectAccountRows.mockRejectedValueOnce(new Error('rows unavailable'));
-        await expect(terminateWorkspaceSyncRelationship(input, null, async () => ({
-            ok: true as const, result: { v: 1, relationshipId: 'relationship-a', terminated: true },
-        }))).resolves.toMatchObject({ ok: true });
-    });
 });

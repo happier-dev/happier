@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { createDataKeyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { resetAccountSettingsRawSnapshotsForTests } from './engine/settings/accountSettingsRawSnapshot';
+import tweetnacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    AccountSettingsV2UpdateRequestSchema,
+    AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import {
     AuthoringMemoryMutationRequestV1Schema,
     buildProjectLastOpenedMemoryKeyV1,
-    LegacyLastUsedProfileSchema,
-    openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
     type AuthoringMemoryContentV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/authoringMemory';
+import {
+    LegacyLastUsedProfileSchema} from '@happier-dev/protocol/account/settings/legacyAuthoringMemorySettingsV1';
+import {
+    openAccountScopedBlobCiphertext,
+    sealAccountScopedBlobCiphertext} from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeUTF8 } from '@/encryption/text';
 import { loadAuthoringMemoryProjection, saveAuthoringMemoryProjection } from './domains/state/authoringMemoryPersistence';
@@ -19,6 +25,9 @@ import { profileDefaults } from './domains/profiles/profile';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createDeferred } from '@/dev/testkit';
+import {
+    disableWorkspaceSyncRelationshipAction, enableWorkspaceSyncRelationshipAction, terminateWorkspaceSyncRelationship,
+} from './ops/actions/workspaceSyncRelationshipActions';
 
 // MMKV/native SDK and the prepared HTTP adapter are the real system boundaries.
 vi.mock('react-native-mmkv', () => {
@@ -79,6 +88,7 @@ const originalSettings = { settings: storage.getState().settings, settingsVersio
     projectAccountRows: storage.getState().projectAccountRows, isDataReady: storage.getState().isDataReady };
 
 afterEach(() => {
+    resetAccountSettingsRawSnapshotsForTests();
     Object.assign(owner, original);
     storage.getState().resetAuthoringMemory();
     storage.setState(originalSettings);
@@ -88,6 +98,31 @@ afterEach(() => {
 });
 
 describe('Sync authoring-memory runtime', () => {
+    it('leaves Project row convergence to push after successful relationship lifecycle Actions', async () => {
+        owner.credentials = { token: 'relationship-account' };
+        owner.pendingSettings = {};
+        owner.appliedServerTarget = { serverId: 'https://relationship.test', serverUrl: 'https://relationship.test', generation: 1 };
+        const scope = createAccountSettingsScope(owner.appliedServerTarget.serverId, 'relationship-account');
+        if (!scope) throw new Error('Expected valid Account/Home scope');
+        owner.pendingSettingsScope = scope;
+        owner.projectAccountRowsRuntime = null;
+        await storage.getState().activateSettingsScope(scope);
+        storage.setState({ profileScope: scope, projectAccountRows: null });
+        network.request.mockImplementation(async path => {
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
+            throw new Error(`Unexpected lifecycle request: ${path}`);
+        });
+        const input = { controllerMachineId: 'machine', relationshipId: 'relationship' };
+        for (const [run, output] of [
+            [disableWorkspaceSyncRelationshipAction, { v: 1, relationshipId: 'relationship', enabled: false }],
+            [enableWorkspaceSyncRelationshipAction, { v: 1, relationshipId: 'relationship', enabled: true }],
+            [terminateWorkspaceSyncRelationship, { v: 1, relationshipId: 'relationship', terminated: true }],
+        ] as const) {
+            await expect(run(input, null, async () => ({ ok: true, result: output }))).resolves.toEqual({ ok: true, ...output });
+        }
+        expect(network.request.mock.calls).toEqual([]);
+    });
     it('retains an admitted Project census only across transient reads and revokes it for auth or Account-mode changes', async () => {
         const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
         onTestFinished(() => { clock.mockRestore(); });
@@ -193,6 +228,7 @@ describe('Sync authoring-memory runtime', () => {
         network.request.mockImplementation(async (path, init) => {
             requests.push(path);
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: scope.accountId });
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
@@ -240,6 +276,7 @@ describe('Sync authoring-memory runtime', () => {
         let memoryAvailable = false;
         network.request.mockImplementation(async (path, init) => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/authoring-memory') return memoryAvailable ? Response.json({ rows: [{
                 key: buildProjectLastOpenedMemoryKeyV1({ serverId: scope.serverId, projectKey: ref.id }),
                 revision: 1, content: { t: 'plain', v: 42 },
@@ -280,6 +317,7 @@ describe('Sync authoring-memory runtime', () => {
             if (path === '/v1/account/encryption') {
                 return Response.json({ mode: 'plain', updatedAt: 1 });
             }
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/authoring-memory') {
                 if (cancelled) throw new Failure();
                 return Response.json({ rows: [
@@ -305,6 +343,38 @@ describe('Sync authoring-memory runtime', () => {
         await vi.waitFor(() => expect(storage.getState().authoringMemory.lastUsedProfile).toBe('current-profile'));
     });
 
+    it('imports legacy authoring memory from the document the Settings refresh just admitted', async () => {
+        owner.credentials = { token: 'settings-single-read-account' };
+        owner.encryption = null;
+        owner.settingsSecretsKey = null;
+        owner.settingsSecretsReadKeys = [];
+        owner.pendingSettings = {};
+        owner.appliedServerTarget = { serverId: 'https://settings-single-read.test', serverUrl: 'https://settings-single-read.test', generation: 1 };
+        const scope = createAccountSettingsScope(owner.appliedServerTarget.serverId, 'settings-single-read-account');
+        if (!scope) throw new Error('Expected valid Account/Home scope');
+        owner.pendingSettingsScope = scope;
+        owner.authoringMemoryRuntime = null;
+        await storage.getState().activateSettingsScope(scope);
+        let documentReads = 0;
+        let rowsRead = false;
+        network.request.mockImplementation(async (path, init) => {
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }));
+            if (path === '/v1/account/authoring-memory') { rowsRead = true; return Response.json({ rows: [] }); }
+            if (path === '/v2/account/settings' && init?.method !== 'POST') {
+                documentReads++;
+                return Response.json({ content: { t: 'plain', v: { analyticsOptOut: true } }, version: 1 });
+            }
+            if (path === '/v1/push-tokens?projectionVersion=2') return Response.json({}, { status: 404 });
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        await vi.waitFor(() => expect(rowsRead).toBe(true));
+        await owner.authoringMemoryRuntime;
+        expect(documentReads).toBe(1);
+    });
+
     it('refreshes ordinary Account Settings quietly when authoring-memory storage is unavailable and retries the next refresh', async () => {
         const diagnostics = vi.spyOn(console, 'error').mockImplementation(() => {});
         owner.credentials = { token: 'settings-independent-account' };
@@ -321,6 +391,7 @@ describe('Sync authoring-memory runtime', () => {
         let unavailable = true;
         network.request.mockImplementation(async (path, init) => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/authoring-memory') return unavailable
                 ? Response.json({ error: 'authoring_memory_storage_unavailable' }, { status: 503 })
                 : Response.json({ rows: [{ key: 'lastUsedProfile', revision: 1, content: { t: 'plain', v: 'recovered-profile' } }] });
@@ -347,7 +418,7 @@ describe('Sync authoring-memory runtime', () => {
 
     it('retires only the transferred legacy key and preserves an unrelated raw SecretString sibling exactly under E2EE', async () => {
         const machineKey = new Uint8Array(32).fill(7);
-        const publicKey = new Uint8Array(32).fill(8);
+        const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
         const material = { type: 'dataKey', machineKey } as const;
         const sealSettings = (raw: Record<string, unknown>) => ({ t: 'encrypted' as const,
             c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: raw,
@@ -368,6 +439,7 @@ describe('Sync authoring-memory runtime', () => {
         owner.authoringMemoryRuntime = null;
         network.request.mockImplementation(async (path, init) => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json({ ...createDataKeyAccountEncryptionCurrentnessFixture({ machineKey, publicKey }), settingsVersion });
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === '/v2/account/settings') {
                 if (init?.method !== 'POST') return Response.json({ content: sealSettings(raw), version: settingsVersion });
@@ -424,6 +496,7 @@ describe('Sync authoring-memory runtime', () => {
         let profile: string | null = null;
         network.request.mockImplementation(async (path, init) => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path === '/v1/account/authoring-memory/lastUsedProfile') {
