@@ -738,8 +738,8 @@ export function buildUsageEphemeral(
     };
 }
 
-export function buildTeamCredentialUsageChangedEphemeral(resourceId: string): EphemeralPayload {
-    return { type: 'team-credential-usage-changed', resourceId };
+export function buildTeamCredentialUsageChangedEphemeral(resourceId: string, teamId: string): EphemeralPayload {
+    return { type: 'team-credential-usage-changed', resourceId, teamId };
 }
 
 export function buildMachineStatusEphemeral(machineId: string, online: boolean): EphemeralPayload {

@@ -482,12 +482,13 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
     })),
   }),
   /**
-   * Content-free invalidation to a Team credential resource's usage readers after a
+   * Content-free invalidation to resource, Team and Home usage readers after a
    * new immutable usage fact commits. Readers re-query the authorized usage projection.
    */
-  z.looseObject({
+  z.strictObject({
     type: z.literal('team-credential-usage-changed'),
     resourceId: z.string().check(z.minLength(1)),
+    teamId: z.optional(z.string().check(z.minLength(1))),
   }),
   z.looseObject({
     type: z.literal('machine-status'),

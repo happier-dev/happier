@@ -1,4 +1,5 @@
 import { buildTeamCredentialUsageChangedEphemeral, eventRouter } from "@/app/events/eventRouter";
+import { readHomeGovernanceChangeAccountIdsInTx } from "@/app/home/governance/governanceChanges";
 import { resolveTeamMembershipCredentialCapabilities } from "@/app/teams/memberships/capabilities";
 import { AccountStatus, TeamRole } from "@/storage/enums.generated";
 import { afterTx, type Tx } from "@/storage/inTx";
@@ -22,13 +23,13 @@ export function readsWholeTeamCredentialUsage(input: Readonly<{
  *
  * The audience is exactly the viewers whose usage projection that fact changes:
  * the resource's whole-usage readers (current custodian and credential managers)
- * and the acting member, who reads their own use. Other members, Home
- * administrators and daemons are not woken: a usage write changes no
- * authorization, catalog or Settings fact, so it is not a Team AccountChange.
+ * and the acting member, who reads their own use, plus Home administrators who
+ * read aggregate usage. Other members and daemons are not woken: a usage write
+ * changes no authorization, catalog or Settings fact, so it is not a Team AccountChange.
  *
  * The wake is an ephemeral to app connections only. It carries only the
- * resource id, persists nothing and allocates no cursor on the admission path;
- * every reader re-authorizes through the usage query, and a reader that was not
+ * resource and Team ids, persists nothing and allocates no cursor on the admission
+ * path; every reader re-authorizes through the usage query, and a reader that was not
  * mounted reads current usage when it opens.
  */
 export async function publishTeamCredentialUsageChangedInTx(
@@ -38,6 +39,7 @@ export async function publishTeamCredentialUsageChangedInTx(
     const resource = await tx.teamCredentialResource.findUnique({
         where: { id: input.resourceId },
         select: {
+            teamId: true,
             custodianAccountId: true,
             custodianAccount: { select: { status: true } },
             team: {
@@ -69,7 +71,8 @@ export async function publishTeamCredentialUsageChangedInTx(
             audience.add(membership.accountId);
         }
     }
-    const payload = buildTeamCredentialUsageChangedEphemeral(input.resourceId);
+    for (const accountId of await readHomeGovernanceChangeAccountIdsInTx(tx)) audience.add(accountId);
+    const payload = buildTeamCredentialUsageChangedEphemeral(input.resourceId, resource.teamId);
     afterTx(tx, () => {
         for (const accountId of audience) {
             eventRouter.emitEphemeral({ userId: accountId, payload, recipientFilter: { type: "user-scoped-only" } });

@@ -421,6 +421,7 @@ export type EphemeralEvent = ScmDiffSummaryResultUpdateEphemeral | SessionPerson
      */
     type: 'team-credential-usage-changed';
     resourceId: string;
+    teamId?: string;
 } | ActionOperationRevisionEphemeralV1 | (PluginWebhookHeartbeatReceiptHintV1 & { type: 'health-check-heartbeat-received' }) | {
     type: 'machine-status';
     machineId: string;

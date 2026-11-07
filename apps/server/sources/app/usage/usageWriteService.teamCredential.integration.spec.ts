@@ -1,15 +1,18 @@
 import type { UsageEventIngestRequest } from "@happier-dev/protocol";
+import { EphemeralUpdateSchema } from "@happier-dev/protocol/updates";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { recordTeamCredentialExternalProviderTerminalUsageInTx } from "@/app/teams/credentials/externalProviderBrokerAdmission";
 import {
     recordTeamCredentialAdmissionUsageEventInTx,
     recordTeamCredentialExternalTerminalUsageEventInTx,
     recordUsageEvent,
     type TeamCredentialUsageWriteAuthority,
 } from "./usageWriteService";
+
 
 describe("usageWriteService Team credential attribution", () => {
     let harness: LightSqliteHarness;
@@ -186,21 +189,35 @@ describe("usageWriteService Team credential attribution", () => {
             measurement: "reported" as const,
             modelId: "provider-model-1",
             tokens: { input: 5, output: 3, reasoning: 1, cacheRead: 0, cacheWrite: 0, total: 9 },
-            cost: null,
+            cost: { reportedUsd: 0.12, estimatedUsd: 0, currency: "USD", costSource: "provider_reported" as const, billingContext: "api_usage" as const },
             authority: terminalAuthority,
         };
-        const terminal = await inTx((tx) => recordTeamCredentialExternalTerminalUsageEventInTx(tx, terminalInput));
+        await db.machine.create({ data: { id: "broker-machine-1", accountId: fixture.storageAccount.id,
+            metadata: "{}" } });
+        // The CLI's real plugin/response observer test produces this strict DTO;
+        // keep this suite at the server admission and database boundary.
+        const request = { v: 1, admissionUsageEventId: first.id, requestId: terminalInput.requestId,
+            brokerMachineId: "broker-machine-1", completedAtMs: terminalInput.completedAt.getTime(),
+            measurement: "reported", outcome: terminalInput.outcome, actualModelId: terminalInput.modelId,
+            tokens: terminalInput.tokens, reportedCostUsd: 0.12 };
+        const terminal = await inTx((tx) => recordTeamCredentialExternalProviderTerminalUsageInTx(tx, {
+            authenticatedBrokerAccountId: fixture.storageAccount.id, request,
+        }));
+        if (!terminal.ok) throw new Error(`Terminal charge rejected: ${terminal.reasonCode}`);
         await expect(inTx((tx) => recordTeamCredentialExternalTerminalUsageEventInTx(tx, terminalInput)))
-            .resolves.toEqual({ id: terminal.id, created: false });
+            .resolves.toEqual({ id: terminal.usageEventId, created: false });
         await expect(inTx((tx) => recordTeamCredentialExternalTerminalUsageEventInTx(tx, {
             ...terminalInput,
             outcome: "failed",
         }))).rejects.toThrow("conflicting team credential terminal usage fact");
         expect(await db.usageEvent.count({ where: { source: "team_credential_external_terminal" } })).toBe(1);
-        expect(await db.usageEvent.findUniqueOrThrow({ where: { id: terminal.id } })).toMatchObject({
+        expect(await db.usageEvent.findUniqueOrThrow({ where: { id: terminal.usageEventId } })).toMatchObject({
             requestCount: 0,
             totalTokens: 9,
             modelId: "provider-model-1",
+            reportedCostUsd: 0.12,
+            estimatedCostUsd: 0,
+            costSource: "provider_reported",
             teamCredentialActorAccountId: fixture.actorA.id,
             teamCredentialExternalApiKeyId: keyA.id,
         });
@@ -554,10 +571,18 @@ describe("usageWriteService Team credential attribution", () => {
         expect(await db.usageEvent.count({ where: { source: "team_credential_admission" } })).toBe(2);
     });
 
-    it("wakes only the resource's usage readers' app connections after each new immutable usage write", async () => {
+    it("wakes resource, Team and Home usage readers' app connections after each new immutable usage write", async () => {
         const fixture = await createTeamFixture();
         const manager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const suspendedManager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const homeAdmin = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain", homeRole: "admin" } });
+        const homeOwner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain", homeRole: "owner" } });
+        const suspendedHomeAdmin = await db.account.create({
+            data: { publicKey: crypto.randomUUID(), encryptionMode: "plain", homeRole: "admin", status: "suspended" },
+        });
+        const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        // Overlapping Home and Team audiences still receive one wake per fact.
+        await db.account.update({ where: { id: manager.id }, data: { homeRole: "admin" } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: manager.id, role: "admin" } });
         await db.teamMembership.create({
             data: { teamId: fixture.team.id, accountId: suspendedManager.id, role: "owner", status: "suspended" },
@@ -585,7 +610,12 @@ describe("usageWriteService Team credential attribution", () => {
             const actorApp = listen(fixture.actorA.id, "user-scoped");
             const otherMemberApp = listen(fixture.actorB.id, "user-scoped");
             const suspendedManagerApp = listen(suspendedManager.id, "user-scoped");
-            const wake = { type: "team-credential-usage-changed", resourceId: fixture.resourceA.id };
+            const homeAdminApp = listen(homeAdmin.id, "user-scoped");
+            const homeOwnerApp = listen(homeOwner.id, "user-scoped");
+            const homeAdminDaemon = listen(homeAdmin.id, "machine-scoped");
+            const suspendedHomeAdminApp = listen(suspendedHomeAdmin.id, "user-scoped");
+            const outsiderApp = listen(outsider.id, "user-scoped");
+            const wake = { type: "team-credential-usage-changed", resourceId: fixture.resourceA.id, teamId: fixture.team.id };
 
             const session = await db.session.create({
                 data: {
@@ -619,13 +649,18 @@ describe("usageWriteService Team credential attribution", () => {
             }));
 
             await expect(admit()).resolves.toMatchObject({ created: true });
+            // Home administration does not require a membership in this Team.
+            expect(homeAdminApp).toEqual([wake]);
+            expect(homeOwnerApp).toEqual([wake]);
             expect(custodianApp).toEqual([wake]);
             expect(managerApp).toEqual([wake]);
             expect(actorApp).toEqual([wake]);
+            expect(EphemeralUpdateSchema.parse(homeAdminApp[0])).toEqual(wake);
 
             // An idempotent replay records nothing new, so nothing is woken.
             await expect(admit()).resolves.toMatchObject({ created: false });
             expect(managerApp).toEqual([wake]);
+            expect(homeAdminApp).toEqual([wake]);
 
             // The Agent's terminal token/cost observation is the other immutable write.
             await expect(recordUsageEvent(fixture.storageAccount.id, {
@@ -649,12 +684,17 @@ describe("usageWriteService Team credential attribution", () => {
             expect(custodianApp).toEqual([wake, wake]);
             expect(managerApp).toEqual([wake, wake]);
             expect(actorApp).toEqual([wake, wake]);
+            expect(homeAdminApp).toEqual([wake, wake]);
+            expect(homeOwnerApp).toEqual([wake, wake]);
 
             // A member reads only their own use; a suspended manager reads nothing;
             // daemons do not render usage and must not rehydrate on it.
             expect(otherMemberApp).toEqual([]);
             expect(suspendedManagerApp).toEqual([]);
             expect(managerDaemon).toEqual([]);
+            expect(homeAdminDaemon).toEqual([]);
+            expect(suspendedHomeAdminApp).toEqual([]);
+            expect(outsiderApp).toEqual([]);
         } finally {
             for (const { accountId, connection } of connections) eventRouter.removeConnection(accountId, connection);
         }
