@@ -4,19 +4,19 @@ import { t } from '@/text';
 import type { TeamCredentialResourceStatus } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import { presentConnectedAccountSignedOut } from '@/components/settings/connectedServices/account/connectedAccountCredentialStatusLabel';
 import { teamCredentialReconnectPresentation } from './sourceHealthPresentation';
-import type { TeamCredentialRecoveryPresentation } from './teamCredentialPresentation';
+import type { TeamCredentialRecoveryPresentation } from './credentialStatusPresentation';
 
 export type TeamCredentialResourceState = TeamCredentialResourceReadinessV1['kind'];
 
-/** Keep the Home's typed reason rather than reducing readiness to its kind at the UI boundary. */
+/** The cause, from the Home's typed reason rather than readiness reduced to its kind at the UI boundary. */
 export function resourceStateLabel(
     readiness: TeamCredentialResourceState | TeamCredentialResourceReadinessV1,
-    sourceOwnerDisplayName?: string | null,
 ): string {
     const state = typeof readiness === 'string' ? readiness : readiness.kind;
+    // The cause only, the same for every viewer; whom to ask is `teamCredentialStatusPresentation`'s.
     if (typeof readiness !== 'string' && readiness.kind === 'source_unavailable') {
-        const reconnect = teamCredentialReconnectPresentation(readiness.reason, sourceOwnerDisplayName);
-        if (reconnect) return reconnect.message;
+        const reconnect = teamCredentialReconnectPresentation(readiness.reason);
+        if (reconnect) return reconnect.title;
     }
     switch (state) {
         case 'available': return t('teams.credentials.state.available');

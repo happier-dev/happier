@@ -2,7 +2,6 @@ import type {
     TeamCredentialBrokerPlacementV1,
     TeamCredentialRouteV1,
     TeamCredentialRequestProtocolKindV1,
-    TeamCredentialResourceRecoveryActionV1,
     TeamCredentialResourceSummaryV1,
     TeamCredentialResourceCatalogEntryV1,
     TeamCredentialResourceSourcePresentationV1,
@@ -22,11 +21,12 @@ import type { ConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedS
 import { resolveQualifiedConnectedServiceMarkId } from '@/components/settings/connectedServices/model/resolveQualifiedConnectedServiceMarkId';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
+import type { TeamCredentialResourceState } from './readinessPresentation';
 import { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { resolveUsageQueryPeriod, type UsageRelativePeriod } from '@happier-dev/protocol/inputs/usageQuery';
 export { deliveryModeLabel } from '@/sync/domains/teams/teamCredentialDeliveryPresentation';
 import { teamCredentialReconnectPresentation } from './sourceHealthPresentation';
+import { teamCredentialRecoveryPresentation, teamCredentialStatusPresentation } from './credentialStatusPresentation';
 export { resourceStateLabel, type TeamCredentialResourceState } from './readinessPresentation';
 
 /** Team Usage requires explicit numeric bounds; its All range keeps the existing epoch contract. */
@@ -220,7 +220,7 @@ export function sessionUsePolicyLabel(policy: TeamCredentialSessionUsePolicyV1):
  */
 function resourceRowFacts(
     resource: TeamCredentialResourceSummaryV1 | TeamCredentialResourceCatalogEntryV1,
-): Readonly<{ identity: readonly string[]; state: string }> {
+): Readonly<{ identity: readonly string[]; state: readonly string[] }> {
     const administration = 'capabilities' in resource ? resource : null;
     const recipientDelivery = 'allowedRoutes' in resource ? recipientDeliveryMode(resource) : null;
     const identity = [
@@ -229,7 +229,9 @@ function resourceRowFacts(
             ? administration.capabilities.manageAudience ? resourceDeliverySummary(administration) : null
             : recipientDelivery ? deliveryModeLabel(recipientDelivery) : null,
     ].filter((part): part is string => part !== null && part !== '');
-    return { identity, state: resourceStateLabel(resource.readiness, administration?.sourceOwnerDisplayName) };
+    // The same status owner as the detail page: the cause, then whom to ask for a viewer who cannot repair it.
+    const status = teamCredentialStatusPresentation(resource);
+    return { identity, state: status.handoff === null ? [status.cause] : [status.cause, status.handoff] };
 }
 
 /**
@@ -248,7 +250,7 @@ export function resourceAccessibilityLabel(
 ): string {
     void options;
     const facts = resourceRowFacts(resource);
-    return [resource.displayName, ...facts.identity, facts.state].join(', ');
+    return [resource.displayName, ...facts.identity, ...facts.state].join(', ');
 }
 
 /**
@@ -264,7 +266,7 @@ export function resourceAdministrationSummaryLines(
     // A usable resource says nothing about its state: only a state that needs someone earns a line.
     return resourceState(resource) === 'available'
         ? [facts.identity.join(' · ')]
-        : [facts.identity.join(' · '), facts.state];
+        : [facts.identity.join(' · '), ...facts.state];
 }
 
 /**
@@ -298,9 +300,11 @@ export function brokerPoolChoiceLabel(
 }
 
 export function brokerPlacementLabel(resource: TeamCredentialResourceSummaryV1): string {
-    if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNone');
+    // A value, never the action's own label: the owner's "Choose a broker location" button sits beside it.
+    if (resource.brokerPlacement === null) return t('teams.credentials.detail.brokerNotChosen');
+    // A stored choice the Home no longer presents is unavailable to its owner, not unnamed or unchosen.
     const unnamedPlacement = resource.capabilities.updateBrokerPlacement
-        ? t('teams.credentials.detail.brokerNone')
+        ? t('common.unavailable')
         : t('teams.credentials.detail.brokerChosen');
     if (resource.brokerPlacement.kind === 'machine_pool') {
         // A Pool is named as one: "Development" beside a Machine's own display
@@ -330,83 +334,14 @@ export function teamCredentialBrokerPlacementAction(
         : null;
 }
 
-/**
- * The Home's recovery instruction for one unavailable resource, mapped to the
- * single destination that instruction names.
- *
- * The server owns the enum; this module only decides which existing destination
- * each arm means and what the row says. Nothing here decides authority: whether
- * a viewer may actually reach the resource's Settings is applied again by the
- * surface they land on, from the Home's own viewer projection.
- */
-export type TeamCredentialRecoveryDestination =
-    | 'retry'
-    | 'resource_settings'
-    | 'broker_selection'
-    | 'source_owner_handoff'
-    | 'app_update'
-    | 'choose_another_resource';
-
-export type TeamCredentialRecoveryTranslationKey =
-    | 'teams.unavailable.retry'
-    | 'teams.credentials.recovery.openSettings'
-    | 'teams.credentials.recovery.selectBroker'
-    | 'teams.credentials.recovery.ownerHandoff'
-    | 'teams.credentials.recovery.updateApp'
-    | 'teams.credentials.recovery.chooseAnother';
-
-export type TeamCredentialRecoveryPresentation = Readonly<{
-    destination: TeamCredentialRecoveryDestination;
-    labelKey: TeamCredentialRecoveryTranslationKey;
-}>;
-
-/**
- * Maps the server-owned recovery enum onto one destination.
- *
- * `source_owner_action` and `select_broker` can only be repaired by the source
- * custodian, so anyone else — including a Team manager, whose surface is
- * audience and limits, not the source — is handed to the owner instead of
- * being offered a destination that would refuse them.
- */
-export function teamCredentialRecoveryPresentation(
-    action: TeamCredentialResourceRecoveryActionV1 | null | undefined,
-    options?: Readonly<{ isSourceCustodian?: boolean }>,
-): TeamCredentialRecoveryPresentation | null {
-    switch (action) {
-        case 'retry':
-            return { destination: 'retry', labelKey: 'teams.unavailable.retry' };
-        case 'source_owner_action':
-            return options?.isSourceCustodian === true
-                ? { destination: 'resource_settings', labelKey: 'teams.credentials.recovery.openSettings' }
-                : { destination: 'source_owner_handoff', labelKey: 'teams.credentials.recovery.ownerHandoff' };
-        case 'select_broker':
-            return options?.isSourceCustodian === true
-                ? { destination: 'broker_selection', labelKey: 'teams.credentials.recovery.selectBroker' }
-                : { destination: 'source_owner_handoff', labelKey: 'teams.credentials.recovery.ownerHandoff' };
-        case 'update_required':
-            return { destination: 'app_update', labelKey: 'teams.credentials.recovery.updateApp' };
-        case 'choose_another_resource':
-            return { destination: 'choose_another_resource', labelKey: 'teams.credentials.recovery.chooseAnother' };
-        default:
-            return null;
-    }
-}
-
-/** The localized label for surfaces that own the global translator. */
-export function teamCredentialRecoveryLabel(presentation: TeamCredentialRecoveryPresentation): string {
-    return t(presentation.labelKey);
-}
-
-/**
- * Whether this recovery names a destination the current surface can open.
- *
- * `source_owner_handoff` is guidance because the viewer is not the person who
- * can act. `choose_another_resource` navigates back to the existing
- * resource catalog; it does not create another selection owner.
- */
-export function recoveryDestinationIsNavigable(destination: TeamCredentialRecoveryDestination): boolean {
-    return destination !== 'source_owner_handoff';
-}
+export {
+    recoveryDestinationIsNavigable,
+    teamCredentialRecoveryLabel,
+    teamCredentialRecoveryPresentation,
+    type TeamCredentialRecoveryDestination,
+    type TeamCredentialRecoveryPresentation,
+    type TeamCredentialRecoveryTranslationKey,
+} from './credentialStatusPresentation';
 
 /**
  * The Home's typed refusal, in the words of the recovery it actually implies.

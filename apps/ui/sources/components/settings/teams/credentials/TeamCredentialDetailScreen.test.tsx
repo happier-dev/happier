@@ -247,7 +247,8 @@ describe('TeamCredentialDetailScreen', () => {
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-broker'));
 
         const brokerRow = screen.findAllByTestId('team-credential-broker')[0];
-        expect(brokerRow?.props.subtitle).toBe('machinePools.connectionSemantics');
+        // Beside the owner's broker action, the chosen Pool and its semantics are the row's description.
+        expect(brokerRow?.props.subtitle).toContain('machinePools.connectionSemantics');
         expect(brokerRow?.props.accessibilityLabel).toContain('machinePools.connectionSemantics');
     });
 
@@ -356,7 +357,43 @@ describe('TeamCredentialDetailScreen', () => {
         expect(ids).toContain(rowAction);
         const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-state');
         if (owner) expect(state?.props.subtitle).not.toBe(t('teams.credentials.recovery.ownerHandoff'));
-        else expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoff'));
+        else expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoffNamed', { name: 'Ada Lovelace' }));
+    });
+
+    it('tells a recipient whom to ask on the one state row, with no owner-only action and no second banner', async () => {
+        const serverId = await harness.addHome({
+            name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-maya',
+            teamsEnabled: true, credentialResourcesEnabled: true,
+        });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({}) }) });
+        harness.answer(serverId, LIST_PATH, {
+            body: { resources: [], viewer: teamCredentialViewerFixture({ manageCredentials: false }) },
+        });
+        harness.answer(serverId, TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, {
+            body: TeamCredentialResourceDiscoveryPageV1Schema.parse({
+                nextCursor: null, failures: [],
+                resources: [{
+                    id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 3,
+                    readiness: { kind: 'broker_unavailable' }, recoveryAction: 'select_broker',
+                    mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
+                    sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [],
+                    sourcePresentation: null,
+                }],
+            }),
+        });
+        harness.answer(serverId, GET_PATH, { status: 404, body: { error: 'not_found_or_not_visible' } });
+        const { TeamCredentialDetailScreen } = await import('./TeamCredentialDetailScreen');
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<TeamCredentialDetailScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-credential-recipient-state'));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).not.toContain('team-credential-recovery-notice');
+        expect(ids).not.toContain('team-credential-recovery');
+        const state = screen.findAllByType(Item).find(row => row.props.testID === 'team-credential-recipient-state');
+        expect(state?.props.title).toBe(t('teams.credentials.errors.brokerUnavailable'));
+        expect(state?.props.subtitle).toBe(t('teams.credentials.recovery.ownerHandoff'));
     });
 
     it('shows the preparation refresh only to the source owner when direct delivery needs preparation', async () => {

@@ -6,7 +6,13 @@ import { t } from '@/text';
 export function teamCredentialReconnectPresentation(code: unknown, sourceOwnerDisplayName?: string | null) {
     if (code !== CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired) return null;
     const title = t('connectedServices.diagnostics.title.connected_service_credential_reconnect_required');
-    const handoff = [t('teams.credentials.recovery.ownerHandoff'), sourceOwnerDisplayName?.trim()]
-        .filter(Boolean).join(' · ');
-    return { title, message: [title, handoff].join('. ') };
+    return { title, message: [title, teamCredentialOwnerHandoffLabel(sourceOwnerDisplayName)].join('. ') };
+}
+
+/** "Ask <owner> …" when the projection names the source owner, otherwise the person who shared it. */
+export function teamCredentialOwnerHandoffLabel(sourceOwnerDisplayName?: string | null): string {
+    const name = sourceOwnerDisplayName?.trim();
+    return name
+        ? t('teams.credentials.recovery.ownerHandoffNamed', { name })
+        : t('teams.credentials.recovery.ownerHandoff');
 }

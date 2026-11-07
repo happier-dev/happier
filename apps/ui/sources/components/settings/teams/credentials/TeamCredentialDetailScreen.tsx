@@ -2,7 +2,6 @@ import * as React from 'react';
 import type { TeamCredentialTestActionOutputV1 } from '@happier-dev/protocol/teams';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -47,11 +46,10 @@ import {
 } from './teamCredentialPresentation';
 import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
 import {
-    recoveryDestinationIsNavigable,
     teamCredentialRecoveryLabel,
-    teamCredentialRecoveryPresentation,
+    teamCredentialStatusPresentation,
     type TeamCredentialRecoveryPresentation,
-} from './teamCredentialPresentation';
+} from './credentialStatusPresentation';
 import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
 import { useTeamCredentialExternalApiAvailability } from './useTeamCredentialExternalApiAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -71,9 +69,9 @@ function directMaterialStateLabel(state: NonNullable<ReturnType<typeof useTeamCr
 
 type CredentialTestResult = Readonly<{ message: string; code?: string; detail?: string }>;
 
-function presentTestResult(result: TeamCredentialTestActionOutputV1, sourceOwnerDisplayName: string | null): CredentialTestResult {
+function presentTestResult(result: TeamCredentialTestActionOutputV1): CredentialTestResult {
     return {
-        message: result.recovery ?? resourceStateLabel(result.readiness, sourceOwnerDisplayName),
+        message: result.recovery ?? resourceStateLabel(result.readiness),
         code: result.failureDetail?.code ?? result.code ?? (result.result === 'needs_attention'
             ? ('reason' in result.readiness ? result.readiness.reason : undefined) ?? result.readiness.kind
             : undefined),
@@ -85,44 +83,21 @@ function presentTestResult(result: TeamCredentialTestActionOutputV1, sourceOwner
     };
 }
 
-/**
- * The one recovery row the Home's recovery action maps to.
- *
- * Every destination already exists — reload, the resource's own Settings where
- * the source and broker placement live, the app-update owner — and the handoff
- * and choose-another arms are instructions rather than navigations. Whoever
- * reaches this row was allowed here by the Home; the mapper only says what the
- * typed recovery action means, never who may perform it.
- */
-const CredentialRecoveryRow = React.memo(function CredentialRecoveryRow(props: Readonly<{
-    recovery: TeamCredentialRecoveryPresentation;
-    retryTestID: string;
-    onRetry: () => void;
-    onOpenResourceSettings: () => void;
-    onAppUpdate: () => void;
-    onChooseAnotherResource: () => void;
-}>) {
-    const navigable = recoveryDestinationIsNavigable(props.recovery.destination);
-    const label = teamCredentialRecoveryLabel(props.recovery);
-    const isRetry = props.recovery.destination === 'retry';
-    // The resource cannot be used as it is: say so above its details, with the one recovery it has.
-    return (
-        <AttentionBanner
-            testID="team-credential-recovery-notice"
-            title={label}
-            action={navigable ? {
-                label: isRetry ? t('teams.unavailable.retry') : label,
-                testID: isRetry ? props.retryTestID : 'team-credential-recovery',
-                onPress: () => {
-                    if (isRetry) props.onRetry();
-                    else if (props.recovery.destination === 'app_update') props.onAppUpdate();
-                    else if (props.recovery.destination === 'choose_another_resource') props.onChooseAnotherResource();
-                    else props.onOpenResourceSettings();
-                },
-            } : null}
-        />
-    );
-});
+/** Opens the one destination a state row's recovery names; a handoff is never navigable and never reaches here. */
+function openCredentialRecovery(
+    recovery: TeamCredentialRecoveryPresentation,
+    target: Readonly<{
+        router: ReturnType<typeof useRouter>;
+        address: TeamSectionContext['address'];
+        resourceId: string;
+        reload: () => unknown;
+    }>,
+): void {
+    if (recovery.destination === 'retry') void target.reload();
+    else if (recovery.destination === 'app_update') target.router.push(UPDATES_ROUTE);
+    else if (recovery.destination === 'choose_another_resource') target.router.push(teamCredentialsPath(target.address));
+    else target.router.push(teamCredentialEditPath(target.address, target.resourceId));
+}
 
 /**
  * One shared credential.
@@ -205,11 +180,10 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
     if (view.resource === null && view.catalogResource !== null) {
         const resource = view.catalogResource;
         // A least-privilege catalog row carries no custodian identity, so a
-        // recipient is never treated as the person who can repair the source;
-        // the Home's handoff instruction is rendered as is.
-        const recipientRecovery = teamCredentialRecoveryPresentation(resource.recoveryAction, {
-            isSourceCustodian: false,
-        });
+        // recipient is never the person who can repair the source: the state row
+        // says the cause and whom to ask, or carries a repair anyone can make.
+        const status = teamCredentialStatusPresentation(resource);
+        const recovery = status.recovery;
         return frame(
             <>
                 <ItemGroup>
@@ -221,12 +195,25 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     />
                     <Item
                         testID="team-credential-recipient-state"
-                        title={resourceStateLabel(resource.readiness)}
+                        title={status.cause}
+                        subtitle={status.handoff ?? undefined}
+                        subtitleLines={0}
                         detail={(() => {
                             const mode = recipientDeliveryMode(resource);
                             return mode ? deliveryModeLabel(mode) : undefined;
                         })()}
                         showChevron={false}
+                        rightElement={recovery ? (
+                            <RoundButton
+                                testID={recovery.destination === 'retry' ? 'team-credential-recipient-retry' : 'team-credential-recovery'}
+                                size="small"
+                                display="secondary"
+                                title={teamCredentialRecoveryLabel(recovery)}
+                                onPress={() => openCredentialRecovery(recovery, {
+                                    router, address: context.address, resourceId, reload: view.reload,
+                                })}
+                            />
+                        ) : undefined}
                     />
                     {resource.sessionUsePolicy ? (
                         <Item
@@ -261,16 +248,6 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                         />
                     ) : null}
                 </ItemGroup>
-                {recipientRecovery === null ? null : (
-                    <CredentialRecoveryRow
-                        recovery={recipientRecovery}
-                        retryTestID="team-credential-recipient-retry"
-                        onRetry={() => void view.reload()}
-                        onOpenResourceSettings={() => router.push(teamCredentialEditPath(context.address, resourceId))}
-                        onAppUpdate={() => router.push(UPDATES_ROUTE)}
-                        onChooseAnotherResource={() => router.push(teamCredentialsPath(context.address))}
-                    />
-                )}
             </>,
         );
     }
@@ -320,28 +297,14 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
     const brokerConnectionSemantics = resource.brokerPlacement?.kind === 'machine_pool'
         ? t('machinePools.connectionSemantics')
         : undefined;
-    // The Home's typed recovery for this exact resource. Only its source
-    // custodian can repair the source or move the broker, so anyone else —
-    // including a Team manager — is handed to the owner rather than being
-    // offered a Settings destination that would refuse them.
-    const administratorRecovery = teamCredentialRecoveryPresentation(resource.recoveryAction, {
-        isSourceCustodian: capabilities.updateBrokerPlacement
-            || capabilities.narrowDisclosure
-            || capabilities.refreshDirectMaterial,
-    });
     // One status voice: the state row says the cause and, for someone who cannot repair it, whom to ask.
     // Test is the retry, and the broker's owner changes it on its own row, so neither repeats as a banner.
-    const ownerHandoff = administratorRecovery?.destination === 'source_owner_handoff'
-        ? teamCredentialRecoveryLabel(administratorRecovery) : undefined;
+    const status = teamCredentialStatusPresentation(resource);
+    const ownerHandoff = status.handoff ?? undefined;
     // Any other repair this viewer can make is the state row's action; Test waits until it is made.
-    const rowRecovery = administratorRecovery !== null && administratorRecovery.destination !== 'retry'
-        && administratorRecovery.destination !== 'broker_selection' && recoveryDestinationIsNavigable(administratorRecovery.destination)
-        ? administratorRecovery : null;
-    const openRecovery = (recovery: TeamCredentialRecoveryPresentation) => {
-        if (recovery.destination === 'app_update') router.push(UPDATES_ROUTE);
-        else if (recovery.destination === 'choose_another_resource') router.push(teamCredentialsPath(context.address));
-        else router.push(teamCredentialEditPath(context.address, resourceId));
-    };
+    const rowRecovery = status.recovery !== null && status.recovery.destination !== 'retry'
+        && status.recovery.destination !== 'broker_selection'
+        ? status.recovery : null;
 
     return frame(
         <>
@@ -363,7 +326,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                 />
                 <Item
                     testID="team-credential-state"
-                    title={resourceStateLabel(resource.readiness, resource.sourceOwnerDisplayName)}
+                    title={status.cause}
                     // The last test's answer, while there is one, says more than the delivery line.
                     subtitle={testResult?.code ? ownerHandoff ?? delivery ?? undefined : testResult?.message ?? ownerHandoff ?? delivery ?? undefined}
                     subtitleLines={0}
@@ -375,7 +338,9 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                             display="secondary"
                             title={teamCredentialRecoveryLabel(rowRecovery)}
                             disabled={busy}
-                            onPress={() => openRecovery(rowRecovery)}
+                            onPress={() => openCredentialRecovery(rowRecovery, {
+                                router, address: context.address, resourceId, reload: view.reload,
+                            })}
                         />
                     ) : (
                         <RoundButton
@@ -405,7 +370,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                                             // "it ran".
                                             onApprovalSucceeded: (result) => {
                                                 if (currentTargetKey.current !== requestedTargetKey) return;
-                                                setTestResult(presentTestResult(result, resource.sourceOwnerDisplayName));
+                                                setTestResult(presentTestResult(result));
                                             },
                                             onApprovalFailed: (code) => {
                                                 if (currentTargetKey.current !== requestedTargetKey) return;
@@ -415,7 +380,7 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                                     });
                                     if (currentTargetKey.current !== requestedTargetKey) return;
                                     if (outcome.kind === 'succeeded') {
-                                        setTestResult(presentTestResult(outcome.value, resource.sourceOwnerDisplayName));
+                                        setTestResult(presentTestResult(outcome.value));
                                     } else {
                                         setTestResult({ message: credentialFailureMessage(outcome.failure), code: outcome.failure.code ?? undefined });
                                     }
@@ -459,8 +424,13 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                     // rather than to the reader. Printing it would put a raw
                     // internal identifier on a settings screen without making
                     // anyone able to act on it.
-                    detail={brokerPlacementLabel(resource)}
-                    subtitle={brokerConnectionSemantics}
+                    // Beside the owner's "Choose a broker location" the value is the row's description, so it
+                    // wraps under the label on a phone instead of being squeezed out beside the button.
+                    detail={capabilities.updateBrokerPlacement ? undefined : brokerPlacementLabel(resource)}
+                    subtitle={capabilities.updateBrokerPlacement
+                        ? [brokerPlacementLabel(resource), brokerConnectionSemantics].filter(Boolean).join('\n')
+                        : brokerConnectionSemantics}
+                    subtitleLines={0}
                     accessibilityLabel={[t('teams.credentials.detail.brokerLabel'), brokerPlacementLabel(resource), brokerConnectionSemantics]
                         .filter(Boolean).join('. ')}
                     showChevron={false}
@@ -470,7 +440,10 @@ const CredentialDetail = React.memo(function CredentialDetail(props: Readonly<{
                             testID="team-credential-choose-broker"
                             size="small"
                             display="secondary"
-                            title={t('teams.credentials.recovery.selectBroker')}
+                            // The row already names the broker location; the button says only the verb so it fits
+                            // beside the label on a phone, and keeps the whole phrase as its accessible name.
+                            title={resource.brokerPlacement === null ? t('common.choose') : t('common.change')}
+                            accessibilityLabel={t('teams.credentials.recovery.selectBroker')}
                             disabled={busy}
                             onPress={() => router.push(teamCredentialEditPath(context.address, resourceId))}
                         />

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { teamCredentialResourceFixture } from '@/dev/testkit';
+import { t } from '@/text';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialUsageQueryInputV1Schema } from '@happier-dev/protocol/teams';
 
 import {
@@ -120,14 +121,19 @@ describe('teamCredentialPresentation', () => {
     });
 
     it('retains source reconnect readiness in the resource accessible description', () => {
-        const resource = teamCredentialResourceFixture({ sourceOwnerDisplayName: 'Alice', readiness: {
-            kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required',
-        } });
-        expect(resourceAccessibilityLabel(resource)).toContain('Connected account needs reconnect');
-        expect(resourceAccessibilityLabel(resource)).toContain('Alice');
+        const readiness = { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } as const;
+        const owner = teamCredentialResourceFixture({ sourceOwnerDisplayName: 'Alice', readiness, recoveryAction: 'source_owner_action' });
+        const manager = teamCredentialResourceFixture({
+            sourceOwnerDisplayName: 'Alice', readiness, recoveryAction: 'source_owner_action',
+            capabilities: { updateBrokerPlacement: false, narrowDisclosure: false, refreshDirectMaterial: false },
+        });
+        expect(resourceAccessibilityLabel(owner)).toContain('Connected account needs reconnect');
+        // Only someone who cannot reconnect it is told whom to ask; the owner is not told to ask themselves.
+        expect(resourceAccessibilityLabel(owner)).not.toContain('Alice');
+        expect(resourceAccessibilityLabel(manager)).toContain('Alice');
         expect(credentialFailureMessage({ kind: 'invalid', retryable: false,
             code: 'connected_service_credential_reconnect_required',
-        })).toContain('Ask the source owner');
+        })).toContain(t('teams.credentials.recovery.ownerHandoff'));
     });
 
     it('never derives a state from an audience the Home did not disclose', () => {
