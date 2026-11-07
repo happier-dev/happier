@@ -16,6 +16,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { MachinePagePinnedBarContext, createMachinePagePinnedBarSlot } from '@/components/machines/page/machinePagePinnedBar';
 
 import {
   presentMachineNetwork,
@@ -224,11 +226,12 @@ describe('Machine → Network page', () => {
       { kind: 'review', plan: reviewed },
       { onDraft, onCancel, onApply },
     );
-    const warning = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+    const warning = findTestInstanceByTypeWithProps(screen, AttentionBanner, {
       testID: 'machine-network-ssh-recovery-warning',
     });
-    expect(warning?.props.kind).toBe('warning');
-    expect(warning?.props.accessibilitySemantics).toBe('alert');
+    // Amber, announced, and it carries the way out itself (lab reachability/closeonly).
+    expect(warning?.props.tone).toBe('warning');
+    expect(warning?.props.announce).toBe('alert');
     expect(findTestInstanceByTypeWithProps(screen, RoundButton, {
       testID: 'machine-network-apply',
     })?.props.disabled).toBe(false);
@@ -254,7 +257,7 @@ describe('Machine → Network page', () => {
         ...plan, basis: { ...plan.basis, change: { kind: 'posture', posture: proposed } },
       });
       const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'review', plan: reviewed });
-      expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+      expect(findTestInstanceByTypeWithProps(screen, AttentionBanner, {
         testID: 'machine-network-ssh-recovery-warning',
       })).toBeUndefined();
       expect(findTestInstanceByTypeWithProps(screen, RoundButton, {
@@ -294,9 +297,9 @@ describe('Machine → Network page', () => {
     expect(findTestInstanceByTypeWithProps(screen, Item, {
       testID: 'machine-network-change-public-ssh',
     })?.props.detail).toBe('machineDetailPage.network.off');
-    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, {
+    expect(findTestInstanceByTypeWithProps(screen, AttentionBanner, {
       testID: 'machine-network-ssh-recovery-warning',
-    })?.props.kind).toBe('warning');
+    })?.props.tone).toBe('warning');
     screen.pressByTestId('machine-network-keep-ssh');
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onDraft).not.toHaveBeenCalled();
@@ -705,5 +708,65 @@ describe('Machine → Network: how people reach its services and ways in (P-M4)'
     expect(card?.props.reason).toBe('machineDetailPage.network.providerRefused');
     await card?.props.action.onPress();
     expect(onDraft).not.toHaveBeenCalled();
+  });
+
+  it('reviews closing SSH as the lab does: what Happier checked, the ways in afterwards, and a primary that names the action', async () => {
+    const managed = MachineReachabilityObservationV1Schema.parse({ ...observation,
+      management: { ...observation.management, providers: [{ provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready' }] } });
+    const network = { ...model({ kind: 'settled' }, true), facts: { ...facts, observation: managed, lastAnsweredAtMs: 1_700_000_000_000 } };
+    const screen = await render(network, true, { kind: 'review', plan });
+    expect(findTestInstanceByTypeWithProps(screen, ItemGroup, { testID: 'machine-network-review-card' })?.props.title)
+      .toBe('machineDetailPage.network.reviewTitleCloseSsh');
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-checked-happier' })?.props.detail)
+      .toBe('machineDetailPage.network.answeredAt');
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-checked-other-way' })?.props.detail).toBe('Tailscale');
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-ways-in-after' })?.props.detail)
+      .toContain('Tailscale');
+    expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-apply' })?.props.title)
+      .toBe('machineDetailPage.network.closeSsh');
+    // Nothing else is a way in: the evidence says so and the amber warning stands.
+    const alone = await render(model({ kind: 'settled' }, true), true, { kind: 'review', plan });
+    expect(findTestInstanceByTypeWithProps(alone, Item, { testID: 'machine-network-checked-other-way' })?.props.detail)
+      .toBe('machineDetailPage.network.none');
+    expect(findTestInstanceByTypeWithProps(alone, AttentionBanner, { testID: 'machine-network-ssh-recovery-warning' })).toBeTruthy();
+  });
+
+  it('puts the staged Review and Discard in the Machine page pinned bar when the page has one, in flow otherwise', async () => {
+    const { MachineNetworkView } = await import('./MachineNetworkSection');
+    const slot = createMachinePagePinnedBarSlot();
+    const draft = plan.basis.change.kind === 'posture' ? plan.basis.change.posture : null;
+    const view = (review: MachineNetworkReview) => React.createElement(MachineNetworkView, {
+      network: model({ kind: 'settled' }, true), machineName: 'shop-prod', online: true,
+      controls: { review, draft, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
+        onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() } });
+    const pinned = await renderScreen(React.createElement(MachinePagePinnedBarContext.Provider, { value: slot }, view({ kind: 'idle' })));
+    expect(findTestInstanceByTypeWithProps(pinned, RoundButton, { testID: 'machine-network-review' })).toBeFalsy();
+    const inBar = await renderScreen(React.createElement(React.Fragment, null, slot.get()));
+    expect(findTestInstanceByTypeWithProps(inBar, RoundButton, { testID: 'machine-network-review' })).toBeTruthy();
+    const inFlow = await renderScreen(view({ kind: 'idle' }));
+    expect(findTestInstanceByTypeWithProps(inFlow, RoundButton, { testID: 'machine-network-review' })).toBeTruthy();
+  });
+
+  it('leads an owner with nothing configured to the existing Connected services entry from both dead-end sections', async () => {
+    const { MachineNetworkView } = await import('./MachineNetworkSection');
+    const onConnectAccount = vi.fn();
+    const empty = { ...facts, selections: [], observation: { ...observation, privateNetworks: [] } };
+    const network = { ...model({ kind: 'settled' }, true), facts: { ...empty, access: projectMachineNetworkAccessFacts(empty) } };
+    const controls = { review: { kind: 'idle' } as const, draft: null, onDraft: vi.fn(), onPrepare: vi.fn(), onPrepareChange: vi.fn(),
+      onApply: vi.fn(), onCancel: vi.fn(), onOpenApproval: vi.fn() };
+    const screen = await renderScreen(React.createElement(MachineNetworkView, {
+      network, machineName: 'shop-prod', online: true, controls, onConnectAccount }));
+    for (const title of ['machineDetailPage.network.ingressTitle', 'machineDetailPage.network.privateTitle']) {
+      const action = findTestInstanceByTypeWithProps(screen, ItemGroup, { title })?.props.action;
+      expect(action?.props.title).toBe('machineDetailPage.network.connectAccount');
+      action?.props.onPress();
+    }
+    expect(onConnectAccount).toHaveBeenCalledTimes(2);
+    // A Use member has nothing to connect here.
+    const read: MachineNetworkRead = { kind: 'unrequested' };
+    const use = await renderScreen(React.createElement(MachineNetworkView, {
+      network: { ...network, ...presentMachineNetwork({ facts: network.facts, read, reachable: true, needsManage: true }) },
+      machineName: 'shop-prod', online: true, controls, onConnectAccount }));
+    expect(findTestInstanceByTypeWithProps(use, ItemGroup, { title: 'machineDetailPage.network.privateTitle' })?.props.action).toBeUndefined();
   });
 });

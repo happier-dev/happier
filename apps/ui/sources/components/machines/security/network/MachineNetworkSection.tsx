@@ -24,12 +24,15 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { MachinePagePinned, MachinePagePinnedBarContext } from '@/components/machines/page/machinePagePinnedBar';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { InlineCode } from '@/components/ui/text/InlineCode';
 import { t } from '@/text';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { joinList } from '@/utils/text/joinList';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
@@ -138,6 +141,7 @@ export function MachineNetworkSection(
       online={props.online}
       ownerName={props.ownerName ?? null}
       controls={controls}
+      onConnectAccount={() => router.push(SETTINGS_ROUTES.connectedServices as never)}
     />
   );
 }
@@ -153,6 +157,8 @@ export function MachineNetworkView(
     controls: ReviewControls;
     providerTitle?: MachineNetworkProviderTitle;
     ownerName?: string | null;
+    /** The existing Connected services entry, where a provider account is connected (lab "Connect Cloudflare"). */
+    onConnectAccount?: () => void;
   }>,
 ) {
   const { network, machineName: machine } = props;
@@ -248,6 +254,7 @@ export function MachineNetworkView(
         machineName={machine}
         controls={props.controls}
         editable={editable}
+        onConnectAccount={props.onConnectAccount}
       />
       <PrivateNetworksGroup
         providerTitle={providerTitle}
@@ -255,6 +262,7 @@ export function MachineNetworkView(
         machineName={machine}
         controls={props.controls}
         editable={editable}
+        onConnectAccount={props.onConnectAccount}
       />
       <PortsGroup
         network={network}
@@ -501,6 +509,7 @@ function IngressGroup(
     machineName: string;
     controls: ReviewControls;
     editable: boolean;
+    onConnectAccount?: () => void;
   }>,
 ) {
   const { posture, observation } = props.network.facts;
@@ -549,6 +558,11 @@ function IngressGroup(
       description={t('machineDetailPage.network.ingressDescription', {
         machine: props.machineName,
       })}
+      // Nothing to choose yet: the next step is connecting a provider account, not a dead end.
+      action={alone && props.editable && props.onConnectAccount ? (
+        <SectionActionButton testID="machine-network-ingress-connect" icon="plus"
+          title={t('machineDetailPage.network.connectAccount')} onPress={props.onConnectAccount} />
+      ) : undefined}
       {...(alone ? {} : {
         accessibilityRole: 'radiogroup' as const,
         accessibilityLabel: t('machineDetailPage.network.ingressTitle'),
@@ -697,6 +711,7 @@ function PrivateNetworksGroup(
     machineName: string;
     controls: ReviewControls;
     editable: boolean;
+    onConnectAccount?: () => void;
   }>,
 ) {
   const facts = props.network.facts;
@@ -709,6 +724,11 @@ function PrivateNetworksGroup(
     <ItemGroup
       title={t('machineDetailPage.network.privateTitle')}
       description={t('machineDetailPage.network.privateDescription')}
+      // Not on one and nothing configured to join: connect the provider's account first.
+      action={entries.length === 0 && props.editable && join?.kind !== 'available' && props.onConnectAccount ? (
+        <SectionActionButton testID="machine-network-private-connect" icon="plus"
+          title={t('machineDetailPage.network.connectAccount')} onPress={props.onConnectAccount} />
+      ) : undefined}
     >
       {entries.length === 0 ? (
         <Item
@@ -985,7 +1005,7 @@ function NetworkReviewFoot(
   if (review.kind === 'idle') {
     if (!draft) return null;
     return (
-      <ItemGroup surface="none">
+      <NetworkDecision>
         <SectionButtonRow
           testID="machine-network-pending"
           footnote={t('machineDetailPage.network.pendingNote', { machine })}
@@ -1005,7 +1025,7 @@ function NetworkReviewFoot(
             onPress={() => props.controls.onDraft(null)}
           />
         </SectionButtonRow>
-      </ItemGroup>
+      </NetworkDecision>
     );
   }
   if (review.kind === 'settled') {
@@ -1099,15 +1119,52 @@ function NetworkReviewFoot(
             value: t(change.intent === 'leave' ? 'machineDetailPage.network.leaveNetwork' : 'machineDetailPage.network.joinNetwork'),
           }]
         : [];
+  // Closing SSH is the one change whose risk is losing the way back in: the review says what Happier checked
+  // first and which ways in remain afterwards, from the same observation the page shows (lab reachability/closeonly).
+  const closingSsh = changes.some((entry) => entry.key === 'public-ssh')
+    && (reviewedPublicSsh ?? (change?.kind === 'posture' ? change.posture.management.publicSsh : null))?.kind === 'closed';
+  const observation = props.network.facts.observation;
+  const otherWaysIn = closingSsh && observation ? observation.management.providers
+    .filter((provider) => provider.state === 'ready')
+    .map((provider) => props.providerTitle(provider.provider) ?? t('machineDetailPage.network.anotherWayIn')) : [];
+  const recovery = closingSsh && change?.kind === 'posture' ? change.posture.management.independentRecovery ?? null : null;
+  const primaryTitle = closingSsh ? t('machineDetailPage.network.closeSsh')
+    : change?.kind === 'privateNetwork'
+      ? t(change.intent === 'leave' ? 'machineDetailPage.network.leaveNetwork' : 'machineDetailPage.network.joinNetwork')
+      : t('machineDetailPage.network.apply');
   return (
     <>
     <ItemGroup
       testID="machine-network-review-card"
-      title={t('machineDetailPage.network.reviewTitle', { machine })}
+      title={closingSsh
+        ? t('machineDetailPage.network.reviewTitleCloseSsh', { machine })
+        : t('machineDetailPage.network.reviewTitle', { machine })}
       description={t('machineDetailPage.network.reviewDescription', {
         machine,
       })}
     >
+      {closingSsh && observation ? (
+        <>
+          <Item
+            testID="machine-network-checked-happier"
+            icon={<Icon name={observation.management.daemon === 'ready' ? 'check-circle' : 'warning-circle'} />}
+            title={t('machineDetailPage.network.checkedReach', { machine })}
+            subtitle={t('machineDetailPage.network.checkedReachSubtitle')}
+            detail={props.network.facts.lastAnsweredAtMs != null
+              ? t('machineDetailPage.network.answeredAt', { time: formatAsOfTime(props.network.facts.lastAnsweredAtMs) })
+              : t(DAEMON_STATE_KEYS[observation.management.daemon])}
+            showChevron={false}
+          />
+          <Item
+            testID="machine-network-checked-other-way"
+            icon={<Icon name={otherWaysIn.length > 0 || recovery ? 'check-circle' : 'minus-circle'} />}
+            title={t('machineDetailPage.network.anotherWayIn')}
+            detail={otherWaysIn.length > 0 ? joinList(otherWaysIn)
+              : recovery ? t(RECOVERY_KIND_KEYS[recovery.kind]) : t('machineDetailPage.network.none')}
+            showChevron={false}
+          />
+        </>
+      ) : null}
       {changes.map((change) => (
         <Item
           key={change.key}
@@ -1117,6 +1174,14 @@ function NetworkReviewFoot(
           showChevron={false}
         />
       ))}
+      {closingSsh ? (
+        <Item
+          testID="machine-network-ways-in-after"
+          title={t('machineDetailPage.network.waysInAfter')}
+          detail={joinList([t('machineDetailPage.network.throughHappier'), ...otherWaysIn])}
+          showChevron={false}
+        />
+      ) : null}
       {steps > 0 ? (
         <Item
           testID="machine-network-change-steps"
@@ -1145,47 +1210,63 @@ function NetworkReviewFoot(
     </ItemGroup>
     {sshClosureWarning ? (
       <ItemGroup surface="none">
-        <SurfaceStateCard
+        {/* Amber: the person needs to decide; keeping SSH is the banner's own way out (lab closeonly). */}
+        <AttentionBanner
           testID="machine-network-ssh-recovery-warning"
-          kind="warning"
-          layout="inline"
-          accessibilitySemantics="alert"
+          placement="inline"
+          tone="warning"
+          announce="alert"
           title={t('machineDetailPage.network.sshRecoveryWarningTitle', { machine })}
-          reason={t('machineDetailPage.network.sshRecoveryWarningBody')}
+          description={t('machineDetailPage.network.sshRecoveryWarningBody')}
+          action={{
+            testID: 'machine-network-keep-ssh',
+            label: t('machineDetailPage.network.keepSshOpen'),
+            onPress: () => {
+              props.controls.onCancel();
+              if (saved?.management.publicSsh.kind === 'open') {
+                props.controls.onDraft({
+                  ...sshClosureWarning,
+                  // Returning from review edits the same saved base, not the proposed write's revision.
+                  revision: plan?.basis.currentPostureRevision ?? saved.revision,
+                  management: { ...sshClosureWarning.management, publicSsh: saved.management.publicSsh },
+                });
+              }
+            },
+          }}
         />
       </ItemGroup>
     ) : null}
-    {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it. */}
-    <ItemGroup surface="none">
+    {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it; a phone pins it. */}
+    <NetworkDecision>
       <SectionButtonRow>
         <RoundButton
           testID="machine-network-apply"
           size="small"
-          title={t('machineDetailPage.network.apply')}
+          title={primaryTitle}
           disabled={review.kind !== 'review'}
           loading={review.kind === 'applying' && approval === null}
           onPress={props.controls.onApply}
         />
         <RoundButton
-          testID={sshClosureWarning ? 'machine-network-keep-ssh' : 'machine-network-cancel'}
+          testID="machine-network-cancel"
           size="small"
           display="secondary"
-          title={t(sshClosureWarning ? 'machineDetailPage.network.keepSshOpen' : 'common.cancel')}
-          onPress={() => {
-            props.controls.onCancel();
-            if (sshClosureWarning && saved?.management.publicSsh.kind === 'open') {
-              props.controls.onDraft({
-                ...sshClosureWarning,
-                // Returning from review edits the same saved base, not the proposed write's revision.
-                revision: plan?.basis.currentPostureRevision ?? saved.revision,
-                management: { ...sshClosureWarning.management, publicSsh: saved.management.publicSsh },
-              });
-            }
-          }}
+          title={t('common.cancel')}
+          onPress={props.controls.onCancel}
         />
       </SectionButtonRow>
-    </ItemGroup>
+    </NetworkDecision>
     </>
+  );
+}
+
+/** A Network decision row: in flow on a wide page, in the Machine page's pinned bar on a phone. */
+function NetworkDecision(props: Readonly<{ children: React.ReactNode }>) {
+  const pinned = React.useContext(MachinePagePinnedBarContext) !== null;
+  return (
+    <MachinePagePinned>
+      {pinned ? props.children : <ItemGroup surface="none">{props.children}</ItemGroup>}
+    </MachinePagePinned>
   );
 }
 
