@@ -2,6 +2,7 @@ export * from './contracts.js';
 export * from './service.js';
 export { createFetchPluginHttpRuntime } from './fetchTransport.js';
 export { readBoundedPluginHttpResponseBody } from './responseBody.js';
+export { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from './recipientOperationResponse.js';
 export { createProviderRedactionLease, redactPluginHttpResponse } from './redaction.js';
 export type { ProviderRedactionLease, ProviderStreamingSanitizer } from './redaction.js';
 export { readCredentialRedactionValues } from './credentialRedactionValues.js';

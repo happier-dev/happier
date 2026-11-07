@@ -592,10 +592,8 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
                   "redirect": "error"
                 },
                 "response": {
-                  "contentTypes": [
-                    "application/json"
-                  ],
-                  "maxBytes": 2097152
+                  "contentTypes": [],
+                  "maxBytes": 0
                 }
               },
               {

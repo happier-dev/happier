@@ -1,0 +1,417 @@
+{
+  "$ref": "#/$defs/ClientToolConfig-Input",
+  "$defs": {
+    "ClientToolConfig-Input": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "client"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 0,
+          "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0
+        },
+        "response_timeout_secs": {
+          "type": "integer",
+          "maximum": 120.0,
+          "minimum": -1.0
+        },
+        "disable_interruptions": {
+          "type": "boolean"
+        },
+        "interruption_mode": {
+          "$ref": "#/$defs/ToolInterruptionMode"
+        },
+        "force_pre_tool_speech": {
+          "type": "boolean"
+        },
+        "pre_tool_speech": {
+          "$ref": "#/$defs/PreToolSpeechMode"
+        },
+        "assignments": {
+          "items": {
+            "$ref": "#/$defs/DynamicVariableAssignment"
+          },
+          "type": "array"
+        },
+        "tool_call_sound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolCallSoundType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool_call_sound_behavior": {
+          "$ref": "#/$defs/ToolCallSoundBehavior"
+        },
+        "tool_error_handling_mode": {
+          "$ref": "#/$defs/ToolErrorHandlingMode"
+        },
+        "parameters": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ObjectJsonSchemaProperty-Input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expects_response": {
+          "type": "boolean"
+        },
+        "dynamic_variables": {
+          "$ref": "#/$defs/DynamicVariablesConfig"
+        },
+        "execution_mode": {
+          "$ref": "#/$defs/ToolExecutionMode"
+        }
+      },
+      "type": "object",
+      "required": [
+        "name",
+        "description"
+      ]
+    },
+    "ToolExecutionMode": {
+      "type": "string",
+      "enum": [
+        "immediate",
+        "post_tool_speech",
+        "async"
+      ]
+    },
+    "DynamicVariablesConfig": {
+      "properties": {
+        "dynamic_variable_placeholders": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ObjectJsonSchemaProperty-Input": {
+      "properties": {
+        "property_kind": {
+          "type": "string",
+          "enum": [
+            "array",
+            "object"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "dynamic_variable": {
+          "type": "string"
+        },
+        "constant_value": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_omitted": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string",
+          "const": "object"
+        },
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "properties": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LiteralJsonSchemaProperty"
+              },
+              {
+                "$ref": "#/$defs/ObjectJsonSchemaProperty-Input"
+              },
+              {
+                "$ref": "#/$defs/ArrayJsonSchemaProperty-Input"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "required_constraints": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequiredConstraints"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RequiredConstraints": {
+      "properties": {
+        "any_of": {
+          "items": {
+            "$ref": "#/$defs/RequiredConstraint"
+          },
+          "type": "array"
+        },
+        "all_of": {
+          "items": {
+            "$ref": "#/$defs/RequiredConstraint"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "RequiredConstraint": {
+      "properties": {
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "required": [
+        "required"
+      ]
+    },
+    "ArrayJsonSchemaProperty-Input": {
+      "properties": {
+        "property_kind": {
+          "type": "string",
+          "enum": [
+            "array",
+            "object"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "dynamic_variable": {
+          "type": "string"
+        },
+        "constant_value": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_omitted": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string",
+          "const": "array"
+        },
+        "items": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/LiteralJsonSchemaProperty"
+            },
+            {
+              "$ref": "#/$defs/ObjectJsonSchemaProperty-Input"
+            },
+            {
+              "$ref": "#/$defs/ArrayJsonSchemaProperty-Input"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "LiteralJsonSchemaProperty": {
+      "properties": {
+        "type": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "boolean",
+                "string",
+                "integer",
+                "number"
+              ]
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "maxItems": 2,
+              "minItems": 2
+            }
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "enum": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_system_provided": {
+          "type": "boolean"
+        },
+        "dynamic_variable": {
+          "type": "string"
+        },
+        "allowed_values": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AllowedValues"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_values_dynamic_variable": {
+          "type": "string"
+        },
+        "constant_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_omitted": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "AllowedValues": {
+      "properties": {
+        "dynamic_variable": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "type": "object",
+      "required": [
+        "dynamic_variable"
+      ]
+    },
+    "ToolErrorHandlingMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "summarized",
+        "passthrough",
+        "hide"
+      ]
+    },
+    "ToolCallSoundBehavior": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "always"
+      ]
+    },
+    "ToolCallSoundType": {
+      "type": "string",
+      "enum": [
+        "typing",
+        "elevator1",
+        "elevator2",
+        "elevator3",
+        "elevator4"
+      ]
+    },
+    "DynamicVariableAssignment": {
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "response"
+        },
+        "dynamic_variable": {
+          "type": "string"
+        },
+        "value_path": {
+          "type": "string"
+        },
+        "sanitize": {
+          "type": "boolean"
+        },
+        "preserve_native_type": {
+          "type": "boolean"
+        }
+      },
+      "type": "object",
+      "required": [
+        "dynamic_variable",
+        "value_path"
+      ]
+    },
+    "PreToolSpeechMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "force",
+        "off"
+      ]
+    },
+    "ToolInterruptionMode": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "disable_during_tool",
+        "disable_during_tool_and_turn"
+      ]
+    }
+  }
+}

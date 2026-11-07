@@ -1,4 +1,4 @@
-import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
+import { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from '@happier-dev/cli-common/plugins/http';
 import { deriveVoiceCredentialBindingIdentityV1, resolveVoiceCredentialOperationAuthorization } from '@happier-dev/protocol/plugins/contributions/voice';
 import { materializeRecipientOperationRequestV1FromOperation, resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import type { RecipientOperationV1, VoiceCredentialAccessPhase, VoiceCredentialBindingIdentityV1, VoiceCredentialOperationAuthorization, VoiceCredentialOperationSelectedSource, VoiceProviderContribution } from '@happier-dev/protocol';
@@ -265,7 +265,7 @@ type VoiceAccountResponseDiagnosticRecorder = (
 
 function responseContractDiagnostic(input: Readonly<{
     operationPurpose: string;
-    declaredContentTypes: readonly string[];
+    responseContract: RecipientOperationV1['response'];
     expectedFinalUrl: string;
     response: VoiceAccountOperationResponse;
     bodyPolicyAccepted: boolean | null;
@@ -273,7 +273,7 @@ function responseContractDiagnostic(input: Readonly<{
     const contentType = normalizedContentType(input.response.headers);
     const contentTypeClassification = contentType === null
         ? 'missing'
-        : input.declaredContentTypes.includes(contentType)
+        : input.responseContract.contentTypes.includes(contentType)
             ? 'declared'
             : 'undeclared';
     const finalUrlMatches = input.response.finalUrl === input.expectedFinalUrl;
@@ -286,7 +286,7 @@ function responseContractDiagnostic(input: Readonly<{
         responseContractMatches: input.response.status >= 200
             && input.response.status < 300
             && finalUrlMatches
-            && contentTypeClassification === 'declared',
+            && acceptsRecipientOperationResponseContentType(input.responseContract, contentType),
         bodyPolicyAccepted: input.bodyPolicyAccepted,
     });
 }
@@ -300,27 +300,6 @@ function recordResponseDiagnosticBestEffort(
         record(diagnostic);
     } catch {
         // Host diagnostics must not change the mediated provider operation.
-    }
-}
-
-function projectJsonResponseMaterial(
-    body: Uint8Array,
-    maxBytes: number,
-    sourceCredentials: readonly string[],
-): Uint8Array | null {
-    if (body.byteLength > maxBytes) return null;
-    try {
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
-        const parsed: unknown = JSON.parse(text);
-        const projectedText = JSON.stringify(parsed);
-        if (
-            projectedText === undefined
-            || containsProviderRegisteredSensitiveValue(projectedText, sourceCredentials)
-        ) return null;
-        const projected = new TextEncoder().encode(projectedText);
-        return projected.byteLength <= maxBytes ? projected : null;
-    } catch {
-        return null;
     }
 }
 
@@ -470,7 +449,7 @@ async function executeVoiceAccountOperation(input: Readonly<{
                 if (input.authority.isCancelled()) throw cancelled();
                 const responseDiagnostic = responseContractDiagnostic({
                     operationPurpose: operation.purpose,
-                    declaredContentTypes: operation.response.contentTypes,
+                    responseContract: operation.response,
                     expectedFinalUrl: materialized.url,
                     response,
                     bodyPolicyAccepted: null,
@@ -485,9 +464,9 @@ async function executeVoiceAccountOperation(input: Readonly<{
                         message: 'The Voice account operation failed',
                     });
                 }
-                const projectedBody = projectJsonResponseMaterial(
+                const projectedBody = projectRecipientOperationResponseBody(
+                    operation.response,
                     response.body,
-                    operation.response.maxBytes,
                     sourceCredentials,
                 );
                 if (!projectedBody) {
@@ -509,9 +488,9 @@ async function executeVoiceAccountOperation(input: Readonly<{
                     });
                 }
                 return Object.freeze({
-                    status: 200,
+                    status: operation.response.maxBytes === 0 ? response.status : 200,
                     finalUrl: materialized.url,
-                    headers: Object.freeze({
+                    headers: Object.freeze<Record<string, string>>(operation.response.maxBytes === 0 ? {} : {
                         'content-type': 'application/json',
                     }),
                     body: projectedBody,
