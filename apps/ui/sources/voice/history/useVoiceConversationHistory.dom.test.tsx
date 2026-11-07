@@ -104,14 +104,17 @@ describe('Voice conversation History discovery', () => {
                     ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } })]));
             await act(async () => storage.setState(state => ({ sessionMessages: { ...state.sessionMessages,
                 'older-voice': createSessionMessagesFixture({ isLoaded: true, messagesVersion: 1,
-                    messageIdsOldestFirst: ['spoken-answer'], messagesById: {
+                    messageIdsOldestFirst: ['spoken-question', 'spoken-answer'], messagesById: {
+                        'spoken-question': { id: 'spoken-question', kind: 'user-text', localId: null,
+                            text: 'Is the release ready yet?', createdAt: 1 },
                         'spoken-answer': { id: 'spoken-answer', kind: 'agent-text', localId: null,
-                            text: 'The release is ready', createdAt: 1 },
+                            text: 'The release is ready', createdAt: 2 },
                     } }),
             } })));
             query = 'release';
             await act(async () => root.render(<Host />));
-            expect(state.current?.conversations).toMatchObject([{ title: 'The release is ready', loadedMessageCount: 1 }]);
+            // A loaded conversation is named by what the person first said, not by "Voice" or its last reply.
+            expect(state.current?.conversations).toMatchObject([{ title: 'Is the release ready yet?', loadedMessageCount: 2 }]);
             expect(requests.length).toBe(beforeSearchRequests);
             expect(bodyReads).toBe(0);
             query = '';

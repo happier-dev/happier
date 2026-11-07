@@ -44,7 +44,12 @@ export function useVoiceConversationHistory(query = '') {
             const spokenRows = projectVoiceHistoryRows(readStoredSessionMessagesFromStateLike(transcript), () => '');
             const lastText = spokenRows.map(row => row.text.trim()).filter(Boolean).at(-1);
             const lastLine = lastText?.split(/\r?\n/u).map(line => line.trim()).filter(Boolean).at(-1) ?? null;
-            return { conversation: { ...conversation, title: lastLine ?? conversation.title, lastLine,
+            // A loaded conversation is named by what the person first said there (else its first line),
+            // never by the generic Voice title; nothing beyond the already-loaded transcript is read.
+            const opening = spokenRows.find(row => row.role === 'user' && row.text.trim())
+                ?? spokenRows.find(row => row.text.trim());
+            const firstLine = opening?.text.split(/\r?\n/u).map(line => line.trim()).find(Boolean) ?? null;
+            return { conversation: { ...conversation, title: firstLine ?? conversation.title, lastLine,
                 loadedMessageCount: transcript?.isLoaded === true ? spokenRows.length : null },
                 searchText: [conversation.title, ...spokenRows.map(row => row.text)].join('\n').toLocaleLowerCase() };
     }), [projection.conversations, transcripts]);
