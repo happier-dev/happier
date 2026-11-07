@@ -1,4 +1,7 @@
 {
+  "machineLume.configure.keepPasswordLogin": "Keep password login",
+  "machineLume.configure.keepPasswordLoginDescription": "Allow SSH login with the image password. Leave off to use SSH keys only. Applies to macOS guests.",
+  "machineLume.configure.macosVmLimitReached": "Host macOS VM limit reached: {count} are running. Stop a macOS VM on this host and try again.",
   "machineLume.presentation.lume_cache_enabled": "Ready · image cache enabled",
   "machineLume.presentation.lume_cache_disabled": "Ready · image cache disabled",
   "machineLume.presentation.lume_cache_unknown": "Ready · image cache status unavailable",
@@ -19,8 +22,8 @@
   "machineLume.configure.user": "Prepared SSH user",
   "machineLume.configure.userDescription": "The explicit account prepared in this image; it is never inferred from the guest OS.",
   "machineLume.configure.customSize": "Custom size",
-  "machineLume.presentation.kind": "VM",
-  "machineLume.presentation.description": "A local macOS or Linux VM with your chosen image.",
+  "machineLume.presentation.kind": "Machine",
+  "machineLume.presentation.description": "A local macOS or Linux machine with your chosen image.",
   "machineLume.presentation.ready": "Ready",
   "machineLume.presentation.unavailable": "Unavailable",
   "machineLume.presentation.lume_not_installed": "Not installed · get it from cua.ai/docs/lume",

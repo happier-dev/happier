@@ -5,11 +5,12 @@ import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema,
+  observeMachineProvisionerNativeRead,
   type MachineProvisionerAuthorDefinitionV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
 import type { ActionContribution } from '@happier-dev/plugin-sdk/actions';
-import { lumeConfigurationLabel as label, LUME_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { lumeConfigurationLabel as label } from './ui/translations.js';
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_DEPENDENCY_ID, LUME_BILLING } from './machine/definition.js';
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema } from './machine/schemas.js';
 
@@ -55,14 +56,16 @@ async function runtime(context: PluginInvocationContext) {
     return new Response(new Uint8Array(response.body), { status: response.status, headers: response.headers });
   } });
   return { native, executable: status.executable,
-    provider: createLumeProvider({ native, observedAt: context.invokedAtMs, signal: context.signal }) };
+    provider: createLumeProvider({ native, observedAt: context.invokedAtMs, signal: context.signal,
+      warn: warning => context.services.logger.warn('Lume image caching could not be enabled; continuing acquisition.', warning) }) };
 }
 
 export const LUME_MACHINE_PROVISIONER = {
   title: 'Lume', icon: 'desktop', resourceKind: 'lume-vm', schemaVersion: 1,
+  enrollmentRole: 'personal',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
   launchSchema: LumeLaunchV1Schema.jsonSchema, resourceSchema: LumeResourceV1Schema.jsonSchema, resourceIdPath: 'vmName',
-  platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
+  platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }, { kind: 'systemTool', id: 'ssh' }],
   billing: LUME_BILLING, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   reconciliation: { nativeOperationSchema: LumeNativeOperationV1Schema.jsonSchema, action: 'reconcile', continueAcquire: true },
@@ -74,11 +77,22 @@ export const LUME_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
-  },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  }, entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [
-    { id: processAccess, capability: 'process', reason: 'Prepare the public SSH key and inspect the reviewed local Lume guest.',
-      scope: { executables: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }] } },
+    { id: processAccess, capability: 'process', reason: 'Install the public SSH key over OpenSSH and inspect the reviewed local Lume guest.',
+      scope: { executables: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }, { kind: 'systemTool', id: 'ssh' }] } },
     { id: networkAccess, capability: 'network', reason: 'Operate the exact managed resource through the controller-local Lume service.',
       scope: { targets: [{ kind: 'fixedOrigin', origin }], methods: ['GET', 'POST', 'PATCH', 'DELETE'] } },
     { id: registryAccess, capability: 'network', reason: 'Read native public image tags through anonymous GHCR pull-scoped authentication.',
@@ -88,9 +102,23 @@ export const LUME_PLUGIN = definePlugin({
     id: LUME_DEPENDENCY_ID, title: 'Lume', executable: 'lume', platforms: ['macos'], architectures: ['arm64'],
     sources: [{ kind: 'system', executableNames: ['lume'], versionArguments: ['--version'] }],
   } },
-  systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
+  systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] },
+    ssh: { title: 'OpenSSH client', executableNames: ['ssh'] } },
   machineProvisioners: { [LUME_PROVISIONER_ID]: LUME_MACHINE_PROVISIONER },
-  ui: { translations: LUME_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
   actions: {
     check: { ...defaults, title: 'Check Lume availability', dangerLevel: 'safe',
       inputSchema: LUME_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
@@ -145,6 +173,8 @@ export const LUME_PLUGIN = definePlugin({
             { op: 'eq', path: 'image.kind', value: 'native-image' },
             { op: 'eq', path: 'image.privateCarrier.kind', value: 'lume-default-password' },
           ] } },
+        { path: 'keepPasswordLogin', title: label('keepPasswordLogin'),
+          description: label('keepPasswordLoginDescription'), widget: 'boolean' },
       ] } satisfies NonNullable<ActionContribution['inputHints']>,
       async run(input, context) { return (await runtime(context)).provider.options(input); },
     },
@@ -180,9 +210,9 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LUME_ROLE_SCHEMAS.bootstrapInput, resultSchema: MachineProvisionerBootstrapCarrierV1Schema,
       async run(input, context) {
         const current = await runtime(context);
-        const scanner = await context.services.exec.systemTools.resolve({ toolId: 'ssh-keyscan', purpose: 'Observe the exact guest host key', signal: context.signal });
         const { resolveLumeBootstrap } = await import('./machine/bootstrap.js');
-        return resolveLumeBootstrap({ native: current.native, executable: current.executable, scanner: scanner.executable,
+        return resolveLumeBootstrap({ native: current.native,
+          credentials: context.services.machineProvisioners,
           exec: context.services.exec, resource: input.resource, credentialRef: input.credentialRef,
           bootstrapPublicKey: input.bootstrapPublicKey, signal: context.signal });
       },
@@ -191,7 +221,7 @@ export const LUME_PLUGIN = definePlugin({
       inputSchema: LUME_ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) {
         try { return await (await runtime(context)).provider.inspect(input.resource); }
-        catch (error) { return { observedAt: context.invokedAtMs, availability: 'unavailable' as const, reason: errorCode(error) }; }
+        catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
       },
     },
     power: { ...defaults, title: 'Change Lume guest power', dangerLevel: 'writesLocal',

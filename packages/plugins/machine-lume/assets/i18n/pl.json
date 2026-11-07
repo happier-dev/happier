@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "Osiągnięto limit maszyn wirtualnych macOS hosta: działa ich {count}. Zatrzymaj maszynę macOS na tym hoście i spróbuj ponownie.",
   "machineLume.presentation.lume_cache_enabled": "Gotowe · pamięć podręczna obrazów włączona",
   "machineLume.presentation.lume_cache_disabled": "Gotowe · pamięć podręczna obrazów wyłączona",
   "machineLume.presentation.lume_cache_unknown": "Gotowe · stan pamięci podręcznej obrazów niedostępny",
@@ -19,7 +20,7 @@
   "machineLume.configure.user": "Przygotowany użytkownik SSH",
   "machineLume.configure.userDescription": "Konto jawnie przygotowane w tym obrazie; nigdy nie jest ustalane na podstawie systemu gościa.",
   "machineLume.configure.customSize": "Własny rozmiar",
-  "machineLume.presentation.kind": "VM",
+  "machineLume.presentation.kind": "maszyna",
   "machineLume.presentation.description": "Lokalna maszyna macOS lub Linux z wybranym obrazem.",
   "machineLume.presentation.ready": "Gotowe",
   "machineLume.presentation.unavailable": "Niedostępne",

@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "Достигнут лимит виртуальных машин macOS хоста: запущено {count}. Остановите виртуальную машину macOS на этом хосте и повторите попытку.",
   "machineLume.presentation.lume_cache_enabled": "Готово · кэш образов включён",
   "machineLume.presentation.lume_cache_disabled": "Готово · кэш образов отключён",
   "machineLume.presentation.lume_cache_unknown": "Готово · статус кэша образов недоступен",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "Подготовленный пользователь SSH",
   "machineLume.configure.userDescription": "Явно подготовленная в этом образе учётная запись; она никогда не определяется по гостевой ОС.",
   "machineLume.configure.customSize": "Произвольный размер",
-  "machineLume.presentation.kind": "ВМ",
-  "machineLume.presentation.description": "Локальная ВМ macOS или Linux с выбранным образом.",
+  "machineLume.presentation.kind": "машина",
+  "machineLume.presentation.description": "Локальная машина macOS или Linux с выбранным образом.",
   "machineLume.presentation.ready": "Готово",
   "machineLume.presentation.unavailable": "Недоступно",
   "machineLume.presentation.lume_not_installed": "Не установлено · скачайте на cua.ai/docs/lume",

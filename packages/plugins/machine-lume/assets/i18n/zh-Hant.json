@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "已達主機的 macOS 虛擬機上限：{count} 台正在執行。請停止此主機上的一台 macOS 虛擬機後重試。",
   "machineLume.presentation.lume_cache_enabled": "就緒 · 映像快取已啟用",
   "machineLume.presentation.lume_cache_disabled": "就緒 · 映像快取已停用",
   "machineLume.presentation.lume_cache_unknown": "就緒 · 無法取得映像快取狀態",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "已準備的 SSH 使用者",
   "machineLume.configure.userDescription": "在此映像中明確準備的帳戶；絕不會根據客體系統推斷。",
   "machineLume.configure.customSize": "自訂大小",
-  "machineLume.presentation.kind": "虛擬機",
-  "machineLume.presentation.description": "使用所選映像的本地 macOS 或 Linux 虛擬機。",
+  "machineLume.presentation.kind": "機器",
+  "machineLume.presentation.description": "使用所選映像的本地 macOS 或 Linux 機器。",
   "machineLume.presentation.ready": "就緒",
   "machineLume.presentation.unavailable": "不可用",
   "machineLume.presentation.lume_not_installed": "未安裝 · 請從 cua.ai/docs/lume 取得",

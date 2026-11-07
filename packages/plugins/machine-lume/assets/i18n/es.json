@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "Se alcanzó el límite de VM macOS del host: hay {count} en ejecución. Detén una VM macOS en este host y vuelve a intentarlo.",
   "machineLume.presentation.lume_cache_enabled": "Listo · caché de imágenes activada",
   "machineLume.presentation.lume_cache_disabled": "Listo · caché de imágenes desactivada",
   "machineLume.presentation.lume_cache_unknown": "Listo · estado de la caché de imágenes no disponible",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "Usuario SSH preparado",
   "machineLume.configure.userDescription": "La cuenta preparada explícitamente en esta imagen; nunca se deduce del sistema del huésped.",
   "machineLume.configure.customSize": "Tamaño personalizado",
-  "machineLume.presentation.kind": "VM",
-  "machineLume.presentation.description": "Una VM macOS o Linux local con la imagen elegida.",
+  "machineLume.presentation.kind": "máquina",
+  "machineLume.presentation.description": "Una máquina macOS o Linux local con la imagen elegida.",
   "machineLume.presentation.ready": "Listo",
   "machineLume.presentation.unavailable": "No disponible",
   "machineLume.presentation.lume_not_installed": "No instalado · descárgalo en cua.ai/docs/lume",

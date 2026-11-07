@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "已达到主机的 macOS 虚拟机上限：{count} 台正在运行。请停止此主机上的一台 macOS 虚拟机后重试。",
   "machineLume.presentation.lume_cache_enabled": "就绪 · 镜像缓存已启用",
   "machineLume.presentation.lume_cache_disabled": "就绪 · 镜像缓存已禁用",
   "machineLume.presentation.lume_cache_unknown": "就绪 · 无法获取镜像缓存状态",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "已准备的 SSH 用户",
   "machineLume.configure.userDescription": "在此镜像中明确准备的账户；绝不会根据客户机系统推断。",
   "machineLume.configure.customSize": "自定义大小",
-  "machineLume.presentation.kind": "虚拟机",
-  "machineLume.presentation.description": "使用所选镜像的本地 macOS 或 Linux 虚拟机。",
+  "machineLume.presentation.kind": "机器",
+  "machineLume.presentation.description": "使用所选镜像的本地 macOS 或 Linux 机器。",
   "machineLume.presentation.ready": "就绪",
   "machineLume.presentation.unavailable": "不可用",
   "machineLume.presentation.lume_not_installed": "未安装 · 请从 cua.ai/docs/lume 获取",

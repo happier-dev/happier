@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "ホストのmacOS仮想マシン数の上限に達しました。{count}台が実行中です。このホストのmacOS仮想マシンを停止して再試行してください。",
   "machineLume.presentation.lume_cache_enabled": "準備完了 · イメージキャッシュ有効",
   "machineLume.presentation.lume_cache_disabled": "準備完了 · イメージキャッシュ無効",
   "machineLume.presentation.lume_cache_unknown": "準備完了 · イメージキャッシュの状態を取得できません",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "準備済みの SSH ユーザー",
   "machineLume.configure.userDescription": "このイメージで明示的に準備されたアカウントです。ゲスト OS から推測することはありません。",
   "machineLume.configure.customSize": "カスタムサイズ",
-  "machineLume.presentation.kind": "VM",
-  "machineLume.presentation.description": "選択したイメージを使うローカルの macOS または Linux VM。",
+  "machineLume.presentation.kind": "マシン",
+  "machineLume.presentation.description": "選択したイメージを使うローカルの macOS または Linux マシン。",
   "machineLume.presentation.ready": "準備完了",
   "machineLume.presentation.unavailable": "利用不可",
   "machineLume.presentation.lume_not_installed": "未インストール · cua.ai/docs/lume から入手",

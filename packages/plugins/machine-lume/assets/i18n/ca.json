@@ -1,4 +1,5 @@
 {
+  "machineLume.configure.macosVmLimitReached": "S’ha arribat al límit de VM macOS de l’amfitrió: n’hi ha {count} en execució. Atura una VM macOS en aquest amfitrió i torna-ho a provar.",
   "machineLume.presentation.lume_cache_enabled": "A punt · memòria cau d’imatges activada",
   "machineLume.presentation.lume_cache_disabled": "A punt · memòria cau d’imatges desactivada",
   "machineLume.presentation.lume_cache_unknown": "A punt · estat de la memòria cau d’imatges no disponible",
@@ -19,8 +20,8 @@
   "machineLume.configure.user": "Usuari SSH preparat",
   "machineLume.configure.userDescription": "El compte preparat explícitament en aquesta imatge; mai no es dedueix del sistema convidat.",
   "machineLume.configure.customSize": "Mida personalitzada",
-  "machineLume.presentation.kind": "VM",
-  "machineLume.presentation.description": "Una VM macOS o Linux local amb la imatge triada.",
+  "machineLume.presentation.kind": "màquina",
+  "machineLume.presentation.description": "Una màquina macOS o Linux local amb la imatge triada.",
   "machineLume.presentation.ready": "A punt",
   "machineLume.presentation.unavailable": "No disponible",
   "machineLume.presentation.lume_not_installed": "No instal·lat · baixa’l de cua.ai/docs/lume",

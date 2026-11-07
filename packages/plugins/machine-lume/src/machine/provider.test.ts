@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createLumeNativeClient } from './nativeClient';
+import { createLumeProvider } from './provider';
 
 const resource = { storage: 'external_disk', vmName: 'managed-vm' };
 const launch = { ...resource, image: 'linux-ubuntu:latest', registry: 'ghcr.io', organization: 'trycua' };
@@ -13,6 +14,7 @@ function setup(responses: Array<Response | Error>) {
   const requests: Array<{ url: URL; init?: RequestInit }> = [];
   const nativeFetch: typeof fetch = async (input, init) => {
     requests.push({ url: new URL(String(input)), init });
+    if (new URL(String(input)).pathname === '/lume/vms') return Response.json([details]);
     const response = responses.shift();
     if (response instanceof Error) throw response;
     if (!response) throw new Error('Unexpected native request');
@@ -22,6 +24,15 @@ function setup(responses: Array<Response | Error>) {
 }
 
 describe('Lume 0.6.1 native HTTP boundary', () => {
+  it.each(['ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'ENOTFOUND', 'ECONNRESET'])(
+    'preserves delivery certainty for a power request failing with %s', async code => {
+      const { client } = setup([new TypeError('private fetch URL', { cause: Object.assign(new Error('private address'), { code }) })]);
+      const result = await createLumeProvider({ native: client, observedAt: 1 }).power(resource, 'start');
+      expect(result).toEqual(code === 'ECONNRESET' ? { kind: 'unknown', code: 'transport',
+        nativeCause: { localCause: 'native_route_unavailable' } } : { kind: 'refused', code: 'native_route_unavailable',
+        nativeCause: { localCause: 'native_route_unavailable' } });
+      expect(JSON.stringify(result)).not.toContain('private');
+    });
   it('preserves the exact identity after a dropped pull response and inspects it without another pull', async () => {
     const { client, requests } = setup([
       new Error('Dropped response with secret'),
@@ -39,7 +50,23 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
 
   it.each([400, 404, 500])('never treats inspect HTTP %s as native absence', async (status) => {
     const { client } = setup([Response.json({ message: 'VM not found or native error secret' }, { status })]);
-    expect(await client.inspect(resource)).toEqual({ kind: 'unknown', resource, reason: 'http', httpStatus: status });
+    expect(await client.inspect(resource)).toEqual({ kind: 'unknown', resource, reason: 'http', httpStatus: status,
+      nativeCause: status === 404 ? { localCause: 'native_route_not_found', route: 'inspect', httpStatus: 404 }
+        : { httpStatusClass: status >= 500 ? '5xx' : '4xx' } });
+  });
+
+  it('recognizes only the vendor exact-name not-found response as confirmed absence', async () => {
+    const { client } = setup([
+      Response.json({ message: `Virtual machine not found: ${resource.vmName}` }, { status: 400 }),
+      Response.json({ message: 'Virtual machine not found: neighbor' }, { status: 400 }),
+      Response.json({ message: `Virtual machine not found: ${resource.vmName}` }, { status: 503 }),
+      Response.json({ message: `Pull failed for '${resource.vmName}': Virtual machine not found: ${resource.vmName}` }, { status: 400 }),
+      new Error('network unavailable'),
+    ]);
+    expect(await client.inspect(resource)).toEqual({ kind: 'absent', resource });
+    for (const reason of ['http', 'http', 'http', 'transport']) {
+      expect(await client.inspect(resource)).toMatchObject({ kind: 'unknown', resource, reason });
+    }
   });
 
   it('does not accept a neighboring VM returned for the exact resource', async () => {
@@ -64,16 +91,17 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
     expect(await client.pull(launch)).toEqual({ kind: 'pull-accepted', resource });
     expect(await client.run(resource)).toEqual({ kind: 'start-accepted', resource });
     expect(requests.slice(1).map(({ url, init }) => [url.pathname, init?.method, init?.body && JSON.parse(String(init.body))])).toEqual([
+      ['/lume/vms', 'GET', undefined],
       ['/lume/vms/managed-vm/run', 'POST', { storage: resource.storage, noDisplay: true, vnc: 'disabled' }],
     ]);
   });
 
   it.each(['stop', 'destroy'] as const)('inspects recorded storage before exact %s and preserves native acceptance', async (operation) => {
-    const { client, requests } = setup([Response.json(details), new Response(null, { status: 200 })]);
+    const { client, requests } = setup([Response.json({ ...details, status: operation === 'destroy' ? 'stopped' : 'running' }), new Response(null, { status: 200 })]);
     expect(await client[operation](resource)).toEqual({ kind: operation === 'stop' ? 'stop-accepted' : 'delete-accepted', resource });
     expect(requests.map(({ url, init }) => [url.pathname, url.searchParams.get('storage'), init?.method])).toEqual([
       ['/lume/vms/managed-vm', resource.storage, 'GET'],
-      [operation === 'stop' ? '/lume/vms/managed-vm/stop' : '/lume/vms/managed-vm', resource.storage, operation === 'stop' ? 'POST' : 'DELETE'],
+      [operation === 'stop' ? '/lume/vms/managed-vm/stop' : '/lume/vms/managed-vm', operation === 'stop' ? null : resource.storage, operation === 'stop' ? 'POST' : 'DELETE'],
     ]);
   });
 
@@ -90,17 +118,6 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
     await expect(client.pull({ ...launch, secret: 'not a native input' })).rejects.toThrow();
     await expect(client.pull(launch, AbortSignal.abort())).rejects.toThrow();
     expect(nativeFetch).not.toHaveBeenCalled();
-  });
-
-  it('reads only native cached image identities and never invents catalog hardware facts', async () => {
-    // Pinned getImages projects metadata.image (name without its tag) and
-    // manifestId.prefix(12); neither is a fully qualified pull reference.
-    const images = [{ repository: 'linux-ubuntu', imageId: 'sha256_f49b0' }];
-    const { client, requests } = setup([Response.json(images), Response.json({ unavailable: true })]);
-    expect(await client.images('trycua')).toEqual({ kind: 'images', images });
-    expect(requests[0].url.pathname).toBe('/lume/images');
-    expect(requests[0].url.searchParams.get('organization')).toBe('trycua');
-    expect(await client.images('trycua')).toEqual({ kind: 'unknown', reason: 'response' });
   });
 
   it('reads anonymous public OCI catalog tags across same-repository pages, not cached short IDs', async () => {
@@ -137,6 +154,24 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
     expect(JSON.parse(String(requests[0].init?.body))).toEqual({ storage: resource.storage, cpu: 2, memory: '4GB', diskSize: '20GB' });
   });
 
+  it('reads the published disk minimum from OCI metadata without fetching image layers', async () => {
+    const { client, requests } = setup([Response.json({ token: 'anonymous-public-token' }),
+      Response.json({ annotations: { 'org.trycua.lume.disk-size': '161061273600' } }),
+      Response.json({ annotations: { 'org.trycua.lume.disk-size': '171798691840' } })]);
+    // This is an external registry read, not a native image pull or blob download.
+    expect(await client.imageDiskBytes('ghcr.io/trycua/macos:26-slim'))
+      .toEqual({ kind: 'image', diskBytes: 161061273600 });
+    expect(await client.imageDiskBytes('ghcr.io/trycua/macos:26'))
+      .toEqual({ kind: 'image', diskBytes: 171798691840 });
+    expect(requests.map(({ url }) => url.pathname)).toEqual(['/token', '/v2/trycua/macos/manifests/26-slim', '/v2/trycua/macos/manifests/26']);
+  });
+
+  it.each([undefined, '0', '-1', 'not-a-size', '9007199254740992'])('keeps malformed published disk minimum %s unknown', async diskBytes => {
+    const { client } = setup([Response.json({ token: 'anonymous-public-token' }),
+      Response.json({ annotations: diskBytes === undefined ? {} : { 'org.trycua.lume.disk-size': diskBytes } })]);
+    expect(await client.imageDiskBytes('ghcr.io/trycua/macos:26-slim')).toEqual({ kind: 'unknown', reason: 'response' });
+  });
+
   it('strips noncontract private detail fields from exact inspection', async () => {
     const { client } = setup([Response.json({ ...details, vncUrl: 'vnc://private', ipAddress: '10.0.0.1', secret: 'private' })]);
     const result = await client.inspect(resource);
@@ -145,15 +180,6 @@ describe('Lume 0.6.1 native HTTP boundary', () => {
     expect(result).toMatchObject({ kind: 'present', resource, os: 'linux', cpu: 2, memoryBytes: 4294967296, diskBytes: 21474836480 });
     expect(result).toHaveProperty('vendorStatus', 'running');
     expect(result).not.toHaveProperty('status');
-  });
-
-  it('lists storage-qualified native facts without inferring absence from an empty list', async () => {
-    const { client, requests } = setup([Response.json([details]), Response.json([]), Response.json([{ ...details, locationName: 'neighbor' }])]);
-    expect(await client.list(resource.storage)).toMatchObject({ kind: 'vms', vms: [{ kind: 'present', resource, vendorStatus: 'running' }] });
-    expect(requests[0].url.pathname).toBe('/lume/vms');
-    expect(requests[0].url.searchParams.get('storage')).toBe(resource.storage);
-    expect(await client.list(resource.storage)).toEqual({ kind: 'vms', vms: [] });
-    expect(await client.list(resource.storage)).toEqual({ kind: 'unknown', reason: 'response' });
   });
 
   it('reports the installed version without turning the vendor host-status cap into a universal guest limit', async () => {

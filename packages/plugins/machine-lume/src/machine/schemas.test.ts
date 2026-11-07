@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
-import { LumeNativeConfigurationSchema, LumeNativeDetailsSchema, LumeNativePullSchema, LumeNativeResourceSchema } from './schemas.js';
+import { LumeNativeConfigurationSchema, LumeNativeDetailsSchema, LumeNativeOperationV1Schema, LumeNativePullSchema, LumeNativeResourceSchema } from './schemas.js';
 
 describe('Lume native public schema boundary', () => {
+  it('admits host-shaped CUID recovery identities and existing UUID names without accepting native aliases', () => {
+    for (const id of ['cmvnxb7gn009mmcagisyszwlh', 'ac2c7f10-2a41-4af1-88ac-d64eeb18bdc7']) {
+      const resource = { storage: 'home', vmName: `happier-${id}` };
+      expect(LumeNativeOperationV1Schema.parse(resource)).toEqual(resource);
+    }
+    for (const vmName of ['happier-', 'unowned-vm', 'happier-vm:latest', 'happier-a/b', 'happier-a\\b', 'happier-vm\0name']) {
+      expect(LumeNativeOperationV1Schema.safeParse({ storage: 'home', vmName }).success).toBe(false);
+    }
+  });
+
   it('composes strict native ingress without changing exact identities or tolerant vendor projections', () => {
     const resource = { storage: 'external disk', vmName: 'native vm' };
     const pull = { ...resource, image: 'linux:latest', registry: 'ghcr.io', organization: 'trycua' };

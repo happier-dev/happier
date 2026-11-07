@@ -1,9 +1,3 @@
-import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-function projectOptions(raw: unknown) {
-  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
-  return projectMachineProvisionerSelectionV1({ options, launchSchema: LumeLaunchV1Schema.jsonSchema,
-    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
-}
 import { describe, expect, it } from 'vitest';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -13,8 +7,17 @@ import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type { ManagedDependencyStatus } from '@happier-dev/plugin-sdk/managed-services';
 import { LUME_PLUGIN, LUME_ROLE_SCHEMAS, LUME_RECONCILIATION_SCHEMAS } from './manifest.js';
 import { LumeLaunchV1Schema, LumeOptionsInputV1Schema } from './machine/schemas.js';
+import { MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+  MachineProvisionerPowerResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
-const managedId = 'ac2c7f10-2a41-4af1-88ac-d64eeb18bdc7';
+function projectOptions(raw: unknown) {
+  const options = MachineProvisionerOptionsResultV1Schema.parse(raw);
+  return projectMachineProvisionerSelectionV1({ options, launchSchema: LumeLaunchV1Schema.jsonSchema,
+    selection: Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) => entries[0] ? [[dimension, entries[0].id]] : [])) });
+}
+
+// Captured Prisma cuid() managed row from LUME1 attempt 3.
+const managedId = 'cmvnxb7gn009mmcagisyszwlh';
 const resource = { storage: 'home', vmName: `happier-${managedId}` };
 const launch = { image: { kind: 'native-image', reference: 'ghcr.io/trycua/macos:26' }, storage: 'home',
   cpu: 2, memoryBytes: 4 * 1024 ** 3, diskBytes: 150 * 1024 ** 3 };
@@ -36,26 +39,53 @@ async function activated(ready = true, response?: (input: Parameters<HttpService
   await LUME_PLUGIN.activate(api);
   const requests: Parameters<HttpService['request']>[0][] = [];
   const commands: Parameters<ExecService['run']>[0][] = [];
+  const warnings: unknown[] = [];
+  let vmStatus = native.status;
   const http: Pick<HttpService, 'request'> = { request: async input => {
     requests.push(input);
-    if (response) return response(input);
     const url = new URL(input.url);
+    if (url.origin === 'https://ghcr.io' && (url.pathname.includes('/manifests/') || response && url.pathname === '/token')) {
+      return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(
+        url.pathname === '/token' ? { token: 'anonymous-registry-token' }
+          : { annotations: { 'org.trycua.lume.disk-size': String(launch.diskBytes) } })) };
+    }
+    if (url.pathname === '/lume/vms') return { status: 200, finalUrl: input.url, headers: {},
+      body: new TextEncoder().encode(JSON.stringify([{ ...native, status: vmStatus }])) };
+    if (response) return response(input);
+    if (url.pathname.endsWith('/stop') && input.method === 'POST') vmStatus = 'stopped';
+    if (url.pathname.endsWith('/run') && input.method === 'POST') vmStatus = 'running';
     const value = url.origin === 'https://ghcr.io' && url.pathname === '/token' ? { token: 'anonymous-registry-token' }
       : url.pathname === '/v2/trycua/macos/tags/list' ? { name: 'trycua/macos', tags: ['26'] }
       : url.pathname === '/v2/trycua/macos-tahoe-cua/tags/list' ? { name: 'trycua/macos-tahoe-cua', tags: ['26.5.2'] }
       : url.pathname === '/lume/host/status' ? { version: '0.6.1' }
+      : url.pathname === '/lume/config' ? { cachingEnabled: true, cacheDirectory: '/user/cache' }
       : url.pathname === '/lume/config/locations' ? [{ name: 'home' }]
-      : url.pathname === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' } : native;
+      : url.pathname === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' } : { ...native, status: vmStatus };
     return { status: url.pathname.endsWith('/run') ? 202 : 200, finalUrl: input.url,
       headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
   } };
-  const exec: Pick<ExecService, 'run' | 'systemTools'> = {
-    systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: { pluginId: LUME_PLUGIN.manifest.id, localId: 'ssh-keyscan' } },
-      executablePath: '/usr/bin/ssh-keyscan' }) },
+  const exec: Pick<ExecService, 'run' | 'spawn' | 'systemTools'> = {
+    systemTools: { resolve: async ({ toolId }) => ({ executable: { kind: 'systemTool', id: { pluginId: LUME_PLUGIN.manifest.id, localId: toolId } },
+      executablePath: `/usr/bin/${toolId}` }) },
     run: async input => { commands.push(input); return processResult(input.executable.id.localId === 'ssh-keyscan'
       ? '192.168.64.7 ssh-ed25519 cHVibGljLWhvc3Qta2V5\n' : ''); },
+    spawn: async input => {
+      commands.push(input);
+      let settle: (value: PluginProcessResult) => void = () => {};
+      const ended = new Promise<PluginProcessResult>(resolve => { settle = resolve; });
+      let listener: Parameters<Awaited<ReturnType<ExecService['spawn']>>['onOutput']>[0] | undefined;
+      return { write: async bytes => {
+        if (new TextDecoder().decode(bytes) === 'BEGIN\n') listener?.({ sequence: 0, stream: 'stdout', data: new TextEncoder().encode('READY\n') });
+        else settle(processResult());
+      }, closeStdin: async () => { settle(processResult()); }, async waitForExit() { return (await this.wait()).termination; },
+      wait: () => ended,
+        onOutput(callback) { listener = callback; return { dispose() {} }; },
+        dispose: async () => {}, [Symbol.dispose]() {} };
+    },
   };
   const context = { signal: new AbortController().signal, invokedAtMs: 123, services: { exec, http,
+    machineProvisioners: { materializeBootstrapCredential: async () => ({ kind: 'file', path: '/private/controller-key', dispose: async () => {} }) },
+    logger: { warn: (message: string, fields: unknown) => warnings.push({ message, fields }) },
     managedServices: { dependencies: { status: async (): Promise<ManagedDependencyStatus> => ready ? ({
       state: 'ready', id: 'lume-cli', version: '0.6.1', sourceId: 'system',
       executable: { kind: 'managedDependency', id: { pluginId: LUME_PLUGIN.manifest.id, localId: 'lume-cli' } },
@@ -66,10 +96,150 @@ async function activated(ready = true, response?: (input: Parameters<HttpService
     if (!handler) throw new Error(`Action ${id} did not activate`);
     return handler;
   }
-  return { action, context, requests, commands };
+  return { action, context, requests, commands, warnings };
+}
+
+// Pinned Lume 0.6.1 Settings/config boundary. Keep private settings in the
+// response to prove the real decoder projects only the closed cache fact.
+async function withCache(cachingEnabled: unknown, failure?: 'get' | 'post' | 'readback' | 'transport' | 'body' | 'unapplied') {
+  let updated = false;
+  return activated(true, async input => {
+    const path = new URL(input.url).pathname;
+    const config = path === '/lume/config';
+    const post = config && input.method === 'POST';
+    if (config && failure === 'transport') throw new Error('private transport diagnostics');
+    if (config && failure === 'body') return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode('{') };
+    const failed = config && (failure === 'get' || failure === 'post' && post || failure === 'readback' && updated && !post);
+    if (post && !failed) { cachingEnabled = failure !== 'unapplied'; updated = true; }
+    const value = config ? post ? { message: 'Configuration updated successfully' }
+      : { cachingEnabled, cacheDirectory: '/explicit/private-cache', homeDirectory: '/private-home', registries: ['private-registry'] }
+      : path === '/lume/host/status' ? { version: '0.6.1' }
+      : path === '/lume/config/locations' ? [{ name: 'home' }]
+      : path === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' } : native;
+    return { status: failed ? 400 : path.endsWith('/run') ? 202 : 200, finalUrl: input.url, headers: {},
+      body: new TextEncoder().encode(JSON.stringify(failed ? { message: 'private configuration failure' } : value)) };
+  });
 }
 
 describe('activated Lume provisioner Actions', () => {
+  it.each([202, 503])('carries native start acceptance without inferring it from a stopped read (HTTP %s)', async status => {
+    const current = await activated(true, async input => {
+      const path = new URL(input.url).pathname;
+      const value = path === '/lume/host/status' ? { version: '0.6.1' }
+        : path === '/lume/config' ? { cachingEnabled: true }
+        : path === '/lume/config/locations' ? [{ name: 'home' }]
+        : path === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' }
+        : { ...native, status: 'stopped' };
+      return { status: path.endsWith('/run') ? status : 200, finalUrl: input.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify(value)) };
+    });
+    const result = LUME_RECONCILIATION_SCHEMAS.result.parse(await current.action('acquire')({ launch, managedId }, current.context));
+    if (status === 202) expect(result).toMatchObject({ kind: 'bound', startPending: true, resource: { value: resource } });
+    else {
+      expect(result).toMatchObject({ kind: 'pending', nativeOperationRef: { value: resource } });
+      expect(result).not.toHaveProperty('startPending');
+    }
+    const recovered = LUME_RECONCILIATION_SCHEMAS.result.parse(await current.action('reconcile')({ nativeOperation: resource }, current.context));
+    expect(recovered).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(recovered).not.toHaveProperty('startPending');
+    expect(current.requests.filter(input => new URL(input.url).pathname.endsWith('/run'))).toHaveLength(1);
+  });
+
+  it('enables image caching in acquire before pull, preserves the explicit directory and performs no repeat write', async () => {
+    const runtime = await withCache(false);
+    const check = async () => MachineProvisionerCheckResultV1Schema.parse(await runtime.action('check')({}, runtime.context));
+    const disabled = await check();
+    expect(disabled).toMatchObject({ available: true, code: 'lume_cache_disabled', status: { fallback: expect.any(String) } });
+    expect(runtime.requests.every(request => request.method === 'GET')).toBe(true);
+    expect(LUME_RECONCILIATION_SCHEMAS.result.parse(await runtime.action('acquire')({ launch, managedId }, runtime.context)))
+      .toMatchObject({ kind: 'bound' });
+    expect(await check()).toMatchObject({ available: true, code: 'lume_cache_enabled' });
+    await runtime.action('acquire')({ launch, managedId }, runtime.context);
+    const writes = runtime.requests.filter(request => new URL(request.url).pathname === '/lume/config' && request.method === 'POST');
+    expect(writes).toHaveLength(1);
+    expect(JSON.parse(new TextDecoder().decode(writes[0].body))).toEqual({ cachingEnabled: true });
+    expect(runtime.requests.indexOf(writes[0])).toBeLessThan(runtime.requests.findIndex(request => new URL(request.url).pathname === '/lume/pull'));
+    expect(runtime.warnings).toEqual([]);
+    expect(JSON.stringify(disabled)).not.toContain('private');
+  });
+
+  it('observes an already-enabled cache with one config read per acquire and no config write', async () => {
+    const runtime = await withCache(true);
+    await runtime.action('acquire')({ launch, managedId }, runtime.context);
+    expect(runtime.requests.filter(request => new URL(request.url).pathname === '/lume/config').map(request => request.method)).toEqual(['GET']);
+    expect(runtime.warnings).toEqual([]);
+  });
+
+  it.each(['get', 'post', 'readback', 'transport', 'body', 'malformed', 'unapplied'] as const)(
+    'keeps cache %s failures non-fatal, typed and private while acquisition still pulls once', async failure => {
+      const runtime = await withCache(failure === 'malformed' ? 'false' : false, failure === 'malformed' ? undefined : failure);
+      const result = LUME_RECONCILIATION_SCHEMAS.result.parse(await runtime.action('acquire')({ launch, managedId }, runtime.context));
+      expect(result).toMatchObject({ kind: 'bound' });
+      expect(runtime.requests.filter(request => new URL(request.url).pathname === '/lume/pull')).toHaveLength(1);
+      expect(runtime.warnings).toEqual([{ message: expect.any(String), fields: {
+        code: 'lume_cache_enable_failed', cacheState: failure === 'unapplied' ? 'disabled' : 'unknown',
+      } }]);
+      const configWrites = runtime.requests.filter(request => new URL(request.url).pathname === '/lume/config' && request.method === 'POST');
+      expect(configWrites).toHaveLength(failure === 'post' || failure === 'readback' || failure === 'unapplied' ? 1 : 0);
+      const check = MachineProvisionerCheckResultV1Schema.parse(await runtime.action('check')({}, runtime.context));
+      expect(check).toMatchObject({ available: true, code: failure === 'post' || failure === 'unapplied' ? 'lume_cache_disabled' : 'lume_cache_unknown' });
+      expect(JSON.stringify({ result, check, warnings: runtime.warnings })).not.toContain('private');
+    });
+
+  it.each(['running', 'stopped', 'provisioning', 'error', 'deleting', 'unknown'])(
+    'defers only positive native startup/connection facts and settles terminal power (%s)', async status => {
+    let ready = false;
+    const runtime = await activated(true, async input => ({ status: 200, finalUrl: input.url, headers: {},
+      body: new TextEncoder().encode(JSON.stringify(ready ? native : { ...native, status, ipAddress: null, sshAvailable: false })) }));
+    const input = { resource, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+      credentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap-key' } };
+    const code = status === 'running' || status === 'provisioning' ? 'native_not_ready' : 'native_resource_unavailable';
+    await expect(runtime.action('bootstrap')(input, runtime.context)).rejects.toMatchObject({ name: 'PluginError', code,
+      data: { name: 'PluginError', code } });
+    expect(runtime.commands).toHaveLength(0);
+    ready = true;
+    await expect(runtime.action('bootstrap')(input, runtime.context)).resolves.toMatchObject({ kind: 'ssh', address: native.ipAddress });
+  });
+
+  it.each(['/lume/host/status', '/lume/pull', `/lume/vms/${resource.vmName}/run`])(
+    'retains an observed HTTP refusal at acquisition phase %s without replaying effects', async failedPath => {
+      const runtime = await activated(true, async input => {
+        const path = new URL(input.url).pathname;
+        const value = path === '/lume/host/status' ? { version: '0.6.1' }
+          : path === '/lume/config/locations' ? [{ name: 'home' }]
+          : path === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' } : native;
+        return { status: path === failedPath ? 503 : path.endsWith('/run') ? 202 : 200, finalUrl: input.url, headers: {},
+          body: new TextEncoder().encode(JSON.stringify(path === failedPath ? { message: 'private native content' } : value)) };
+      });
+      const result = LUME_RECONCILIATION_SCHEMAS.result.parse(await runtime.action('acquire')({ launch, managedId }, runtime.context));
+      expect(result).toMatchObject({ kind: failedPath === '/lume/host/status' ? 'rejected' : 'pending',
+        nativeCause: { httpStatusClass: '5xx' } });
+      expect(runtime.requests.filter(request => new URL(request.url).pathname === '/lume/pull'))
+        .toHaveLength(failedPath === '/lume/host/status' ? 0 : 1);
+      expect(JSON.stringify(result)).not.toContain('private');
+    });
+
+  it.each(['check', 'options', 'inspect', 'power', 'destroy', 'bootstrap', 'reconcile'] as const)(
+    'retains an observed HTTP cause through the sibling %s reader', async role => {
+      const runtime = await activated(true, async input => ({ status: 503, finalUrl: input.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify({ message: 'private native content' })) }));
+      const input = role === 'check' || role === 'options' ? {} : role === 'reconcile' ? { nativeOperation: resource }
+        : role === 'power' ? { resource, intent: 'start' } : role === 'bootstrap'
+          ? { resource, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+            credentialRef: { kind: 'shared_resource', resourceId: 'retained-key' } } : { resource };
+      if (role === 'bootstrap' || role === 'options') {
+        await expect(runtime.action(role)(input, runtime.context)).rejects.toMatchObject({ name: 'PluginError',
+          details: { nativeCause: { httpStatusClass: '5xx' } } });
+        return;
+      }
+      const result = await runtime.action(role)(input, runtime.context);
+      expect(result).toMatchObject({ nativeCause: { httpStatusClass: '5xx' } });
+      const schema = role === 'check' ? MachineProvisionerCheckResultV1Schema : role === 'inspect' ? MachineProvisionerObservationV1Schema
+        : role === 'reconcile' ? LUME_RECONCILIATION_SCHEMAS.result : MachineProvisionerPowerResultV1Schema;
+      expect(schema.safeParse(result).success).toBe(true);
+      expect(JSON.stringify(result)).not.toContain('private');
+    });
+
   it('admits the full cold manifest through canonical SDK manifest validation', async () => {
     const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
     const result = parsePluginManifest(LUME_PLUGIN.manifest);
@@ -86,6 +256,7 @@ describe('activated Lume provisioner Actions', () => {
       ['storage', 'text', false], ['cpu', 'integer', false],
       ['memoryBytes', 'integer', false], ['diskBytes', 'integer', false],
       ['image.kind', 'select', false],
+      ['keepPasswordLogin', 'boolean', false],
     ]);
     expect(LumeOptionsInputV1Schema.parse(query)).toEqual({});
     const select = (path: string, value: ActionInputOptionValue) => {
@@ -115,16 +286,40 @@ describe('activated Lume provisioner Actions', () => {
     expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: expectedLaunch });
   });
 
+  it.each([undefined, false, true])('carries password opt-in %s through Create, pending recovery and key-first bootstrap', async keepPasswordLogin => {
+    const runtime = await activated();
+    const query = { ...launch, ...(keepPasswordLogin === undefined ? {} : { keepPasswordLogin }) };
+    const options = await runtime.action('options')(LumeOptionsInputV1Schema.parse(query), runtime.context);
+    const projected = projectOptions(options);
+    expect(projected).toMatchObject({ kind: 'ready', launch: { keepPasswordLogin: keepPasswordLogin === true } });
+    if (projected.kind !== 'ready') throw new Error('Incomplete launch');
+    expect(await runtime.action('acquire')(LUME_ROLE_SCHEMAS.acquireInput.parse({ launch: projected.launch, managedId }), runtime.context))
+      .toMatchObject({ kind: 'bound', resource: { value: { keepPasswordLogin: keepPasswordLogin === true } } });
+    const recovered = await runtime.action('reconcile')(LUME_RECONCILIATION_SCHEMAS.input.parse({
+      correlation: { managedId, requestId: 'recover-create', launch: projected.launch },
+    }), runtime.context);
+    expect(recovered).toMatchObject({ kind: 'bound', resource: { value: { ...resource, keepPasswordLogin: keepPasswordLogin === true } } });
+    const bound = recovered as { resource: { value: unknown } };
+    await runtime.action('bootstrap')({ resource: bound.resource.value, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+      credentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap-key' } }, runtime.context);
+    expect(runtime.commands.some(command => command.args?.at(-1)?.includes('sshd_config.d'))).toBe(keepPasswordLogin !== true);
+    expect(runtime.commands.some(command => command.env?.SSH_ASKPASS)).toBe(false);
+    expect(JSON.stringify(runtime.warnings)).not.toContain('lume');
+  });
+
   it('consumes the host managed ID and bootstrap public key through real declared role schemas', async () => {
     const { action, context, requests, commands } = await activated();
     const options = await action('options')({ storage: launch.storage, cpu: launch.cpu,
       memoryBytes: launch.memoryBytes, diskBytes: launch.diskBytes }, context);
+    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } } });
     expect(MachineProvisionerOptionsResultV1Schema.parse(options).dimensions.image.map(image => image.id))
       .toEqual(['ghcr.io/trycua/macos:26', 'ghcr.io/trycua/macos-tahoe-cua:26.5.2']);
-    expect(projectOptions(options)).toMatchObject({ kind: 'ready', launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } } });
     expect(LUME_PLUGIN.manifest.hostAccess?.required).toContainEqual(expect.objectContaining({ id: 'lume-image-registry', capability: 'network',
       scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://ghcr.io' }], methods: ['GET'] } }));
-    expect(await action('acquire')({ launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } }, managedId }, context))
+    const projected = projectOptions(options);
+    if (projected.kind !== 'ready') throw new Error('Lume options did not produce a complete launch');
+    const acquireInput = LUME_ROLE_SCHEMAS.acquireInput.parse({ launch: projected.launch, managedId });
+    expect(await action('acquire')(acquireInput, context))
       .toMatchObject({ kind: 'bound', resource: { value: resource } });
     const bootstrap = await action('bootstrap')({ resource, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
       credentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap-key' } }, context);
@@ -133,6 +328,26 @@ describe('activated Lume provisioner Actions', () => {
     expect(requests.filter(request => new URL(request.url).pathname === '/lume/pull')).toHaveLength(1);
     expect(JSON.stringify(commands)).not.toContain('private-bootstrap-key');
     expect(JSON.stringify(options)).not.toContain('anonymous-registry-token');
+  });
+
+  it('revalidates retained inactive image fields and acquires the exact offered native image', async () => {
+    const { action, context, requests } = await activated();
+    const nativeDraft = { ...launch, image: { ...launch.image, id: 'ghcr.io/trycua/macos-tahoe-cua:26.5.2' } };
+    const nativeOptions = await action('options')(nativeDraft, context);
+    const projected = projectOptions(nativeOptions);
+    expect(projected).toMatchObject({ kind: 'ready', launch });
+    if (projected.kind !== 'ready') throw new Error('Reviewed native image did not produce a launch');
+    const offered = projected.launch;
+    expect(await action('options')(offered, context)).toEqual(nativeOptions);
+    expect(await action('acquire')({ launch: offered, managedId }, context))
+      .toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(requests.filter(request => new URL(request.url).pathname === '/lume/pull')).toHaveLength(1);
+    const catalogDraft = { ...launch, image: { ...nativeDraft.image, kind: 'catalog',
+      id: 'ghcr.io/trycua/macos:26', privateCarrier: { kind: 'lume-default-password', guestOs: 'linux', user: 'retained-user' } } };
+    const catalogOptions = await action('options')(catalogDraft, context);
+    expect(projectOptions(catalogOptions)).toMatchObject({ kind: 'ready', launch: { ...launch, image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26' } } });
+    await expect(action('options')({ ...nativeDraft, image: { ...nativeDraft.image, unexpected: true } }, context)).rejects.toThrow();
+    expect(LumeLaunchV1Schema.safeParse(nativeDraft).success).toBe(false);
   });
 
   it('refuses malformed role input and missing managed ID before native effects', async () => {
@@ -159,34 +374,99 @@ describe('activated Lume provisioner Actions', () => {
     const stopped = await activated(true, async () => { throw new Error('connect ECONNREFUSED 127.0.0.1:7777'); });
     expect(await stopped.action('check')({}, stopped.context)).toMatchObject({ available: false, code: 'lume_transport' });
     const ready = await activated();
-    expect(await ready.action('check')({}, ready.context)).toMatchObject({ available: true, status: { key: 'machineLume.presentation.ready' } });
+    expect(await ready.action('check')({}, ready.context)).toMatchObject({ available: true, code: 'lume_cache_enabled',
+      status: { key: 'machineLume.presentation.lume_cache_enabled' } });
   });
 
   it('projects native Stop/disk retention facts without disclosing guest connection details', async () => {
     const { action, context } = await activated();
     expect(await action('inspect')({ resource }, context)).toEqual({ observedAt: 123, availability: 'present',
-      power: 'running', storage: 'retained', daemon: 'unknown', billing: { location: 'local', stoppedBilling: 'not-billed' } });
+      power: 'running', storage: 'retained', billing: { location: 'local', stoppedBilling: 'not-billed' } });
   });
 
-  it('recovers a dropped acquisition reply through declared read-only exact storage/name lookup after activation restart', async () => {
+  it.each([undefined, true])('recovers a dropped acquisition reply and password choice %s after activation restart', async keepPasswordLogin => {
     const first = await activated(true, async input => {
       const pathname = new URL(input.url).pathname;
       if (pathname === '/lume/pull') throw new Error('lost reply');
       const value = pathname === '/lume/host/status' ? { version: '0.6.1' } : [{ name: 'home' }];
       return { status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
     });
-    const pending = await first.action('acquire')({ launch, managedId }, first.context);
+    const choice = keepPasswordLogin === undefined ? {} : { keepPasswordLogin };
+    const retained = { ...resource, ...choice };
+    const pending = await first.action('acquire')({ launch: { ...launch, ...choice }, managedId }, first.context);
     expect(pending).toEqual({ kind: 'pending', nativeOperationRef: {
-      contributionRef: { pluginId: LUME_PLUGIN.manifest.id, localId: 'lume' }, schemaVersion: 1, value: resource } });
+      contributionRef: { pluginId: LUME_PLUGIN.manifest.id, localId: 'lume' }, schemaVersion: 1, value: retained } });
     const restarted = await activated();
-    expect(await restarted.action('reconcile')({ nativeOperation: resource }, restarted.context))
-      .toMatchObject({ kind: 'bound', resource: { value: resource } });
+    expect(await restarted.action('reconcile')({ nativeOperation: retained }, restarted.context))
+      .toMatchObject({ kind: 'bound', resource: { value: retained } });
     expect(restarted.requests.map(input => [input.method, new URL(input.url).pathname, new URL(input.url).searchParams.get('storage')]))
       .toEqual([['GET', `/lume/vms/${resource.vmName}`, 'home']]);
-    expect(await restarted.action('bootstrap')({ resource, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
+    expect(await restarted.action('bootstrap')({ resource: retained, bootstrapPublicKey: 'ssh-ed25519 cHVibGlj',
       credentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap-key' } }, restarted.context))
       .toMatchObject({ kind: 'ssh', user: 'lume' });
     expect(first.requests.filter(input => new URL(input.url).pathname === '/lume/pull')).toHaveLength(1);
+  });
+
+  it.each([
+    { title: 'equal disk with changed CPU and memory', cpu: 4, memory: 8 * 1024 ** 3, disk: launch.diskBytes,
+      patch: { cpu: launch.cpu, memory: `${launch.memoryBytes}B` } },
+    { title: 'changed CPU only', cpu: 4, memory: launch.memoryBytes, disk: launch.diskBytes, patch: { cpu: launch.cpu } },
+    { title: 'changed memory only', cpu: launch.cpu, memory: 8 * 1024 ** 3, disk: launch.diskBytes,
+      patch: { memory: `${launch.memoryBytes}B` } },
+    { title: 'disk growth only', cpu: launch.cpu, memory: launch.memoryBytes, disk: 64 * 1024 ** 3,
+      patch: { diskSize: `${launch.diskBytes}B` } },
+    { title: 'unchanged hardware', cpu: launch.cpu, memory: launch.memoryBytes, disk: launch.diskBytes, patch: {} },
+  ])('starts the pulled VM with only required configuration: $title', async sample => {
+    let vm = { ...native, status: 'stopped', cpuCount: sample.cpu, memorySize: sample.memory,
+      diskSize: { ...native.diskSize, total: sample.disk } };
+    const current = await activated(true, async input => {
+      const url = new URL(input.url);
+      let status = 200;
+      let value: unknown = vm;
+      if (input.method === 'PATCH') {
+        const body = JSON.parse(new TextDecoder().decode(input.body)) as { cpu?: number; memory?: string; diskSize?: string };
+        // Pinned Lume 0.6.1 MacDiskResizer refuses an equal or smaller disk.
+        if (body.diskSize !== undefined && Number.parseInt(body.diskSize) <= vm.diskSize.total) {
+          return { status: 400, finalUrl: input.url, headers: {},
+            body: new TextEncoder().encode(JSON.stringify({ message: 'private native resize refusal' })) };
+        }
+        vm = { ...vm, cpuCount: body.cpu ?? vm.cpuCount,
+          memorySize: body.memory === undefined ? vm.memorySize : Number.parseInt(body.memory),
+          diskSize: { ...vm.diskSize, total: body.diskSize === undefined ? vm.diskSize.total : Number.parseInt(body.diskSize) } };
+      } else if (url.pathname.endsWith('/run')) {
+        vm = { ...vm, status: 'running' }; status = 202;
+      } else if (url.pathname === '/lume/host/status') value = { version: '0.6.1' };
+      else if (url.pathname === '/lume/config/locations') value = [{ name: 'home' }];
+      else if (url.pathname === '/lume/pull') value = { name: resource.vmName, image: 'macos:26' };
+      return { status, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
+    });
+    const result = await current.action('acquire')({ launch, managedId }, current.context);
+    expect(LUME_RECONCILIATION_SCHEMAS.result.parse(result)).toMatchObject({ kind: 'bound', resource: { value: resource } });
+    const patches = current.requests.filter(input => input.method === 'PATCH');
+    expect(patches.map(input => JSON.parse(new TextDecoder().decode(input.body))))
+      .toEqual(Object.keys(sample.patch).length ? [{ ...sample.patch, storage: resource.storage }] : []);
+    expect(vm).toMatchObject({ status: 'running', cpuCount: launch.cpu, memorySize: launch.memoryBytes,
+      diskSize: { total: launch.diskBytes } });
+    expect(current.requests.filter(input => input.method === 'GET' && new URL(input.url).pathname === `/lume/vms/${resource.vmName}`))
+      .toHaveLength(2); // Initial facts plus applied-hardware proof, including the no-op case.
+  });
+
+  it('retains a typed configure refusal and HTTP status through the Action result without native text', async () => {
+    const current = await activated(true, async input => {
+      const url = new URL(input.url);
+      const value = input.method === 'PATCH' ? { message: 'private native configure detail' }
+        : url.pathname === '/lume/host/status' ? { version: '0.6.1' }
+        : url.pathname === '/lume/config/locations' ? [{ name: 'home' }]
+        : url.pathname === '/lume/pull' ? { name: resource.vmName, image: 'macos:26' }
+        : { ...native, status: 'stopped', cpuCount: 4 };
+      return { status: input.method === 'PATCH' ? 400 : 200, finalUrl: input.url, headers: {},
+        body: new TextEncoder().encode(JSON.stringify(value)) };
+    });
+    const result = LUME_RECONCILIATION_SCHEMAS.result.parse(await current.action('acquire')({ launch, managedId }, current.context));
+    expect(result).toMatchObject({ kind: 'pending', nativeOperationRef: { value: resource },
+      nativeCause: { localCause: 'native_configure_refused', httpStatus: 400 } });
+    expect(JSON.stringify(result)).not.toContain('private');
+    expect(current.requests.some(input => new URL(input.url).pathname.endsWith('/run'))).toBe(false);
   });
 
   it.each(['pull', 'configure', 'run'] as const)('completes reviewed sizing and admitted startup on the retained stopped VM after a lost %s reply', async lostPhase => {
@@ -238,7 +518,8 @@ describe('activated Lume provisioner Actions', () => {
       .toMatchObject({ kind: 'ssh', address: native.ipAddress, user: 'lume' });
     expect(restarted.requests.filter(input => input.method === 'PATCH' || new URL(input.url).pathname.endsWith('/run'))
       .map(input => [input.method, new URL(input.url).pathname])).toEqual([
-        ['PATCH', `/lume/vms/${resource.vmName}`], ['POST', `/lume/vms/${resource.vmName}/run`],
+        ...(lostPhase === 'pull' ? [['PATCH', `/lume/vms/${resource.vmName}`]] : []),
+        ['POST', `/lume/vms/${resource.vmName}/run`],
       ]);
   });
 
@@ -282,10 +563,32 @@ describe('activated Lume provisioner Actions', () => {
       .toEqual([['GET', `/lume/vms/${resource.vmName}`, 'home']]);
   });
 
-  it('deletes a pending exact guest through the admitted native-operation arm only after recorded storage inspection', async () => {
+  it.each(['resource', 'nativeOperation'])('stops and deletes the exact guest through the admitted %s arm after stopped readback', async arm => {
     const current = await activated();
-    expect(await current.action('destroy')({ nativeOperation: resource }, current.context)).toEqual({ kind: 'confirmed' });
+    expect(MachineProvisionerPowerResultV1Schema.parse(await current.action('destroy')({ [arm]: resource }, current.context))).toEqual({ kind: 'confirmed' });
     expect(current.requests.map(input => [input.method, new URL(input.url).pathname, new URL(input.url).searchParams.get('storage')]))
-      .toEqual([['GET', `/lume/vms/${resource.vmName}`, 'home'], ['DELETE', `/lume/vms/${resource.vmName}`, 'home']]);
+      .toEqual([['GET', `/lume/vms/${resource.vmName}`, 'home'], ['POST', `/lume/vms/${resource.vmName}/stop`, null],
+        ['GET', `/lume/vms/${resource.vmName}`, 'home'], ['DELETE', `/lume/vms/${resource.vmName}`, 'home']]);
+    expect(JSON.parse(new TextDecoder().decode(current.requests[1].body))).toEqual({ storage: 'home' });
+  });
+
+  it('carries a native Delete refusal through the activated Action and strict role result without leaking native content', async () => {
+    const current = await activated(true, async input => ({ status: input.method === 'DELETE' ? 400 : 200,
+      finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(input.method === 'DELETE'
+        ? { message: 'private native disk-lock failure' } : { ...native, status: 'stopped' })) }));
+    const result = MachineProvisionerPowerResultV1Schema.parse(await current.action('destroy')({ resource }, current.context));
+    expect(result).toEqual({ kind: 'refused', code: 'native_delete_refused', nativeCause: { localCause: 'native_delete_refused', httpStatus: 400 } });
+    expect(current.requests.map(input => input.method)).toEqual(['GET', 'DELETE']);
+  });
+
+  it.each(['power', 'destroy'] as const)('retains a typed missing Stop route through the activated %s Action', async role => {
+    const current = await activated(true, async input => ({ status: input.method === 'POST' ? 404 : 200,
+      finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(input.method === 'POST'
+        ? { message: 'private missing route' } : native)) }));
+    const input = role === 'power' ? { resource, intent: 'stop' } : { resource };
+    const result = MachineProvisionerPowerResultV1Schema.parse(await current.action(role)(input, current.context));
+    expect(result).toEqual({ kind: 'refused', code: 'native_route_not_found',
+      nativeCause: { localCause: 'native_route_not_found', route: 'stop', httpStatus: 404 } });
+    expect(current.requests.map(request => request.method)).toEqual(['GET', 'POST']);
   });
 });
