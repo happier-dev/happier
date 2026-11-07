@@ -9,7 +9,7 @@ import { carryMachineActivity, linkMachineActivity, readMachineActivity } from '
 import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { describeManagedCreation } from '../managed/managedCreationPresentation';
+import { describeManagedCreation, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
 import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -19,8 +19,11 @@ export const MACHINES_THIS_COMPUTER_ROUTE = '/settings/machines/this-computer';
 export const MACHINES_ADD_ROUTE = '/settings/machines/add';
 export const MACHINE_PRESETS_ROUTE = `${MACHINES_COLLECTION_ROOT}/presets`;
 
-/** The ways the add-a-machine form offers (`useMachineAddPaths` decides which this device can run). */
-export type MachineAddRoutePath = 'thisComputer' | 'ssh' | 'anotherComputer';
+/**
+ * The ways the add-a-machine form offers (`useMachineAddPaths` decides which this device can run), plus
+ * `create`: Create one (in the cloud), open from the start.
+ */
+export type MachineAddRoutePath = 'thisComputer' | 'ssh' | 'anotherComputer' | 'create';
 
 /**
  * Add a machine: the Machines collection's draft (lab `add-flows` M4). `path` opens that way first when
@@ -40,6 +43,8 @@ type MachineCollectionRowPresentation = Readonly<{
     }>;
     /** The name the user gave the machine, else its host; told apart when two share it. */
     title: string;
+    /** Reserve this Machine's row while its display metadata is being decrypted. */
+    hydrating?: true;
     /**
      * The title in its two parts, for a one-line row that shortens the name and keeps what tells it apart
      * whole: `name` and the suffix `hint` (`null` when the name is already unique).
@@ -48,10 +53,14 @@ type MachineCollectionRowPresentation = Readonly<{
     /** The host, when the title is a different display name. */
     host: string | null;
     platformLabel: string;
+    /** The published OS platform (`metadata.platform`), for the machine's kind glyph; `null` when unknown. */
+    platform: string | null;
     online: boolean;
     status: 'online' | 'offline' | 'unknown';
     /** "Online", or "Offline · last seen …", from the shared presence owner. */
     presence: string;
+    /** Compact native lifecycle word from the same presence projection. */
+    presenceWord?: string;
     /** Why this device cannot read the machine, when it is locked. */
     reason: string | null;
     ownership: string | null;
@@ -62,8 +71,7 @@ type MachineCollectionRowPresentation = Readonly<{
 export type MachineCollectionRow = MachineCollectionRowPresentation & (
     | Readonly<{ kind: 'machine'; machineId: string; managedId?: never }>
     | Readonly<{ kind: 'managed'; managedId: string; machineId?: never; enrolledMachineId?: string;
-        /** The rail's one word for its state ("Ended"), where `presence` would truncate beside the name. */
-        presenceWord?: string }>
+    }>
 );
 
 export type MachineCollectionTarget = Readonly<{ serverId: string }> & (
@@ -97,11 +105,11 @@ export type MachineCollectionSection = Readonly<{
 }>;
 
 export type MachineCollection = Readonly<{
-    /** Every row the search can match: machines, retired created machines and recipes. */
+    /** Every row the search can match: machines, retired created machines and presets. */
     count: number;
-    /** The machines the header counts: yours, shared and created ones; never recipes or retired creations. */
+    /** The machines the header counts: yours, shared and created ones; never presets or retired creations. */
     machineCount: number;
-    /** Managed membership or a listed Machine name has not answered yet. */
+    /** Membership has not answered or no Machine name is readable; unread arrivals reserve only their own row. */
     firstAnswerPending: boolean;
     sections: readonly MachineCollectionSection[];
     presetSections: readonly MachinePresetCollectionSection[];
@@ -112,9 +120,14 @@ export function partitionMachineCollectionRailRows(rows: readonly MachineCollect
     inline: readonly MachineCollectionRow[];
     offline: readonly MachineCollectionRow[];
 }> {
-    const offline = foldOffline ? rows.filter(row => row.status === 'offline') : [];
+    if (!foldOffline) return { inline: rows, offline: [] };
+    const inline: MachineCollectionRow[] = [];
+    const offline: MachineCollectionRow[] = [];
+    for (const row of rows) {
+        (!row.hydrating && row.status === 'offline' ? offline : inline).push(row);
+    }
     if (offline.length === 0) return { inline: rows, offline: [] };
-    return { inline: rows.filter(row => row.status !== 'offline'), offline };
+    return { inline, offline };
 }
 
 export function managedMachineConsentKey(serverId: string, managedId: string): string {
@@ -139,7 +152,9 @@ export function buildMachineCollection(input: Readonly<{
     /** Managed creations whose installer is waiting on the user's consent, as `managedMachineConsentKey`. */
     awaitingConsent?: ReadonlySet<string>;
 }>): MachineCollection {
-    // An enrolled roster cannot partition Your machines and Created by Happier until membership answers.
+    // An enrolled roster alone cannot decide "Your machines" versus "Created
+    // by Happier" or their count. Every collection surface reserves that first
+    // answer rather than publishing a group it will immediately replace.
     if (input.managedFirstAnswerPending) {
         return { count: 0, machineCount: 0, firstAnswerPending: true, sections: [], presetSections: [] };
     }
@@ -147,7 +162,6 @@ export function buildMachineCollection(input: Readonly<{
     const nowMs = input.nowMs ?? Date.now();
     let count = 0;
     let machineCount = 0;
-    const firstAnswerPending = input.groups.some(group => group.machines.some(isMachineDisplayHydrating));
     const sections = input.groups.flatMap((group): MachineCollectionSection[] => {
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
         const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
@@ -190,14 +204,18 @@ export function buildMachineCollection(input: Readonly<{
                 linkMachineActivity(machine, presenceMachine);
                 const titleParts = names.get(machine.id) ?? { name, hint: null };
                 return {
-                    kind: 'machine',
-                    machineId: machine.id,
+                    ...(managedMachine && !managedMachineEnrolledDetailId(managedMachine, true)
+                        ? { kind: 'managed' as const, managedId: managedMachine.id }
+                        : { kind: 'machine' as const, machineId: machine.id }),
                     serverId: group.serverId,
                     presenceSource: { machine: presenceMachine, managedPresence, scope: group.accountScope },
+                    ...(managedPresence?.offline ? { presenceWord: managedPresence.offline.word } : {}),
+                    ...(isMachineDisplayHydrating(machine) ? { hydrating: true as const } : {}),
                     title: titleParts.hint ? `${titleParts.name} · ${titleParts.hint}` : titleParts.name,
                     titleParts,
-                    host: !managedByMachineId.has(machine.id) && host && host !== name ? host : null,
+                    host: !managedMachine && host && host !== name ? host : null,
                     platformLabel: formatOSPlatform(machine.metadata?.platform),
+                    platform: machine.metadata?.platform ?? null,
                     online: presence.online,
                     status: presence.status,
                     presence: presence.label,
@@ -216,11 +234,12 @@ export function buildMachineCollection(input: Readonly<{
                     .map((machine): MachineCollectionRow => {
                         const awaitingConsent = input.awaitingConsent?.has(managedMachineConsentKey(group.serverId, machine.id)) === true;
                         const creation = describeManagedCreation(machine);
+                        const enrolledMachineId = managedMachineEnrolledDetailId(machine, enrolledIds.has(machine.enrolledMachineId ?? ''));
                         return { kind: 'managed', managedId: machine.id,
-                        serverId: group.serverId, title: machine.launch.name, titleParts: { name: machine.launch.name, hint: null }, host: null, platformLabel: '', online: false, status: 'offline',
+                        serverId: group.serverId, title: machine.launch.name, titleParts: { name: machine.launch.name, hint: null }, host: null, platformLabel: '', platform: null, online: false, status: 'offline',
                         presence: awaitingConsent ? t('approvals.waitingForYou') : creation.line,
                         ...(!awaitingConsent && creation.word ? { presenceWord: creation.word } : {}), reason: null, ownership: null, ownerName: null,
-                        ...(machine.enrolledMachineId && machine.archivedAt === undefined ? { enrolledMachineId: machine.enrolledMachineId } : {}) };
+                        ...(enrolledMachineId ? { enrolledMachineId } : {}) };
                     })
                     .filter(row => !query || row.title.toLocaleLowerCase().includes(query));
                 rows.push(...managedRows);
@@ -262,7 +281,11 @@ export function buildMachineCollection(input: Readonly<{
         return { key: JSON.stringify([group.serverId, 'presets']), serverId: group.serverId,
             title: input.groupedByHome ? group.serverName : null, status: group.status, rows };
     });
-    return { count, machineCount, firstAnswerPending, sections, presetSections };
+    // A typed query lists what matched: a group it left empty has nothing to say (its empty line is for a Home with no
+    // machines). With no match anywhere the groups stay, so the list can say "No matches".
+    const shownSections = query && count > 0 ? sections.filter(section => section.rows.length > 0) : sections;
+    const firstAnswerPending = machineCount > 0 && shownSections.every(section => section.rows.every(row => row.hydrating));
+    return { count, machineCount, firstAnswerPending, sections: shownSections, presetSections };
 }
 
 /**
@@ -304,7 +327,7 @@ function compareMachineCollectionRows(a: MachineCollectionRow, b: MachineCollect
 
 /**
  * A collection row's page, scoped to the Home it belongs to, in `door`. Rows outside Settings pass
- * `'rail'`; recipes are configuration and always open in Settings.
+ * `'rail'`; presets are configuration and always open in Settings.
  */
 export function machineCollectionHref(row: MachineCollectionTarget, door: MachinesDoor = 'settings'): `/settings/machines/${string}` | `/machines/${string}` {
     if (row.kind === 'preset') return machinePresetCollectionHref(row);

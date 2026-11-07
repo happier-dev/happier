@@ -85,8 +85,8 @@ async function persistMachineOfflineInTx(tx: Tx, machine: MachinePresenceRow) {
     return { ...machine, recipientAccountIds };
 }
 
-/** A graceful publisher withdrawal uses the same offline transition as deadline expiry. */
-export async function recordMachineCleanDisconnect(
+/** Any known publisher withdrawal uses the same offline transition as deadline expiry. */
+export async function recordMachineDisconnect(
     identity: Readonly<{ accountId: string; machineId: string }>,
     isCurrentPublisher: () => Promise<boolean>,
     releasePublisher: () => Promise<void>,

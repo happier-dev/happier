@@ -5,10 +5,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { auth } from "@/app/auth/auth";
 import { eventRouter } from "@/app/events/eventRouter";
+import { stopLocalMachinePresenceTimeout } from "@/app/presence/timeout";
 import * as metrics from "@/app/monitoring/metrics/index";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { createFakeSocket } from "./testkit/socketHarness";
+import { createFakeSocket, createSocketRoomDiscoveryHarness } from "./testkit/socketHarness";
 import { startSocket } from "./socket";
 import type { Fastify as AppFastify } from "./types";
 
@@ -41,6 +42,7 @@ describe("startSocket connect convergence", () => {
     });
 
     afterEach(async () => {
+        await stopLocalMachinePresenceTimeout();
         vi.restoreAllMocks();
         eventRouter.clearIo();
         await app.close();
@@ -48,10 +50,16 @@ describe("startSocket connect convergence", () => {
 
     afterAll(async () => { await harness.close(); });
 
-    async function createConnection(join: (rooms: unknown) => Promise<void> = async () => {}) {
+    async function createConnection(join: (rooms: unknown) => Promise<void> = async () => {}, machineScoped = false) {
         const account = await db.account.create({ data: { publicKey: `convergence-${randomUUID()}` } });
+        const machine = machineScoped ? await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, metadata: '{}', active: false,
+        } }) : null;
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const server = { on: vi.fn(), use: vi.fn(), close: vi.fn(), to: vi.fn(() => ({ emit: vi.fn() })) };
+        const sockets = new Map<string, { connected: boolean }>();
+        const adapter = Object.assign(new EventEmitter(), { rooms: new Map<string, Set<string>>() });
+        const server = { ...createSocketRoomDiscoveryHarness(async () => []),
+            on: vi.fn(), use: vi.fn(), close: vi.fn(), to: vi.fn(() => ({ emit: vi.fn() })), sockets: { sockets, adapter } };
         serverCtor.mockReturnValue(server);
         startSocket(app);
         const base = createFakeSocket({ id: `socket-${account.id}`, data: {} });
@@ -61,8 +69,10 @@ describe("startSocket connect convergence", () => {
         const socket = {
             ...base,
             data: {} as Record<string, unknown>,
-            handshake: { auth: { token, clientType: "user-scoped", clientPurpose: "stress" }, address: "127.0.0.1", headers: { "user-agent": "test-agent" } },
+            handshake: { auth: { token, clientType: machine ? "machine-scoped" : "user-scoped", clientPurpose: "stress",
+                ...(machine ? { machineId: machine.id } : {}) }, address: "127.0.0.1", headers: { "user-agent": "test-agent" } },
             conn: { transport: { name: "websocket" } },
+            request: { socket: {} },
             join: vi.fn(join),
             use: vi.fn(),
             leave: vi.fn(),
@@ -75,13 +85,23 @@ describe("startSocket connect convergence", () => {
         };
         const middleware = server.use.mock.calls[0]?.[0] as
             (socket: Record<string, unknown>, next: (error?: unknown) => void) => Promise<void>;
+        sockets.set(socket.id, socket);
         const next = vi.fn();
         await middleware(socket, next);
         expect(next).toHaveBeenCalledWith();
         const connection = server.on.mock.calls.find(([event]) => event === "connection")?.[1] as
             (socket: Record<string, unknown>) => Promise<void>;
-        return { account, socket, connection, events };
+        return { account, socket, connection, events, machine };
     }
+
+    it("publishes a known Machine transport close immediately instead of retaining Online until its heartbeat deadline", async () => {
+        const { socket, connection, events, machine } = await createConnection(undefined, true);
+        await connection(socket);
+        expect((await db.machine.findUniqueOrThrow({ where: { id: machine!.id } })).active).toBe(true);
+        socket.connected = false;
+        events.emit("disconnect", "transport close");
+        await vi.waitFor(async () => expect((await db.machine.findUniqueOrThrow({ where: { id: machine!.id } })).active).toBe(false));
+    });
 
     it("records connect start and completion without counting a later disconnect as pre-ready", async () => {
         const { account, socket, connection, events } = await createConnection();

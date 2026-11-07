@@ -1,10 +1,12 @@
 import { onShutdown } from "@/utils/process/shutdown";
+import { isIrohIngressRequest, IROH_REQUEST_IP } from '@/app/net/requestIngress';
 import { registerUiFocusSocketEvent } from '@/app/api/socket/registerUiFocusSocketEvent';
-import { registerSessionConsumptionSocketEvent } from '@/app/api/socket/sessionConsumption';
+import { registerSessionConsumptionSocketEvent, retireSessionConsumptionAfterAccessChange } from '@/app/api/socket/sessionConsumption';
 import { registerSocketRoomDiscovery } from '@/app/api/socket/socketRoomDiscovery';
 import { Fastify } from "./types";
 import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
+import { registerMachineAccessLossHandler } from '@/app/events/machineAccessLoss';
 import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
@@ -36,7 +38,8 @@ import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compa
 import { createSessionHumanPresenceService } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { registerSessionHumanPresenceSocketHandlers, releaseSessionHumanPresenceHoldAfterFinalCurrentness } from "@/app/session/humanPresence/registerSessionHumanPresenceSocketHandlers";
 import { machineUpdateHandler, observeMachineAliveFromSocket } from "./socket/machineUpdateHandler";
-import { recordMachineCleanDisconnect, schedulePresenceDeadline } from '@/app/presence/timeout';
+import { withdrawMachineConnectionCapabilitiesForSocketClaim } from './socket/machineOperationCapabilities';
+import { recordMachineDisconnect, schedulePresenceDeadline } from '@/app/presence/timeout';
 import { registerPresenceDeadlineNotifications } from '@/app/presence/presenceDeadlineNotification';
 import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
@@ -64,13 +67,11 @@ import {
     createSessionServerStartDaemonDispatcher,
 } from "./socket/sessionServerStartDispatcher";
 import { resolveMachineSocketInstallationIdentity } from "./socket/machineSocketInstallationProof";
-import { installSessionPublisherCredentialCurrentness } from "./socket/socketCredentialCurrentness";
 import { rejectSocket, resolveSocketAuthUnavailableError } from "./socket/socketAuthError";
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import {
     getAccountRevocationSocketRoom,
     getApiTokenRevocationSocketRoom,
-    getAccountTerminalSocketRoom,
     getMachineInstallationSocketRoom,
     getProtectedSocketRooms,
     type SocketClientType,
@@ -314,6 +315,7 @@ export function startSocket(app: Fastify) {
     const humanPresence = createSessionHumanPresenceService({
         io,
         clusterAccessChangePublicationEnabled: shouldEnableRedisAdapter,
+        onSessionAccessChanged: sessionId => retireSessionConsumptionAfterAccessChange(io.sockets.sockets.values(), sessionId),
     });
     if (typeof app.addHook === "function") {
         app.addHook("onClose", async () => { humanPresence.close(); });
@@ -382,6 +384,7 @@ export function startSocket(app: Fastify) {
             log({ module: 'machine-presence', error }, 'Failed to deliver legacy Machine heartbeat');
         });
     });
+    const releaseMachineAccessLoss = registerMachineAccessLossHandler(io, input => eventRouter.receiveMachineAccessLoss(input));
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
     const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
     const peerMediationObservabilityEmitter = createPeerMediationObservabilityEmitter(peerMediationObservabilityStore);
@@ -655,6 +658,19 @@ export function startSocket(app: Fastify) {
                     });
                 }
                 machineOwnershipClaimed = true;
+                // Retained capabilities describe the prior daemon, including a
+                // newer binary on this exact installation. Withdraw connection facts
+                // before connect can expose this new RPC owner to callers.
+                if (!await withdrawMachineConnectionCapabilitiesForSocketClaim({
+                    accountId: verified.userId, machineId: machine.id, installationId: machine.installationId,
+                    isCurrent: () => machineOwnershipRegistry.isOwner({
+                        accountId: verified.userId, machineId: machine.id, socketId: socket.id,
+                    }),
+                })) {
+                    observeHandshakeStage('error');
+                    await releaseMachineOwnershipIfClaimed();
+                    return rejectHandshake({ statusCode: 403, error: 'invalid-machine' });
+                }
                 observeHandshakeStage("ok");
 
                 activityCache.seedMachineValidity({
@@ -696,6 +712,7 @@ export function startSocket(app: Fastify) {
             }
 
             socket.data.userId = verified.userId;
+            socket.data.tokenEpoch = verified.tokenEpoch;
             socket.data.authTokenKind = verified.authTokenKind;
             socket.data.authAuthority = narrowCredentialAuthority(verified.authority, socket.handshake.auth.authorityCeiling);
             socket.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
@@ -714,7 +731,7 @@ export function startSocket(app: Fastify) {
             // handshake. The client can emit its first replacement as soon as
             // it receives `connect`; registering later in the async connection
             // callback races that packet and can silently lose the declaration.
-            if (clientType === "user-scoped") {
+            if (clientType === "user-scoped" || clientType === "session-scoped") {
                 registerSessionHumanPresenceSocketHandlers({
                     presence: humanPresence,
                     socket,
@@ -760,7 +777,7 @@ export function startSocket(app: Fastify) {
 
     io.on("connection", async (socket) => {
         const connectedAtMs = Date.now();
-        const remoteAddress = socket.handshake.address;
+        const remoteAddress = isIrohIngressRequest(socket.request) ? IROH_REQUEST_IP : socket.handshake.address;
         const remotePort =
             typeof (socket.conn as unknown as { remotePort?: unknown } | undefined)?.remotePort === 'number'
                 ? (socket.conn as unknown as { remotePort: number }).remotePort
@@ -899,57 +916,63 @@ export function startSocket(app: Fastify) {
 
         try {
             await socket.join(getAccountRevocationSocketRoom(userId));
-            // Join before the existing final currentness read, closing the
-            // policy-change window without admitting protected fanout early.
-            if (socket.data.authTokenKind === "terminal") await socket.join(getAccountTerminalSocketRoom(userId));
             if (handshakeEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
                 const principal = handshakeEphemeralRunnerAdmission.principal;
                 await socket.join([getApiTokenRevocationSocketRoom(principal.credentialId),
                     ...(principal.parentTokenId ? [getApiTokenRevocationSocketRoom(principal.parentTokenId)] : [])]);
             }
-            const currentVerified = await auth.verifyTokenForRoute(token);
-            const currentEphemeralRunnerAdmission = currentVerified?.authTokenKind === "ephemeral_session_runner" || currentVerified?.authTokenKind === "api_token"
-                ? resolveRestrictedSocketAdmission({
-                    principal: currentVerified.ephemeralSessionRunnerPrincipal,
-                    apiTokenPrincipal: currentVerified.apiTokenPrincipal,
-                    clientType,
-                    ...(sessionId ? { sessionId } : {}),
-                    ...(machineId ? { machineId } : {}),
-                })
-                : null;
-            if (
-                !socket.connected
-                || !currentVerified
-                || (isRestrictedAuthTokenKind(currentVerified.authTokenKind) && !currentEphemeralRunnerAdmission)
-                || currentVerified.userId !== userId
-            ) {
-                await rejectPostConnectAdmission();
-                return;
-            }
-            socket.data.authTokenKind = currentVerified.authTokenKind;
-            socket.data.authAuthority = narrowCredentialAuthority(currentVerified.authority, socket.handshake.auth.authorityCeiling);
-            socket.data.authTokenAuthenticationEvidence = currentVerified.authenticationEvidence;
-            if (currentEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
-                const principal = currentEphemeralRunnerAdmission.principal;
-                const origin = socket.handshake.headers.origin;
-                const admitted = await admitApiTokenSessionOperation({ principal,
-                    sessionId: currentEphemeralRunnerAdmission.sessionId, actionId: "session.transcript.get",
-                    capability: "readTranscript", targetMachineId: await resolveCurrentSessionMachine({
-                        accountId: userId, sessionId: currentEphemeralRunnerAdmission.sessionId,
-                    }),
-                });
-                if (!admitted.ok || (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin))) {
-                    await rejectPostConnectAdmission(); return;
+            // Verify the signed token once, then close any revocation gap before
+            // room membership made this admitted Machine stream evictable.
+            if (clientType === 'machine-scoped' && !handshakeEphemeralRunnerAdmission) {
+                if (!socket.connected || !await auth.isSignedCredentialCurrent(db, userId, socket.data.tokenEpoch)) {
+                    await rejectPostConnectAdmission();
+                    return;
                 }
-                socket.data.apiTokenPrincipal = principal;
-                socket.data.ephemeralRunnerAdmission = currentEphemeralRunnerAdmission;
+            } else {
+                const currentVerified = await auth.verifyTokenForRoute(token);
+                const currentEphemeralRunnerAdmission = currentVerified?.authTokenKind === "ephemeral_session_runner" || currentVerified?.authTokenKind === "api_token"
+                    ? resolveRestrictedSocketAdmission({
+                        principal: currentVerified.ephemeralSessionRunnerPrincipal,
+                        apiTokenPrincipal: currentVerified.apiTokenPrincipal,
+                        clientType,
+                        ...(sessionId ? { sessionId } : {}),
+                        ...(machineId ? { machineId } : {}),
+                    })
+                    : null;
+                if (
+                    !socket.connected
+                    || !currentVerified
+                    || (isRestrictedAuthTokenKind(currentVerified.authTokenKind) && !currentEphemeralRunnerAdmission)
+                    || currentVerified.userId !== userId
+                ) {
+                    await rejectPostConnectAdmission();
+                    return;
+                }
+                socket.data.authTokenKind = currentVerified.authTokenKind;
+                socket.data.authAuthority = narrowCredentialAuthority(currentVerified.authority, socket.handshake.auth.authorityCeiling);
+                socket.data.authTokenAuthenticationEvidence = currentVerified.authenticationEvidence;
+                if (currentEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
+                    const principal = currentEphemeralRunnerAdmission.principal;
+                    const origin = socket.handshake.headers.origin;
+                    const admitted = await admitApiTokenSessionOperation({ principal,
+                        sessionId: currentEphemeralRunnerAdmission.sessionId, actionId: "session.transcript.get",
+                        capability: "readTranscript", targetMachineId: await resolveCurrentSessionMachine({
+                            accountId: userId, sessionId: currentEphemeralRunnerAdmission.sessionId,
+                        }),
+                    });
+                    if (!admitted.ok || (origin !== undefined && !isApiTokenRequestOriginAllowed(principal.grant, origin))) {
+                        await rejectPostConnectAdmission(); return;
+                    }
+                    socket.data.apiTokenPrincipal = principal;
+                    socket.data.ephemeralRunnerAdmission = currentEphemeralRunnerAdmission;
+                }
             }
             await socket.join(protectedRooms);
             if (!socket.connected) {
                 await rejectPostConnectAdmission();
                 return;
             }
-            // The final socket-currentness check succeeded: release the presence
+            // Connect admission and protected-room setup succeeded: release the presence
             // hold so an early replacement declaration is admitted through the
             // ordinary path. Until this point it could not acknowledge, authorize,
             // join a presence room, or emit a snapshot.
@@ -1032,10 +1055,8 @@ export function startSocket(app: Fastify) {
                 // A retiring predecessor must not mark its replacement offline.
                 // Release after the presence write, before notification work.
                 const releasePublisher = () => machineOwnershipRegistry.releaseOwner(publisher);
-                void (reason === 'client namespace disconnect'
-                    ? recordMachineCleanDisconnect(publisher, () => machineOwnershipRegistry.isOwner(publisher), releasePublisher)
-                    : releasePublisher()).catch(error => {
-                    log({ module: 'machine-presence', error }, 'Failed to publish clean Machine disconnect');
+                void recordMachineDisconnect(publisher, () => machineOwnershipRegistry.isOwner(publisher), releasePublisher).catch(error => {
+                    log({ module: 'machine-presence', error }, 'Failed to publish Machine disconnect');
                 });
             }
 
@@ -1122,6 +1143,7 @@ export function startSocket(app: Fastify) {
             ephemeralRunnerAdmission,
         });
 
+
         // Handlers
         if (ephemeralRunnerAdmission?.kind !== "machine-runtime" && ephemeralRunnerAdmission?.kind !== "api-token-session-viewer") {
             usageHandler(
@@ -1142,9 +1164,6 @@ export function startSocket(app: Fastify) {
             });
         }
         if (ephemeralRunnerAdmission?.kind !== "machine-runtime") {
-            if (!ephemeralRunnerAdmission && sessionBinding?.proof === "machine-access-key") {
-                installSessionPublisherCredentialCurrentness(userId, socket);
-            }
             sessionUpdateHandler(
                 userId,
                 socket,
@@ -1245,6 +1264,11 @@ export function startSocket(app: Fastify) {
         // Ready
         connectReady = true;
         finalizeConnectConvergence("ready");
+        if (ephemeralRunnerAdmission?.kind === 'api-token-session-viewer') {
+            // Rooms are joined and currentness is proved: Self can now close the
+            // gap between initial credential admission and pushed configuration.
+            socket.emit('ephemeral', { type: 'api-token-embed-config-changed' });
+        }
         log(
             {
                 module: 'websocket',
@@ -1264,6 +1288,7 @@ export function startSocket(app: Fastify) {
 
     onShutdown('api:socket', async () => {
         releasePresenceDeadlineNotifications();
+        releaseMachineAccessLoss();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);
         } catch (error) {

@@ -1,5 +1,3 @@
-import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
-import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import { Redis } from 'ioredis';
 import type { Socket } from 'socket.io';
@@ -28,10 +26,13 @@ import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from './machineSocke
 import { machineUpdateHandler, observeMachineAliveFromSocket } from './machineUpdateHandler';
 import { machinesRoutes } from '../routes/machines/machinesRoutes';
 import { withAuthenticatedTestApp } from '../testkit/sqliteFastify';
+import { ScmDiffSummaryResultRevisionHintSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import * as logging from '@/utils/logging/log';
 import { resolveRedisAdapterValidationRedisUrl } from '../../../../scripts/resolveRedisAdapterValidationRedisUrl';
 import { publishMachineAlive, startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
+import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol';
 
 const redisBoundary = vi.hoisted(() => ({ client: null as Redis | null }));
 vi.mock('@/storage/redis/redis', () => ({
@@ -97,12 +98,15 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             workflowCustodyState: 'pending', state: 'running', scheduledAt: new Date(), dueAt: new Date(),
             assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } },
         } });
+        const terminalPendingId = randomUUID();
         for (const [state, custody, installationId] of [
             ['succeeded', 'pending', machine.installationId],
+            ['succeeded', 'settled', machine.installationId],
             ['queued', 'settled', machine.installationId],
             ['queued', 'pending', 'retired-installation'],
         ] as const) await db.automationRun.create({ data: { accountId: guest.id, originKind: 'direct',
             causeKind: null, workflowAcceptedSnapshotEnvelope: 'private accepted snapshot',
+            ...(state === 'succeeded' && custody === 'pending' ? { id: terminalPendingId } : {}),
             workflowCustodyState: custody, state, scheduledAt: new Date(), dueAt: new Date(),
             assignments: { create: { machineId: machine.id, admittedMachineInstallationId: installationId } },
         } });
@@ -123,20 +127,22 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         assignmentReads = 0;
         await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
             timestamp: Date.now(), continuingBeat: false });
-        expect(wakes().map(body => body.runId).sort()).toEqual([queued.id, running.id].sort());
+        expect(wakes().map(body => body.runId).sort()).toEqual([queued.id, running.id, terminalPendingId].sort());
         expect(assignmentReads).toBe(1);
         expect(wakes()).toEqual(expect.arrayContaining([
             expect.objectContaining({ runId: queued.id, targetMachineId: machine.id,
                 requesterScope: { kind: 'workflow_trigger', id: triggerId } }),
             expect.objectContaining({ runId: running.id, targetMachineId: machine.id,
                 requesterScope: { kind: 'workflow_trigger', id: running.id } }),
+            expect.objectContaining({ runId: terminalPendingId, state: 'succeeded', targetMachineId: machine.id,
+                requesterScope: { kind: 'workflow_trigger', id: terminalPendingId } }),
         ]));
         expect(JSON.stringify(wakes())).not.toContain('private definition');
         expect(Object.keys(wakes()[0]).sort()).toEqual(['t', 'runId', 'automationId', 'state', 'scheduledAt',
             'startedAt', 'finishedAt', 'updatedAt', 'machineId', 'attempt', 'targetMachineId', 'requesterScope'].sort());
         await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
             timestamp: Date.now(), continuingBeat: true });
-        expect(wakes()).toHaveLength(2);
+        expect(wakes()).toHaveLength(3);
         expect(assignmentReads).toBe(1);
         } finally { stopObserving(); }
     });
@@ -234,6 +240,10 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
         } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
         const reader = createFakeSocket({ data: { clientType: 'user-scoped' } });
+        writeAccountStoredContentCompatibilityForSocket(reader as unknown as Socket,
+            evaluateAccountStoredContentSocketCompatibility({
+                accountStoredContentCompatibility: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+            }));
         const connection: ClientConnection = { userId: owner.id, connectionType: 'user-scoped', socket: reader as unknown as Socket };
         eventRouter.addConnection(owner.id, connection);
         machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
@@ -273,7 +283,12 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 .toEqual([{ type: 'machine-work-summary-changed', machineId: machine.id }]);
             await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
                 timestamp: base + 180_000, continuingBeat: false });
-            expect(activity()).toHaveLength(1);
+            // A reconnect repairs an unavailable verdict even when the stored
+            // active bit survived the previous transport's loss.
+            expect(activity()).toEqual([
+                { type: 'machine-activity', id: machine.id, active: true, activeAt: base, reconnected: true },
+                { type: 'machine-activity', id: machine.id, active: true, activeAt: base + 180_000, reconnected: true },
+            ]);
             expect(verifications.mock.calls.length).toBe(0);
             expect(reader.emit.mock.calls.filter(([event, value]) => event === 'ephemeral'
                 && value?.type === 'machine-activity' && value.active === false)).toEqual([]);
@@ -414,6 +429,12 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect.soft(activity(2)).toEqual(expected);
             expect.soft(activity(3)).toEqual([]);
             expect(saved.lastActiveAt.getTime()).toBeGreaterThan(observedAt);
+            await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
+                machineId: machine.id, timestamp: Date.now(), continuingBeat: false, isCurrent: async () => true });
+            expect(activity(1)).toEqual([{ type: 'machine-activity', id: machine.id, active: true,
+                activeAt: (await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).lastActiveAt.getTime(), reconnected: true }]);
+            expect(activity(2).at(-1)).toMatchObject({ id: machine.id, reconnected: true });
+            expect(activity(3)).toEqual([]);
             await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
                 principal: { kind: 'account', accountId: guest.id } }));
             for (const reader of readers) reader.socket.emit.mockClear();
@@ -1142,6 +1163,69 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             } finally { eventRouter.removeConnection(owner.id, connection); }
         },
     );
+
+    it.each(['execution-run-updated', 'scm-diff-summary-result-updated'] as const)('publishes %s only to its Account while the exact Machine publisher remains current', async event => {
+        const owner = await db.account.create({ data: { publicKey: `run-owner-${randomUUID()}`, encryptionMode: 'plain' } });
+        const shared = await db.account.create({ data: { publicKey: `run-shared-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: shared.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
+        const readers = [owner, shared].map(account => {
+            const socket = Object.assign(createFakeSocket({ id: `run-reader-${account.id}`, data: { clientType: 'user-scoped' } }),
+                { disconnect: vi.fn() });
+            const connection: ClientConnection = { userId: account.id, connectionType: 'user-scoped', socket: socket as unknown as Socket };
+            eventRouter.addConnection(account.id, connection);
+            return { accountId: account.id, socket, connection };
+        });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const publisher = Object.assign(createFakeSocket({ data: {
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId,
+        } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
+        machineUpdateHandler(owner.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const identity = event === 'execution-run-updated' ? { runId: 'detached-run' }
+            : ScmDiffSummaryResultRevisionHintSchema.parse({ resultId: 'accepted-proposal', revision: 10 });
+        const payload = { machineId: machine.id, installationId: machine.installationId, ...identity };
+        publisher.disconnect.mockImplementation(() => { publisher.connected = false; });
+        const publisherConnection: ClientConnection = { userId: owner.id, connectionType: 'machine-scoped', machineId: machine.id,
+            socket: publisher as unknown as Socket };
+        eventRouter.addConnection(owner.id, publisherConnection);
+        const updates = (index: number) => readers[index]!.socket.emit.mock.calls
+            .filter(([name, value]) => name === 'ephemeral' && value?.type === event)
+            .map(([, value]) => value);
+        try {
+            const publish = getSocketHandler(publisher, event);
+            await publish(payload);
+            expect(updates(0)).toEqual([{ type: event, machineId: machine.id, ...identity }]);
+            expect(updates(1)).toEqual([]);
+            readers[0]!.socket.emit.mockClear();
+            for (const invalid of [{ ...payload, machineId: 'another-machine' }, { ...payload, installationId: 'another-installation' },
+                { ...payload, privateContent: 'must-not-cross-this-boundary' }]) await publish(invalid);
+            expect(updates(0)).toEqual([]);
+            publisher.data!.clientType = 'user-scoped';
+            await publish(payload);
+            expect(updates(0)).toEqual([]);
+            publisher.data!.clientType = 'machine-scoped';
+            await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement-installation' } });
+            await publish(payload);
+            expect(updates(0)).toEqual([]);
+            await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
+            await publish(payload);
+            expect(updates(0)).toHaveLength(1);
+            readers[0]!.socket.emit.mockClear();
+            expect(await inTx(tx => setAccountStatusInTx(tx, { actorAccountId: owner.id, targetAccountId: owner.id,
+                status: 'suspended', authority: 'account_erasure' }))).toEqual({ status: 'applied' });
+            expect(publisher.connected).toBe(false);
+            await publish(payload);
+            expect(updates(0)).toEqual([]);
+            expect(updates(1)).toEqual([]);
+        } finally {
+            eventRouter.removeConnection(owner.id, publisherConnection);
+            for (const reader of readers) eventRouter.removeConnection(reader.accountId, reader.connection);
+        }
+    });
 
     it('publishes only safe Machine liveness to owner, Manage and Use, excluding outsiders and retired grants', async () => {
         const account = () => db.account.create({ data: { publicKey: `presence-${randomUUID()}`, encryptionMode: 'plain' } });

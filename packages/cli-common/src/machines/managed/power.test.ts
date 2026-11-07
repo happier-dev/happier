@@ -51,6 +51,22 @@ describe('shared admitted native power', () => {
         expect(calls).toEqual(['inspect']);
     });
 
+    it('re-observes an uncertain power effect after transport recovery without sending power again', async () => {
+        const roles: string[] = [];
+        let waits = 0;
+        const value = await executeManagedMachinePowerIntent({ machine: { ...machine, desired: 'stop' },
+            waitForObservation: async () => { waits++; },
+            invoke: async (role): Promise<JsonValue> => {
+                roles.push(role);
+                if (role === 'power') return { kind: 'unknown', code: 'transport' };
+                return waits ? { observedAt: 2, availability: 'present', power: 'stopped' }
+                    : { observedAt: 1, availability: 'unavailable', reason: 'transport' };
+            } });
+        expect(value).toEqual({ result: { kind: 'unknown', code: 'transport' },
+            observation: { observedAt: 2, availability: 'present', power: 'stopped' } });
+        expect(roles).toEqual(['power', 'inspect', 'inspect']);
+        expect(waits).toBe(1);
+    });
     it.each([
         { desired: 'start' as const, initialPower: 'running' as const },
         { desired: 'resume' as const, initialPower: 'running' as const },

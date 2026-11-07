@@ -62,6 +62,11 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
         let observation: ProviderObservationV1;
         try { observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value })); }
         catch { break; /* The acknowledged effect survives an unavailable observation. */ }
+        if (input.waitForObservation && observation.availability === 'unavailable' && observation.reason === 'transport') {
+            await input.onObservation?.(observation);
+            await input.waitForObservation();
+            continue;
+        }
         if (!input.waitForObservation || result.kind !== 'confirmed'
             || machine.desired !== 'start' && machine.desired !== 'resume'
             || observation.availability !== 'present' || observation.storage === 'lost' || observation.power === 'running') {

@@ -12,7 +12,8 @@ import {
   withdrawMachinePresenceForScope,
   captureMachinePresenceObservation,
 } from '@/sync/domains/machines/reachability/machineReachability';
-import { describeMachinePresenceLine } from './machinePresenceLine';
+import { describeMachinePresenceLine, projectMachineManagedPresence } from './machinePresenceLine';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 afterEach(() => clearMachineRequestReachabilityForTest());
 
@@ -25,6 +26,20 @@ describe('describeMachinePresenceLine', () => {
       { serverId: 'home', accountId: 'presence-account' }).online).toBe(true);
   });
   const scope = { serverId: 'home', accountId: 'presence-account' };
+  it('presents native running without a connected daemon as starting and only daemon presence as Online', () => {
+    const managed = ManagedMachineV1Schema.parse({ id: 'native', homeId: scope.serverId, custodianAccountId: scope.accountId,
+      enrolledMachineId: 'guest', launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1,
+        name: 'Build box', choices: {} }, allocation: 'bound', creationState: 'active',
+      resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
+      desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+      observation: { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' } });
+    const machine = { id: 'guest', active: false, activeAt: Date.now(), presenceProtocolVersion: 1 as const };
+    const presentation = projectMachineManagedPresence(machine, managed);
+    expect(describeMachinePresenceLine(machine, undefined, presentation, scope))
+      .toMatchObject({ online: false, status: 'offline', label: 't:managedWake.starting' });
+    expect(describeMachinePresenceLine({ ...machine, active: true }, undefined, presentation, scope))
+      .toMatchObject({ online: true, status: 'online', label: 't:settingsOverview.machineOnline' });
+  });
   const now = Date.now();
   const fresh = { id: 'machine', active: true, activeAt: now - 1_000 };
   const stale = {

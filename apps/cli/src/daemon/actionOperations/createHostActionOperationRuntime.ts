@@ -1,45 +1,85 @@
-import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { ActionOperationCancellation } from './actionOperationTypes';
-import type { ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
-import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
-import type { ManagedDeleteOperationSettlement } from '@/machines/managed/managedIntentReconciler';
-import { isDeepStrictEqual } from 'node:util';
-import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
-import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { isDeploymentChildRootActionIdV1 } from '@happier-dev/protocol';
-import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { type DeploymentDeployIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { type DeploymentDeployInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionExecuteResult, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 
 import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext } from './actionOperationRpcHandlers';
 import { createActionOperationRunner } from './actionOperationRunner';
-import { createActionOperationStore } from './actionOperationStore';
-import type { ActionOperationDomainOwner, ActionOperationProgressUpdate } from './actionOperationTypes';
+import { createActionOperationStore, type DeploymentBackupOperationTarget } from './actionOperationStore';
+import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
+import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
-import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { isDeepStrictEqual } from 'node:util';
+import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
+import type { ManagedNativeOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
+import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
+  type DeploymentDeployInputV1, type DeploymentDeployIntentInputV1,
+  type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
+import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 
-export type RequesterMachineOperationCleanupInput = Readonly<{
-  serverId: string;
-  requesterAccountId: string;
-  machineId: string;
-  installationId: string;
-  verifyCurrentMachineAdmission: () => Promise<boolean>;
+type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
+
+export function carriesNativeConfirmation(actionId: string, context?: ConfirmationContext): boolean {
+  return Boolean(context?.externalActionExecutionAuthorization && context.presentUserConfirmation?.inputDigest
+    && context.presentUserConfirmation.actionId === actionId);
+}
+
+export type PendingDeploymentObservationRequest = Readonly<{
+  input: DeploymentDeployIntentInputV1;
+  admission: DeploymentPendingAdmissionV1;
+  pendingDeploy: import('@happier-dev/protocol').DeploymentPendingDeployV1;
+  context: import('@happier-dev/protocol').ActionExecutorContext;
+  /** Same domain validator, not a consumer-owned candidate parser. */
+  validateOriginalInput(input: DeploymentDeployInputV1,
+    context: import('@happier-dev/protocol').ActionExecutorContext): Promise<void>;
 }>;
+
+/** A native receipt intent survives transport retries. Its exact input remains
+ * the runner's conflict authority; the tuple fits the existing request-id bound. */
+function readDeploymentOperationRequestId(actionId: string, input: unknown): string | undefined {
+  if (actionId === 'machines.services.adopt') {
+    const parsed = MachineServiceAdoptInputV1Schema.safeParse(input);
+    if (!parsed.success || parsed.data.mode !== 'apply') return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      'adopt', parsed.data.serverId, parsed.data.machineId, parsed.data.serviceId, parsed.data.requestKey,
+    ]);
+  }
+  if (actionId === 'deployments.backups.restore') {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;
+    // One prepared restore can enter the destructive native phase once. The
+    // incumbent runner compares the complete input before returning its result.
+    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      'restore', parsed.data.prepareOperationId,
+    ]);
+  }
+  if (actionId === 'deployments.templates.instantiate') {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success || parsed.data.mode !== 'apply' || parsed.data.environment.kind !== 'create') return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      // The parsed template requires exactly one existing Source or new Project.
+      'template', parsed.data.serverId, parsed.data.projectSourceId ?? parsed.data.newProject!.requestKey, parsed.data.machineId,
+      parsed.data.target.installationId, parsed.data.environment.requestKey,
+    ]);
+  }
+  if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
+  const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+  if (!parsed.success || !('requestKey' in parsed.data) || parsed.data.requestKey === undefined) return undefined;
+  return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+    parsed.data.serverId, parsed.data.environmentId, parsed.data.requestKey,
+  ]);
+}
 
 function readRequestId(actionId: string, input: unknown): string | undefined {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
@@ -101,7 +141,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   custodyBinding?: Readonly<{ serverId: string; installationId: string }>;
   resolveAccountId: () => Promise<string | null>;
   generateOperationId?: () => string;
-  publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void;
+  publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void | Promise<void>;
   publishSnapshotAcknowledged?: (snapshot: ActionOperationSnapshotV1) => Promise<boolean>;
   onInspection?: (operation: ActionOperationSnapshotV1) => void;
   supportsCoreCancellation?: (
@@ -147,7 +187,12 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       actionIds: [...new Set(attached.flatMap(item => item.actionIds))],
       async list(scope) { return (await Promise.all(attached.map(item => item.list(scope)))).flat(); },
       async get(scope, id) { return (await find(scope, id))?.snapshot ?? null; },
-      async cancel(scope, id) { return (await find(scope, id))?.item.cancel(scope, id) ?? null; },
+      async cancel(scope, id, context) {
+        const found = await find(scope, id);
+        await context?.assertCurrent();
+        if (owner !== composite) return null;
+        return found?.item.cancel(scope, id, context) ?? null;
+      },
       async refreshSetupReview(scope, id) { await (await find(scope, id))?.item.refreshSetupReview?.(scope, id); },
       async decideSetupReview(scope, id, workspace, phase, decision) {
         return (await find(scope, id))?.item.decideSetupReview?.(scope, id, workspace, phase, decision) ?? null;
@@ -176,6 +221,11 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     runner,
     machineId: deps.machineId,
     resolveAccountId: deps.resolveAccountId,
+    ...(deps.custodyBinding ? { onMissingCancellation: async (scope, operationId, context) => {
+      if (context.callerInputAuthorization?.binding.actionId !== 'action.operations.cancel') return null;
+      const { cancelPendingDeploymentForHost } = await import('@/deployments/pendingDeploy');
+      return cancelPendingDeploymentForHost({ scope, operationId, context, custody: deps.custodyBinding! });
+    } } : {}),
     ...(deps.onInspection ? { onInspection: deps.onInspection } : {}),
   });
 
@@ -217,21 +267,22 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       operationCancellation?: ActionOperationCancellation;
       operationReview?: import('./actionOperationTypes').ActionOperationReviewContinuation;
       afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
-      settleManagedDeleteOperation?: ManagedMachineOperationSettlementContext['settleManagedDeleteOperation'];
+      settleManagedNativeOperation?: ManagedMachineOperationSettlementContext['settleManagedNativeOperation'];
     }>) => Promise<ActionExecuteResult>;
   }>): Promise<ActionExecuteResult> => {
     const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
     const deploymentChildIdentity = await readDeploymentArchiveOperationIdentityForHost(request.rpcContext, request.actionId);
-    const settleManagedDeleteOperation = scope
+    const settleManagedNativeOperation = scope
       && (request.actionId === 'machines.managed.inspect' || request.actionId === 'machines.managed.delete')
-      ? (settlement: ManagedDeleteOperationSettlement) => {
+      ? (settlement: ManagedNativeOperationSettlement) => {
         if (settlement.controller && (settlement.controller.machineId !== deps.machineId
           || deps.custodyBinding && settlement.controller.installationId !== deps.custodyBinding.installationId)) return;
         // Confirmed native absence ends setup for this same managed Machine.
         // Reuse each admitted invocation's local cancellation owner, including
         // early acquisition phases that have not yet acquired a resource.
         const acquisitionScope = { accountId: scope.accountId, machineId: scope.machineId };
-        for (const candidate of store.list({ ...acquisitionScope, states: ['accepted', 'running'] }).items) {
+        for (const candidate of settlement.intent === 'delete'
+          ? store.list({ ...acquisitionScope, states: ['accepted', 'running'] }).items : []) {
           const acquiring = candidate.domainRef;
           if ((candidate.actionId === 'machines.managed.acquire' || candidate.actionId === 'machines.managed.bootstrap.retry')
             && acquiring?.kind === 'managedMachine' && acquiring.id === settlement.managedId
@@ -240,7 +291,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
             runner.cancel(acquisitionScope, candidate.operationId);
           }
         }
-        const operation = store.findByRequestIdentity(scope, 'machines.managed.delete', settlement.requestId);
+        const operation = store.findByRequestIdentity(scope,
+          settlement.intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set', settlement.requestId);
         const target = operation?.domainRef;
         // Only the retained uncertain invocation is retired. A running native
         // handler, another resource/controller, or terminal history is untouched.
@@ -248,8 +300,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
           || operation.observation.code !== 'action_outcome_unknown' || target?.kind !== 'managedMachine'
           || target.id !== settlement.managedId || !isDeepStrictEqual(target.controller, settlement.controller)
           || !isDeepStrictEqual(target.resource, settlement.resource)) return;
-        store.succeed(operation.operationId, { kind: 'accepted', managedId: settlement.managedId,
+        if (settlement.succeeded) store.succeed(operation.operationId, { kind: 'accepted', managedId: settlement.managedId,
           intentRevision: settlement.intentRevision, operation: { operationId: operation.operationId } });
+        else store.fail(operation.operationId, { errorCode: 'native_intent_unconfirmed', error: 'native_intent_unconfirmed' });
       } : undefined;
     const actionId = ActionIdSchema.safeParse(request.actionId);
     const spec = actionId.success ? getActionSpec(actionId.data) : null;
@@ -264,7 +317,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         signal: new AbortController().signal,
         operationProgress: { update: () => undefined },
         operationOwnerUpdate: { update: () => undefined },
-        ...(settleManagedDeleteOperation ? { settleManagedDeleteOperation } : {}),
+        ...(settleManagedNativeOperation ? { settleManagedNativeOperation } : {}),
       });
     }
     const attribution = acceptedAttribution(scope, request.rpcContext);
@@ -299,6 +352,15 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       // the incumbent runner remains the sole conflict/rejoin authority.
     }
     const domainRef = readInitialDomainRef(request.actionId, request.input, requestId);
+    const teardown = request.actionId === 'deployments.teardown'
+      ? DeploymentActionInputSchemasV1['deployments.teardown'].safeParse(request.input) : null;
+    let operationInput = request.input;
+    if (teardown?.success && 'contentArtifactId' in teardown.data) {
+      // The signed transition owner advances this receipt's head. Its Artifact
+      // identity and teardown intent, rather than those head versions, identify a retry.
+      const { contentHeaderVersion: _header, contentBodyVersion: _body, ...intent } = teardown.data;
+      operationInput = intent;
+    }
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
@@ -311,7 +373,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       ...(requestId ? { requestId } : {}),
       ...(carriesNativeConfirmation(request.actionId, request.rpcContext) ? { rejoinPendingApproval: true as const } : {}),
       ...(request.rpcContext?.approvedActionReplay ? { approvedActionReplay: request.rpcContext.approvedActionReplay } : {}),
-      input: request.input,
+      input: operationInput,
       ...(deploymentChildIdentity ? { deploymentChildIdentity } : {}),
       ...(deploymentTokenOrigin ? { deploymentTokenOrigin } : {}),
       onOperation: operation => { observedOperationId = operation.operationId; request.onOperation?.(operation); },
@@ -322,25 +384,46 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'
         || request.actionId === 'machines.setup.apply' || request.actionId === 'machines.setup.adminAccess.set' || request.actionId === 'machines.reboot'
         || request.actionId === 'machines.services.exec'
-        || isDeploymentChildRootActionIdV1(request.actionId)
+        || request.actionId === 'deployments.backups.restore'
+        || (request.rpcContext?.externalActionExecutionAuthorization
+          ? request.rpcContext.externalActionExecutionAuthorization.binding.deploymentChildRoot === true
+          : isDeploymentChildEffectActionIdV1(request.actionId))
         || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
         ? 'supported'
         : 'unsupported',
-      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => await request.execute({
-        ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
-        // Receipt correspondence is not a replacement for original-root correlation.
-        ...(deploymentRequestId ? request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}
-          : actionRequestId ? { actionRequestId } : {}),
-        ...(resumeActionRequest ? { resumeActionRequest } : {}),
-        signal,
-        operationProgress: { update: updateProgress },
-        operationOwnerUpdate: { update: publishOwnerUpdate },
-        operationCancellation: { onRequest: onCancellationRequested },
-        operationReview,
-        ...(afterTerminalSuccessAcknowledged ? { afterTerminalSuccessAcknowledged } : {}),
-        ...(settleManagedDeleteOperation ? { settleManagedDeleteOperation } : {}),
-        ...(operationAcceptance ? { operationAcceptance } : {}),
-      }),
+      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => {
+        const result = await request.execute({
+          ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
+          // Receipt correspondence is not a replacement for original-root correlation.
+          ...(deploymentRequestId ? request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}
+            : actionRequestId ? { actionRequestId } : {}),
+          ...(resumeActionRequest ? { resumeActionRequest } : {}),
+          signal,
+          operationProgress: { update: updateProgress },
+          operationOwnerUpdate: { update: publishOwnerUpdate },
+          operationCancellation: { onRequest: onCancellationRequested },
+          operationReview,
+          ...(afterTerminalSuccessAcknowledged ? { afterTerminalSuccessAcknowledged } : {}),
+          ...(settleManagedNativeOperation ? { settleManagedNativeOperation } : {}),
+          ...(operationAcceptance ? { operationAcceptance } : {}),
+        });
+        const serverId = deps.custodyBinding?.serverId ?? deps.serverId;
+        if (isDeploymentDomainChildActionIdV1(request.actionId) && !result.ok && serverId && observedOperationId) {
+          const input = DeploymentActionInputSchemasV1[request.actionId].safeParse(request.input);
+          if (input.success) {
+            const native = { environmentId: input.data.environmentId, domainId: input.data.domainId,
+              step: 'native_execution' as const };
+            const details = DeploymentDomainFailureDetailsV1Schema.safeParse({ ...native,
+              ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : {}) });
+            const diagnostic = details.success && details.data.environmentId === input.data.environmentId
+              && details.data.domainId === input.data.domainId ? details.data : native;
+            // The runner stores this same bound result before live/public consumers read it.
+            return { ...result, details: { ...projectDeploymentFailureRecoveryV1(diagnostic),
+              operation: { serverId, machineId: scope.machineId, operationId: observedOperationId } } };
+          }
+        }
+        return result;
+      },
     });
     // The keyed Session startup remains daemon-owned after its caller leaves.
     // Detach only this transport waiter; a retry can rejoin the same execution.
@@ -366,108 +449,13 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     return result;
   };
 
-  const runActionOperation: NonNullable<ActionExecutorDeps['runActionOperation']> = async request => {
+  const runActionOperation = async (request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0]
+    & Readonly<{ recoverPendingDeployment?: () => Promise<import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentPendingAdmissionV1 | undefined> }>) => {
     return runHostActionOperation(observeExecution, request);
   };
 
-  const observePluginExecution = async (request: Readonly<{
-    actionId: string;
-    title: string;
-    operation: ActionOperationDeclarationV1;
-    input: unknown;
-    requestId?: string;
-    sessionId?: string;
-    rpcContext?: ActionOperationRpcContext;
-    execute: (context: Readonly<{
-      signal: AbortSignal;
-      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
-    }>) => Promise<ActionExecuteResult>;
-  }>): Promise<ActionExecuteResult> => {
-    const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
-    if (!scope) {
-      return await request.execute({
-        signal: new AbortController().signal,
-        operationProgress: { update: () => undefined },
-      });
-    }
-    const attribution = acceptedAttribution(scope, request.rpcContext);
-    return await runner.observe({
-      actionId: request.actionId,
-      action: {
-        actionId: request.actionId,
-        title: request.title,
-        operation: request.operation,
-      },
-      scope,
-      ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
-      ...(request.requestId ? { requestId: request.requestId } : {}),
-      input: request.input,
-      execute: async ({ signal, updateProgress }) => await request.execute({
-        signal,
-        operationProgress: { update: updateProgress },
-      }),
-    });
-  };
-
-  const attachOwner = (next: ActionOperationDomainOwner): (() => void) => {
-    if (attachedOwners.has(next)) throw new Error('action_operation_domain_owner_already_attached');
-    attachedOwners.add(next);
-    rebuildOwner();
-    const unsubscribe = next.subscribe({
-      resolveScope: async () => {
-        const accountId = await deps.resolveAccountId();
-        return accountId ? { accountId, machineId: deps.machineId } : null;
-      },
-      publishSnapshot: snapshot => { if (attachedOwners.has(next)) store.project(snapshot); },
-    });
-    return () => {
-      unsubscribe();
-      if (attachedOwners.delete(next)) {
-        rebuildOwner();
-        store.removeOwnerProjections(next.actionIds.filter(id => !owner?.actionIds.includes(id)));
-      }
-    };
-  };
-  const decideSetupReview: typeof runner.decideSetupReview = async (scope, id, workspace, phase, decision) => {
-    const current = owner;
-    const retained = store.get(scope, id);
-    if (current && (!retained || current.actionIds.includes(retained.actionId))) {
-      const projected = await current.get(scope, id);
-      if (current !== owner) return null;
-      if (projected) {
-        const result = await current.decideSetupReview?.(scope, id, workspace, phase, decision) ?? null;
-        if (current !== owner) return null;
-        if (result) store.project(result);
-        return result;
-      }
-    }
-    return await runner.decideSetupReview(scope, id, workspace, phase, decision);
-  };
-  const activity: LiveWorkProducerV1 = Object.freeze({ read: store.readLiveWork, subscribe: store.subscribe });
-  const cleanupRequesterMachineOperations = async (input: RequesterMachineOperationCleanupInput): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>> => {
-    if (!deps.custodyBinding || input.machineId !== deps.machineId
-      || input.serverId !== deps.custodyBinding.serverId || input.installationId !== deps.custodyBinding.installationId) {
-      return { kind: 'incomplete' };
-    }
-    try {
-      if (!await input.verifyCurrentMachineAdmission()) return { kind: 'incomplete' };
-      const scope = { accountId: input.requesterAccountId, machineId: deps.machineId };
-      const requests = await runner.cancelForAccessLoss(scope, input.verifyCurrentMachineAdmission, {
-        serverId: input.serverId, accountId: input.requesterAccountId,
-        machineId: input.machineId, installationId: input.installationId,
-      });
-      let incomplete = false;
-      for (const request of requests) {
-        if (request.result.kind === 'unsupported' || request.result.kind === 'not_found' || request.result.kind === 'admission_not_current') {
-          incomplete = true;
-          continue;
-        }
-        const settled = await runner.waitForTerminal(scope, request.operationId);
-        if (!settled || settled.state === 'accepted' || settled.state === 'running') incomplete = true;
-      }
-      return { kind: incomplete ? 'incomplete' : 'settled' };
-    } catch { return { kind: 'incomplete' }; }
-  };
+  /** Prepares observation, not execution or a new request identity. The original
+   * prepared input never leaves the private runtime/domain validator corridor. */
   const preparePendingDeploymentObservation = async (request: PendingDeploymentObservationRequest) => {
     const context: RpcActionExecutorContext = request.context;
     const scope = await resolveObservedScope(context, context.defaultSessionId ?? undefined);
@@ -512,21 +500,107 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       });
     };
   };
-return Object.freeze({async publishCurrentSnapshot(scope: Parameters<typeof store.get>[0], operationId: string): Promise<void> {
-      const snapshot = store.get(scope, operationId);
-      if (snapshot) await deps.publishSnapshot?.(snapshot);
-    },
-preparePendingDeploymentObservation,
+
+  const observePluginExecution = async (request: Readonly<{
+    actionId: string;
+    title: string;
+    operation: ActionOperationDeclarationV1;
+    input: unknown;
+    requestId?: string;
+    sessionId?: string;
+    rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
+    execute: (context: Readonly<{
+      signal: AbortSignal;
+      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
+      operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+      operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
+    }>) => Promise<ActionExecuteResult>;
+  }>): Promise<ActionExecuteResult> => {
+    const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
+    if (!scope) {
+      return await request.execute({
+        signal: new AbortController().signal,
+        operationProgress: { update: () => undefined },
+      });
+    }
+    const attribution = acceptedAttribution(scope, request.rpcContext);
+    return await runner.observe({
+      actionId: request.actionId,
+      action: {
+        actionId: request.actionId,
+        title: request.title,
+        operation: request.operation,
+      },
+      scope,
+      ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
+      ...(request.requestId ? { requestId: request.requestId } : {}),
+      input: request.input,
+      execute: async ({ signal, updateProgress, operationAcceptance, publishOwnerUpdate }) => await request.execute({
+        signal,
+        operationProgress: { update: updateProgress },
+        operationAcceptance,
+        operationOwnerUpdate: { update: publishOwnerUpdate },
+      }),
+    });
+  };
+
+  const attachOwner = (next: ActionOperationDomainOwner): (() => void) => {
+    if (attachedOwners.has(next)) throw new Error('action_operation_domain_owner_already_attached');
+    attachedOwners.add(next);
+    rebuildOwner();
+    const unsubscribe = next.subscribe({
+      resolveScope: async () => {
+        const accountId = await deps.resolveAccountId();
+        return accountId ? { accountId, machineId: deps.machineId } : null;
+      },
+      publishSnapshot: snapshot => { if (attachedOwners.has(next)) store.project(snapshot); },
+    });
+    return () => {
+      unsubscribe();
+      if (attachedOwners.delete(next)) {
+        rebuildOwner();
+        store.removeOwnerProjections(next.actionIds.filter(id => !owner?.actionIds.includes(id)));
+      }
+    };
+  };
+  const decideSetupReview: typeof runner.decideSetupReview = async (scope, id, workspace, phase, decision) => {
+    const current = owner;
+    const retained = store.get(scope, id);
+    if (current && (!retained || current.actionIds.includes(retained.actionId))) {
+      const projected = await current.get(scope, id);
+      if (current !== owner) return null;
+      if (projected) {
+        const result = await current.decideSetupReview?.(scope, id, workspace, phase, decision) ?? null;
+        if (current !== owner) return null;
+        if (result) store.project(result);
+        return result;
+      }
+    }
+    return await runner.decideSetupReview(scope, id, workspace, phase, decision);
+  };
+  const activity: LiveWorkProducerV1 = Object.freeze({ read: store.readLiveWork, subscribe: store.subscribe });
+  return Object.freeze({ store, runner, handlers, observeExecution, runActionOperation, observePluginExecution, attachOwner, activity,
+    preparePendingDeploymentObservation,
     /** Restore evidence stays under the same requester/Machine custody as its
      * existing Action operation; another Account cannot select it by ID. */
     async readRestorePreparation(request: Readonly<{ operationId: string; context?: ActionOperationRpcContext }>) {
       const scope = await resolveObservedScope(request.context);
       return scope ? store.get(scope, request.operationId) : null;
     },
- store, runner, handlers, observeExecution, runActionOperation, observePluginExecution, attachOwner, activity,
+    async readDeploymentBackupOperations(request: Readonly<{
+      target: DeploymentBackupOperationTarget; context?: ActionOperationRpcContext;
+    }>) {
+      const scope = await resolveObservedScope(request.context);
+      return scope ? store.readDeploymentBackupOperations(scope, request.target) : [];
+    },
+    /** Await the incumbent Account-mode publisher before an irreversible
+     * boundary can destroy this daemon's only copy of the admitted snapshot. */
+    async publishCurrentSnapshot(scope: Parameters<typeof store.get>[0], operationId: string): Promise<void> {
+      const snapshot = store.get(scope, operationId);
+      if (snapshot) await deps.publishSnapshot?.(snapshot);
+    },
     decideSetupReview,
     retireProjectFiniteOperations: runner.retireProjectFiniteOperations,
-    cleanupRequesterMachineOperations,
     waitForProjectTerminalAttachment: runner.waitForProjectTerminalAttachment });
 }
 
@@ -566,54 +640,3 @@ export async function runHostActionOperation(
     },
   });
 }
-
-type ConfirmationContext = Pick<ActionExecutorContext, 'presentUserConfirmation' | 'externalActionExecutionAuthorization' | 'approvedActionReplay'>;
-
-export function carriesNativeConfirmation(actionId: string, context?: ConfirmationContext): boolean {
-  return Boolean(context?.externalActionExecutionAuthorization && context.presentUserConfirmation?.inputDigest
-    && context.presentUserConfirmation.actionId === actionId);
-}
-
-function readDeploymentOperationRequestId(actionId: string, input: unknown): string | undefined {
-  if (actionId === 'machines.services.adopt') {
-    const parsed = MachineServiceAdoptInputV1Schema.safeParse(input);
-    if (!parsed.success || parsed.data.mode !== 'apply') return undefined;
-    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-      'adopt', parsed.data.serverId, parsed.data.machineId, parsed.data.serviceId, parsed.data.requestKey,
-    ]);
-  }
-  if (actionId === 'deployments.backups.restore') {
-    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;
-    // One prepared restore can enter the destructive native phase once. The
-    // incumbent runner compares the complete input before returning its result.
-    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-      'restore', parsed.data.prepareOperationId,
-    ]);
-  }
-  if (actionId === 'deployments.templates.instantiate') {
-    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    if (!parsed.success || parsed.data.mode !== 'apply' || parsed.data.environment.kind !== 'create') return undefined;
-    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-      // The parsed template requires exactly one existing Source or new Project.
-      'template', parsed.data.serverId, parsed.data.projectSourceId ?? parsed.data.newProject!.requestKey, parsed.data.machineId,
-      parsed.data.target.installationId, parsed.data.environment.requestKey,
-    ]);
-  }
-  if (!isDeploymentChildRootActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
-  const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-  if (!parsed.success || !('requestKey' in parsed.data) || parsed.data.requestKey === undefined) return undefined;
-  return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-    parsed.data.serverId, parsed.data.environmentId, parsed.data.requestKey,
-  ]);
-}
-
-export type PendingDeploymentObservationRequest = Readonly<{
-  input: DeploymentDeployIntentInputV1;
-  admission: DeploymentPendingAdmissionV1;
-  pendingDeploy: import('@happier-dev/protocol').DeploymentPendingDeployV1;
-  context: import('@happier-dev/protocol').ActionExecutorContext;
-  /** Same domain validator, not a consumer-owned candidate parser. */
-  validateOriginalInput(input: DeploymentDeployInputV1,
-    context: import('@happier-dev/protocol').ActionExecutorContext): Promise<void>;
-}>;

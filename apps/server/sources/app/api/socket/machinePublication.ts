@@ -114,13 +114,13 @@ export function resolveMachineMetadataTarget(
 
 export async function publishMachineAliveObservation(userId: string, machineId: string, timestamp: number,
     presence: MachineAliveAdmission, reconnected = false, workSummaryChanged = false): Promise<void> {
-    if (presence.wasOffline) {
+    if (presence.wasOffline || reconnected) {
         const payload = { ...buildMachineActivityEphemeral(machineId, true, timestamp),
             ...(reconnected ? { reconnected: true as const } : {}) };
         for (const accountId of presence.recipientAccountIds) eventRouter.emitEphemeral({
             userId: accountId, payload, recipientFilter: { type: 'user-scoped-only' },
         });
-        await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
+        if (presence.wasOffline) await submitMachineRemoteAlerts({ machines: [{ machineId, accountId: userId }], phase: 'recovered' });
     } else {
         await eventRouter.publishLegacyMachineHeartbeat({ machineId, activeAt: timestamp });
     }
@@ -133,3 +133,4 @@ export async function publishMachineAliveObservation(userId: string, machineId: 
         });
     }
 }
+
