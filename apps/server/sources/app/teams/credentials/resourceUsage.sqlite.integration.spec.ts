@@ -21,6 +21,43 @@ describe('Team credential resource usage query', () => {
   beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'team-resource-usage-' }); }, 120_000);
   afterAll(async () => { await harness?.close(); });
 
+  it('keeps incomplete finite publications unavailable to recipients while preserving owner and complete-share attribution', async () => {
+    const manager = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+    const team = await db.team.create({ data: { name: randomUUID() } });
+    await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: 'admin' } });
+    const resource = await db.teamCredentialResource.create({ data: {
+      teamId: team.id, custodianAccountId: manager.id, displayName: 'Finite publications',
+      disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', sourceBindingJson: '{}',
+      allMembersDeliveryMode: 'brokered',
+    } });
+    const observedAt = new Date();
+    const sessions = [];
+    for (const [accountId, publicationId] of [[owner.id, '   '], [owner.id, 'complete-publication'], [manager.id, '   ']] as const) {
+      const session = await db.session.create({ data: {
+        accountId, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
+        currentStorageState: 'snapshot_complete', seq: 1, materializationPublicationId: publicationId,
+        materializedThroughSourceAt: BigInt(observedAt.getTime()), publishedThroughServerSeq: 1,
+      } });
+      sessions.push(session);
+      if (accountId !== manager.id) await db.sessionShare.create({ data: {
+        sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: manager.id, accessLevel: 'view',
+      } });
+      await db.usageEvent.create({ data: {
+        accountId: manager.id, sessionId: session.id, observedAt, agentId: 'codex', source: 'codex_app_server',
+        scope: 'turn_delta', totalTokens: 1, teamCredentialResourceId: resource.id,
+        teamCredentialActorAccountId: manager.id, credentialDeliveryMode: 'brokered',
+      } });
+    }
+    const result = await queryTeamCredentialUsage(manager.id, {
+      resourceId: resource.id, startMs: observedAt.getTime(), endMs: observedAt.getTime(),
+      granularity: 'day', costMode: 'auto', breakdown: 'session',
+    }, TEST_AUTHENTICATION);
+    if ('ok' in result) throw new Error(`Usage refused: ${result.error}`);
+    expect(result.totals.tokens.total).toBe(3);
+    expect(result.breakdown?.map(row => row.key).sort()).toEqual(['unavailable_session', sessions[1]!.id, sessions[2]!.id].sort());
+  });
+
   it('uses the same real Home resource authority for export, including restricted-Team and outsider refusal', async () => {
     const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
     const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });

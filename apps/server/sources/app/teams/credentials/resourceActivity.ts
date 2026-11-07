@@ -6,7 +6,8 @@ import { resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDispl
 import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
-import { admitSavedSecretResourceManagementInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { admitSavedSecretDisclosureInTx as admitSavedSecretResourceDisclosureInTx,
+    admitSavedSecretResourceManagementInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { SavedSecretDisclosureOutcomeV1Schema, SavedSecretCopyOutcomeV1Schema, SavedSecretDisclosureHistoryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1, savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
@@ -166,16 +167,19 @@ export async function recordTeamCredentialDirectDeliveryActivityInTx(
 }
 
 /**
- * Whether usable material of this resource was ever delivered to anyone. Once
+ * Whether usable material in this scope was ever delivered to anyone. Once
  * it has been, use outside Happier is possible and unknowable, whatever the
  * current audience says. Retained metadata only, like the per-recipient read.
  */
 export async function hasTeamCredentialResourceDirectDeliveryActivityInTx(
     tx: Tx,
-    input: Readonly<{ resourceId: string }>,
+    input: Readonly<{ resourceId: string } | { teamId: string } | { kind: 'home' }>,
 ): Promise<boolean> {
     return (await tx.teamCredentialActivityEvent.findFirst({
-        where: { subjectKind: 'team_credential', resourceId: input.resourceId, kind: "direct_delivered" },
+        where: { subjectKind: 'team_credential', kind: "direct_delivered",
+            ...('resourceId' in input ? { resourceId: input.resourceId }
+                : 'teamId' in input ? { teamId: input.teamId } : {}),
+        },
         select: { id: true },
     })) !== null;
 }
@@ -199,10 +203,10 @@ type DisclosureFailure = Readonly<{ ok: false; error: 'resource_not_found' | 're
 type DisclosureMutationResult = Readonly<{ ok: true; historyEntryId: string }> | DisclosureFailure;
 
 async function admitSavedSecretDisclosureInTx(tx: Tx, input: SavedSecretDisclosureContext) {
-    if (input.authentication.authenticationAuthority !== 'present_user' || !input.deviceId.trim()) {
+    if (!input.deviceId.trim()) {
         return { ok: false as const, error: 'resource_forbidden' as const };
     }
-    const admitted = await admitSavedSecretResourceManagementInTx(tx, { accountId: input.actorAccountId,
+    const admitted = await admitSavedSecretResourceDisclosureInTx(tx, { accountId: input.actorAccountId,
         resourceId: input.resourceId, expectedRevision: input.expectedRevision, authentication: input.authentication });
     return admitted.ok ? admitted : { ok: false as const, error: admitted.error === 'resource_changed'
         ? 'resource_changed' as const : admitted.error === 'forbidden' ? 'resource_forbidden' as const : 'resource_not_found' as const };
@@ -222,14 +226,14 @@ export async function recordSavedSecretDisclosureActivityInTx(tx: Tx, input: Sav
     const outcome = SavedSecretDisclosureOutcomeV1Schema.parse(input.outcome);
     if (input.historyEntryId) {
         const existing = await tx.teamCredentialActivityEvent.findUnique({ where: { id: input.historyEntryId } });
-        if (!existing || existing.subjectKind !== 'saved_secret' || existing.ownerAccountId !== input.actorAccountId
+        if (!existing || existing.subjectKind !== 'saved_secret' || existing.ownerAccountId !== admitted.value.ownerAccountId
             || existing.actorAccountId !== input.actorAccountId || existing.resourceId !== input.resourceId
             || existing.resourceRevision !== input.expectedRevision || existing.deviceId !== input.deviceId) {
             return { ok: false, error: 'resource_forbidden' };
         }
         if (existing.outcome === outcome) return { ok: true, historyEntryId: existing.id };
         await tx.teamCredentialActivityEvent.update({ where: { id: existing.id }, data: { outcome } });
-        await publishSavedSecretActivityInTx(tx, input.actorAccountId, input.resourceId);
+        await publishSavedSecretActivityInTx(tx, admitted.value.ownerAccountId, input.resourceId);
         return { ok: true, historyEntryId: existing.id };
     }
     const event = await tx.teamCredentialActivityEvent.create({ data: {
@@ -237,7 +241,7 @@ export async function recordSavedSecretDisclosureActivityInTx(tx: Tx, input: Sav
         resourceRevision: input.expectedRevision, actorAccountId: input.actorAccountId, deviceId: input.deviceId,
         kind: 'secret_reveal', outcome, subjectDisplayName: admitted.value.displayName,
     }, select: { id: true } });
-    await publishSavedSecretActivityInTx(tx, input.actorAccountId, input.resourceId);
+    await publishSavedSecretActivityInTx(tx, admitted.value.ownerAccountId, input.resourceId);
     return { ok: true, historyEntryId: event.id };
 }
 
@@ -249,7 +253,7 @@ export async function recordSavedSecretCopyActivityInTx(tx: Tx, input: SavedSecr
     if (!admitted.ok) return admitted;
     const outcome = SavedSecretCopyOutcomeV1Schema.parse(input.outcome);
     const event = await tx.teamCredentialActivityEvent.findUnique({ where: { id: input.historyEntryId } });
-    if (!event || event.subjectKind !== 'saved_secret' || event.ownerAccountId !== input.actorAccountId
+    if (!event || event.subjectKind !== 'saved_secret' || event.ownerAccountId !== admitted.value.ownerAccountId
         || event.actorAccountId !== input.actorAccountId || event.resourceId !== input.resourceId
         || event.resourceRevision !== input.expectedRevision || event.deviceId !== input.deviceId || event.outcome !== 'displayed') {
         return { ok: false, error: 'resource_forbidden' };
@@ -258,7 +262,7 @@ export async function recordSavedSecretCopyActivityInTx(tx: Tx, input: SavedSecr
     await tx.teamCredentialActivityEvent.update({ where: { id: event.id }, data: {
         copyOutcome: outcome, ...(outcome === 'requested' ? { copyRequestedAt: new Date() } : {}),
     } });
-    await publishSavedSecretActivityInTx(tx, input.actorAccountId, input.resourceId);
+    await publishSavedSecretActivityInTx(tx, admitted.value.ownerAccountId, input.resourceId);
     return { ok: true, historyEntryId: event.id };
 }
 

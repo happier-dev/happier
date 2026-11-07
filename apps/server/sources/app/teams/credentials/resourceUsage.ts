@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import {
     TeamCredentialUsageLimitMetricV1Schema,
     TeamCredentialUsageLimitPeriodV1Schema,
@@ -15,26 +16,19 @@ import type {
 } from '@happier-dev/protocol/teams';
 import { inTx, type Tx } from '@/storage/inTx';
 import { resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
-import { AccountStatus } from '@/storage/enums.generated';
-import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from '../actorContext';
-import { resolveTeamCredentialCapabilities } from '../capabilities';
-import { qualifyTeamCredentialOperationInTx } from './resourceRead';
-import { resolveTeamCredentialEntitlementInTx } from './resourceAccess';
-import { readTeamCredentialAllowedRoutes } from './resourceDeliveryRead';
-import {
-    hasTeamCredentialDirectDeliveryActivityInTx,
-    hasTeamCredentialResourceDirectDeliveryActivityInTx,
-} from './resourceActivity';
+import type { TeamOperationAuthenticationContext } from '../actorContext';
+import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionAccess';
+import { authorizeTeamCredentialUsageSubjectInTx } from './resourceUsageSubject';
 import { resolveScopedUsageContributions, type ScopedUsageContribution, type ScopedUsageEventRow } from '@/app/usage/query/resolveScopedUsageContributions';
 import { toScopedUsageEventRow } from '@/app/usage/query/scopedUsageEventRow';
 import { addUsageCostForMode, withEffectiveUsageCost, type UsageCostMode } from '@/app/usage/query/resolveUsageCostMode';
 import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from '@/app/usage/usageMetrics';
 import { resolveUsageBucketBounds as resolveBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import { projectTeamCredentialUsageLimitsInTx, type TeamCredentialUsageLimitRow } from './teamCredentialUsageLimits';
-import { resolveEffectiveSessionAccess } from '@/app/session/access/sessionAccess';
+import { resolveEffectiveSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
+import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from '../groups/effectiveGroupMembership';
 import { classifyTeamCredentialUsageObservationSource } from '@/app/usage/usageSourceClassifier';
-import { readsWholeTeamCredentialUsage } from '@/app/usage/teamCredentialUsageInvalidation';
 
 const UNAVAILABLE_SESSION_KEY = 'unavailable_session';
 const UNAVAILABLE_WORKER_MACHINE_KEY = 'unavailable_worker_machine';
@@ -235,7 +229,7 @@ function buildSeries(
  */
 function usageBreakdownCursorQueryKey(input: TeamCredentialUsageQueryInputV1): string {
     return createHash('sha256').update(JSON.stringify([
-        'team-credential-usage-breakdown:v2', input.resourceId, input.startMs, input.endMs,
+        'team-credential-usage-breakdown:v2', input.resourceId ?? input.subject, input.startMs, input.endMs,
         input.granularity, input.costMode, input.breakdown ?? null,
     ]), 'utf8').digest('base64url');
 }
@@ -255,7 +249,7 @@ async function resolveBreakdownLabelsInTx(
     input: Readonly<{
         dimension: TeamCredentialUsageBreakdownDimensionV1;
         keys: readonly string[];
-        resourceId: string;
+        resourceId?: string;
     }>,
 ): Promise<ReadonlyMap<string, string>> {
     const keys = [...new Set(input.keys)];
@@ -286,85 +280,55 @@ async function resolveBreakdownLabelsInTx(
     return new Map();
 }
 
-async function authorizeResourceUsageInTx(
-    tx: Tx,
-    accountId: string,
-    resourceId: string,
-    authentication: TeamOperationAuthenticationContext,
-) {
-    const resource = await tx.teamCredentialResource.findUnique({ where: { id: resourceId }, select: {
-        id: true, teamId: true, custodianAccountId: true, allMembersDeliveryMode: true,
-        groupGrants: { select: { deliveryMode: true } },
-        memberGrants: { select: { deliveryMode: true } },
-    } });
-    if (!resource) return { ok: false as const, error: 'not_found_or_not_visible' as const };
-    const actor = await resolveTeamActorContextInTx(tx, { teamId: resource.teamId, actorAccountId: accountId });
-    if (!actor) return { ok: false as const, error: 'not_found_or_not_visible' as const };
-    if (actor.accountStatus !== AccountStatus.active) return { ok: false as const, error: 'not_found_or_not_visible' as const };
-    const caps = resolveTeamCredentialCapabilities({ ...actor, teamArchivedAt: actor.team.archivedAt });
-    // Resource-wide readers answer for every recipient: any current direct arm
-    // or any past delivery makes off-platform use possible.
-    const resourceDirectUsePossible = async () => [
-        resource.allMembersDeliveryMode,
-        ...resource.groupGrants.map((grant) => grant.deliveryMode),
-        ...resource.memberGrants.map((grant) => grant.deliveryMode),
-    ].some((mode) => {
-        if (mode === null) return false;
-        const routes = readTeamCredentialAllowedRoutes(mode);
-        return routes.success && routes.data.some(route => route !== 'brokered');
-    })
-        || await hasTeamCredentialResourceDirectDeliveryActivityInTx(tx, { resourceId });
-    if (readsWholeTeamCredentialUsage({
-        viewerAccountId: accountId,
-        custodianAccountId: resource.custodianAccountId,
-        manageCredentials: caps.manageCredentials,
-    })) {
-        const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, authentication);
-        if (!qualification.ok) return qualification;
-        return { ok: true as const, resource, manager: true as const, directUsePossible: await resourceDirectUsePossible() };
-    }
-    const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId, accountId });
-    if (!entitlement.ok) return { ok: false as const, error: 'not_found_or_not_visible' as const };
-    const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, authentication);
-    if (!qualification.ok) return qualification;
-    // A member reads only their own use, so only their own direct access or
-    // delivery history can make it incomplete.
-    const directUsePossible = entitlement.allowedRoutes.some(route => route !== 'brokered')
-        || await hasTeamCredentialDirectDeliveryActivityInTx(tx, { resourceId, recipientAccountId: accountId });
-    return { ok: true as const, resource, manager: false as const, directUsePossible };
-}
-
 export async function queryTeamCredentialUsage(
     accountId: string,
     input: TeamCredentialUsageQueryInputV1,
     authentication: TeamOperationAuthenticationContext,
 ): Promise<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }> {
     return await inTx<TeamCredentialUsageQueryResultV1 | { ok: false; error: 'not_found_or_not_visible' | 'invalid_resource_input' | 'team_authentication_required' | 'team_authentication_policy_unavailable' | 'cost_limit_unavailable' }>(async (tx) => {
-        const auth = await authorizeResourceUsageInTx(tx, accountId, input.resourceId, authentication);
+        const auth = await authorizeTeamCredentialUsageSubjectInTx(tx, accountId, input, authentication);
         if (!auth.ok) return auth;
-        const resourceRows = await tx.usageEvent.findMany({
-            where: {
-                teamCredentialResourceId: input.resourceId,
-                observedAt: { gte: new Date(input.startMs), lte: new Date(input.endMs) },
-                ...(auth.manager ? {} : { teamCredentialActorAccountId: accountId }),
-            },
+        const resourceIds = auth.resourceIds === null ? null : new Set(auth.resourceIds);
+        const inSubject = (id: ScopedUsageEventRow['teamCredentialResourceId']) => id != null
+            && (resourceIds === null || resourceIds.has(id));
+        // Read the range through its resource index, then history through the
+        // Session index. Keeping these as separate reads avoids a correlated OR
+        // that scans unrelated usage and duplicates history during ORM batching.
+        const scopes: Array<{ in: string[] } | { not: null }> = [];
+        if (auth.resourceIds === null) scopes.push({ not: null });
+        else {
+            // These IDs also select readable Sessions below. Reuse the Session
+            // access owner's bind budget, which reserves room for its predicate;
+            // Prisma cannot auto-batch that predicate's negation filters.
+            for (let index = 0; index < auth.resourceIds.length; index += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+                scopes.push({ in: auth.resourceIds.slice(index, index + SESSION_ACCESS_SESSION_BATCH_SIZE) });
+            }
+        }
+        const resourceWheres = scopes.map(scope => ({
+            teamCredentialResourceId: scope,
+            observedAt: { gte: new Date(input.startMs), lte: new Date(input.endMs) },
+            ...(auth.manager ? {} : { teamCredentialActorAccountId: accountId }),
+        } satisfies Prisma.UsageEventWhereInput));
+        const rangeRows = (await Promise.all(resourceWheres.map(where => tx.usageEvent.findMany({
+            where, orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        })))).flat();
+        // Relational Session selection keeps the parameter set independent of
+        // the number of Sessions. Its own read has no competing range OR arm.
+        const histories = await Promise.all(resourceWheres.map(resourceWhere => tx.usageEvent.findMany({
+            where: { session: { usageEvents: { some: resourceWhere } },
+                observedAt: { lte: new Date(input.endMs) } },
             orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-        const sessionIds = [...new Set(resourceRows.flatMap((row) => row.sessionId ? [row.sessionId] : []))];
-        const corridorRows = sessionIds.length === 0 ? resourceRows : await tx.usageEvent.findMany({
-            where: {
-                OR: [
-                    { id: { in: resourceRows.map((row) => row.id) } },
-                    { sessionId: { in: sessionIds }, observedAt: { lte: new Date(input.endMs) } },
-                ],
-            },
-            orderBy: [{ observedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-        const scoped = corridorRows.map(toScopedUsageEventRow);
-        const { bucketAttributions } = resolveScopedUsageContributions(scoped);
-        const totalContributions = bucketAttributions.filter((row) => row.teamCredentialResourceId === input.resourceId
+        })));
+        // The scoped contribution owner decides replay order, including equal-
+        // clock runtime witnesses. This layer only removes repeated DB rows.
+        const corridorRows = [...new Map([...rangeRows, ...histories.flat()].map(row => [row.id, row] as const)).values()];
+        const inRange = (row: Pick<ScopedUsageEventRow,
+            'teamCredentialResourceId' | 'observedAt' | 'teamCredentialActorAccountId'>) => inSubject(row.teamCredentialResourceId)
             && row.observedAt.getTime() >= input.startMs && row.observedAt.getTime() <= input.endMs
-            && (auth.manager || row.teamCredentialActorAccountId === accountId));
+            && (auth.manager || row.teamCredentialActorAccountId === accountId);
+        const resourceRows = corridorRows.filter(inRange);
+        const { bucketAttributions } = resolveScopedUsageContributions(corridorRows.map(toScopedUsageEventRow));
+        const totalContributions = bucketAttributions.filter(inRange);
         const rows = resourceRows;
         const costMode = input.costMode as UsageCostMode;
         // Source-member and broker-Machine identities are administration
@@ -378,21 +342,22 @@ export async function queryTeamCredentialUsage(
             || (authorizedBreakdown === 'worker_machine' && !auth.manager);
         const readableSessionIds = new Set<string>();
         if (needsReadableSessions) {
-            const candidateSessionIds = [...new Set(totalContributions.flatMap((row) => row.sessionId ? [row.sessionId] : []))];
-            const access = await Promise.all(candidateSessionIds.map(async (sessionId) => ({
-                sessionId,
-                access: await resolveEffectiveSessionAccess(tx, {
-                    accountId,
-                    sessionId,
-                    authentication: {
-                        env: authentication.env ?? process.env,
-                        authority: authentication.authenticationAuthority,
-                        authenticationEvidence: authentication.authenticationEvidence,
-                    },
-                }),
-            })));
-            for (const decision of access) {
-                if (decision.access?.capabilities.readTranscript) readableSessionIds.add(decision.sessionId);
+            const access = await resolveEffectiveSessionAccessWhere({
+                mode: 'effective_access_v1', tx, accountId, capability: 'readTranscript',
+                authentication: {
+                    env: authentication.env ?? process.env,
+                    authority: authentication.authenticationAuthority,
+                    authenticationEvidence: authentication.authenticationEvidence,
+                },
+            });
+            const readable = (await Promise.all(resourceWheres.map(resourceWhere => tx.session.findMany({
+                where: { AND: [{ usageEvents: { some: resourceWhere } }, access.where] },
+                select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
+            })))).flat();
+            for (const session of readable) {
+                // The portable database predicate is deliberately broader than
+                // publication admission; retain its canonical runtime guard.
+                if (session.accountId === accountId || isSessionTranscriptShareable(session)) readableSessionIds.add(session.id);
             }
         }
         const totals = aggregate(totalContributions, costMode);
@@ -436,41 +401,45 @@ export async function queryTeamCredentialUsage(
         const coverage = projectTeamCredentialUsageCoverage(rows.map(toScopedUsageEventRow), {
             directUsePossible: auth.directUsePossible,
         });
-        const limits = await tx.teamCredentialUsageLimit.findMany({ where: { resourceId: input.resourceId, ...(auth.manager ? {} : { enabled: true }) }, orderBy: { createdAt: 'asc' } });
-        const visibleLimits = auth.manager ? limits : await (async () => {
-            const groupIds = new Set(await resolveEffectiveTeamGroupIdsForAccountInTx(tx, {
-                teamId: auth.resource.teamId,
-                accountId,
+        const resourceId = input.resourceId;
+        const serializedLimits = resourceId === undefined ? [] : await (async () => {
+            const limits = await tx.teamCredentialUsageLimit.findMany({ where: { resourceId, ...(auth.manager ? {} : { enabled: true }) }, orderBy: { createdAt: 'asc' } });
+            const visibleLimits = auth.manager ? limits : await (async () => {
+                const groupIds = new Set(await resolveEffectiveTeamGroupIdsForAccountInTx(tx, {
+                    teamId: auth.resource.teamId,
+                    accountId,
+                }));
+                return limits.filter((limit) => limit.subjectKind === 'resource'
+                    || limit.subjectKind === 'each_member'
+                    || (limit.subjectKind === 'team_member' && limit.subjectId === accountId)
+                    || (limit.subjectKind === 'team_group' && groupIds.has(limit.subjectId)));
+            })();
+            const typedVisibleLimits: readonly TeamCredentialUsageLimitRow[] = visibleLimits.map((limit) => ({
+                ...limit,
+                subjectKind: TeamCredentialUsageLimitSubjectKindV1Schema.parse(limit.subjectKind),
+                period: TeamCredentialUsageLimitPeriodV1Schema.parse(limit.period),
+                metric: TeamCredentialUsageLimitMetricV1Schema.parse(limit.metric),
             }));
-            return limits.filter((limit) => limit.subjectKind === 'resource'
-                || limit.subjectKind === 'each_member'
-                || (limit.subjectKind === 'team_member' && limit.subjectId === accountId)
-                || (limit.subjectKind === 'team_group' && groupIds.has(limit.subjectId)));
+            const limitEvaluation = await projectTeamCredentialUsageLimitsInTx(tx, {
+                resourceId,
+                actorAccountId: accountId,
+                limits: typedVisibleLimits,
+            });
+            if (!limitEvaluation.ok && 'unavailable' in limitEvaluation) {
+                return { ok: false as const, error: 'cost_limit_unavailable' as const };
+            }
+            const limitDecisions = new Map(limitEvaluation.applied.map((decision) => [decision.limitId, decision]));
+            return typedVisibleLimits.map((limit) => {
+                const decision = limitDecisions.get(limit.id);
+                if (!decision) throw new Error(`Team credential usage limit was not projected: ${limit.id}`);
+                return {
+                    id: limit.id, subjectKind: limit.subjectKind, subjectId: limit.subjectId, period: limit.period,
+                    metric: limit.metric, maximum: limit.maximum, enabled: limit.enabled,
+                    currentWindow: { recorded: String(decision.recorded), resetsAtUtc: decision.resetsAt.toISOString() },
+                };
+            });
         })();
-        const typedVisibleLimits: readonly TeamCredentialUsageLimitRow[] = visibleLimits.map((limit) => ({
-            ...limit,
-            subjectKind: TeamCredentialUsageLimitSubjectKindV1Schema.parse(limit.subjectKind),
-            period: TeamCredentialUsageLimitPeriodV1Schema.parse(limit.period),
-            metric: TeamCredentialUsageLimitMetricV1Schema.parse(limit.metric),
-        }));
-        const limitEvaluation = await projectTeamCredentialUsageLimitsInTx(tx, {
-            resourceId: input.resourceId,
-            actorAccountId: accountId,
-            limits: typedVisibleLimits,
-        });
-        if (!limitEvaluation.ok && 'unavailable' in limitEvaluation) {
-            return { ok: false as const, error: 'cost_limit_unavailable' as const };
-        }
-        const limitDecisions = new Map(limitEvaluation.applied.map((decision) => [decision.limitId, decision]));
-        const serializedLimits = typedVisibleLimits.map((limit) => {
-            const decision = limitDecisions.get(limit.id);
-            if (!decision) throw new Error(`Team credential usage limit was not projected: ${limit.id}`);
-            return {
-                id: limit.id, subjectKind: limit.subjectKind, subjectId: limit.subjectId, period: limit.period,
-                metric: limit.metric, maximum: limit.maximum, enabled: limit.enabled,
-                currentWindow: { recorded: String(decision.recorded), resetsAtUtc: decision.resetsAt.toISOString() },
-            };
-        });
+        if (!Array.isArray(serializedLimits)) return serializedLimits;
         return TeamCredentialUsageQueryResultV1Schema.parse({
             v: 1 as const,
             totals,

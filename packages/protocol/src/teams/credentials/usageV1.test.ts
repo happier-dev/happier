@@ -48,6 +48,26 @@ const usageLimit = {
 } as const;
 
 describe('Team credential usage query contract', () => {
+  it('accepts Team and Home subjects without requiring an arbitrary credential', () => {
+    for (const subject of [{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }]) {
+      expect(TeamCredentialUsageQueryInputV1Schema.parse({ subject, startMs: 0, endMs: 10 }))
+        .toMatchObject({ subject, granularity: 'day', costMode: 'auto' });
+    }
+  });
+
+  it('rejects ambiguous, missing and unknown authority subjects', () => {
+    for (const selection of [
+      {},
+      { resourceId: 'resource-1', subject: { kind: 'home' } },
+      { subject: { kind: 'team' } },
+      { subject: { kind: 'home', teamId: 'team-1' } },
+      { subject: { kind: 'account', accountId: 'another-person' } },
+    ]) {
+      expect(TeamCredentialUsageQueryInputV1Schema.safeParse({ ...selection, startMs: 0, endMs: 10 }).success)
+        .toBe(false);
+    }
+  });
+
   it('admits every cost mode the shared usage analytics request admits, and rejects others', () => {
     const base = { resourceId: 'resource-1', startMs: 0, endMs: 10 };
     for (const costMode of ['auto', 'reported', 'estimated', 'api_equivalent'] as const) {

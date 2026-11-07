@@ -134,14 +134,20 @@ export const TeamCredentialUsageBreakdownDimensionV1Schema = lazyZodSchema(() =>
 export type TeamCredentialUsageBreakdownDimensionV1 = z.infer<typeof TeamCredentialUsageBreakdownDimensionV1Schema>;
 
 export const TeamCredentialUsageQueryInputV1Schema = lazyZodSchema(() => z.strictObject({
-  resourceId: z.string().check(z.minLength(1)),
+  resourceId: z.optional(z.string().check(z.minLength(1))),
+  subject: z.optional(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('team'), teamId: z.string().check(z.minLength(1)) }),
+    z.strictObject({ kind: z.literal('home') }),
+  ])),
   startMs: z.number().check(z.int(), z.minimum(0)),
   endMs: z.number().check(z.int(), z.minimum(0)),
   granularity: z._default(UsageAnalyticsGranularitySchema, 'day'),
   costMode: z._default(UsageAnalyticsCostModeSchema, 'auto'),
   breakdown: z.optional(TeamCredentialUsageBreakdownDimensionV1Schema),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(KEYSET_CURSOR_MAX_LENGTH_V1))),
-}).check(z.refine((value) => value.endMs >= value.startMs, {
+}).check(z.refine((value) => (value.resourceId === undefined) !== (value.subject === undefined), {
+  path: ['subject'], message: 'Choose exactly one resource or aggregate subject',
+}), z.refine((value) => value.endMs >= value.startMs, {
   path: ['endMs'], message: 'endMs must be greater than or equal to startMs',
 })));
 export type TeamCredentialUsageQueryInputV1 = z.infer<typeof TeamCredentialUsageQueryInputV1Schema>;

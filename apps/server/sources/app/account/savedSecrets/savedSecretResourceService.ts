@@ -178,6 +178,9 @@ const ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE = { team: { archivedAt: null } } as c
 const ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE = {
     teamGroup: { archivedAt: null, team: { archivedAt: null } },
 } as const;
+const ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE = {
+    status: "active", role: { not: "guest" }, account: { status: "active" },
+} as const;
 
 /** Rows this Account can currently reach through any one of its four grant arms. */
 function authorizedSavedSecretRowWhere(accountId: string): Prisma.SavedSecretResourceWhereInput {
@@ -190,7 +193,7 @@ function authorizedSavedSecretRowWhere(accountId: string): Prisma.SavedSecretRes
                     some: {
                         team: {
                             archivedAt: null,
-                            memberships: { some: { accountId, status: "active", role: { not: "guest" }, account: { status: "active" } } },
+                            memberships: { some: { accountId, ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE } },
                         },
                     },
                 },
@@ -205,8 +208,7 @@ function authorizedSavedSecretRowWhere(accountId: string): Prisma.SavedSecretRes
                                 some: {
                                     teamMembership: {
                                         accountId,
-                                        status: "active",
-                                        account: { status: "active" },
+                                        ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
                                     },
                                 },
                             },
@@ -238,7 +240,7 @@ function authorizedSavedSecretRowSelect(accountId: string) {
                         id: true,
                         name: true,
                         memberships: {
-                            where: { accountId, status: "active", account: { status: "active" } },
+                            where: { accountId, ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE },
                             select: { accountId: true, role: true },
                         },
                     },
@@ -256,7 +258,7 @@ function authorizedSavedSecretRowSelect(accountId: string) {
                         name: true,
                         team: { select: { id: true, name: true } },
                         memberships: {
-                            where: { teamMembership: { accountId, status: "active", account: { status: "active" } } },
+                            where: { teamMembership: { accountId, ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE } },
                             select: { teamMembership: { select: { accountId: true } } },
                         },
                     },
@@ -482,7 +484,7 @@ async function listAuthorizedAccountIdsForResourceInTx(
                     team: {
                         select: {
                             memberships: {
-                                where: { status: "active", account: { status: "active" } },
+                                where: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
                                 select: { accountId: true, role: true },
                             },
                         },
@@ -495,7 +497,7 @@ async function listAuthorizedAccountIdsForResourceInTx(
                     teamGroup: {
                         select: {
                             memberships: {
-                                where: { teamMembership: { status: "active", account: { status: "active" } } },
+                                where: { teamMembership: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE },
                                 select: { teamMembership: { select: { accountId: true } } },
                             },
                         },
@@ -531,8 +533,7 @@ async function resolveSavedSecretAudienceAccountIdsInTx(
         input.teamIds.length === 0 ? [] : tx.teamMembership.findMany({
             where: {
                 teamId: { in: [...input.teamIds] },
-                status: "active",
-                account: { status: "active" },
+                ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
                 team: { archivedAt: null },
             },
             select: { accountId: true, role: true },
@@ -541,7 +542,7 @@ async function resolveSavedSecretAudienceAccountIdsInTx(
             where: {
                 teamGroupId: { in: [...input.groupIds] },
                 group: { archivedAt: null, team: { archivedAt: null } },
-                teamMembership: { status: "active", account: { status: "active" } },
+                teamMembership: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
             },
             select: { teamMembership: { select: { accountId: true } } },
         }),
@@ -942,6 +943,7 @@ function projectRow(
         materialStatus,
         capabilities: {
             use: materialStatus === "ready",
+            reveal: materialStatus === "ready",
             rename: isOwner,
             rotate: isOwner,
             manageAccess: isOwner,
@@ -1128,7 +1130,23 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
     };
 }
 
-/** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
+/** Person disclosure uses the same qualified grants as material reads, never management. */
+export async function admitSavedSecretDisclosureInTx(tx: Tx, input: Readonly<{
+    accountId: string; resourceId: string; expectedRevision: number; authentication?: TeamOperationAuthenticationContext;
+}>): Promise<SavedSecretResourceServiceResult<{ ownerAccountId: string; revision: number; displayName: string }>> {
+    if (input.authentication?.authenticationAuthority !== 'present_user') return { ok: false, error: 'forbidden' };
+    const { accountGrants, teamGrants, groupGrants } = authorizedSavedSecretRowSelect(input.accountId);
+    const row = await tx.savedSecretResource.findUnique({ where: { id: input.resourceId },
+        select: { ownerAccountId: true, revision: true, displayName: true, accountGrants, teamGrants, groupGrants } });
+    if (!row) return { ok: false, error: 'resource_not_found' };
+    const retained = await retainQualifiedSavedSecretRowsInTx(tx, { rows: [row], accountId: input.accountId,
+        authentication: input.authentication });
+    if (retained.rows.length === 0) return { ok: false, error: 'resource_not_found' };
+    if (row.revision !== input.expectedRevision) return { ok: false, error: 'resource_changed' };
+    return { ok: true, value: { ownerAccountId: row.ownerAccountId, revision: row.revision, displayName: row.displayName } };
+}
+
+/** Management remains the resource owner's authority. */
 export async function admitSavedSecretResourceManagementInTx(tx: Tx, input: Readonly<{
     accountId: string; resourceId: string; expectedRevision?: number; authentication?: TeamOperationAuthenticationContext;
 }>): Promise<SavedSecretResourceServiceResult<{ ownerAccountId: string; revision: number; displayName: string }>> {
