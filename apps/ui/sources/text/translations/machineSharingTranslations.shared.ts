@@ -1,17 +1,22 @@
+import type { MachineAgentIsolationStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+
 export type MachineSharingCopy = Readonly<{
     title: string; description: string; recipientDescription: string; trustedOsLead: string; trustedOsDetail: string;
+    memberUsersLead: string; memberUsersDetail: string;
     recipientTrustLead: string; recipientTrustDetail: string; manageHelp: string; recipientEncryptionIncompatible: string;
     loading: string; readError: string; offline: string; offlineRecipient: string; approvalPending: string; denied: string; use: string; manage: string;
     allMembers: string; pending: string; incompatible: string; incompatibleHelp: string; plain: string;
     saved: string; yourAccess: string; ownHistory: string; through: string; leave: string; inherited: string; unavailable: string; saveFailed: string;
-    effectiveLoss: string; overlap: string; custodianProtected: string; revoked: string;
+    effectiveLoss: string; leaveLoss: string; overlap: string; custodianProtected: string; revoked: string;
     unpublished: string; custodianOnly: string; upgradeRequired: string; unpublishedTag: string; unpublishedMember: string;
     destinations: Readonly<{ yours: string; created: string; shared: string; sharedWithoutOwner: string; owner: string; ownerOnly: string; pendingKey: string; sharedPurposeUnsupported: string }>;
     /** Guest execution without separate users: the people added run as the owner. */
     fallback: Readonly<{ lead: string; detail: string; offer: string; turnOn: string; previewing: string;
         reviewUsers: string; reviewFolders: string; reviewSessions: string; reviewAdmin: string; confirm: string;
         applying: string; alreadyOn: string; changed: string; reviewAgain: string; failed: string; locked: string;
-        unknown: string; unavailable: string; approval: string }>;
+        unknown: string; unavailable: string; approval: string;
+        adminDisabled: string; adminCheckRequired: string; managedCliRequired: string;
+        prerequisites: Readonly<Record<Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['code'], string>> }>;
     terminals: Readonly<{ projectEmpty: string; opening: string; sharedOsLead: string; sharedOsDetail: string; denied: string;
         rootDenied: string; offline: string; openUnknown: string; unavailable: string; failed: string }>;
 }>;
@@ -24,6 +29,7 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
     return { machines: { sharing: {
         title: copy.title, description: machine(copy.description), recipientDescription: machine(copy.recipientDescription),
         trustedOsLead: machine(copy.trustedOsLead), trustedOsDetail: machine(copy.trustedOsDetail),
+        memberUsersLead: machine(copy.memberUsersLead), memberUsersDetail: machine(copy.memberUsersDetail),
         recipientTrustLead: machine(copy.recipientTrustLead), recipientTrustDetail: machine(copy.recipientTrustDetail),
         manageHelp: machine(copy.manageHelp), loading: machine(copy.loading),
         readError: machine(copy.readError), offline: machine(copy.offline), offlineRecipient: machine(copy.offlineRecipient), approvalPending: copy.approvalPending, denied: machine(copy.denied),
@@ -34,7 +40,8 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
         through: (parameters: Readonly<{ audience: string }>) => format(copy.through, parameters),
         leave: copy.leave, inherited: (parameters: Readonly<{ audience: string }>) => format(copy.inherited, parameters),
         unavailable: machine(copy.unavailable),
-        saveFailed: (parameters: Readonly<{ person: string; draft: string; current: string }>) => format(copy.saveFailed, parameters), effectiveLoss: copy.effectiveLoss, overlap: copy.overlap,
+        saveFailed: (parameters: Readonly<{ person: string; draft: string; current: string }>) => format(copy.saveFailed, parameters), effectiveLoss: copy.effectiveLoss,
+        leaveLoss: machine(copy.leaveLoss), overlap: copy.overlap,
         revoked: (parameters: Readonly<{ owner: string; machine: string }>) => format(copy.revoked, parameters),
         custodianProtected: copy.custodianProtected,
         unpublished: machine(copy.unpublished), custodianOnly: machine(copy.custodianOnly), upgradeRequired: machine(copy.upgradeRequired),
@@ -48,6 +55,8 @@ export function createMachineSharingTranslations(copy: MachineSharingCopy) {
             alreadyOn: copy.fallback.alreadyOn, changed: machine(copy.fallback.changed), reviewAgain: copy.fallback.reviewAgain,
             failed: copy.fallback.failed, locked: machine(copy.fallback.locked), unknown: machine(copy.fallback.unknown),
             unavailable: machine(copy.fallback.unavailable), approval: copy.fallback.approval,
+            adminDisabled: copy.fallback.adminDisabled, adminCheckRequired: copy.fallback.adminCheckRequired,
+            managedCliRequired: copy.fallback.managedCliRequired, prerequisites: copy.fallback.prerequisites,
         },
     }, destinations: {
         recipientEncryptionIncompatible: copy.recipientEncryptionIncompatible,

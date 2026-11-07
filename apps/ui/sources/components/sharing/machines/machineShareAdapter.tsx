@@ -14,17 +14,22 @@ import type { ShareSheetAdapter } from '../shareSheetTypes';
 import type { MachineShareGrantRow, useMachineShareController } from './useMachineShareController';
 import { MachineShareTrustDisclosure } from './MachineShareTrustDisclosure';
 import { MachineSeparateUsersOffer } from './MachineSeparateUsersOffer';
+import { describeMachineShareTrust } from './machineShareTrust';
 
 /** Domain meaning only. ShareSheet retains list, picker, focus, Back and removal anatomy. */
 export function createMachineShareAdapter(input: Readonly<{
     machineName: string; online: boolean | null; controller: ReturnType<typeof useMachineShareController>;
     openApproval?: (artifactId: string) => void;
+    /** The machine is shared with the viewer: says so before, or without, a readable access census. */
+    shared?: boolean;
 }>): ShareSheetAdapter<MachineShareGrantRow> {
     const { machineName: machine, controller } = input;
+    // The trust fact is said to whoever reads it: the owner learns what sharing exposes of their
+    // operating-system user; someone it is shared with learns whose user their work runs as.
     const own = controller.viewerRow;
-    const recipient = own !== null;
+    const recipient = own !== null || (controller.response === null && input.shared === true);
     const guest = controller.guestExecution;
-    const runsAsYou = guest.showOwnerUserDisclosure;
+    const trust = describeMachineShareTrust(guest.placement, recipient, machine);
     const adapter: ShareSheetAdapter<MachineShareGrantRow> = {
         namespace: 'machine-share', title: t('machines.sharing.title'),
         showLeadingOnDirectorySteps: true,
@@ -35,20 +40,25 @@ export function createMachineShareAdapter(input: Readonly<{
             admin: { label: t('machines.sharing.manage'),
                 ...(controller.response?.canManage ? { help: t('machines.sharing.manageHelp', { machine }) } : {}) },
         },
-        notes: [t(recipient ? 'machines.sharing.recipientTrustDetail'
-            : runsAsYou ? 'machines.sharing.fallback.detail' : 'machines.sharing.trustedOsDetail', { machine }),
+        notes: [trust.detail,
             ...(controller.response?.access.resourceMode === 'plain' ? [t('machines.sharing.plain')] : [])],
         principalTags: (principal, row) => [
             ...(principal.ref.kind === 'account' ? [] : [t('machines.sharing.allMembers')]),
             ...(row?.canPrepareKeys ? [t('machines.destinations.pendingKey')] : []),
             ...(row && row.readiness !== 'ready' && !row.canPrepareKeys
                 && !row.audience.some(member => member.reason === 'recipient_encryption_incompatible')
-                ? [t('machines.sharing.unavailable', { machine })] : []),
+                ? [row.audience.some(member => member.reason === 'content_unpublished')
+                    ? t('machines.sharing.unpublishedTag') : t('machines.sharing.unavailable', { machine })] : []),
         ],
         showsLevelLock: row => row.level.kind === 'locked',
         removalLabels: row => row.viewer ? { request: t('machines.sharing.leave'), confirm: t('machines.sharing.leave') }
             : row.readiness === 'key_pending' ? { request: t('common.cancel'), confirm: t('shareSheet.confirmRemove') } : undefined,
         renderGrantDetails: (row, context) => <View style={styles.details}>
+            {/* Why the tag says so leads; what Remove would do follows. */}
+            {row.audience.filter(member => member.reason === 'content_unpublished').map(member => <Text key={member.accountId} style={styles.detail}
+                testID={`${context.idPrefix}machine-share-unpublished:${row.principal.key}:${member.accountId}`}>
+                {t('machines.sharing.unpublishedMember', { machine, person: member.displayName || t('shareSheet.person') })}
+            </Text>)}
             {row.removal.kind !== 'blocked' ? row.removalConsequences.map(consequence => <Text key={consequence} style={styles.detail}
                 testID={`${context.idPrefix}machine-share-remove-consequence:${row.principal.key}`}>
                 {consequence}
@@ -79,15 +89,19 @@ export function createMachineShareAdapter(input: Readonly<{
             </Text>) : null}
         </View>,
         sections: context => {
-            // The trust fact is said to whoever reads it: the owner learns what sharing exposes of their
-            // operating-system user; someone it is shared with learns whose user their work runs as.
-            const leading: SelectionListSectionDescriptor[] = [{ kind: 'static', id: 'machine-trust', options: [{
-                id: 'machine-trust', label: t(own ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine }), disabled: true,
+            // When sharing itself is refused for a cause someone else must fix, that cause is the sheet's message:
+            // it leads, says who can fix it, and the trust explainer about sharing steps aside.
+            const refusal = controller.issue && refusedKind(controller.issue.code);
+            const leading: SelectionListSectionDescriptor[] = refusal ? [{ kind: 'static', id: 'machine-refused', options: [{
+                id: 'machine-refused', label: controller.issue!.message, disabled: true,
+                content: <SectionContentRow showDivider={false}><SurfaceStateCard testID={`${context.idPrefix}machine-share-refused`}
+                    kind={refusal} layout="inline" title={controller.issue!.message} /></SectionContentRow>,
+            }] }] : [{ kind: 'static', id: 'machine-trust', options: [{
+                id: 'machine-trust', label: trust.lead, disabled: true,
                 // The block sits at the rows' inset, so its edge lines up with the people under it in the
                 // page section and in the sheet alike (lab m-share A/S), never flush with the sheet's edge.
                 content: <SectionContentRow showDivider={false}><MachineShareTrustDisclosure idPrefix={context.idPrefix}
-                    lead={t(recipient ? 'machines.sharing.recipientTrustLead'
-                        : runsAsYou ? 'machines.sharing.fallback.lead' : 'machines.sharing.trustedOsLead', { machine })}>
+                    lead={trust.lead}>
                     {!recipient && guest.canEnableSeparateUsers ? <MachineSeparateUsersOffer machine={machine} guestExecution={guest}
                         idPrefix={context.idPrefix} openApproval={input.openApproval} /> : null}
                 </MachineShareTrustDisclosure></SectionContentRow>,
@@ -105,7 +119,7 @@ export function createMachineShareAdapter(input: Readonly<{
                 rightAccessory: () => <ShareLevelControl row={own} adapter={adapter} actions={controller.actions}
                     onExpand={() => context.onExpand('machine-viewer-access')} editable={false}
                     testID={`${context.idPrefix}machine-share-own-level`} />,
-                expandedContentInset: 'row',
+                expandedContentInset: 'text',
                 expandedContent: () => <ShareGrantRow row={own} adapter={adapter} actions={controller.actions}
                     context={{ ...context, editable: controller.canLeave }} />,
             }] });
@@ -117,7 +131,7 @@ export function createMachineShareAdapter(input: Readonly<{
                     {...(action ? { action } : {})} />,
             });
             if (controller.loading) notices.push(notice('loading', 'loading', t('machines.sharing.loading', { machine })));
-            if (controller.issue) notices.push(notice('read-error', 'error', controller.issue.message,
+            if (controller.issue && !refusal) notices.push(notice('read-error', 'error', controller.issue.message,
                 controller.issue.retryable ? { label: t('common.retry'), onPress: () => { void controller.retryContent(); } } : undefined));
             // Only someone who can change access is told that changes are saved while it is offline.
             if (input.online === false) notices.push(notice('offline', 'unavailable', t(controller.response?.canManage === false
@@ -133,6 +147,12 @@ export function createMachineShareAdapter(input: Readonly<{
         },
     };
     return adapter;
+}
+
+/** A cause someone else must fix is not a failure: reserved to the owner reads as denied, waiting on the owner as unavailable. */
+function refusedKind(code: string): SurfaceStateKind | null {
+    if (code === 'custodian_only') return 'denied';
+    return code === 'content_unpublished' || code === 'daemon_upgrade_required' ? 'unavailable' : null;
 }
 
 // Grant details read as row descriptions (pending keys, incompatible members, inherited access).

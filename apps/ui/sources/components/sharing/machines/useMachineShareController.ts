@@ -24,6 +24,7 @@ import type { ShareGrantRowModel, ShareOperationModel, ShareSheetActions,
 import { presentSharePrincipal } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import { useActiveHomeSettling } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { describeMachineShareTrust } from './machineShareTrust';
 
 export type MachineShareGrantRow = ShareGrantRowModel & Readonly<{
     removalConsequences: readonly string[];
@@ -48,6 +49,10 @@ type UnsavedRoleChange = Readonly<{ draft: MachineAccessLevelV1; current: Machin
 const levelLabel = (level: MachineAccessLevelV1) => t(level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use');
 
 function failure(code: string, machine: string, person = t('shareSheet.person'), change?: UnsavedRoleChange): ShareUiError {
+    // Each cause names who can fix it; none clears by retrying until that person acts.
+    if (code === 'content_unpublished') return { code, message: t('machines.sharing.unpublished', { machine }), retryable: false };
+    if (code === 'custodian_only') return { code, message: t('machines.sharing.custodianOnly', { machine }), retryable: false };
+    if (code === 'daemon_upgrade_required') return { code, message: t('machines.sharing.upgradeRequired', { machine }), retryable: false };
     if (code === 'recipient_encryption_incompatible' || code === 'recipient_incompatible') return { code,
         message: t('machines.sharing.incompatible', { machine, person }), retryable: false };
     if (isAuthorityLoss(code) || code === 'custodian_protected') return { code,
@@ -99,13 +104,13 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     confirmUserAction.current = async ({ actionId, input, context }) => {
         const presentation = presentActionApproval({ actionId, actionArgs: input, subject: machineName });
         const grant = actionId === 'machines.access.grant.set' ? MachineAccessGrantSetInputV1Schema.safeParse(input) : null;
-        const message = grant?.success
-            ? [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
+        let message = presentation.summary ?? '';
+        if (grant?.success) {
+            const trust = describeMachineShareTrust(guestExecutionRef.current.placement, false, machineName);
+            message = [`${names.current.get(sessionAccessSubjectKey(grant.data.principal)) ?? t('shareSheet.person')} · ${
                 t(grant.data.level === 'admin' ? 'machines.sharing.manage' : 'machines.sharing.use')}`,
-                ...(guestExecutionRef.current.showOwnerUserDisclosure
-                    ? [t('machines.sharing.fallback.lead', { machine: machineName }), t('machines.sharing.fallback.detail', { machine: machineName })]
-                    : [t('machines.sharing.trustedOsLead', { machine: machineName }), t('machines.sharing.trustedOsDetail', { machine: machineName })])].join('\n\n')
-            : presentation.summary ?? '';
+                trust.lead, trust.detail].join('\n\n');
+        }
         return Modal.confirm(presentation.title ?? t('approvals.untitled'), message,
             { ...(presentation.confirmLabel ? { confirmText: presentation.confirmLabel } : {}),
                 ...(presentation.destructive ? { destructive: true } : {}),
@@ -154,7 +159,7 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         const unsubscribe = subscribeHomeAccountChange(event => {
             if (!lifetime.signal.aborted && areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)
                 && (event.entityIds === undefined || event.entityIds.includes(machineId))) void load();
-        });
+        }, { reconnect: 'refresh' });
         const stopCredentials = subscribeHomeCredentialChange(event => {
             if (!areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)) return;
             let actor: string | null = null;
@@ -177,11 +182,12 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     // A read that failed while the Home was still being reached (right after a restart) has not settled into a
     // failure: it reads as loading, and is read again once the Home answers.
     const homeSettling = useActiveHomeSettling(scope.serverId);
-    const phaseRef = React.useRef(state.phase);
-    phaseRef.current = state.phase;
+    const retryableReadRef = React.useRef(false);
+    retryableReadRef.current = state.phase === 'error' && state.issue?.retryable === true;
     const wasSettling = React.useRef(false);
     React.useEffect(() => {
-        if (wasSettling.current && !homeSettling && phaseRef.current === 'error') void load();
+        // A definitive Home refusal has already answered; reconnecting cannot repair it.
+        if (wasSettling.current && !homeSettling && retryableReadRef.current) void load();
         wasSettling.current = homeSettling;
     }, [homeSettling, load]);
     const readSettling = homeSettling && state.phase === 'error' && state.issue?.retryable === true;
@@ -313,7 +319,8 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
         level: { kind: 'locked', value: response.access.role === 'manage' ? 'admin' : 'view', reason: { code: 'own_access', message: t('machines.sharing.ownHistory', { machine: machineName }) } },
         removal: response.ownDirectGrant ? removal(ownPrincipal) : { kind: 'blocked',
             reason: { code: 'inherited_access', message: t('machines.sharing.inherited', { audience: inherited.map(source => principal(source.principal, source.displayName).displayName).join(', ') }) } },
-        removalConsequences: removalConsequences(inherited.length === 0 ? [scope.accountId] : []),
+        // Leaving is said to the person leaving: their own work stops, never the owner's census sentence about them.
+        removalConsequences: inherited.length === 0 ? [t('machines.sharing.leaveLoss', { machine: machineName })] : removalConsequences([]),
         operation: state.operations[ownKey] ?? IDLE,
     } : null;
     const model: ShareSheetModel<MachineShareGrantRow> = {
