@@ -8,7 +8,7 @@ import { DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/d
 import { getRelayAccessProvider } from '../relayAccess/registry.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from './nativeBackend.js';
-import { checkNativeCaddyPortAvailability, ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
+import { checkNativeCaddyPortAvailability, ensureNativeCaddyContainer, nativeCaddyImage, nativeCaddyProfile, readCaddyContainerFirewallExposures, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, createNativeCaddyBindings, connectNativeCaddyNetworks, disconnectNativeCaddyNetworks, hashNativeCaddyPassword, createCaddyContainerSetupSteps, type NativeCaddySetupInput } from './nativeCaddy.js';
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -214,6 +214,13 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
             return ok(container.Id);
         }
         if (args[0] === 'network' && args[1] === 'connect') { container!.NetworkSettings.Networks[args[2]!] = { IPAddress: '172.19.0.2' }; return ok(); }
+        if (args[0] === 'network' && args[1] === 'disconnect') {
+            const attachment = Object.entries(container?.NetworkSettings.Networks ?? {})
+                .find(([, value]) => Reflect.get(value, 'NetworkID') === args[2]);
+            if (!container || container.Id !== args[3] || !attachment) return { code: 1, stdout: '', stderr: 'not attached' };
+            delete container.NetworkSettings.Networks[attachment[0]];
+            return ok();
+        }
         if (args[0] === 'container' && args[1] === 'start') {
             exitCode = undefined;
             container!.State.Running = true;
@@ -643,6 +650,37 @@ it.skipIf(process.platform === 'win32')('discovers the actual owned Caddy name i
     expect(f.commands[before]!.args).toEqual(['container', 'ls', '--all', '--no-trunc', '--filter',
         'label=dev.happier.machine-setup.recipe=caddy@1', '--format', '{{json .ID}}']);
     expect(f.commands[before + 1]!.args).toEqual(['container', 'inspect', '--', 'owned-container-id']);
+});
+
+it('releases exact retired network IDs while preserving shared Caddy and sibling attachments', async () => {
+    const f = await fixture(); await f.setup();
+    await ensureNativeCaddyContainer(f.input, f.options());
+    const retained = f.readContainer();
+    retained.NetworkSettings.Networks = { app: { NetworkID: 'retired-network' }, sibling: { NetworkID: 'sibling-network' } };
+    const config = structuredClone(retained.Config);
+    expect(await disconnectNativeCaddyNetworks({ dockerHost: f.input.dockerHost,
+        networkIds: ['retired-network', 'sibling', 'already-absent'] }, { run: f.run })).toEqual({ status: 'ready' });
+    expect(f.readContainer()).toBe(retained);
+    expect(retained.State.Running).toBe(true);
+    expect(retained.Config).toEqual(config);
+    expect(retained.NetworkSettings.Networks).toEqual({ sibling: { NetworkID: 'sibling-network' } });
+    expect(await disconnectNativeCaddyNetworks({ dockerHost: f.input.dockerHost,
+        networkIds: ['retired-network'] }, { run: f.run })).toEqual({ status: 'ready' });
+});
+
+it.each(['foreign-container', 'disconnect-denied'] as const)('retains attachments when Caddy release is refused: %s', async refusal => {
+    const f = await fixture(); await f.setup();
+    await ensureNativeCaddyContainer(f.input, f.options());
+    const retained = f.readContainer();
+    retained.NetworkSettings.Networks = { app: { NetworkID: 'retired-network' } };
+    if (refusal === 'foreign-container') retained.Config.Image = 'foreign-image';
+    expect(await disconnectNativeCaddyNetworks({ dockerHost: f.input.dockerHost, networkIds: ['retired-network'] }, {
+        run: command => command.args.includes('disconnect')
+            ? Promise.resolve({ code: 1, stdout: '', stderr: 'private-docker-output' }) : f.run(command),
+    })).toEqual({ status: 'unavailable', reason: refusal === 'foreign-container' ? 'foreign_effect_conflict' : 'native_effect_failed' });
+    expect(f.readContainer()).toBe(retained);
+    expect(retained.State.Running).toBe(true);
+    expect(retained.NetworkSettings.Networks).toEqual({ app: { NetworkID: 'retired-network' } });
 });
 
 it('connects only missing observed Caddy networks through the same native writer as setup', async () => {

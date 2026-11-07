@@ -1,5 +1,3 @@
-import { awaitExecLaunchPreparation } from './execLaunchPreparation';
-import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { PluginAgentCliReadinessServiceForHost } from '../../context/agents';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { realpath } from 'node:fs/promises';
@@ -12,7 +10,7 @@ import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-servi
 import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonRpcConnection, PluginJsonRpcConnectionSpec, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { PluginPath } from '@happier-dev/plugin-sdk';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type {
     ExecProcessHandleV1,
@@ -40,45 +38,33 @@ import {
     createPluginExecClientAbortError,
     sanitizeExecDiagnosticText,
 } from '../../exec/errors';
-import {
-    isPluginPathCoveredByDisclosure,
-    type PluginFileSystemScope,
-} from './filesystem';
 import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
-import type { ProjectNativeEnvironmentInput, ProjectNativeEnvironmentIo, ProjectNativePluginAdapterInput } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import type { ProjectNativeToolchainInput, ProjectNativeToolchainIo, ProjectNativePluginAdapterInput } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import { formatProcessOwnerTag, readHostProcessOwnerTag, withHostProcessOwnerEnvironment, withProcessOwnerEnvironment, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type LinuxProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { logger } from '@/ui/logger';
-import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import { type HostAgentIsolationLaunchKind } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
-import { type HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
-import { consumeDeploymentExecEnvForHost } from '@/deployments/secrets/deploymentExecEnvPort';
-import { type HostRuntimeDockerTuple } from '@/deployments/secrets/deploymentExecEnvPort';
-import { type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
-import { resolveHostRequesterExecutionIdentityForLaunch } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { assertHostRequesterExecutionAdmissionForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { createProviderRedactionLease } from '@/providers/spawn/redaction';
-import { admitAgentIsolationLaunchForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterExecutionIdentityForLaunch, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchKind, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
-import { type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-import { type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
-
-
-type HostExecOptions = NonNullable<Parameters<ExecService['run']>[1]> & {
-    beforeSpawn?: (signal: AbortSignal) => Promise<void>;
-};
-
+import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { consumeDeploymentExecEnvForHost, type HostDeploymentRuntimeProjectionV1,
+    type HostRuntimeDockerTuple, type HostRuntimeProjectedDockerInput } from '@/deployments/secrets/deploymentExecEnvPort';
+import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
+import { awaitExecLaunchPreparation } from './execLaunchPreparation';
 
 type AgentNativeLaunchQualifier = NonNullable<NonNullable<Parameters<ExecService['spawn']>[1]>['nativeLaunch']>;
 type McpLaunchMaterial = (NonNullable<Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]['mcpLaunchMaterial']>
     & Readonly<{ nativeSocketDirectory?: AgentLaunchNativeSocketDirectory }>) | undefined;
+type HostExecOptions = NonNullable<Parameters<ExecService['run']>[1]> & {
+    beforeSpawn?: (signal: AbortSignal) => Promise<void>;
+};
 
+/** Host invocation authority, never an SDK request or launch option. */
+export type HostPluginExecExecutionKind = 'person_break_glass' | 'machine_native';
 
 const INTERNAL_PROTOCOL_GRACEFUL_DISPOSERS = new WeakMap<PluginProtocolClientHandle<'jsonRpc'>,
     (beforeTerminate: SupervisedPluginGracefulStop) => Promise<void>>();
@@ -110,7 +96,7 @@ export type HostProjectNativeLaunchAdmission =
         status: 'ready';
         reviewedEffectDigest: string;
         verifyCurrent?: () => Promise<void>;
-        environment: Omit<ProjectNativeEnvironmentInput, 'cwd' | 'env' | 'signal' | 'pluginAdapter'>;
+        toolchain: Omit<ProjectNativeToolchainInput, 'cwd' | 'env' | 'signal' | 'pluginAdapter'>;
         nativeAdapter?: Omit<ProjectNativePluginAdapterInput, 'launch'>;
         secretReferences?: ProjectSecretReferenceEnvironmentInput;
     }>
@@ -129,8 +115,10 @@ export type HostPluginExecLaunchOptions = Readonly<{
     /** The selected native adapter's invocation, not the original Agent's. */
     nativeExecutableOwner?: ExecService;
     prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation;
-    /** The Project host already holds this admission context; public Exec options do not. */
-    agentIsolation?: HostAgentIsolationLaunchContext;
+    /** Held invocation context, or null to use the Exec service's own host identity; never SDK data. */
+    agentIsolation: HostAgentIsolationLaunchContext | null;
+    /** Actual target-daemon P41 candidate capture; never public Exec data. */
+    deploymentRuntimeProjection?: HostDeploymentRuntimeProjectionV1;
 }>;
 
 export type HostAgentNativeLaunchPreparation = (
@@ -153,7 +141,6 @@ type HostResolvedAgentLaunchAuthorizer = (
     agentLaunchKind?: HostAgentIsolationLaunchKind,
     mcpLaunchMaterial?: McpLaunchMaterial,
 ) => Promise<HostAuthorizedPluginExecLaunch>;
-
 const INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS = new WeakMap<ExecService, Readonly<{
     signal: AbortSignal;
     admit(kind: HostAgentIsolationLaunchKind, signal?: AbortSignal): Promise<void>;
@@ -166,6 +153,14 @@ export type HostAgentNativeLaunchAuthority = Readonly<{
     admit(signal?: AbortSignal): Promise<void>;
     authorize(launch: ResolvedHostExecLaunch, signal?: AbortSignal): Promise<HostAuthorizedPluginExecLaunch>;
 }>;
+
+export function requireAgentNativeLaunchAuthorityForHost(authority: HostAgentNativeLaunchAuthority | null | undefined): HostAgentNativeLaunchAuthority {
+    if (!authority) assertHostRequesterExecutionAdmissionForHost({
+        identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, agentLaunchKind: 'attach',
+    });
+    // The canonical unknown admission above always throws.
+    return authority!;
+}
 
 export function captureAgentNativeLaunchAuthorityForHost(service: ExecService,
     kind: HostAgentIsolationLaunchKind, lifetime?: AbortSignal,
@@ -231,6 +226,17 @@ export type ResolvedPluginExecutable = Readonly<{
     env?: Readonly<Record<string, string>>;
     allowedArguments?: readonly string[];
     release?: () => void;
+}>;
+
+/** Original host authority finalizes a tuple only after local declaration checks. */
+export type HostPreparedPluginExecLaunchAuthorizer = (
+    launch: HostAuthorizedPluginExecLaunch,
+    signal: AbortSignal,
+) => Promise<HostAuthorizedPluginExecLaunch>;
+
+type PreauthorizedPluginExecSpawn = Readonly<{
+    launch: ResolvedPluginExecutable;
+    authorizePreparedLaunch?: HostPreparedPluginExecLaunchAuthorizer;
 }>;
 
 const INTERNAL_PREAUTHORIZED_SPAWNS = new WeakMap<
@@ -360,7 +366,6 @@ export type HostResolvedSystemToolExecutable = Readonly<{
 }>;
 
 export type HostAuthorizedPluginExecLaunch = Readonly<{
-    secretRedactionLease?: ProviderRedactionLease;
     command: string;
     args: readonly string[];
     env: Readonly<Record<string, string>>;
@@ -378,6 +383,8 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     waitForGracefulRootExitBeforeTreeStop?: true;
     /** Host-private ownership, retained across all native and provider env layers. */
     processOwnerTag?: string;
+    /** Secret-only host custody; the existing generation owner retains release. */
+    secretRedactionLease?: ProviderRedactionLease;
     /** Exact value-free generation inputs, captured before finite input retirement. */
     deploymentSecretRefs?: readonly Readonly<{ resourceId: string; resourceRevision: number }>[];
     /** Actual finalized direct-native prefix, captured by the private P41 projection. */
@@ -481,32 +488,28 @@ export function spawnAuthorizedHostExecLaunchForHost(
     }
     const recoverFailedNativeLaunch = launch.onNativeLaunchFailure;
     if (recoverFailedNativeLaunch) {
-        const result = supervised.handle.wait().then(async result => {
-            const observed = result.termination.observed;
-            if (options.signal?.aborted || result.termination.requestedBy.kind !== 'none'
-                || observed.kind === 'exit' && observed.exitCode === 0) return result;
+        const termination = supervised.handle.waitForExit().then(async termination => {
+            const observed = termination.observed;
+            if (options.signal?.aborted || termination.requestedBy.kind !== 'none'
+                || observed.kind === 'exit' && observed.exitCode === 0) return termination;
             // Exec has no payload-accepted marker. Qualify only a failed native
             // result; a healthy member preserves the payload's original failure.
-            if (!await recoverFailedNativeLaunch()) return result;
-            return Object.freeze({ ...result, termination: Object.freeze({ ...result.termination,
+            if (!await recoverFailedNativeLaunch()) return termination;
+            return Object.freeze({ ...termination,
                 observed: Object.freeze({ kind: 'failed' as const, diagnostic: Object.freeze({
                     code: 'agent_isolation_unavailable', severity: 'error' as const,
                     message: 'Native execution was unavailable; retry the command',
                 }) }),
-            }) });
+            });
         });
-        const handle = Object.freeze({ ...supervised.handle, wait: () => result });
+        const result = supervised.handle.wait().then(async result => Object.freeze({ ...result, termination: await termination }));
+        const handle = Object.freeze({ ...supervised.handle, waitForExit: () => termination, wait: () => result });
         associateSupervisedPluginProcessHandleForHost(handle, supervised.child);
         supervised = Object.freeze({ ...supervised, handle });
     }
     if (!options.retainLaunch) void supervised.waitForSettlement().then(() => launch.release());
     return supervised;
 }
-
-export type PluginExecDisclosureMismatch =
-    | Readonly<{ capability: 'process'; executable: ManagedExecutableRef }>
-    | Readonly<{ capability: 'environment'; keys: readonly string[] }>
-    | Readonly<{ capability: 'filesystem'; path: PluginPath | string; access: 'read' }>;
 
 const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
     ExecService,
@@ -517,7 +520,7 @@ const INTERNAL_LAUNCH_AUTHORIZERS = new WeakMap<
         projectLaunch?: HostProjectNativeLaunchAdmission,
         nativeExecutableOwner?: ExecService,
         prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation,
-        agentIsolation?: HostAgentIsolationLaunchContext,
+        agentIsolation?: HostAgentIsolationLaunchContext | null,
         deploymentRuntimeProjection?: HostDeploymentRuntimeProjectionV1,
     ) => Promise<HostAuthorizedPluginExecLaunch>
 >();
@@ -542,7 +545,7 @@ export async function authorizePluginExecLaunchForHost(
     service: ExecService,
     request: Parameters<ExecService['spawn']>[0]
         & Readonly<{ timeoutMs?: number }>,
-    options?: HostPluginExecLaunchOptions,
+    options: HostPluginExecLaunchOptions,
 ): Promise<HostAuthorizedPluginExecLaunch> {
     try {
         const authorize = INTERNAL_LAUNCH_AUTHORIZERS.get(service);
@@ -554,7 +557,8 @@ export async function authorizePluginExecLaunchForHost(
         }
         // Only this host entry point supplies the third argument. Extra properties
         // on public run/spawn options cannot opt a plugin into Project effects.
-        return await authorize(request, options, options?.projectLaunch, options?.nativeExecutableOwner, options?.prepareAgentNativeLaunch, options?.agentIsolation);
+        return await authorize(request, options, options?.projectLaunch, options?.nativeExecutableOwner,
+            options?.prepareAgentNativeLaunch, options?.agentIsolation, options?.deploymentRuntimeProjection);
     } catch (error) { throw withExecLaunchNotStarted(error); }
 }
 
@@ -790,13 +794,6 @@ function validateExecLaunchInput(input: Readonly<{
     }
 }
 
-function assertAllowedExecArguments(resolved: ResolvedPluginExecutable, args: readonly string[]): void {
-    const allowedArguments = resolved.allowedArguments;
-    if (allowedArguments !== undefined && args.some(argument => !allowedArguments.includes(argument))) {
-        fail('plugin_exec_argument_denied', 'Process argument is not authorized for this system tool');
-    }
-}
-
 async function resolveNativeExecutableForHost(
     service: ExecService,
     executable: ManagedExecutableRef,
@@ -831,11 +828,11 @@ async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
     if (!input.cwd || !admitted.reviewedEffectDigest) {
         fail('project_launch_preparation_unavailable', 'Project launch requires its admitted root and reviewed effect');
     }
-    const { produceProjectNativeEnvironment } = await import('@/workspaces/environment/produceProjectNativeEnvironment');
+    const { prepareProjectNativeToolchain } = await import('@/workspaces/toolchain/prepareProjectNativeToolchain');
     await admitted.verifyCurrent?.();
     assertCurrent();
-    const native = await produceProjectNativeEnvironment({
-        ...admitted.environment, cwd: input.cwd, env: input.env, signal: input.signal,
+    const native = await prepareProjectNativeToolchain({
+        ...admitted.toolchain, cwd: input.cwd, env: input.env, signal: input.signal,
         ...(admitted.nativeAdapter ? { pluginAdapter: { ...admitted.nativeAdapter,
             ...(launch ? { launch } : {}),
         } } : {}),
@@ -860,8 +857,27 @@ async function produceHostProjectEnvironment(input: HostProjectEnvironmentInput,
 /** Environment-only preparation uses the same owner without a dummy process. */
 export async function produceProjectLaunchEnvironmentForHost(input: HostProjectEnvironmentInput): Promise<Readonly<Record<string, string>>> {
     const native = await produceHostProjectEnvironment(input);
-    if (native.nativeLaunch) fail('native_environment_launch_required', 'This native adapter requires an admitted command');
+    if (native.nativeLaunch) fail('native_toolchain_launch_required', 'This native adapter requires an admitted command');
     return native.env;
+}
+
+/** The same requester decision precedes both native preparation and tuple
+ * production. Resolved identity is carried forward, not resolved twice. */
+async function resolveExecRequesterIdentity(input: Readonly<{
+    agentIsolation?: HostAgentIsolationLaunchContext;
+    requesterIdentity?: HostRequesterExecutionIdentity;
+    executionKind?: HostPluginExecExecutionKind;
+    agentLaunchKind?: HostAgentIsolationLaunchKind;
+    signal: AbortSignal;
+}>): Promise<HostRequesterExecutionIdentity | undefined> {
+    const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: input.agentIsolation,
+        requesterIdentity: input.requesterIdentity, signal: input.signal });
+    if (identity || input.executionKind === 'person_break_glass') {
+        assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: input.executionKind === 'person_break_glass',
+            agentLaunchKind: input.agentLaunchKind,
+            snapshot: input.executionKind === 'person_break_glass' ? undefined : input.agentIsolation?.read() });
+    }
+    return identity;
 }
 
 /** The one final tuple producer, after the caller's executable/effect admission. */
@@ -1054,7 +1070,7 @@ export type ProjectNativeEffectCaptureForHost = Readonly<{
     release(): Promise<void>;
 }>;
 
-export type ProjectNativeEnvironmentIoForHost = ProjectNativeEnvironmentIo & Readonly<{
+export type ProjectNativeToolchainIoForHost = ProjectNativeToolchainIo & Readonly<{
     createInvocation(input: Readonly<{
         signal: AbortSignal;
         retainCapture(capture: ProjectNativeEffectCaptureForHost): void;
@@ -1062,7 +1078,7 @@ export type ProjectNativeEnvironmentIoForHost = ProjectNativeEnvironmentIo & Rea
         executionKind?: 'person_break_glass';
         requesterIdentity?: HostRequesterExecutionIdentity;
         assertLaunchCurrent?: () => Promise<void>;
-    }>): ProjectNativeEnvironmentIo;
+    }>): ProjectNativeToolchainIo;
 }>;
 
 /** One invocation's physical resources, shared by SDK Exec and built-in effects. */
@@ -1109,12 +1125,12 @@ function createNativeProcessCustodyForHost() {
     };
 }
 
-export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
+export function createProjectNativeToolchainIoForHost(input: Readonly<{
     ownerRemainder?: OwnerRemainderPort;
     agentIsolation?: HostAgentIsolationLaunchContext;
-    resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeEnvironmentIo): ReturnType<ProjectNativeEnvironmentIo['resolveTool']>;
-}>): ProjectNativeEnvironmentIoForHost {
-    const create = (invocation?: Parameters<ProjectNativeEnvironmentIoForHost['createInvocation']>[0]): ProjectNativeEnvironmentIoForHost => {
+    resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeToolchainIo): ReturnType<ProjectNativeToolchainIo['resolveTool']>;
+}>): ProjectNativeToolchainIoForHost {
+    const create = (invocation?: Parameters<ProjectNativeToolchainIoForHost['createInvocation']>[0]): ProjectNativeToolchainIoForHost => {
         const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
         const capture: ProjectNativeEffectCaptureForHost = Object.freeze({
             requestStop: custody.requestStop,
@@ -1126,10 +1142,10 @@ export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
             },
         });
         invocation?.retainCapture(capture);
-        const io: ProjectNativeEnvironmentIoForHost = Object.freeze({
+        const io: ProjectNativeToolchainIoForHost = Object.freeze({
             resolveTool: (tool, signal) => input.resolveTool(tool, signal, io),
             createInvocation: create,
-            async run(request: Parameters<ProjectNativeEnvironmentIo['run']>[0]) {
+            async run(request: Parameters<ProjectNativeToolchainIo['run']>[0]) {
                 const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
                 assertOpen();
                 if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
@@ -1151,17 +1167,24 @@ export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
                     await invocation?.assertLaunchCurrent?.();
                     assertOpen();
                     if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
+                    if (request.output && !request.output.redaction.isActive()) {
+                        fail('secret_redaction_unavailable', 'Native output custody is unavailable');
+                    }
                 } catch (error) {
                     await launch.release();
                     throw withExecLaunchNotStarted(error);
                 }
                 const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch,
+                    ...(request.output ? { secretRedactionLease: request.output.redaction } : {}),
                     processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } }),
                 }, {
                     ...(signal ? { signal } : {}),
                     ...(input.ownerRemainder ? { ownerRemainder: input.ownerRemainder } : {}),
                 });
                 retain(supervised);
+                const outputSubscription = request.output ? supervised.handle.onOutput(chunk => {
+                    request.output!.onChunk(chunk.stream, chunk.data);
+                }) : undefined;
                 const settle = async () => {
                     try { await supervised.dispose(); }
                     catch (error) {
@@ -1177,10 +1200,10 @@ export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
                         fail('plugin_exec_aborted', 'Process operation was aborted');
                     }
                     if (result.termination.observed.kind === 'failed') {
-                        fail('project_native_environment_process_failed', 'Native environment process failed');
+                        fail('project_native_toolchain_process_failed', 'Native environment process failed');
                     }
                     if (result.stdoutTruncated) {
-                        fail('project_native_environment_output_incomplete', 'Native environment output was incomplete');
+                        fail('project_native_toolchain_output_incomplete', 'Native environment output was incomplete');
                     }
                     return Object.freeze({
                         exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : 1,
@@ -1188,23 +1211,14 @@ export function createProjectNativeEnvironmentIoForHost(input: Readonly<{
                         stderr: Buffer.from(result.stderr).toString('utf8'),
                     });
                 } finally {
-                    await settle();
+                    try { await settle(); }
+                    finally { await outputSubscription?.dispose(); }
                 }
             },
         });
         return io;
     };
     return create();
-}
-
-function executableKey(executable: ManagedExecutableRef): string {
-    if (executable.kind === 'packaged-runtime-binary') {
-        return `${executable.kind}:${JSON.stringify(executable.directorySegments)}:${JSON.stringify(executable.executableBaseName)}`;
-    }
-    const id = typeof executable.id === 'string'
-        ? executable.id
-        : `${executable.id.pluginId}:${executable.id.localId}`;
-    return `${executable.kind}:${id}`;
 }
 
 function fail(code: string, message: string, cause?: unknown): never {
@@ -1406,7 +1420,7 @@ export function createStablePluginExecService(params: Readonly<{
 
     async function authorizeLaunch(request: Parameters<typeof prepareLaunch>[0], options?: Parameters<typeof prepareLaunch>[1],
         projectLaunch?: HostProjectNativeLaunchAdmission, nativeExecutableOwner?: ExecService,
-        prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation, hostAgentIsolation?: HostAgentIsolationLaunchContext,
+        prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation, hostAgentIsolation?: HostAgentIsolationLaunchContext | null,
         lifetime?: ManagedPluginExecLifetimeForHost, deploymentRuntimeProjection?: HostDeploymentRuntimeProjectionV1): Promise<HostAuthorizedPluginExecLaunch> {
         const args = [request, options, projectLaunch, nativeExecutableOwner, prepareAgentNativeLaunch, hostAgentIsolation, lifetime] as const;
         let material: Awaited<ReturnType<typeof consumeDeploymentExecEnvForHost>> | undefined;
@@ -1519,7 +1533,7 @@ export function createStablePluginExecService(params: Readonly<{
         projectLaunch?: HostProjectNativeLaunchAdmission,
         nativeExecutableOwner?: ExecService,
         prepareAgentNativeLaunch?: HostAgentNativeLaunchPreparation,
-        hostAgentIsolation?: HostAgentIsolationLaunchContext,
+        hostAgentIsolation?: HostAgentIsolationLaunchContext | null,
         lifetime?: ManagedPluginExecLifetimeForHost,
         prepareRuntime?: (host: HostRuntimeDockerTuple,
             admit: Parameters<HostDeploymentRuntimeProjectionV1['prepare']>[0]['admitNormalization']) => Promise<HostRuntimeProjectedDockerInput>,
@@ -1949,8 +1963,7 @@ export function createStablePluginExecService(params: Readonly<{
             // Do not turn its failed observation into a permanent client latch.
             await supervised.dispose('caller');
         };
-        void supervised.handle.wait().then((result) => {
-            const observed = result.termination.observed;
+        void supervised.handle.waitForExit().then(({ observed }) => {
             protocol.settleExit(createPluginExecClientExitError({
                 exitCode: observed.kind === 'exit' ? observed.exitCode : null,
                 signal: observed.kind === 'signal' ? observed.signal : null,
@@ -1958,8 +1971,8 @@ export function createStablePluginExecService(params: Readonly<{
                     ? { diagnostic: observed.diagnostic.message ?? observed.diagnostic.code }
                     : {}),
             }, sanitizeExecDiagnosticText(
-                Buffer.from(result.stderr).toString('utf8'),
-                // The process result already obeys the launch owner's capture budget.
+                Buffer.from(supervised.readBufferedStderr()).toString('utf8'),
+                // Exit diagnostics are a preview; wait() owns completed output.
                 -1,
             )));
         });
@@ -2028,8 +2041,7 @@ export function createStablePluginExecService(params: Readonly<{
             protocol.dispose();
             await supervised.dispose('caller');
         };
-        void supervised.handle.wait().then((result) => {
-            const observed = result.termination.observed;
+        void supervised.handle.waitForExit().then(({ observed }) => {
             protocol.settleExit(createPluginExecClientExitError({
                 exitCode: observed.kind === 'exit' ? observed.exitCode : null,
                 signal: observed.kind === 'signal' ? observed.signal : null,
@@ -2069,7 +2081,7 @@ export function createStablePluginExecService(params: Readonly<{
             protocol.dispose();
             await supervised.dispose('caller');
         };
-        void supervised.handle.wait().then(() => {
+        void supervised.handle.waitForExit().then(() => {
             protocol.settleExit(new PluginExecClientError('PLUGIN_EXEC_CLIENT_EXITED', 'Plugin process terminated'));
         });
         return Object.freeze({ client, process: supervised.handle, wait: () => supervised.handle.wait(), dispose });
@@ -2143,7 +2155,7 @@ export function createStablePluginExecService(params: Readonly<{
             protocol.dispose();
             await supervised.dispose('caller');
         };
-        void supervised.handle.wait().then(() => {
+        void supervised.handle.waitForExit().then(() => {
             protocol.settleExit(new PluginExecClientError('PLUGIN_EXEC_CLIENT_EXITED', 'Plugin process terminated'));
         });
         return Object.freeze({ client, process: supervised.handle, wait: () => supervised.handle.wait(), dispose });
@@ -2409,141 +2421,4 @@ export function createStablePluginExecService(params: Readonly<{
         });
     });
     return service;
-}
-
-export function createProjectNativeToolchainIoForHost(input: Readonly<{
-    ownerRemainder?: OwnerRemainderPort;
-    agentIsolation?: HostAgentIsolationLaunchContext;
-    resolveTool(tool: string, signal: AbortSignal | undefined, scopedIo: ProjectNativeToolchainIo): ReturnType<ProjectNativeToolchainIo['resolveTool']>;
-}>): ProjectNativeToolchainIoForHost {
-    const create = (invocation?: Parameters<ProjectNativeToolchainIoForHost['createInvocation']>[0]): ProjectNativeToolchainIoForHost => {
-        const { custody, retain, assertOpen } = createNativeProcessCustodyForHost();
-        const capture: ProjectNativeEffectCaptureForHost = Object.freeze({
-            requestStop: custody.requestStop,
-            waitForSettlement: custody.waitForSettlement,
-            onOutcomeUncertain: custody.onOutcomeUncertain,
-            async release() {
-                await custody.requestStop();
-                await custody.waitForSettlement();
-            },
-        });
-        invocation?.retainCapture(capture);
-        const io: ProjectNativeToolchainIoForHost = Object.freeze({
-            resolveTool: (tool, signal) => input.resolveTool(tool, signal, io),
-            createInvocation: create,
-            async run(request: Parameters<ProjectNativeToolchainIo['run']>[0]) {
-                const signal = invocation ? request.signal ? AbortSignal.any([invocation.signal, request.signal]) : invocation.signal : request.signal;
-                assertOpen();
-                if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
-                // Native environment evaluation can execute workspace code before
-                // the final script exists. Its actual command uses the same tuple
-                // authority, not a preflight that is discarded before spawning.
-                const launch = await authorizeResolvedProjectExecLaunchForHost({
-                    launch: request, signal: signal ?? new AbortController().signal,
-                    agentIsolation: invocation?.agentIsolation ?? input.agentIsolation,
-                    executionKind: invocation?.executionKind,
-                    requesterIdentity: invocation?.requesterIdentity,
-                    agentLaunchKind: 'workspaceExec',
-                    assertCurrent() {
-                        assertOpen();
-                        if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
-                    },
-                });
-                try {
-                    await invocation?.assertLaunchCurrent?.();
-                    assertOpen();
-                    if (signal?.aborted) fail('plugin_exec_aborted', 'Process operation was aborted');
-                    if (request.output && !request.output.redaction.isActive()) {
-                        fail('secret_redaction_unavailable', 'Native output custody is unavailable');
-                    }
-                } catch (error) {
-                    await launch.release();
-                    throw withExecLaunchNotStarted(error);
-                }
-                const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch,
-                    ...(request.output ? { secretRedactionLease: request.output.redaction } : {}),
-                    processOwnerTag: formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir, owner: { kind: 'happier' } }),
-                }, {
-                    ...(signal ? { signal } : {}),
-                    ...(input.ownerRemainder ? { ownerRemainder: input.ownerRemainder } : {}),
-                });
-                retain(supervised);
-                const outputSubscription = request.output ? supervised.handle.onOutput(chunk => {
-                    request.output!.onChunk(chunk.stream, chunk.data);
-                }) : undefined;
-                const settle = async () => {
-                    try { await supervised.dispose(); }
-                    catch (error) {
-                        if (!invocation || !isPluginError(error) || error.code !== 'plugin_exec_termination_incomplete') throw error;
-                        await supervised.waitForSettlement();
-                    }
-                };
-                try {
-                    const result = await supervised.handle.wait();
-                    // Root exit alone is not completed requested tree cleanup.
-                    await settle();
-                    if (signal?.aborted || result.termination.requestedBy.kind === 'abort') {
-                        fail('plugin_exec_aborted', 'Process operation was aborted');
-                    }
-                    if (result.termination.observed.kind === 'failed') {
-                        fail('project_native_toolchain_process_failed', 'Native environment process failed');
-                    }
-                    if (result.stdoutTruncated) {
-                        fail('project_native_toolchain_output_incomplete', 'Native environment output was incomplete');
-                    }
-                    return Object.freeze({
-                        exitCode: result.termination.observed.kind === 'exit' ? result.termination.observed.exitCode : 1,
-                        stdout: Buffer.from(result.stdout).toString('utf8'),
-                        stderr: Buffer.from(result.stderr).toString('utf8'),
-                    });
-                } finally {
-                    try { await settle(); }
-                    finally { await outputSubscription?.dispose(); }
-                }
-            },
-        });
-        return io;
-    };
-    return create();
-}
-
-export type ProjectNativeToolchainIoForHost = ProjectNativeToolchainIo & Readonly<{
-    createInvocation(input: Readonly<{
-        signal: AbortSignal;
-        retainCapture(capture: ProjectNativeEffectCaptureForHost): void;
-        agentIsolation?: HostAgentIsolationLaunchContext;
-        executionKind?: 'person_break_glass';
-        requesterIdentity?: HostRequesterExecutionIdentity;
-        assertLaunchCurrent?: () => Promise<void>;
-    }>): ProjectNativeToolchainIo;
-}>;
-
-export type HostPluginExecExecutionKind = 'person_break_glass' | 'machine_native';
-
-
-type PreauthorizedPluginExecSpawn = Readonly<{
-    launch: ResolvedPluginExecutable;
-    authorizePreparedLaunch?: HostPreparedPluginExecLaunchAuthorizer;
-}>;
-
-export type HostPreparedPluginExecLaunchAuthorizer = (
-    launch: HostAuthorizedPluginExecLaunch,
-    signal: AbortSignal,
-) => Promise<HostAuthorizedPluginExecLaunch>;
-
-async function resolveExecRequesterIdentity(input: Readonly<{
-    agentIsolation?: HostAgentIsolationLaunchContext;
-    requesterIdentity?: HostRequesterExecutionIdentity;
-    executionKind?: HostPluginExecExecutionKind;
-    agentLaunchKind?: HostAgentIsolationLaunchKind;
-    signal: AbortSignal;
-}>): Promise<HostRequesterExecutionIdentity | undefined> {
-    const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: input.agentIsolation,
-        requesterIdentity: input.requesterIdentity, signal: input.signal });
-    if (identity || input.executionKind === 'person_break_glass') {
-        assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: input.executionKind === 'person_break_glass',
-            agentLaunchKind: input.agentLaunchKind,
-            snapshot: input.executionKind === 'person_break_glass' ? undefined : input.agentIsolation?.read() });
-    }
-    return identity;
 }

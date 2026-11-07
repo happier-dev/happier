@@ -22,6 +22,8 @@ declare const agentNativeLaunchQualifier: unique symbol;
 export type AgentNativeLaunchQualifier = Readonly<{ [agentNativeLaunchQualifier]: true }>;
 
 export type {
+    DeploymentExecEnvAttachmentV1,
+    DeploymentExecEnvPortV1,
     PluginExecSpawnRequest,
     PluginProcessHandle,
     PluginProcessObservedTermination,

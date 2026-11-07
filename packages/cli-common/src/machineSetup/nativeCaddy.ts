@@ -200,6 +200,26 @@ export async function connectNativeCaddyNetworks(input: Readonly<{ dockerHost?: 
     return { status: 'ready' };
 }
 
+/** Target teardown calls after its Environment Domains retire. Release only the
+ * selected owned workload networks; shared Caddy and sibling attachments stay. */
+export async function disconnectNativeCaddyNetworks(input: ContainerInput & Readonly<{ networkIds: readonly string[] }>,
+    options: NativeOptions = {}): Promise<Readonly<{ status: 'ready' }>
+    | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' }>> {
+    if (!input.networkIds.length) return { status: 'ready' };
+    const run = nativeDocker(input, options);
+    const owned = await inspectOwnedContainer(input, run);
+    if (owned.status === 'needs_setup') return { status: 'ready' };
+    if (owned.status !== 'observed') return owned;
+    const retired = new Set(input.networkIds);
+    for (const network of Object.values(owned.networks)) {
+        const networkId = object(network)?.NetworkID;
+        if (typeof networkId !== 'string' || !retired.has(networkId)) continue;
+        const disconnected = await run(['network', 'disconnect', networkId, owned.containerId]);
+        if (disconnected.code !== 0) return { status: 'unavailable', reason: 'native_effect_failed' };
+    }
+    return { status: 'ready' };
+}
+
 const ownerLabel = 'dev.happier.machine-setup.recipe';
 const ownerValue = 'caddy@1';
 const command = ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'];

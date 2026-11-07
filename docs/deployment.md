@@ -2523,7 +2523,10 @@ Domain retirement through the existing Domain removal owner, with the same
 operation, controller and request binding. Its native calls spend that admission
 and check only that the admitted job remains active. The controller retires the
 captured Domains before target cleanup; it does not issue another Domain Remove
-Action or ask for another confirmation. A failed retirement returns a typed
+Action or ask for another confirmation. Native target cleanup then disconnects
+the canonical shared Caddy container from exact Compose-owned networks before
+removing them, preserving Caddy and its sibling attachments. Other active
+endpoints still prevent verified network removal. A failed retirement returns a typed
 partial result naming the Domain and its required fact and remedy, records a
 cleanup failure, and leaves the Environment present. Environment removal is the
 last step of Stop and remove. A rejected or uncertain final removal returns a

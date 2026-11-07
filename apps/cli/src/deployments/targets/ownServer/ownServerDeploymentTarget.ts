@@ -1,3 +1,9 @@
+import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentRestoreResultV1 } from '@happier-dev/deployments';
+import type { DeploymentBackupManifestV1 as BackupManifestV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DeploymentBackupActionInputV1, DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import type { OwnServerRestorePreparationForHost } from './restorePreparation';
 import type { ActionExecutorContext, DeploymentTeardownProofV1 } from '@happier-dev/protocol';
 import type { DeploymentTransitionResultForHost } from '../../deploymentTransitionResult';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -32,7 +38,8 @@ export type OwnServerDeploymentMaterialization = Readonly<
     { kind: 'review'; contentArtifactId: string } | { kind: 'deployment'; deploymentId: string }
     | { kind: 'restoration'; deploymentId: string; sourceDeploymentId: string }
 >;
-export type OwnServerDeploymentRuntimeRequest = Omit<OwnServerDeploymentRequest, 'receipt'> & Readonly<{
+export type OwnServerDeploymentRuntimeRequest = Omit<OwnServerDeploymentRequest, 'receipt' | 'actionId'> & Readonly<{
+    actionId: OwnServerDeploymentRequest['actionId'] | DeploymentBackupActionIdV1;
     materialization: OwnServerDeploymentMaterialization;
     executionRole?: 'build' | 'runtime';
 }>;
@@ -95,7 +102,8 @@ export type OwnServerDomainCaddyPreparation = Readonly<{
         signal: AbortSignal;
     }>):
         ReturnType<typeof import('@happier-dev/cli-common/machineSetup').ensureNativeCaddyContainer>;
-}> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'private_scope_unenforceable' }>;
+}> | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'private_scope_unenforceable';
+    details?: Readonly<{ requiredFact: string }> }>;
 export type OwnServerDeploymentRuntime = Readonly<{
     /** Domain setup borrows the deployed generation's already observed routing facts. */
     prepareDomainCaddy?(input: OwnServerDomainCaddyRequest): OwnServerDomainCaddyPreparation;
@@ -103,13 +111,16 @@ export type OwnServerDeploymentRuntime = Readonly<{
         exec: ExecService; nativeIo: ProjectNativeToolchainIo; deploymentRoot: string;
         assertCurrent(): Promise<void>; settleNative(): Promise<void>; release(): Promise<void>;
     }>>;
+    acquireTeardown?(request: Readonly<{ request: Extract<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>;
+        machineId: string; installationId: string }>, assertCurrent: () => Promise<void>):
+        ReturnType<NonNullable<OwnServerDeploymentRuntime['acquireRetention']>>;
     acquireCandidate?(request: Readonly<{ environmentId: string; targetLinkId: string;
         sourceIntent?: DeploymentSourceIntentV1;
         sha?: string;
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
         context: ActionExecutorContext;
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'] }>, environment: DeploymentEnvironmentDetailV1):
-        Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{ sourceIntent: DeploymentSourceIntentV1 }>>;
+        Promise<OwnServerDeploymentRuntimeAcquisition & Readonly<{ sourceIntent: DeploymentOwnServerContentV1['sourceIntent'] }>>;
     acquire(request: OwnServerDeploymentRuntimeRequest, snapshot: Readonly<{
         environment: DeploymentEnvironmentDetailV1;
         content: DeploymentOwnServerContentV1;
@@ -130,6 +141,7 @@ export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
             'environmentId' | 'machineId' | 'installationId' | 'phase' | 'bindings' | 'assertCurrent'>;
         /** Lazy use of this acquisition's captured destination and P42 bindings. */
         preparePreMigrationBackupOperands?(): Promise<import('./backupDestination').OwnServerPreMigrationBackupOperandsForHost>;
+        prepareBackupRepositoryOperands?(): Promise<import('./backupDestination').OwnServerBackupRepositoryOperandsForHost>;
         /** Explicit Source/workspace physical custody witness with the local installed-runtime guard. */
         assertSourceCurrent(): Promise<void>;
         /** Local admitted-runtime cancellation, installation and invocation lifetime. */
@@ -169,7 +181,30 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
     runtime: OwnServerDeploymentRuntime;
     signal?: AbortSignal;
 }>;
+export type OwnServerRestoreRequestForHost = Readonly<{
+    input: DeploymentBackupRestoreInputV1;
+    context: ActionExecutorContext;
+    /** Decoded once from the scoped, succeeded prepare Action operation. */
+    prepared?: OwnServerRestorePreparationForHost;
+}>;
+export type OwnServerRestoreResultForHost = (Readonly<{ kind: 'prepared' }> & OwnServerRestorePreparationForHost)
+    | DeploymentRestoreResultV1;
+
+export type OwnServerBackupRequestForHost = {
+    [TId in DeploymentBackupActionIdV1]: Readonly<{
+        actionId: TId; input: DeploymentBackupActionInputV1<TId>; context: ActionExecutorContext;
+    }> & (TId extends 'deployments.backups.inventory' ? Readonly<{
+        verificationEvidence?: readonly Readonly<{ backupOperationId: string; manifest: BackupManifestV1 }>[];
+    }> : TId extends 'deployments.backups.verify' ? Readonly<{ manifest: BackupManifestV1 }>
+        : TId extends 'deployments.backups.prune' ? Readonly<{
+            verification: Readonly<{ kind: 'verified'; level: 'manifestReadBack' | 'repositoryCheck'; manifest: BackupManifestV1 }>;
+            protectedSnapshotIds: readonly string[];
+        }> : Readonly<Record<never, never>>)
+}[DeploymentBackupActionIdV1];
+
 export type OwnServerDeploymentTargetForHost = Readonly<{
+    backup(request: OwnServerBackupRequestForHost): Promise<DeploymentBackupActionResultV1>;
+    restore(request: OwnServerRestoreRequestForHost): Promise<OwnServerRestoreResultForHost>;
     review(request: OwnServerDeploymentReviewRequest): Promise<OwnServerDeploymentReview>;
     execute(request: OwnServerDeploymentRequest): Promise<OwnServerDeploymentResult>;
     reviewMember(request: OwnServerDeploymentMemberReviewRequest): Promise<OwnServerDeploymentReview>;

@@ -10,6 +10,8 @@ import {
 } from '@happier-dev/deployment-protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import type { DeploymentTeardownEnvironmentPartialDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { projectDeploymentTransitionOutcomeUnknownForHost } from '../deploymentTransitionResult';
 import type { DeploymentReceiptDispatchV1 } from '../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentTransition } from '../targets/ownServer/ownServerDeploymentTarget';
 
@@ -100,12 +102,27 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                     steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
                     retainedProviderResource: intent.resources.some(resource => resource.disposition === 'retain' && resource.kind === 'providerResource') }
                 : undefined;
+            const finalRemoval = state === 'succeeded' && request.input.removeEnvironment === true;
             const response = await host.writeTransition({ environmentId: receipt.deployment.environmentId,
                 deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision,
                 state, content, context: request.context,
                 ...(teardownProof ? { teardownProof } : {}),
+            }).catch(error => {
+                if (finalRemoval) return projectDeploymentTransitionOutcomeUnknownForHost(error);
+                throw error;
             });
-            if (!response.ok) return response;
+            if (!response.ok) {
+                if (!finalRemoval) return response;
+                const details: DeploymentTeardownEnvironmentPartialDetailsV1 = {
+                    environmentId: request.input.environmentId, step: 'removeEnvironment', partial: true,
+                    requiredFact: 'environmentRemoval',
+                    remedy: 'Check whether the Environment still exists. If it remains, resolve the Home removal failure and retry Stop and remove.',
+                };
+                return { ...response, details };
+            }
+            // Committed removal makes the Environment unreadable. The signed
+            // transition response is the final outcome, including its removal fact.
+            if (state === 'succeeded') return response;
             receipt = await read();
             return null;
         };

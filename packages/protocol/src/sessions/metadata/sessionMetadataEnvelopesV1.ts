@@ -10,7 +10,7 @@ import {
   SESSION_OWNER_METADATA_ACCOUNT_SCOPED_KIND,
   SessionOwnerMetadataEnvelopeV1Schema,
   SessionOwnerMetadataV1Schema,
-  validateSessionOwnerMetadataEnvelopeForAccountModeV1,
+  validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1,
   type SessionOwnerMetadataV1,
   type SessionOwnerMetadataEnvelopeV1,
   type OpenSessionOwnerMetadataEnvelopeV1Result,
@@ -60,9 +60,17 @@ export function openSessionOwnerMetadataEnvelopeV1(params: Readonly<{
     return { ok: false, reason: 'invalid_envelope' };
   }
   const stored = createStoredReadSchema(SessionOwnerMetadataEnvelopeV1Schema).safeParse(normalized);
-  const validated = validateSessionOwnerMetadataEnvelopeForAccountModeV1(
-    { ...params, envelope: stored.success ? stored.data : params.envelope },
-  );
+  if (!stored.success) return { ok: false, reason: 'invalid_envelope' };
+  return openAdmittedSessionOwnerMetadataEnvelopeV1({ ...params, envelope: stored.data });
+}
+
+/** Opens a structurally admitted envelope under the current Account mode and material. */
+export function openAdmittedSessionOwnerMetadataEnvelopeV1(params: Readonly<{
+  accountMode: AccountEncryptionMode;
+  envelope: SessionOwnerMetadataEnvelopeV1;
+  material?: AccountScopedCryptoMaterial | null;
+}>): OpenSessionOwnerMetadataEnvelopeV1Result {
+  const validated = validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1(params);
   if (!validated.ok) return validated;
   if (validated.envelope.t === 'plain') {
     return { ok: true, ownerMetadata: validated.envelope.v };

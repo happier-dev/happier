@@ -19,6 +19,9 @@ export type OwnServerDockerInvocation = Readonly<{
 /** A real executable substitutes Docker only; all host process and domain owners remain real. */
 export async function createOwnServerDockerBoundary(directory: string, options?: Readonly<{ operatingSystem?: string; engineId?: string; expectedDockerHost?: string;
     runtimeInventoryFailure?: boolean;
+    sourceNormalizationFailure?: boolean;
+    dockerAccessDenied?: boolean;
+    activationCommandFailure?: boolean | 'afterCreate';
     accounting?: Readonly<{ memoryBytes: number }>;
     nativeCaddy?: Readonly<Record<string, unknown>>; nativeCloudflare?: Readonly<Record<string, unknown>> }>) {
     await mkdir(directory, { recursive: true });
@@ -29,9 +32,12 @@ export async function createOwnServerDockerBoundary(directory: string, options?:
         await writeFile(`${statePath}.next`, JSON.stringify(value));
         await rename(`${statePath}.next`, statePath);
     };
-    await writeFile(statePath, JSON.stringify({ images: {}, tags: {}, containers: [], health: {}, imageHealth: {},
+    await writeFile(statePath, JSON.stringify({ images: {}, tags: {}, containers: [], networks: [], health: {}, imageHealth: {},
         engineId: options?.engineId ?? 's0-docker-engine', operatingSystem: options?.operatingSystem ?? 'Ubuntu 24.04.3 LTS',
         runtimeInventoryFailure: options?.runtimeInventoryFailure ?? false,
+        sourceNormalizationFailure: options?.sourceNormalizationFailure ?? false,
+        dockerAccessDenied: options?.dockerAccessDenied ?? false,
+        activationCommandFailure: options?.activationCommandFailure ?? false,
         ...(options?.accounting ? { accounting: options.accounting } : {}),
         ...(options?.nativeCaddy ? { nativeCaddy: options.nativeCaddy } : {}),
         ...(options?.nativeCloudflare ? { nativeCloudflare: options.nativeCloudflare } : {}),
@@ -73,7 +79,12 @@ const write = value => process.stdout.write(typeof value === 'string' ? value : 
 const writeOperation = value => state.operationStdoutBase64 === undefined ? write(value)
     : process.stdout.write(Buffer.from(state.operationStdoutBase64, 'base64'));
 const save = () => { fs.writeFileSync(statePath+'.next', JSON.stringify(state)); fs.renameSync(statePath+'.next', statePath); };
-const imageFor = reference => state.images[state.tags[reference] || reference];
+const imageFor = reference => {
+    // Docker resolves a tagged digest reference by digest, independently of its tag.
+    const digestReference = reference.replace(/:[^/:@]+(?=@)/, '');
+    return state.images[state.tags[reference] || reference]
+        || state.images[state.tags[digestReference] || digestReference];
+};
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 // Genuine OS/Docker boundary substitute, pinned to compose-go2.9 native
 // include/ResolveEnvironment and config escapeDollarSign semantics. This is
@@ -151,7 +162,13 @@ if (args[0] === 'system' && args[1] === 'dial-stdio') {
     process.stdin.on('end', () => { watcher.close(); process.exit(0); });
     process.stdin.resume();
 } else if (args[0] === 'compose' && args[1] === 'version') write('2.39.4\n');
-else if (args[0] === 'version') write('linux/amd64\n');
+else if (args[0] === 'version') {
+    if (state.dockerAccessDenied) {
+        process.stderr.write('permission denied while trying to connect to the docker API at unix:///var/run/docker.sock: private-source-config-sentinel\n');
+        process.exit(1);
+    }
+    write('linux/amd64\n');
+}
 else if (args[0] === 'info') write(args.at(-1) === '{{json .}}'
     ? { ID: state.engineId, OperatingSystem: state.operatingSystem } : state.engineId+'\n');
 else if (args[0] === 'container' && args[1] === 'ls' && args.includes('label=dev.happier.machine-setup.recipe=caddy@1')) {
@@ -249,6 +266,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         });
         write(variables);
     } else {
+    if (state.sourceNormalizationFailure && args.includes('--no-interpolate')) {
+        process.stderr.write('private-source-config-sentinel\n');
+        process.exit(1);
+    }
     const model = loadNativeModel(files[0], args.includes('--no-interpolate'));
     // Real Compose 5.6 rejects the image-free intermediate review model unless
     // this read-only query explicitly skips full project consistency.
@@ -329,6 +350,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     }
 } else if (args[0] === 'compose' && args.includes('up')) {
     if (!args.includes('--no-build') || args[args.indexOf('--pull') + 1] !== 'never') throw new Error('fixture_unpinned_activation');
+    if (state.activationCommandFailure === true) {
+        process.stderr.write('OCI runtime create failed: exec: /private-missing-entrypoint-sentinel: no such file or directory\n');
+        process.exit(1);
+    }
     const model = loadNativeModel(files[0]);
     const project = args[args.indexOf('--project-name') + 1];
     state.containers = [...state.containers.filter(row => row.Config.Labels['com.docker.compose.project'] !== project),
@@ -359,6 +384,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                 Networks: { [project + '_default']: {} } } };
         });
     })]; save();
+    if (state.activationCommandFailure === 'afterCreate') {
+        process.stderr.write('OCI runtime create failed: exec: /private-missing-entrypoint-sentinel: no such file or directory\n');
+        process.exit(1);
+    }
     if (state.holdActivationReply) {
         state.holdingActivationReply = true; save();
         let released = false;
@@ -432,6 +461,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const row = state.containers.find(row => row.Id === args.at(-1));
     if (!row || !state.operationOutputs?.[row.Id]) throw new Error('fixture_missing_created_operation');
     row.State.Status = 'exited'; save(); writeOperation(state.operationOutputs[row.Id]);
+    process.exitCode = row.State.ExitCode;
 } else if (args[0] === 'compose' && (args.includes('exec') || args.includes('run'))) {
     const mode = args.includes('exec') ? 'exec' : 'run';
     const offset = args.indexOf(mode);
@@ -520,6 +550,33 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         return separator < 0 ? Object.hasOwn(row.Config.Labels, label)
             : row.Config.Labels[label.slice(0, separator)] === label.slice(separator + 1);
     })).map(row => row.Id).join('\n'));
+} else if (args[0] === 'network' && args[1] === 'ls') {
+    const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
+    write(state.networks.filter(row => filters.every(filter => {
+        const label = filter.slice('label='.length);
+        const separator = label.indexOf('=');
+        return separator < 0 ? Object.hasOwn(row.Labels, label)
+            : row.Labels[label.slice(0, separator)] === label.slice(separator + 1);
+    })).map(row => row.Id).join('\n'));
+} else if (args[0] === 'network' && args[1] === 'disconnect') {
+    const network = state.networks.find(row => row.Id === args[2]);
+    const caddy = state.nativeCaddy;
+    const attachment = Object.entries(caddy?.NetworkSettings.Networks || {}).find(([, value]) => value.NetworkID === args[2]);
+    if (!network || caddy?.Id !== args[3] || !attachment || !Object.hasOwn(network.Containers, caddy.Id)) process.exitCode = 1;
+    else {
+        delete network.Containers[caddy.Id];
+        delete caddy.NetworkSettings.Networks[attachment[0]];
+        save();
+    }
+} else if (args[0] === 'network' && args[1] === 'rm') {
+    for (const id of args.slice(2)) {
+        const network = state.networks.find(row => row.Id === id);
+        // Docker refuses a network with active endpoints, without force or
+        // touching another attached workload.
+        if (!network || Object.keys(network.Containers).length) { process.exitCode = 1; continue; }
+        state.networks = state.networks.filter(row => row.Id !== id);
+    }
+    save();
 } else if (args[0] === 'stats') {
     for (const row of state.containers.filter(row => args.includes(row.Id) && row.State.Status === 'running')) {
         write(JSON.stringify({ ID: row.Id, CPUPerc: '--', MemUsage: state.accounting ? state.accounting.memoryBytes+'B / --' : '-- / --' })+'\n');
@@ -584,7 +641,9 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
             setImmediate(() => process.stderr.write(value.slice(split)+' PORT=3000\n'));
         });
     }
-    state.containers = state.containers.filter(row => !args.includes(row.Id)); save();
+    state.containers = state.containers.filter(row => !args.includes(row.Id));
+    for (const network of state.networks) for (const id of args.slice(2)) delete network.Containers[id];
+    save();
 }
 else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args));
 `);
@@ -793,6 +852,38 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
             state.holdCommandReplies = hold;
             await writeState(state);
+        },
+        async seedComposeGeneration(projectName: string, health?: 'healthy') {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: unknown[] };
+            state.containers.push({ Id: '9'.repeat(64), RestartCount: 0,
+                State: { Status: 'running', ...(health ? { Health: { Status: health } } : {}) },
+                Mounts: [], NetworkSettings: { Ports: {}, Networks: {} },
+                Config: { Labels: { 'com.docker.compose.project': projectName, 'com.docker.compose.service': 'app' } } });
+            await writeState(state);
+        },
+        /** Docker network inventory, including exact labels and active endpoints. */
+        async seedNetwork(id: string, project?: string, endpointIds: readonly string[] = []) {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{
+                Id: string; Labels: Record<string, string>; Containers: Record<string, object>;
+            }> };
+            state.networks.push({ Id: id, Labels: project ? { 'com.docker.compose.project': project } : {},
+                Containers: Object.fromEntries(endpointIds.map(endpoint => [endpoint, {}])) });
+            await writeState(state);
+        },
+        async readNativeCaddyAttachments(): Promise<Readonly<{ containerId: string; networkIds: readonly string[] }> | null> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { nativeCaddy?: {
+                Id: string; NetworkSettings: { Networks: Record<string, { NetworkID: string }> };
+            } };
+            return state.nativeCaddy ? { containerId: state.nativeCaddy.Id,
+                networkIds: Object.values(state.nativeCaddy.NetworkSettings.Networks).map(network => network.NetworkID) } : null;
+        },
+        async readNetworkEndpoints(id: string): Promise<readonly string[]> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string; Containers: Record<string, object> }> };
+            return Object.keys(state.networks.find(network => network.Id === id)?.Containers ?? {});
+        },
+        async readNetworkIds(): Promise<readonly string[]> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { networks: Array<{ Id: string }> };
+            return state.networks.map(network => network.Id);
         },
         async stopCurrentContainers() {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ State: { Status: string } }> };

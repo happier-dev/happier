@@ -1008,7 +1008,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const detached = await contributedTarget.prepareTeardownDetach({ environmentId: request.input.environmentId,
                         targetLinkId, reason: request.input.reason, requestKey: request.input.requestKey ?? randomUUID(),
                         context: request.context }, environment);
-                    if (detached) return detached;
+                    if (detached) {
+                        if ('input' in detached && request.input.removeEnvironment) return {
+                            ...failure('unsupported_action'), effectAttempted: false,
+                            details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval',
+                                remedy: 'This target cannot prove workload removal. Use its removal owner before Stop and remove, or explicitly Detach to keep resources running.' },
+                        };
+                        return detached;
+                    }
                 }
                 return await ownServerTeardown.prepare(request, environment);
             } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }

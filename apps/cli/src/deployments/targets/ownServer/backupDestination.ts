@@ -3,7 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDestinationV1 } from '@happier-dev/deployments';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
+import { createDeploymentBackupEnvironmentForHost, prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 
 export type DeploymentBackupDestinationRegistryForHost = Pick<ResolvedExecutablePluginRuntimeRegistry,
     'targetActionInvocations' | 'readPluginOccurrenceId'> & Readonly<{
@@ -52,16 +52,45 @@ export type OwnServerPreMigrationBackupOperandsForHost = Awaited<ReturnType<type
     destination: Pick<DeploymentRestoreDestinationV1, 'environmentId' | 'service' | 'adapter' | 'database'>;
 }>;
 
-/** Lazy operands for P41's admitted pre-migration backup. Binding keys are
- * resolved by P42, never interpreted as literal database names by the consumer. */
-export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: Readonly<{
+type BackupDestinationPreparation = Readonly<{
     registry: DeploymentBackupDestinationRegistryForHost;
     configuration: DeploymentEnvironmentContentV1['backup'];
-    data: DeploymentBackupRunInputV1['data'];
     preparation: Omit<Parameters<typeof prepareDeploymentBackupEnvironmentForHost>[0]['preparation'], 'backupDestinationUses'>;
     context: ActionExecutorContext;
     signal: AbortSignal;
     isCurrent(): boolean;
+}>;
+
+async function captureBackupDestination(input: BackupDestinationPreparation) {
+    const configuration = input.configuration;
+    if (!configuration || 'notNeeded' in configuration) return refuse('backup_required');
+    if (configuration.ownership.environmentId !== input.preparation.environmentId) return refuse('stale_input');
+    const opened = await openDeploymentBackupDestinationForHost({ ...input, configuration });
+    const uses = opened.credentialBindings.map(identity => {
+        const row = input.preparation.bindings.find(binding =>
+            environmentSecretBindingIdentityV1(binding) === environmentSecretBindingIdentityV1(identity));
+        if (!row || row.purpose !== 'backupDestination') throw new PluginError({
+            code: 'secret_missing', message: 'The configured destination binding is unavailable' });
+        return row;
+    });
+    return { configuration, opened, preparation: { ...input.preparation, backupDestinationUses: uses } };
+}
+
+export type OwnServerBackupRepositoryOperandsForHost = ReturnType<typeof createDeploymentBackupEnvironmentForHost> & Readonly<{
+    configuration: DeploymentBackupConfigurationV1;
+}>;
+
+/** Inventory, verify and retention need destination custody only, never a database binding. */
+export async function prepareOwnServerBackupRepositoryOperandsForHost(input: BackupDestinationPreparation): Promise<OwnServerBackupRepositoryOperandsForHost> {
+    const { configuration, opened, preparation } = await captureBackupDestination(input);
+    return { ...createDeploymentBackupEnvironmentForHost({ ...opened, preparation,
+        signal: input.signal, isCurrent: input.isCurrent }), configuration };
+}
+
+/** Lazy operands for P41's admitted pre-migration backup. Binding keys are
+ * resolved by P42, never interpreted as literal database names by the consumer. */
+export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: BackupDestinationPreparation & Readonly<{
+    data: DeploymentBackupRunInputV1['data'];
 }>): Promise<OwnServerPreMigrationBackupOperandsForHost> {
     const configuration = input.configuration;
     if (!configuration || 'notNeeded' in configuration) return refuse('backup_required');
@@ -73,17 +102,10 @@ export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: R
         && binding.phase === 'runtime' && binding.name === databaseKey);
     if (!databaseBinding || databaseBinding.purpose !== 'variable') throw new PluginError({
         code: 'secret_missing', message: 'The configured database binding is unavailable' });
-    const opened = await openDeploymentBackupDestinationForHost({ ...input, configuration });
-    const uses = opened.credentialBindings.map(identity => {
-        const row = input.preparation.bindings.find(binding =>
-            environmentSecretBindingIdentityV1(binding) === environmentSecretBindingIdentityV1(identity));
-        if (!row || row.purpose !== 'backupDestination') throw new PluginError({
-            code: 'secret_missing', message: 'The configured destination binding is unavailable' });
-        return row;
-    });
+    const { opened, preparation } = await captureBackupDestination(input);
     const prepared = await prepareDeploymentBackupEnvironmentForHost({ ...opened, databaseBinding,
         signal: input.signal, isCurrent: input.isCurrent,
-        preparation: { ...input.preparation, backupDestinationUses: uses } });
+        preparation });
     return { ...prepared, configuration, data,
         destination: { environmentId: input.preparation.environmentId, service: data.service,
             adapter: 'postgres-v1', database: prepared.database } };

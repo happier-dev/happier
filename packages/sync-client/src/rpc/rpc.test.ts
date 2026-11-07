@@ -8,6 +8,11 @@ import { readRpcRequestDisposition } from './rpcDisposition.js';
 import { socketRpcCodec, type SocketRpcContent } from './socketRpcCodec.js';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ManagedMachineActionInputSchemasV1, readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
+import { DeploymentChildRoutingV1Schema } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 
 function cipher(): SocketRpcContent {
   const key = randomBytes(32);
@@ -45,6 +50,168 @@ afterEach(async () => {
   await destroy?.();
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
 });
+it.each(['plain', 'e2ee'] as const)('preserves an acknowledged handler failure through the real %s socket transport', async mode => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const failureCause = { phase: 'rpc.handler', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null } as const;
+  const failure = { name: 'PluginError', code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED',
+    message: 'Provider acknowledgment pending', retryable: true, failureCause } as const;
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, failure, decoded.callId) });
+  }));
+  const result = callSocketRpc({ socket, target: { kind: 'session', id: 'session' },
+    method: SESSION_RPC_METHODS.SESSION_USER_ACTION_ANSWER, params: { id: 'question', approved: true }, content });
+  await expect(result).rejects.toMatchObject({ message: failure.message, failureCause });
+  const error = await result.catch((error: unknown) => error);
+  expect(readRpcErrorCode(error)).toBe(failure.code);
+  expect(readRpcRequestDisposition(error)).not.toBe('outcomeUnknown');
+});
+it.each(['plain', 'e2ee'] as const)('retains the Section root only for its exact signed Stop child (%s)', async mode => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const envelope = { v: 1 as const, requestId: 'section-root', target: { kind: 'machine' as const, machineId: 'source' }, input: { sectionId: 'section' } };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
+    accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'home',
+    machineId: 'source', custodianAccountId: 'account', installationId: 'source-installation',
+    actionId: 'session.sections.archive', requestId: envelope.requestId, requestEnvelopeDigest: 'a'.repeat(43), target: envelope.target,
+  } });
+  const execution = { v: 1 as const, authorization, effectActionId: 'session.stop',
+    target: { kind: 'session' as const, sessionId: 'member' }, installationId: 'source-installation', machineSignature: 'a'.repeat(86) };
+  const retainedPacket = { method: `worker:${RPC_METHODS.STOP_SESSION}`, requestId: 'reviewed-stop',
+    params: { sessionId: 'member' }, externalActionExecution: execution, originalActionEnvelope: envelope };
+  for (const changed of [
+    { method: `worker:${RPC_METHODS.SESSION_SPAWN_NEW}` },
+    { params: { sessionId: 'foreign' } },
+    { externalActionExecution: { ...execution, effectActionId: 'session.archive' } },
+    { externalActionExecution: { ...execution, target: { kind: 'machine', machineId: 'worker' } } },
+    { externalActionExecution: { ...execution, authorization: { ...authorization,
+      binding: { ...authorization.binding, actionId: 'session.sections.delete' } } } },
+    { originalActionEnvelope: { ...envelope, input: { sectionId: 'section', memberIds: ['forged'] } } },
+  ]) expect(WorkspaceSyncSourceExecutionV1Schema.safeParse({ ...retainedPacket, ...changed }).success).toBe(false);
+  const received: string[] = [];
+  const retained: boolean[] = [];
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    received.push(packet.method);
+    retained.push(WorkspaceSyncSourceExecutionV1Schema.safeParse({ method: packet.method, requestId: packet.requestId,
+      params: packet.params, externalActionExecution: packet.externalActionExecution, originalActionEnvelope: packet.originalActionEnvelope }).success);
+    expect(packet.originalActionEnvelope).toEqual(envelope);
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, decoded.params, decoded.callId) });
+  }));
+  const invoke = (sessionId = 'member', effectActionId = 'session.stop', params: unknown = { sessionId: 'member' }) => callSocketRpc({
+    socket, target: { kind: 'machine', id: 'worker' }, method: RPC_METHODS.STOP_SESSION, params, content,
+    originalActionEnvelope: envelope,
+    // The Home/signature boundary is covered by the composed authorization suite;
+    // this real network boundary exercises only the carrier's exact grammar.
+    createExternalActionExecution: () => ({ v: 1, authorization, effectActionId,
+      target: { kind: 'session', sessionId }, installationId: 'source-installation', machineSignature: execution.machineSignature }),
+  });
+  for (const refused of [() => invoke('foreign'), () => invoke('member', 'session.archive'),
+    () => invoke('member', 'session.stop', { sessionId: 'member', unrelated: true })]) {
+    const failure = await refused().catch((error: unknown) => error);
+    expect(readRpcRequestDisposition(failure)).toBe('notSent');
+    expect(received).toEqual([]);
+  }
+  await expect(invoke()).resolves.toEqual({ sessionId: 'member' });
+  expect(received).toEqual([`worker:${RPC_METHODS.STOP_SESSION}`]);
+  expect(retained).toEqual([true]);
+});
+it.each(['machines.setup.plan', 'machines.setup.apply', 'machines.setup.remove'] as const)(
+  'retains only the exact reviewed target Plan envelope under %s through the socket carrier', async actionId => {
+    const socket = await setup();
+    const machineId = actionId === 'machines.setup.remove' ? 'receiver' : 'controller';
+    const child = { homeId: 'home', machineId: 'receiver', mode: 'effects',
+      sources: [{ kind: 'direct', setup: { scripts: [{ body: 'echo reviewed' }] } }],
+      ...(actionId === 'machines.setup.remove' ? { removeItemKeys: [] } : {}) };
+    const rootInput = actionId === 'machines.setup.remove'
+      ? { homeId: 'home', machineId, sources: child.sources, desiredRevision: 3, removeItemKeys: [], removalPlans: [] }
+      : { homeId: 'home', machineId, targets: [actionId === 'machines.setup.apply'
+        ? { homeId: 'home', machineId: child.machineId, sources: child.sources, desiredRevision: 3, recipePlans: [] } : child] };
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'reviewed-setup',
+      target: { kind: 'machine', machineId }, input: ManagedMachineActionInputSchemasV1[actionId].parse(rootInput) });
+    expect(readMachineSetupPlanChildInputV1({ rootActionId: actionId, rootInput: envelope.input,
+      machineId: child.machineId, input: child })).toEqual(child);
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
+      accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'home',
+      machineId, custodianAccountId: 'owner', installationId: `${machineId}-installation`,
+      actionId, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+    } });
+    const received: unknown[] = [];
+    server.sockets.sockets.forEach(remote => remote.on('rpc-call', (packet, acknowledge) => {
+      received.push(packet);
+      acknowledge({ ok: true, result: { desiredRevision: 3 } });
+    }));
+    const invoke = (params: unknown = child, targetId = child.machineId, effectActionId = 'machines.setup.plan') => callSocketRpc({
+      socket, target: { kind: 'machine', id: targetId }, method: RPC_METHODS.MACHINE_SETUP_PLAN, params,
+      content: { mode: 'plain' }, originalActionEnvelope: envelope,
+      // Home/signature authority is proved by the real server/CLI suites; this
+      // socket boundary exercises the carrier's exact retained-root grammar.
+      createExternalActionExecution: () => ({ v: 1, authorization, effectActionId, target: authorization.binding.target,
+        installationId: authorization.binding.installationId, machineSignature: 'a'.repeat(86) }),
+    });
+    for (const refused of [() => invoke({ ...child, homeId: 'foreign' }), () => invoke(child, 'foreign'),
+      () => invoke({ ...child, sources: [{ kind: 'direct', setup: { scripts: [{ body: 'echo changed' }] } }] }),
+      () => invoke(child, child.machineId, 'machines.setup.remove')]) {
+      const failure = await refused().catch((error: unknown) => error);
+      expect(readRpcRequestDisposition(failure)).toBe('notSent');
+      expect(received).toEqual([]);
+    }
+    await expect(invoke()).resolves.toEqual({ desiredRevision: 3 });
+    expect(received).toEqual([expect.objectContaining({ method: `receiver:${RPC_METHODS.MACHINE_SETUP_PLAN}`,
+      params: child, originalActionEnvelope: envelope })]);
+  });
+
+it.each(['plain', 'e2ee'] as const)('retains the teardown root for its captured Domain remove child (%s)', async mode => {
+  const socket = await setup();
+  const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'teardown-root',
+    target: { kind: 'machine', machineId: 'controller' },
+    input: { serverId: 'home', environmentId: 'environment', reason: 'manual' } });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-root', binding: {
+    accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'home',
+    machineId: 'controller', custodianAccountId: 'account', installationId: 'controller-installation',
+    actionId: 'deployments.teardown', requestId: envelope.requestId,
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+    environmentId: 'environment', deploymentChildRoot: true, accountEncryptionMode: mode,
+  } });
+  const child = DeploymentChildRoutingV1Schema.parse({ v: 1, kind: 'domain', actionId: 'deployments.domains.remove',
+    machineId: 'receiver', installationId: 'receiver-installation',
+    input: { serverId: 'home', environmentId: 'environment', domainId: 'domain' },
+    expectedDomainRevision: 2, actionOperationId: 'operation', capture: {
+      placement: { accountId: 'account', serverId: 'home', environmentId: 'environment', targetLinkId: 'predecessor', domainId: 'domain',
+        machineId: 'receiver', installationId: 'receiver-installation', actionOperationId: 'operation',
+        requestId: 'domain-request', nativeServer: 'native' },
+      content: { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      desired: false, listener: 'public',
+    } });
+  const received: unknown[] = [];
+  server.sockets.sockets.forEach(remote => remote.on('rpc-call', async (packet, acknowledge) => {
+    received.push(packet);
+    const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+    expect(decoded.params).toEqual(child);
+    acknowledge({ ok: true, result: await socketRpcCodec.encodeResponse(content, { removed: true }, decoded.callId) });
+  }));
+  const invoke = (targetId = child.machineId, effectActionId = child.actionId) => callSocketRpc({
+    socket, target: { kind: 'machine', id: targetId }, method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD,
+    params: child, content, originalActionEnvelope: envelope,
+    // Home/signature authority is covered by the composed admission tests;
+    // this real socket boundary verifies retained-root transport and refusal before emission.
+    createExternalActionExecution: () => ({ v: 1, authorization, effectActionId, target: authorization.binding.target,
+      installationId: authorization.binding.installationId, deploymentChildRouting: child, machineSignature: 'a'.repeat(86) }),
+  });
+  for (const refused of [() => invoke('foreign'), () => invoke(child.machineId, 'deployments.domains.add')]) {
+    const failure = await refused().catch((error: unknown) => error);
+    expect(readRpcRequestDisposition(failure)).toBe('notSent');
+    expect(received).toEqual([]);
+  }
+  await expect(invoke()).resolves.toEqual({ removed: true });
+  expect(received).toEqual([expect.objectContaining({ method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`,
+    originalActionEnvelope: envelope, externalActionExecution: expect.objectContaining({
+      authorization, effectActionId: child.actionId, deploymentChildRouting: child,
+    }) })]);
+});
+
 it.each(['plain', 'e2ee'] as const)('correlates each ordinary %s issuance without opting into cancellation', async mode => {
   const socket = await setup();
   const content = mode === 'plain' ? { mode: 'plain' } as const : cipher();

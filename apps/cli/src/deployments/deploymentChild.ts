@@ -1,8 +1,10 @@
-import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
+import { projectDeploymentFailure as failure } from './deploymentFailure';
+import { deploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema,
     type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPromoteInputV1 } from '@happier-dev/protocol';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
     DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
 import type { AccountArtifact } from '@/api/artifacts/accountArtifactStore';
@@ -16,9 +18,6 @@ import { projectDeploymentTransitionResultForHost } from './deploymentTransition
 import type { OwnServerDeploymentRequest, OwnServerDeploymentTargetHostInput,
     OwnServerDeploymentTargetForHost, OwnServerDeploymentResult, OwnServerDeploymentMemberRequest } from './targets/ownServer/ownServerDeploymentTarget';
 
-const failure = (errorCode: string, error?: unknown): ActionExecuteFailure =>
-    readDeploymentSystemToolFailure(errorCode, error)
-        ?? { ok: false, errorCode, error: errorCode };
 const errorCode = (error: unknown) => error instanceof Error && 'code' in error && typeof error.code === 'string'
     ? error.code : 'deployment_content_unavailable';
 
@@ -41,6 +40,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
     open(id: string, context: ActionExecutorContext): Promise<AccountArtifact | null>;
     storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
     domainNative: ReturnType<typeof import('./targets/ownServer/ownServerDomainNative').createOwnServerDomainNative>;
+    teardown: ReturnType<typeof import('./targets/ownServer/teardown').createOwnServerTeardownForHost>['executeNative'];
     assertCurrent(context: ActionExecutorContext): Promise<void>;
     prepareCandidate(request: DaemonDeploymentCandidateRequest): Promise<DaemonDeploymentCandidateResult>;
 }>) {
@@ -55,7 +55,9 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             || !isDeepStrictEqual(content.sourceIntent, promotion.candidateEnvironmentContent.definition)
             || !isDeepStrictEqual(content.images, promotion.sourceReceipt.content.images)
             || !isDeepStrictEqual(content.machines, promotion.link.machines)
-            || content.ownServer && !isDeepStrictEqual(content.ownServer.imageArchives, promotion.sourceReceipt.content.ownServer?.imageArchives)
+            // Build adopts the pinned images into this receipt's archive custody.
+            || admittedDeployment === undefined && content.ownServer
+                && !isDeepStrictEqual(content.ownServer.imageArchives, promotion.sourceReceipt.content.ownServer?.imageArchives)
             || content.buildMachineId !== promotion.buildMachineId
             || !isDeepStrictEqual(content.ingress, promotion.destination.environment.ingress)
             || admittedDeployment === undefined && (content.steps.length || content.machineResults.length)) {
@@ -71,15 +73,21 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             if (job.input.serverId !== host.serverId || job.machineId !== host.machineId) return failure('target_mismatch');
             await assertCurrent(context);
             if (job.kind === 'domain' || job.kind === 'domainDiscover') return await ports.domainNative(job, context);
+            if (job.kind === 'teardown') {
+                if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
+                return await ports.teardown(job, context);
+            }
             const authorization = context.externalActionExecutionAuthorization;
             const templateRoot = authorization?.binding.actionId === 'deployments.templates.instantiate';
+            const createRoot = authorization?.binding.actionId === 'deployments.environments.create'
+                && readHostReviewedChildOperationV1(context, job.actionId, job.input)?.parent.actionId === 'deployments.environments.create';
             if (templateRoot && !await isReviewedDeploymentChild({ authorization,
                 envelope: context.originalActionEnvelope, actionId: job.actionId, machineId: job.machineId, params: job,
-                ...(context.signal ? { signal: context.signal } : {}) })) return failure(context.signal?.aborted ? 'cancelled' : 'action_forbidden');
-            const root = job.actionId === 'deployments.deploy' && authorization && !templateRoot
+                ...(context.signal ? { signal: context.signal } : {}) })) return context.signal?.aborted ? failure('cancelled') : deploymentAuthorizationFailure('child_root_not_reviewed');
+            const root = job.actionId === 'deployments.deploy' && authorization && !templateRoot && !createRoot
                 ? await readReviewedDeploymentDeployInput({ authorization, envelope: context.originalActionEnvelope,
                     ...(context.signal ? { signal: context.signal } : {}) }) : undefined;
-            if (job.actionId === 'deployments.deploy' && authorization && !templateRoot && !root) return failure(context.signal?.aborted ? 'cancelled' : 'action_forbidden');
+            if (job.actionId === 'deployments.deploy' && authorization && !templateRoot && !createRoot && !root) return context.signal?.aborted ? failure('cancelled') : deploymentAuthorizationFailure('child_root_not_reviewed');
             const semanticRoot = root && !('contentArtifactId' in root) ? root : undefined;
             const admitSource = async (content: DeploymentContentV1, issued: boolean,
                 suppliedEnvironment?: Awaited<ReturnType<typeof host.readEnvironment>>) => {
