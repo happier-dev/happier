@@ -3,6 +3,7 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
@@ -43,13 +44,14 @@ afterEach(async () => {
   home = null;
 });
 
-async function mount(phone = true, readRunningBindings?: (bindings: readonly unknown[]) => Promise<unknown>,
-  referenceTargets?: readonly unknown[]) {
+async function mount(phone = true, referenceTargets?: readonly unknown[],
+  rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number }>) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
     handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
       ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
   const { entry } = await home.addOwnerResource();
-  const binding = createDeploymentSecretVariableBindingV1({ name: 'API_KEY', phase: 'runtime', resourceId: 'resource-a', resourceRevision: 3 });
+  const binding = createDeploymentSecretVariableBindingV1({ name: 'API_KEY', phase: 'runtime', resourceId: 'resource-a',
+    resourceRevision: rotation?.bindingRevision ?? 3 });
   const base = createDeploymentEnvironmentDetailV1();
   const detail = { ...base, content: { ...base.content, bindings: [binding] } };
   const scope = home.scope;
@@ -64,7 +66,8 @@ async function mount(phone = true, readRunningBindings?: (bindings: readonly unk
       snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
-      machineId="machine-a" readRunningBindings={readRunningBindings as never} referenceTargets={referenceTargets as never} />;
+      machineId="machine-a" referenceTargets={referenceTargets as never}
+      secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
     // Test Renderer has no layout engine; this is the platform's measured anchor.
@@ -128,30 +131,9 @@ it('takes the person to the Machine Services control owner and the existing API 
   expect(materialReads()).toBe(0);
 });
 
-it('marks a secret whose saved revision the running release does not have yet, from one bindings read', async () => {
-  const facts = { ok: true, environmentId: 'environment-staging', deploymentId: 'deployment-a', targetLinkId: 'target-a',
-    machineId: 'machine-a', installationId: 'installation-a', references: [],
-    secrets: [{ name: 'API_KEY', phase: 'runtime', status: 'redeploy_required', runningRevision: 2, currentRevision: 3 }] };
-  const read = vi.fn(async (_bindings: readonly unknown[]) => facts);
-  const { screen } = await mount(false, read);
-  await vi.waitFor(() => expect(screen.findByTestId(`${prefix}.running`)).not.toBeNull());
-  expect(read).toHaveBeenCalledTimes(1);
-  expect(read.mock.calls[0]![0]).toEqual([expect.objectContaining({ name: 'API_KEY', purpose: 'variable' })]);
-  // A render that changes no bound source issues no second read.
-  await act(async () => {});
-  expect(read).toHaveBeenCalledTimes(1);
-});
-
-it('shows nothing when the running release has no facts to compare', async () => {
-  const read = vi.fn(async () => ({ ok: false, error: 'deployment_unavailable' }));
-  const { screen } = await mount(false, read);
-  await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-  expect(screen.findByTestId(`${prefix}.running`)).toBeNull();
-});
-
 it('points a new variable at another service export through the same draft and binding write', async () => {
   const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-  const { screen } = await mount(false, undefined, [{ environmentId: 'environment-data', export: 'database', service: 'db' }]);
+  const { screen } = await mount(false, [{ environmentId: 'environment-data', export: 'database', service: 'db' }]);
   const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel !== undefined
     && node.props.items?.some((item: { id: string }) => item.id === 'reference'));
   expect(menu()).toBeDefined();
@@ -168,4 +150,35 @@ it('offers no service pointer when there is no declared export to point at', asy
   const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
   const { screen } = await mount(false);
   expect(screen.findAllByType(DropdownMenu).some(node => node.props.items?.some((item: { id: string }) => item.id === 'reference'))).toBe(false);
+});
+
+function rotatedFact(currentRevision: number) {
+  return [{ machineId: 'machine-a', installationId: 'installation-a', facts: [{ name: 'API_KEY', phase: 'runtime',
+    ref: formatSharedSavedSecretRefV1('resource-a'), runningRevision: 3, currentRevision, status: 'redeploy_required' }] }];
+}
+
+it('names a rotated secret from the controller facts and re-binds the newest revision in the draft before Save', async () => {
+  const onDeploy = vi.fn();
+  const { screen } = await mount(false, undefined, { secretRevisions: rotatedFact(4), onDeploy });
+  expect(screen.findByTestId(`${prefix}.rotated`)).not.toBeNull();
+  // Bound to revision 3 while 4 is saved: the primary control re-binds first; Deploy is not offered yet.
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.rotated.action');
+  await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull());
+  expect(onDeploy).not.toHaveBeenCalled();
+});
+
+it('offers Deploy once the binding already names the newest revision', async () => {
+  const onDeploy = vi.fn();
+  const { screen } = await mount(false, undefined, { secretRevisions: rotatedFact(4), onDeploy, bindingRevision: 4 });
+  expect(screen.findByTestId(`${prefix}.rotated`)).not.toBeNull();
+  await screen.pressByTestIdAsync('project-deployments.environment.variables.rotated.action');
+  expect(onDeploy).toHaveBeenCalledTimes(1);
+});
+
+it('stays quiet when every running revision is current', async () => {
+  const unchanged = [{ machineId: 'machine-a', installationId: 'installation-a', facts: [{ name: 'API_KEY', phase: 'runtime',
+    ref: formatSharedSavedSecretRefV1('resource-a'), runningRevision: 3, currentRevision: 3, status: 'unchanged' }] }];
+  const { screen } = await mount(false, undefined, { secretRevisions: unchanged });
+  expect(screen.findByTestId(`${prefix}.rotated`)).toBeNull();
+  expect(screen.findByTestId('project-deployments.environment.variables.rotated')).toBeNull();
 });

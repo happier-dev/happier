@@ -6,9 +6,8 @@ import {
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
-import type { EnvironmentSecretBindingV1, EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentBindingsReadResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
+import type { EnvironmentVariableBindingV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentEnvironmentReadDetailV1, EnvironmentSecretBindingProjectionV1 } from '@happier-dev/deployments';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -74,17 +73,14 @@ const PHASES: readonly Phase[] = ['build', 'runtime', 'both'];
 const MASK = '••••••••••••••••••••••••';
 const TABLE_MIN_WIDTH_PX = 520;
 const keyOf = (row: VariableRow) => row.key;
-/**
- * A saved secret revision the running release does not have yet, per variable (T2-DOMAIN-PREVIEW
- * `deployments.bindings.read`). A changed reference address is told at deploy review instead (O-DEPLOY 15:10Z).
- */
-type RunningFact = 'secretRotated';
-type RunningFacts = ReadonlyMap<string, RunningFact>;
-const NO_RUNNING_FACTS: RunningFacts = new Map();
 /** A service another variable can point at: one declared service export of an Environment the page can name. */
 export type VariableReferenceTarget = Readonly<{ environmentId: string; export: string; service: string }>;
 const NO_REFERENCE_TARGETS: readonly VariableReferenceTarget[] = Object.freeze([]);
-const factKey = (name: string, phase: 'build' | 'runtime') => JSON.stringify([name, phase]);
+type SecretRevisions = DeploymentEnvironmentReadDetailV1['secretRevisions'];
+/** Per variable (name, phase): the newest saved revision the running release does not have yet. */
+type RotatedSecrets = ReadonlyMap<string, number>;
+const NO_ROTATED: RotatedSecrets = new Map();
+const rotationKey = (name: string, phase: 'build' | 'runtime') => JSON.stringify([name, phase]);
 const noop = () => {};
 
 /**
@@ -112,10 +108,12 @@ export const DeploymentVariablesPanel = React.memo(
       /** Only a single runtime Machine has an unambiguous Services destination. */
       machineId?: string | null;
       /**
-       * The running release's binding facts, bound by the page to its current deployment placement; absent while
-       * nothing runs. Read once per open and when the bound secrets change, never polled.
+       * The Environment controller's running-vs-saved secret facts per runtime member (T2-DOMAIN-PREVIEW
+       * `secretRevisions` on the Environment detail); absent before the page has them.
        */
-      readRunningBindings?: ((bindings: readonly EnvironmentSecretBindingV1[]) => Promise<DeploymentBindingsReadResultV1>) | null;
+      secretRevisions?: SecretRevisions | null;
+      /** The page's Deploy, offered once the new revisions are saved; absent where this viewer cannot deploy. */
+      onDeploy?: (() => void) | null;
       /** Declared service exports "Point at another service" offers (this Environment's and its Project's). */
       referenceTargets?: readonly VariableReferenceTarget[];
     }>,
@@ -131,7 +129,10 @@ export const DeploymentVariablesPanel = React.memo(
       [catalog],
     );
     const rows = React.useMemo(() => variableRows(editor.rows), [editor.rows]);
-    const running = useRunningBindingFacts(props.readRunningBindings ?? null, editor.rows);
+    const rotated = React.useMemo(() => rotatedSecrets(props.secretRevisions ?? null), [props.secretRevisions]);
+    // Rows still bound to an older revision than the newest one saved: "Use the new revision" re-binds them here.
+    const stale = React.useMemo(() => rows.filter(row => row.binding.source.kind === 'secret'
+      && (rowRotation(row, rotated) ?? 0) > row.binding.source.resourceRevision), [rotated, rows]);
     const [disclosedKey, setDisclosedKey] = React.useState<string | null>(null);
     const disclosedRow = rows.find(row => JSON.stringify([props.environmentId, row.key]) === disclosedKey);
     const disclosedRef = disclosedRow?.binding.source.kind === 'secret' ? disclosedRow.binding.source.ref : null;
@@ -223,8 +224,7 @@ export const DeploymentVariablesPanel = React.memo(
           binding={row.binding}
           environmentName={props.environmentName}
           secretName={secretName}
-          running={rowRunningFact(row, running)}
-          runningTestID={`project-deployments.environment.variable.${row.name}.running`}
+          rotatedTestID={rowRotation(row, rotated) !== null ? `project-deployments.environment.variable.${row.name}.rotated` : undefined}
         />
       );
       return {
@@ -244,8 +244,8 @@ export const DeploymentVariablesPanel = React.memo(
                   style={{ color: theme.colors.text.secondary }}
                 >
                   {`${phaseLabel(row.phase)} · ${sourceTitle(row.binding, props.environmentName, secretName)}`}
-                  {rowRunningFact(row, running) ? <>{' · '}<RunningFactWord testID={`project-deployments.environment.variable.${row.name}.running`}
-                    fact={rowRunningFact(row, running)!} /></> : null}
+                  {rowRotation(row, rotated) !== null ? <>{' · '}<RotatedWord
+                    testID={`project-deployments.environment.variable.${row.name}.rotated`} /></> : null}
                 </Text>
               ),
         action: rowMenu(true),
@@ -292,7 +292,7 @@ export const DeploymentVariablesPanel = React.memo(
       props.scope,
       props.environmentId,
       manageSecret,
-      running,
+      rotated,
       theme.colors.text.secondary,
     ]);
 
@@ -426,6 +426,31 @@ export const DeploymentVariablesPanel = React.memo(
               props.review.pendingId === outcome.artifactId
             }
             onOpenReview={props.review.open}
+          />
+        ) : null}
+        {mode === 'table' && rotated.size > 0 && rows.some(row => rowRotation(row, rotated) !== null) ? (
+          <AttentionBanner
+            testID="project-deployments.environment.variables.rotated"
+            tone="warning"
+            title={t('projects.deployments.editors.rotatedTitle')}
+            description={t('projects.deployments.editors.rotatedBody')}
+            action={stale.length > 0 && editable ? {
+              label: t('projects.deployments.editors.useNewRevision'),
+              onPress: () => {
+                // One draft edit for every stale row; Save stays the one `deployments.bindings.set` write.
+                for (const row of stale) {
+                  const source = row.binding.source;
+                  const revision = rowRotation(row, rotated);
+                  if (source.kind !== 'secret' || revision === null) continue;
+                  const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
+                  editor.putMany(phases.map(phase => ({ ...row.binding, phase, source: { ...source, resourceRevision: revision } })),
+                    row.identities);
+                }
+              },
+            } : stale.length === 0 && !draft.dirty && props.onDeploy ? {
+              label: t('projects.deployments.deploy'),
+              onPress: props.onDeploy,
+            } : null}
           />
         ) : null}
         {draft.conflict ? (
@@ -1168,54 +1193,34 @@ function SaveOutcome(
   );
 }
 
-/**
- * Reads the running release's facts for the committed references and secrets once per open and whenever the set of
- * bound sources changes. A failed or unavailable read shows nothing: unknown is not "unchanged" and not "changed".
- */
-function useRunningBindingFacts(
-  read: ((bindings: readonly EnvironmentSecretBindingV1[]) => Promise<DeploymentBindingsReadResultV1>) | null,
-  projection: readonly EnvironmentSecretBindingProjectionV1[],
-): RunningFacts {
-  const bindings = React.useMemo(() => projection.map(row => row.binding), [projection]);
-  // Only the bound secrets decide the read; editing a plain value or a reference does not re-read.
-  const sourcesKey = JSON.stringify(bindings.flatMap(binding => binding.purpose === 'variable'
-    && binding.source.kind === 'secret' ? [[binding.name, binding.phase, binding.source]] : []));
-  const latest = React.useRef(bindings);
-  latest.current = bindings;
-  const [facts, setFacts] = React.useState<Readonly<{ key: string; facts: RunningFacts }> | null>(null);
-  React.useEffect(() => {
-    if (!read || sourcesKey === '[]') return;
-    let live = true;
-    void read(latest.current).then((result) => {
-      if (!live || !result.ok) return;
-      const next = new Map<string, RunningFact>();
-      for (const item of result.secrets) if (item.status === 'redeploy_required') next.set(factKey(item.name, item.phase), 'secretRotated');
-      setFacts({ key: sourcesKey, facts: next });
-    }, () => {});
-    return () => { live = false; };
-  }, [read, sourcesKey]);
-  return facts?.key === sourcesKey ? facts.facts : NO_RUNNING_FACTS;
+/** The newest saved revision any runtime member does not run yet, per (name, phase); unknown facts say nothing. */
+function rotatedSecrets(revisions: SecretRevisions | null): RotatedSecrets {
+  if (!revisions || revisions.length === 0) return NO_ROTATED;
+  const out = new Map<string, number>();
+  for (const member of revisions) {
+    for (const fact of member.facts) {
+      if (fact.status !== 'redeploy_required' || fact.currentRevision === null) continue;
+      const key = rotationKey(fact.name, fact.phase);
+      out.set(key, Math.max(out.get(key) ?? 0, fact.currentRevision));
+    }
+  }
+  return out.size === 0 ? NO_ROTATED : out;
 }
 
-function rowRunningFact(row: VariableRow, facts: RunningFacts): RunningFact | null {
-  if (facts.size === 0) return null;
+function rowRotation(row: VariableRow, rotated: RotatedSecrets): number | null {
+  if (rotated.size === 0 || row.binding.source.kind !== 'secret') return null;
   const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
+  let newest: number | null = null;
   for (const phase of phases) {
-    const fact = facts.get(factKey(row.name, phase));
-    if (fact) return fact;
+    const revision = rotated.get(rotationKey(row.name, phase));
+    if (revision !== undefined) newest = Math.max(newest ?? 0, revision);
   }
-  return null;
+  return newest;
 }
 
 /** "New revision saved · redeploy to apply": amber, because the running release still uses the old revision. */
-function RunningFactWord(props: Readonly<{ fact: RunningFact; testID?: string }>) {
-  return (
-    <StatusWord
-      testID={props.testID}
-      variant="attention"
-      label={t('projects.deployments.editors.secretRotated')}
-    />
-  );
+function RotatedWord(props: Readonly<{ testID?: string }>) {
+  return <StatusWord testID={props.testID} variant="attention" label={t('projects.deployments.editors.secretRotated')} />;
 }
 
 /** "Saved secret · revision 2" over its provenance, or a value, or a reference: what the row's value comes from. */
@@ -1224,8 +1229,7 @@ function ValueSource(
     binding: VariableBinding;
     environmentName: (id: string) => string | null;
     secretName: (ref: string) => string | null;
-    running?: RunningFact | null;
-    runningTestID?: string;
+    rotatedTestID?: string;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1242,10 +1246,8 @@ function ValueSource(
       >
         {title}
       </Text>
-      {props.running ? (
-        <Text variant="meta" numberOfLines={1}>
-          <RunningFactWord fact={props.running} testID={props.runningTestID} />
-        </Text>
+      {props.rotatedTestID ? (
+        <Text variant="meta" numberOfLines={1}><RotatedWord testID={props.rotatedTestID} /></Text>
       ) : detail ? (
         <Text
           variant="meta"
