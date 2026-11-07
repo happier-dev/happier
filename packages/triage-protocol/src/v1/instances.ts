@@ -11,15 +11,14 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/mani
 
 import {
     MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TRIAGE_SOURCE_INSTANCE_KEY_STABILITY_V1,
 } from './bounds.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import {
     TriageIdentifierV1ProtocolSchema,
-    TriageLocationV1ProtocolSchema,
     TriageSourceInstanceRefV1Schema,
-    TriageTextV1ProtocolSchema,
 } from './identity.js';
 import {
     defineTriageCompositeIdentifierStringV1,
@@ -108,11 +107,12 @@ export type TriageSourceInstanceConfigurationV1 = ReturnType<
 >;
 
 /** Mutable presentation of one candidate or configured source instance. */
+const triageSourceInstanceTextV1 = defineTriageSingleLineStringV1(MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1);
 export const TriageSourceInstanceLocatorV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    displayLabel: TriageTextV1ProtocolSchema,
-    displayPath: TriageTextV1ProtocolSchema.optional(),
-    webUrl: TriageLocationV1ProtocolSchema.optional(),
+    displayLabel: triageSourceInstanceTextV1,
+    displayPath: triageSourceInstanceTextV1.optional(),
+    webUrl: triageSourceInstanceTextV1.optional(),
 }, { policy: 'closed' });
 export type TriageSourceInstanceLocatorV1 = ReturnType<
     typeof TriageSourceInstanceLocatorV1Schema.parse

@@ -11,12 +11,15 @@ import {
 } from './contribution.js';
 import { TriageDetailSurfaceInputV1Schema } from './detail.js';
 import { TriageListInstancesInputV1Schema } from './instances.js';
+import { TriageResolveResourceInputV1Schema } from './resourceLinks.js';
 
 describe('Triage sources contribution protocol', () => {
     it('declares required reads plus optional prepare and final verification roles', () => {
         const operations = TriageSourcesContributionProtocolV1.operations;
         expect(Object.keys(operations).sort())
-            .toEqual(['create', 'edit', 'get', 'linkSession', 'listInstances', 'listScopeUnits', 'prepareReviewWorkspace', 'readPullRequestStatus', 'readSessionLinks', 'scan', 'transition', 'verifyReviewWorkspace']);
+            .toEqual(['create', 'edit', 'get', 'linkSession', 'listInstances', 'listScopeUnits', 'prepareReviewWorkspace', 'readAttention', 'readFixPullRequests', 'readPullRequestStatus', 'readSessionLinks', 'resolveResource', 'scan', 'transition', 'verifyReviewWorkspace']);
+        expect(operations.resolveResource.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin', 'ui'] });
+        expect(operations.readAttention.declaration).toMatchObject({ required: false, dangerLevel: 'safe', surfaces: ['plugin'] });
         expect(operations.listInstances.declaration).toMatchObject({
             dangerLevel: 'safe',
             surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
@@ -39,6 +42,8 @@ describe('Triage sources contribution protocol', () => {
         }
         expect(TriageSourcesContributionProtocolV1.operations.listInstances.declaration.input)
             .toMatchObject({ schema: TriageListInstancesInputV1Schema });
+        expect(TriageSourcesContributionProtocolV1.operations.resolveResource.declaration.input)
+            .toMatchObject({ schema: TriageResolveResourceInputV1Schema });
     });
 
     it('declares the required detail content surface and no other surface role', () => {

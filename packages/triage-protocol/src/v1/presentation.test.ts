@@ -142,6 +142,19 @@ describe('triage detail presentation', () => {
         expect(failure.code).toBe('source/unauthorized');
     });
 
+    it('provides explicit source-language access guidance without replacing existing localized fallbacks', () => {
+        const contextual = 'The source may have applied this change. Reload before trying again.';
+        const permission = { class: 'permission', code: 'source/forbidden' } as const;
+        const authentication = { class: 'authentication', code: 'source/unauthorized' } as const;
+        expect(describeTriageSourceFailureV1(permission, contextual, undefined, 'en')).toContain('Grant it access');
+        expect(describeTriageSourceFailureV1(authentication, contextual, undefined, 'en')).toContain('Reconnect');
+        expect(describeTriageSourceFailureV1(permission, 'Lecture indisponible.')).toBe('Lecture indisponible.');
+        for (const failureClass of ['transient', 'rateLimit', 'unknown'] as const) {
+            expect(describeTriageSourceFailureV1({ class: failureClass, code: 'source/confirmation-failed' }, contextual, undefined, 'en'))
+                .toBe(contextual);
+        }
+    });
+
     it.each(['transient', 'rateLimit', 'unknown'] as const)('preserves an uncertain write warning instead of generic retry advice (%s)', (failureClass) => {
         const warning = 'The source may have applied this change. Reload before trying again.';
         const translate = (key: string, fallback?: string) => key.startsWith('plugins.triage.sourceSettings.failure.')

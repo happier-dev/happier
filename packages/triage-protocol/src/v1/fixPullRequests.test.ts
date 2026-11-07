@@ -14,6 +14,11 @@ const entryRef = createTriageSourceV1Fixture().detailInput.observation.entryRef;
 const candidate = { entryRef, origins: ['user', 'session'], status: 'unknown', display: { title: 'Fix', scopeLabel: 'example/repo' } };
 
 describe('public fix-PR caller contract', () => {
+    it('admits native candidates through the same closed projection as explicit and Session choices', () => {
+        const native = { ...candidate, origins: ['user', 'session', 'native'] };
+        expect(TriageReadFixPullRequestsResultV1Schema.parse({ v: 1, candidates: [native], primary: native, incomplete: true }))
+            .toMatchObject({ candidates: [native], incomplete: true });
+    });
     it('accepts durable choices beyond relationship query pages without truncating the public read', () => {
         const candidates = Array.from({ length: 2 * MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 }, (_, index) => ({
             ...candidate,

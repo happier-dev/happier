@@ -7,16 +7,6 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    "./releases/v1": {
-      "happier-source": "./src/releases/v1/index.ts",
-      "types": "./dist/releases/v1/index.d.ts",
-      "default": "./dist/releases/v1/index.js"
-    },
-    "./releases/testing/v1": {
-      "happier-source": "./src/releases/testing/v1/index.ts",
-      "types": "./dist/releases/testing/v1/index.d.ts",
-      "default": "./dist/releases/testing/v1/index.js"
-    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
@@ -27,11 +17,6 @@
       "types": "./dist/v1/index.d.ts",
       "default": "./dist/v1/index.js"
     },
-    "./testing/v1": {
-      "happier-source": "./src/testing/v1/index.ts",
-      "types": "./dist/testing/v1/index.d.ts",
-      "default": "./dist/testing/v1/index.js"
-    },
     "./ci/v1": {
       "happier-source": "./src/ci/v1/index.ts",
       "types": "./dist/ci/v1/index.d.ts",
@@ -41,6 +26,21 @@
       "happier-source": "./src/ci/testing/v1/index.ts",
       "types": "./dist/ci/testing/v1/index.d.ts",
       "default": "./dist/ci/testing/v1/index.js"
+    },
+    "./releases/v1": {
+      "happier-source": "./src/releases/v1/index.ts",
+      "types": "./dist/releases/v1/index.d.ts",
+      "default": "./dist/releases/v1/index.js"
+    },
+    "./releases/testing/v1": {
+      "happier-source": "./src/releases/testing/v1/index.ts",
+      "types": "./dist/releases/testing/v1/index.d.ts",
+      "default": "./dist/releases/testing/v1/index.js"
+    },
+    "./testing/v1": {
+      "happier-source": "./src/testing/v1/index.ts",
+      "types": "./dist/testing/v1/index.d.ts",
+      "default": "./dist/testing/v1/index.js"
     }
   },
   "files": [
@@ -60,6 +60,8 @@
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run --config vitest.config.ts",
+    "test:source": "../../apps/stack/bin/hstack-exec --script=test:source:local",
+    "test:source:local": "vitest run --config vitest.source.config.ts",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },

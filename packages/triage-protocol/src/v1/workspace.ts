@@ -187,11 +187,11 @@ export const TriagePrepareReviewWorkspaceResultV1Schema = defineProtocolUnion([
         ]),
         currentness: TriageReviewWorkspaceCurrentnessV1Schema,
         /**
-         * A bounded opaque transport of the canonical SCM pull-request
+         * An opaque transport of the canonical SCM pull-request
          * reference. Its parser stays at the SCM/Reviews producer: Triage and
          * sources must not grow a second `ScmPullRequestReference` grammar.
          */
-        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+        pullRequest: defineProtocolJsonValue(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceRequired'),
@@ -238,7 +238,7 @@ const triageVerifyReviewWorkspaceInputFieldsV1 = {
     prepared: defineProtocolUnion([
         defineProtocolObject({
             repositoryPath: TriageLocationV1ProtocolSchema,
-            pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+            pullRequest: defineProtocolJsonValue(),
         }, { policy: 'closed' }),
         defineProtocolObject({
             kind: defineProtocolLiteral('acceptedCheckout'),
@@ -273,7 +273,7 @@ export type TriageVerifyReviewWorkspaceInputV1 = ReturnType<
 export const TriageVerifyReviewWorkspaceResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('verified'),
-        pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+        pullRequest: defineProtocolJsonValue(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('workspaceMismatch'),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    TriagePrepareReviewWorkspaceResultV1Schema,
     TriageVerifyReviewWorkspaceInputV1Schema,
     TriageVerifyReviewWorkspaceResultV1Schema,
 } from './workspace.js';
@@ -54,6 +55,23 @@ const input = {
 } as const;
 
 describe('Triage final review workspace verification', () => {
+    it('carries a long opaque canonical SCM reference through preparation and verification unchanged', () => {
+        const pullRequest = { url: `https://forge.example/${'repository/'.repeat(64)}pull/17` };
+        const prepared = {
+            kind: 'prepared',
+            repositoryPath: input.prepared.repositoryPath,
+            branch: 'review/pr-17',
+            created: false,
+            currentness: { kind: 'currentAtObservedHead' },
+            pullRequest,
+        };
+        expect(TriagePrepareReviewWorkspaceResultV1Schema.parse(prepared)).toEqual(prepared);
+        const verification = { ...input, prepared: { ...input.prepared, pullRequest } };
+        expect(TriageVerifyReviewWorkspaceInputV1Schema.parse(verification)).toEqual(verification);
+        const verified = { kind: 'verified', pullRequest };
+        expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(verified)).toEqual(verified);
+    });
+
     it('admits the exact selected source, observed revision, workspace and prepared facts', () => {
         expect(TriageVerifyReviewWorkspaceInputV1Schema.parse(input)).toEqual(input);
         expect(TriageVerifyReviewWorkspaceInputV1Schema.safeParse({

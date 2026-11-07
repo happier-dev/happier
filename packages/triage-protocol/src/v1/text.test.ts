@@ -60,6 +60,11 @@ describe('truncateTriageUtf8V1', () => {
 });
 
 describe('projectTriageDisplayTextV1', () => {
+    it('preserves a provider title beyond the removed 512-byte display ceiling', () => {
+        const title = '界'.repeat(255);
+        expect(projectTriageDisplayTextV1(title)).toEqual({ value: title, truncated: false });
+    });
+
     it('normalizes before bounding so a newline-bearing provider title parses', () => {
         const projected = projectTriageDisplayTextV1('Crash in\nrender() ');
 
