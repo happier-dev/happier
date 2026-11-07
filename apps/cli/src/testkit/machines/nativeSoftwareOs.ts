@@ -131,7 +131,7 @@ export async function createNativeSoftwareOsFixture(options: Readonly<{
         + `else if (command === 'dpkg' && JSON.stringify(args) === JSON.stringify(['--remove', '--', 'jq'])) { state.installed = false; state.version = null; state.effects.push('dpkg:remove'); writeFileSync(statePath, JSON.stringify(state)); }\n`
         + `else if (command === 'dpkg' && args[0] === '--print-architecture') out('amd64\\n');\n`
         + `else if (command === 'dpkg-query') { if (${JSON.stringify(options.unprivilegedPackageFactUnavailable === 'presence')} && process.env.HAPPIER_FIXTURE_NATIVE_ROOT !== '1' && state.version !== '1.0') process.exitCode = 2; else if (!state.installed) process.exitCode = 1; else out('jq\\tinstall ok installed\\t' + state.version + '\\tamd64\\n'); }\n`
-        + `else if (command === 'lslocks') out(${JSON.stringify(options.unprivilegedPackageFactUnavailable === 'locks')} && process.env.HAPPIER_FIXTURE_NATIVE_ROOT !== '1' ? '{"locks":[{}]}' : '{"locks":[]}');\n`
+        + `else if (command === 'lslocks') { if (${JSON.stringify(options.unprivilegedPackageFactUnavailable === 'locks')} && process.env.HAPPIER_FIXTURE_NATIVE_ROOT !== '1') process.exitCode = 2; else out('{"locks":[]}'); }\n`
         + `else if (command === 'python3') { state.updatesChecks = (state.updatesChecks ?? 0) + 1; writeFileSync(statePath, JSON.stringify(state)); out(JSON.stringify({ architecture: 'amd64', packages: state.installed ? [] : [{ name: 'jq', version: '1.0', architecture: 'amd64', security: true }] })); }\n`
         + `else if (command === 'test' && args.join(' ') === '-e /var/run/reboot-required') { process.exitCode = 1; }\n`
         + `else if (command === 'apt-cache' && args[0] === 'policy') out('jq:\\n  Candidate: 1.0\\n     1.0 500\\n');\n`
