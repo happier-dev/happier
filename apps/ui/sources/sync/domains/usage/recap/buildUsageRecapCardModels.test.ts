@@ -143,7 +143,8 @@ describe('buildUsageRecapCardModels', () => {
         const cards = buildUsageRecapCardModels({ viewModel, filters });
         expect(cards.find(card => card.id === 'model')?.value).toBe(usageDimensionLabel('model', 'gpt-5.4', 'GPT-5.4'));
         expect(cards.find(card => card.id === 'model')?.subtitle).not.toContain(t('usage.noData.title'));
-        expect(cards.find(card => card.id === 'usage')?.subtitle).toBe(t('common.unavailable'));
+        // Under a token total, missing money says what is missing, never a bare "Unavailable".
+        expect(cards.find(card => card.id === 'usage')?.subtitle).toBe(t('usage.board.recap.costNotPriced'));
         const costCard = buildUsageRecapCardModels({ viewModel, filters: { ...filters, metric: 'cost' } }).find(card => card.id === 'usage');
         expect(costCard?.value).toBe(t('common.unavailable'));
     });
@@ -300,5 +301,15 @@ describe('buildUsageRecapCardModels', () => {
 
         expect(modelCard?.subtitle).toContain(usageAgentTitle('opencode'));
         expect(modelCard?.subtitle).not.toContain('unknown');
+    });
+
+    it('names an engine that is an Agent by its display name, never its raw id', () => {
+        const filters = { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' } as const;
+        const viewModel = buildUsageAnalyticsViewModel({ ...response,
+            leaders: { ...response.leaders, engines: [{ key: 'codex', label: 'codex', eventCount: 4 }] },
+        }, filters);
+        const subtitle = buildUsageRecapCardModels({ viewModel, filters }).find(card => card.id === 'model')?.subtitle;
+        expect(subtitle).toContain(` · ${usageAgentTitle('codex')}`);
+        expect(subtitle).not.toMatch(/ · codex$/);
     });
 });

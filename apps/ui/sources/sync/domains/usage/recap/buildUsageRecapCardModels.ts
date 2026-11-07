@@ -88,8 +88,10 @@ function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: U
         return `${formatTokenCount(viewModel.overview.totalTokens)} ${t('usage.tokens')}`;
     }
 
+    // Under a token total, missing money says what is missing ("Cost not priced"), never a bare "Unavailable".
+    if (viewModel.pageCost ? viewModel.pageCost.amountUsd === null || !viewModel.pageCost.selection : viewModel.costPresentation.source === 'none')
+        return t('usage.board.recap.costNotPriced');
     const amount = formatUsageRecapCost(viewModel);
-    if (viewModel.pageCost ? viewModel.pageCost.amountUsd === null : viewModel.costPresentation.source === 'none') return amount;
     return `${amount} · ${usageCostKindPhrase(viewModel.pageCost?.selection?.kind ?? viewModel.costPresentation.source)}`;
 }
 

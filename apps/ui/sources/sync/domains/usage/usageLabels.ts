@@ -89,6 +89,8 @@ export function usageDimensionLabel(dimension: UsageAnalyticsBreakdownDimension,
     if (dimension === 'machine') return machineNames?.get(key) ?? getMachineDisplayName({ id: key, absence: 'unlisted' });
     if (dimension === 'source') return usageSourceTitle(key, label);
     if (dimension !== 'model' && dimension !== 'backendMode') return label ?? key;
+    // An engine that is an Agent (`codex`) is named as that Agent, never by its raw id.
+    if (dimension === 'backendMode' && (AGENT_IDS as readonly string[]).includes(key)) return usageAgentTitle(key, label);
     if (dimension === 'model') {
         const modelId = canonicalUsageModelPriceId(key);
         for (const agentId of AGENT_IDS) {

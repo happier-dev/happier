@@ -28,10 +28,12 @@ import {
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { USAGE_SETTINGS } from '../usageSettings';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { usageDimensionLabel } from './usageBodyKit';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { usePlanText } from './plans/UsagePlanParts';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 type RateField = 'input' | 'output' | 'cacheRead' | 'cacheWrite';
 const RATE_FIELDS: readonly RateField[] = [
@@ -87,10 +89,11 @@ export function UsageModelPricesLine(props: Readonly<{ slice: UsageQueryResultSl
   const model = React.useMemo(() => buildUsagePriceEditorModel(props.slice, overrides), [props.slice, overrides]);
   const unpriced = model.rows.filter(row => row.modelId !== null && row.effectivePrice === null).length;
   const asOf = t('usage.board.page.pricesAsOf', { date: formatUsageObservedAt(model.provenance.asOfMs) });
-  const open = () => openUsageModelPrices(props.slice, props.serverId, props.testID);
+  const open = useUsageModelPricesOpener(props.slice, props.serverId, props.testID);
   return (
     <View style={styles.provenance} testID={props.testID}>
-      <Text style={[styles.quiet, text.detail, styles.grow]} numberOfLines={1}>
+      {/* On a phone the actionable "8 unpriced" wraps under the source line instead of being cut off. */}
+      <Text style={[styles.quiet, text.detail, styles.grow]} numberOfLines={2}>
         {asOf}
         {unpriced ? <Text style={styles.attention}>{` · ${t('usage.board.page.pricesUnpriced', { count: unpriced })}`}</Text> : null}
       </Text>
@@ -101,8 +104,10 @@ export function UsageModelPricesLine(props: Readonly<{ slice: UsageQueryResultSl
 }
 
 /** The one way into the price editor, from the facts line and from the Cost facts ⋯ menu. */
-function openUsageModelPrices(slice: UsageQueryResultSlice, serverId: string, testID: string): void {
+function openUsageModelPrices(slice: UsageQueryResultSlice, serverId: string, testID: string,
+  commandBridge: ReturnType<typeof useCurrentUiContextCommandBridge>): void {
   Modal.show({
+    commandBridge,
     component: UsageModelPricesSheet,
     props: { slice, serverId, testID: `${testID}.editor` },
     chrome: { kind: 'card', material: 'solid', title: t('usage.board.page.pricesTitle'), phonePresentation: 'sheet',
@@ -110,17 +115,23 @@ function openUsageModelPrices(slice: UsageQueryResultSlice, serverId: string, te
   });
 }
 
+function useUsageModelPricesOpener(slice: UsageQueryResultSlice | null, serverId: string, testID: string) {
+  const bridge = useCurrentUiContextCommandBridge();
+  const commands = useCurrentUiContextLocalCommands(slice ? [{ key: 'open', title: t('usage.board.page.pricesTitle'),
+    invoke: () => { openUsageModelPrices(slice, serverId, testID, bridge); return true; } }] : []);
+  return React.useCallback(() => { void commands.invoke('open'); }, [commands.invoke]);
+}
+
 /** The Cost facts ⋯ entry; any widget size reaches the editor even when the line has no room. */
 export function useUsageModelPricesAction(slice: UsageQueryResultSlice | null, serverId: string, testID: string): ItemAction | null {
-  const latest = React.useRef(slice);
-  latest.current = slice;
+  const open = useUsageModelPricesOpener(slice, serverId, `${testID}.prices`);
   const available = slice !== null;
   return React.useMemo(() => available ? {
     id: 'usageModelPrices',
     title: t('usage.board.page.pricesTitle'),
     icon: 'currency-dollar',
-    onPress: () => { if (latest.current) openUsageModelPrices(latest.current, serverId, `${testID}.prices`); },
-  } : null, [available, serverId, testID]);
+    onPress: open,
+  } : null, [available, open]);
 }
 
 function UsageModelPricesSheet(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string }> & CustomModalInjectedProps) {
@@ -212,7 +223,10 @@ function UsageModelPriceRow(
   const { setSetting } = useSettingActionFeedback({ serverId: props.serverId });
   const [expanded, setExpanded] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const write = async (override: UsageModelPriceOverridesV1[string] | null) => {
+  const disclosure = useCurrentUiContextLocalCommands([{ key: 'toggle',
+    title: `${modelId}: ${t(expanded ? 'usage.showLess' : 'common.details')}`,
+    invoke: () => { setExpanded(value => !value); return true; } }], { foregroundOverlay: true });
+  const write = async (override: UsageModelPriceOverridesV1[string] | null, callerContext?: ActionExecutorContext) => {
     setBusy(true);
     try {
       const intent = createUsageModelPriceSettingsIntent(props.overrides, {
@@ -222,6 +236,7 @@ function UsageModelPriceRow(
       const accepted = await setSetting(
         USAGE_SETTINGS.settings.modelPrices,
         intent.input.value,
+        { callerContext },
       );
       if (accepted) setExpanded(false);
     } finally {
@@ -244,7 +259,7 @@ function UsageModelPriceRow(
     <ExpandableItem
       testID={props.testID}
       expanded={expanded}
-      onExpandedChange={setExpanded}
+      onExpandedChange={() => { void disclosure.invoke('toggle'); }}
       showDivider={!props.last}
       header={(state) => (
         <Item
@@ -261,14 +276,15 @@ function UsageModelPriceRow(
       )}
     >
       <UsageModelPriceFields
+        active={expanded}
         row={props.row}
         modelId={modelId}
         mappingTargets={props.mappingTargets}
         busy={busy}
         testID={props.testID}
         onCancel={() => setExpanded(false)}
-        onMap={(target) => {
-          void write({ kind: 'map', modelId: target });
+        onMap={async (target, callerContext) => {
+          await write({ kind: 'map', modelId: target }, callerContext);
         }}
         {...(props.row.override ? { onReset: () => { void write(null); } } : {})}
         onSave={(rates) => {
@@ -285,13 +301,14 @@ function UsageModelPriceRow(
  */
 function UsageModelPriceFields(
   props: Readonly<{
+    active: boolean;
     row: UsagePriceEditorRow;
     modelId: string;
     mappingTargets: readonly string[];
     busy: boolean;
     testID: string;
     onCancel: () => void;
-    onMap: (target: string) => void;
+    onMap: (target: string, callerContext?: ActionExecutorContext) => void | Promise<void>;
     onReset?: () => void;
     onSave: (rates: {
       inputUsdPerMillion: number;
@@ -332,6 +349,16 @@ function UsageModelPriceFields(
     ) &&
     parsed.input !== undefined &&
     parsed.output !== undefined;
+  const commands = useCurrentUiContextLocalCommands(props.active ? [
+    ...RATE_FIELDS.map(field => ({ key: field, title: `${props.modelId}: ${t(RATE_TITLE[field])}`,
+      invoke: (next: unknown) => {
+        if (typeof next !== 'string') return false;
+        setValues(current => ({ ...current, [field]: next }));
+        return true;
+      } })),
+    ...(!props.busy ? [{ key: 'cancel', title: `${props.modelId}: ${t('usage.board.page.priceCancel')}`,
+      invoke: () => { props.onCancel(); return true; } }] : []),
+  ] : [], { foregroundOverlay: true });
   return (
     <View style={[styles.fields, rowInset]}>
       <View style={styles.fieldRow}>
@@ -343,9 +370,7 @@ function UsageModelPriceFields(
               inputMode="decimal"
               keyboardType="decimal-pad"
               accessibilityLabel={`${t(RATE_TITLE[field])}, ${t('usage.board.page.priceUnit')}`}
-              onChangeText={(next) =>
-                setValues((current) => ({ ...current, [field]: next }))
-              }
+              onChangeText={next => { void commands.invoke(field, next); }}
             />
           </FieldItem>
         ))}
@@ -378,7 +403,7 @@ function UsageModelPriceFields(
           title={t('usage.board.page.priceCancel')}
           disabled={props.busy}
           testID={`${props.testID}.cancel`}
-          onPress={props.onCancel}
+          onPress={() => { void commands.invoke('cancel'); }}
         />
         <RoundButton
           size="small"
@@ -412,7 +437,7 @@ function UsageModelPriceMapChip(
     targets: readonly string[];
     disabled: boolean;
     testID: string;
-    onChoose: (target: string) => void;
+    onChoose: (target: string, callerContext?: ActionExecutorContext) => void | Promise<void>;
   }>,
 ) {
   const options = React.useMemo(
@@ -424,6 +449,7 @@ function UsageModelPriceMapChip(
   );
   return (
     <SelectionListFilterChip
+      currentUiContextCommandScope={props.testID}
       filter={{
         id: 'map',
         label: t('usage.board.page.priceMap'),
@@ -432,6 +458,7 @@ function UsageModelPriceMapChip(
         renderPopoverContent: ({ close, maxHeight }) => (
           <SelectionList
             testID={`${props.testID}.list`}
+            currentUiContextCommandScope={`${props.testID}.filters`}
             maxHeight={maxHeight}
             disableTransitions
             listAccessibilityLabel={t('usage.board.page.priceMap')}
@@ -440,9 +467,9 @@ function UsageModelPriceMapChip(
               inputPlaceholder: t('usage.board.page.priceSearchModels'),
               sections: [{ kind: 'static', id: 'targets', options }],
             }}
-            onSelect={(id: string) => {
-              close();
-              props.onChoose(id);
+            onSelect={async (id, _option, callerContext) => {
+              await props.onChoose(id, callerContext);
+              close(callerContext);
             }}
             onRequestClose={close}
           />

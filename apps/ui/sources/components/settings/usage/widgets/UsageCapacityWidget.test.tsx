@@ -340,6 +340,16 @@ it('outlines only a pool of two or more members; a pool of one reads as its acco
   expect(screen.findHostByTestId('capacity.pool.duo')).not.toBeNull();
   expect(screen.findHostByTestId('capacity.pool.one')).toBeNull();
   expect(screen.findHostByTestId('capacity.cell.solo')).not.toBeNull();
+  // The outline is named: a framed set of cells says which pool it is.
+  expect(screen.findHostByTestId('capacity.pool.duo.label')).not.toBeNull();
+  // At full width (Plans) the pool order follows the meters; beside other widgets the meters are said once.
+  expect(screen.findHostByTestId('capacity.usedFirst')).not.toBeNull();
+  await screen.update(<InjectedAuthProvider credentials={null}>
+    <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 2, rowSpan: 1, width: 'full', height: 'regular' }, geometry: { width: 900, height: 240 } }}>
+      <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
+    </WidgetPresentationProvider>
+  </InjectedAuthProvider>);
+  expect(screen.findHostByTestId('capacity.usedFirst')).toBeNull();
 });
 
 it('keeps each reset and renewal as an exact point when the shared plot cannot fit', async () => {
@@ -420,7 +430,7 @@ it.each([['loaded_data', true], ['not_loaded', false]] as const)('says only an a
     current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
       providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: 'mail' },
       observedAtMs: observed ? Date.now() : 0, fetchedAtMs: observed ? Date.now() : 0, staleAfterMs: 60_000,
-      source: 'providerHttp', confidence: 'confirmed', state, meters: [], planLabel: null },
+      source: 'providerHttp', confidence: 'confirmed', state, meters: [], planLabel: null, accountLabel: 'Mail plan' },
     pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
   });
   const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read] } }).results[0]!;
@@ -441,6 +451,7 @@ it.each([['loaded_data', true], ['not_loaded', false]] as const)('says only an a
     expect(screen.getTextContent()).not.toContain(t('usage.board.plans.cellNoAllowance'));
     expect(screen.findByTestId('capacity.unread')).not.toBeNull();
     expect(screen.getTextContent()).toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
+    expect(screen.findByTestId('capacity.unread')?.props.children).toContain('Mail plan');
   }
 });
 
@@ -565,4 +576,42 @@ it('says a lone account once: the headline names it, no cell repeats its figure,
   expect(two.getTextContent().split('0%').length - 1).toBe(3);
   const precise = await render(['solo'], 99.625);
   expect(precise.findAllByType(ChartDatum).find(node => node.props.testID === 'capacity.tightest-datum')?.props.datum.value).toContain('0.375');
+});
+
+it('says a lone account read a while ago once too, and a used-up lone plan offers one next step (Home 0% black and red)', async () => {
+  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+  const query = normalizeUsageQuery({});
+  const now = Date.now();
+  const observedAtMs = now - 3 * 3_600_000;
+  const read = (usedPct: number) => {
+    const recordKey = { providerId: 'anthropic', accountSubjectId: 'solo', subjectKind: 'account', quotaScope: 'account' } as const;
+    return ConnectedServiceQuotaGetResultV1Schema.parse({
+      source: { ref: { service, accountId: 'solo' }, bindingKind: 'account' },
+      current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'anthropic', accountSubject: { kind: 'providerSubject', id: 'solo' },
+        observedAtMs, fetchedAtMs: observedAtMs, staleAfterMs: 600_000,
+        source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null,
+        meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
+          unit: 'count', status: 'ok', resetsAt: now + 86_400_000, windowDurationMs: 7 * 86_400_000 }] },
+      pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+    });
+  };
+  const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
+  const render = (usedPct: number) => {
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: [read(usedPct)] } }).results[0]!;
+    return renderScreen(<InjectedAuthProvider credentials={null}>
+      <UsageCapacityWidget id="usage_capacity" slice={slice} query={query} serverId="home" testID="capacity"
+        model={{ refresh: async () => {} }} />
+    </InjectedAuthProvider>);
+  };
+  const usedUp = await render(100);
+  // The headline says the figure; the cell under it names the account without a second, red figure.
+  expect(usedUp.getTextContent().split('0%').length - 1).toBe(1);
+  expect(usedUp.getTextContent()).not.toContain(t('usage.board.plans.capacityTightestUnit', { name: 'solo' }));
+  // Nothing is left: one next step, the same sign-in Capacity offers when nothing is connected.
+  expect(usedUp.findAllHostsByTestId('capacity.nextStep')).toHaveLength(1);
+  expect(usedUp.getTextContent()).toContain(t('usage.board.plans.capacityAddAccount'));
+  // With allowance left there is nothing to do.
+  const left = await render(40);
+  expect(left.findAllHostsByTestId('capacity.nextStep')).toHaveLength(0);
 });

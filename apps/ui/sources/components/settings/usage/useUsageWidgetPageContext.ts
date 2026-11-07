@@ -231,9 +231,8 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const retryLayouts = React.useCallback(() => invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('retry', 'layouts'))?.command), [invoke]);
     const historyOperation = historyRead?.operation;
     const history = React.useMemo((): UsagePageHistoryFact | null => !historyRead || !historyTitle || !historyOperation ? null
-        // Sessions that stay unreadable are said quietly; their reread stays a page command, not a control here.
-        : historyRead.failed ? { text: historyRead.text, failed: true } : {
-        text: historyRead.text, label: historyRead.label, accessibilityLabel: historyTitle, failed: false,
+        : {
+        text: historyRead.text, label: historyRead.label, accessibilityLabel: historyTitle, failed: historyRead.failed,
         // The header's control runs the published command, never a second path to the Action.
         onPress: () => { void invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('history', historyOperation))?.command); },
     }, [historyRead?.text, historyRead?.label, historyRead?.failed, historyTitle, historyOperation, invoke]);

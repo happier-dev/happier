@@ -7,6 +7,10 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Typography } from '@/constants/Typography';
 import { wasConnectedServiceQuotaObserved } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { getPreferredLanguage, t } from '@/text';
@@ -16,6 +20,7 @@ import {
 } from './UsageResetCelebration';
 import {
   useUsagePluginTheme,
+  usageUnreadAccountsLabel,
   type UsageBodyProps,
 } from './usageBodyKit';
 import type { UsagePlanAccount, UsagePlanPool, UsagePlanWindow } from './plans/usagePlansModel';
@@ -177,11 +182,12 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const plans = useUsagePlans(props.slice, props.model.refresh);
   const { projection, nameOf, nowMs } = plans;
   const selections = useUsagePoolSelections(props.slice);
+  const router = useRouter();
   useWidgetFrameBodyCaption(t('usage.board.plans.capacityCaption'));
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
   // Never-read accounts collapse into one quiet line; accounts in flight keep their segment's room.
   const drawn = React.useMemo(() => projection.accounts.filter((account) => !isUsagePlanAccountSettledUnread(account)), [projection.accounts]);
-  const unreadCount = projection.accounts.length - drawn.length;
+  const unreadNames = projection.accounts.filter(isUsagePlanAccountSettledUnread).map(account => nameOf(account).title);
   const runs = React.useMemo(
     () => buildRuns(drawn, projection.pools, selections, nowMs),
     [drawn, projection.pools, selections, nowMs],
@@ -200,19 +206,6 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ),
     [projection.accounts, nameOf],
   );
-  if (projection.accounts.length === 0) {
-    return (
-      <View style={styles.body}>
-        <UsagePlansNothingRead
-          testID={`${props.testID}.none`}
-          slice={props.slice}
-          ownsCause
-          promise={t('usage.board.plans.capacityNoneConnectedPromise')}
-          onRetry={props.model.refresh}
-        />
-      </View>
-    );
-  }
   const tightest = projection.tightest;
   const tightestName = tightest ? nameOf(tightest.account) : null;
   const cellCount = drawn.length;
@@ -226,10 +219,30 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const reading = tightest === null && pendingAccounts > 0;
   const provisionalReading = tightest?.provisional === true && pendingAccounts > 0;
   // One account: the headline says its figure and reset, and its cell under the bar names it (mark, name, plan),
-  // so neither says the other's fact again. A state only the cell says (left out of a pool, an old reading)
-  // keeps the ordinary cell.
-  const lone = drawn.length === 1 && tightest !== null && tightest.account.key === drawn[0]!.key && !drawn[0]!.stale
+  // so neither says the other's fact again. An old reading is said once, by the read-state line under the body;
+  // a state only the cell says (left out of a pool) keeps the ordinary cell.
+  const lone = drawn.length === 1 && tightest !== null && tightest.account.key === drawn[0]!.key
     && runs.every((run) => run.cells.every((cell) => cell.excluded === null));
+  // The only plan is used up: one next step, the sign-in Capacity offers when nothing is connected, so work has
+  // another account to go to before the reset.
+  const loneUsedUp = lone && tightest !== null && tightest.window.remainingFraction !== null && tightest.window.remainingFraction <= 0;
+  const nextStep = useCurrentUiContextLocalCommands(loneUsedUp ? [{ key: 'addAccount',
+    title: t('usage.board.plans.capacityAddAccount'),
+    invoke: () => router.push(SETTINGS_ROUTES.connectedServicesAgentSignIn as Parameters<typeof router.push>[0]),
+  }] : []);
+  if (projection.accounts.length === 0) {
+    return (
+      <View style={styles.body}>
+        <UsagePlansNothingRead
+          testID={`${props.testID}.none`}
+          slice={props.slice}
+          ownsCause
+          promise={t('usage.board.plans.capacityNoneConnectedPromise')}
+          onRetry={props.model.refresh}
+        />
+      </View>
+    );
+  }
   const heroUnit = !tightestName ? ''
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
@@ -238,6 +251,17 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX ? ('46%' as const) : undefined;
   // In the two-up grid an odd account keeps its half: an empty half beside it, never a full-width track.
   const loneRuns = cellBasis ? readLoneHalfRuns(runs) : null;
+  const renderCells = (run: Run) => run.cells.map((cell) => (
+    <CapacityCell
+      key={cell.account.key}
+      cell={cell}
+      name={nameOf(cell.account)}
+      nowMs={nowMs}
+      lone={lone}
+      basis={isFramedRun(run) ? cellBasis : undefined}
+      testID={`${props.testID}.cell.${cell.account.accountId}`}
+    />
+  ));
   return (
     <View style={styles.body} testID={`${props.testID}.capacity`}>
       <UsageResetCelebration
@@ -279,6 +303,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
               .filter(Boolean)
               .join(' · ')}
           </Text>
+          {loneUsedUp ? (
+            <View style={styles.nextStep}>
+              <RoundButton testID={`${props.testID}.nextStep`} size="small" display="inverted"
+                title={t('usage.board.plans.capacityAddAccount')}
+                onPress={() => { void nextStep.invoke('addAccount'); }} />
+            </View>
+          ) : null}
         </View>
       ) : reading ? (
         <CapacityHeroReading count={pendingAccounts} testID={`${props.testID}.reading`} />
@@ -293,36 +324,32 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
             <View
               testID={isFramedRun(run) ? `${props.testID}.pool.${run.pool!.groupId}` : undefined}
               style={[
-                styles.run,
-                isFramedRun(run) ? styles.pool : null,
+                isFramedRun(run) ? styles.pool : styles.run,
                 cellBasis
                   ? { flexBasis: isFramedRun(run) ? '100%' : '47%', flexGrow: 1 }
                   : { flexGrow: run.cells.length, flexBasis: 0 },
               ]}
             >
-              {run.cells.map((cell) => (
-                <CapacityCell
-                  key={cell.account.key}
-                  cell={cell}
-                  name={nameOf(cell.account)}
-                  nowMs={nowMs}
-                  lone={lone}
-                  basis={isFramedRun(run) ? cellBasis : undefined}
-                  testID={`${props.testID}.cell.${cell.account.accountId}`}
-                />
-              ))}
+              {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
+              {isFramedRun(run) && run.pool!.name ? (
+                <Text style={[styles.poolLabel, text.detail]} numberOfLines={1} testID={`${props.testID}.pool.${run.pool!.groupId}.label`}>
+                  {run.pool!.name}
+                </Text>
+              ) : null}
+              {isFramedRun(run) ? <View style={styles.run}>{renderCells(run)}</View> : renderCells(run)}
             </View>
             {loneRuns?.has(run) ? <View style={styles.halfSpacer} /> : null}
           </React.Fragment>
         ))}
       </View>
       ) : null}
-      {unreadCount > 0 ? (
+      {unreadNames.length > 0 ? (
         <Text style={[styles.subline, text.detail]} testID={`${props.testID}.unread`}>
-          {t('usage.board.plans.capacityNotRead', { count: unreadCount })}
+          {usageUnreadAccountsLabel(unreadNames)}
         </Text>
       ) : null}
-      {tile ? (
+      {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
+      {pooled && !tile ? null : tile ? (
         <UsagePoolSteps
           serverId={props.serverId}
           query={props.query}
@@ -557,7 +584,7 @@ function CapacityCell(
           <View style={styles.listedIdentity}>
             <View style={styles.cellHead}>
               <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
-              {cell.rank !== null || cell.excluded !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
+              {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
             </View>
             {props.lone ? null : detailLine}
           </View>
@@ -568,9 +595,8 @@ function CapacityCell(
           {props.lone ? null : <View style={styles.cellHead}>{valueText}</View>}
           <View style={styles.cellHead}>
             <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact /></View>
-            {cell.rank !== null || cell.excluded !== null ? (
-              <UsagePlanRank rank={cell.rank} selected={cell.selected} />
-            ) : null}
+            {/* A left-out account says why in words on its caption line; an unnumbered badge would only repeat it. */}
+            {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
           </View>
           {/* The caption's line is held for every account from the first frame, the one that never answers
               included: "last read" or "used up" arrives into it, and settling never resizes the bar. Under the
@@ -593,6 +619,7 @@ const styles = StyleSheet.create((theme) => ({
     columnGap: theme.space.s10,
   },
   heroReading: { justifyContent: 'center' },
+  nextStep: { alignItems: 'flex-start', paddingTop: theme.space.s4 },
   heroUnit: {
     ...Typography.default(),
     color: theme.colors.text.secondary,
@@ -609,11 +636,14 @@ const styles = StyleSheet.create((theme) => ({
   // A pool is a nested surface: it keeps the gap its own cells keep from each other, so the bars and figures sit
   // inside its outline with air, never against it.
   pool: {
+    gap: theme.space.s8,
+    minWidth: 0,
     borderRadius: theme.borderRadius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border.default,
     padding: theme.space.s12,
   },
+  poolLabel: { ...Typography.default('semiBold'), color: theme.colors.text.secondary },
   halfSpacer: { flexBasis: '47%', flexGrow: 1 },
   cell: { flex: 1, minWidth: 0, gap: theme.space.s6 },
   cellListed: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto' },

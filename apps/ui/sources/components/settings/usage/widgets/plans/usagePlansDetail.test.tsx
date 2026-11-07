@@ -28,13 +28,15 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import {
   getAppliedActiveServerSnapshot,
   isAppliedActiveServerRuntimeAvailable,
   publishAppliedActiveServerSnapshot,
 } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
+import { formatPlanMoment } from './UsagePlanParts';
 
 // Machine RPC and the served Home's Artifact persistence are the external boundaries.
 const selectionTransport = vi.hoisted(() => vi.fn());
@@ -64,17 +66,25 @@ const query = normalizeUsageQuery({});
 
 let previousSnapshot = getAppliedActiveServerSnapshot();
 let comparisonHome: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let mountedHome: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
+let mountedProfile = AccountProfileSchema.parse({ id: 'mounted-account' });
 let previousAvailable = isAppliedActiveServerRuntimeAvailable();
 let previousProfile = storage.getState().profile;
 let previousProfileScope = storage.getState().profileScope;
 let restoreFrameBoundary: (() => void) | undefined;
 let restoreActionModuleLoader: (() => void) | undefined;
-beforeEach(() => {
+beforeEach(async () => {
   restoreFrameBoundary = withPopoverWebGlobals();
   previousSnapshot = getAppliedActiveServerSnapshot();
   previousAvailable = isAppliedActiveServerRuntimeAvailable();
   previousProfile = storage.getState().profile;
   previousProfileScope = storage.getState().profileScope;
+  mountedProfile = AccountProfileSchema.parse({ id: 'mounted-account' });
+  mountedHome = await serveAccountHomes({ homes: [{ key: 'mounted', serverUrl: 'https://usage-plans-mounted.test', accountId: mountedProfile.id,
+    profile: mountedProfile, currentAccount: true }], route: () => undefined });
+  const home = mountedHome.homes.mounted!;
+  publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: home.serverUrl, generation: 0 });
+  storage.setState({ profileScope: { serverId: home.id, accountId: mountedProfile.id }, profile: mountedProfile });
 });
 afterEach(async () => {
   standardCleanup();
@@ -82,6 +92,7 @@ afterEach(async () => {
   restoreActionModuleLoader?.(); restoreActionModuleLoader = undefined;
   selectionTransport.mockReset();
   await comparisonHome?.dispose(); comparisonHome = undefined;
+  await mountedHome?.dispose(); mountedHome = undefined;
   (
     await import('@/sync/domains/scope/activeServerAccountScope')
   ).retireActiveServerAccountScopeLifetime();
@@ -203,13 +214,16 @@ function bodyProps(
     const serverId = snapshot.serverId ?? 'home';
     const accountId = storage.getState().profileScope?.accountId ?? 'detail-account';
     publishAppliedActiveServerSnapshot({ ...snapshot, serverId, serverUrl: snapshot.serverUrl || 'https://usage-detail.test' }, true);
-    storage.setState({ profileScope: { serverId, accountId }, profile: AccountProfileSchema.parse({ ...storage.getState().profile, id: accountId,
+    const profile = AccountProfileSchema.parse({ ...storage.getState().profile, id: accountId,
       connectedAccountGroupsV4: pools.flatMap(read => read.value ?? []).map(pool => QualifiedConnectedAccountGroupV4Schema.parse({
         v: 1, ref: pool.group, displayName: pool.group.groupId, incarnation: `${pool.group.groupId}:1`,
         policy: { strategy: 'priority' }, generation: 1, runtimeStateRevision: 1, state: {}, members: [],
         activeConnectedAccountId: null, createdAt: 1, updatedAt: 1,
       })),
-    }) });
+    });
+    // The Home profile producer and its loaded projection describe the same current definitions.
+    if (profile.id === mountedProfile.id) Object.assign(mountedProfile, profile);
+    storage.setState({ profileScope: { serverId, accountId }, profile });
   }
   const slice = resolveUsagePageAggregation({
     queries: [shownQuery],
@@ -229,7 +243,7 @@ function bodyProps(
     refreshing: false,
     refresh: async () => {},
   } satisfies UsageWidgetBodyModel;
-  return { model, slice, query: shownQuery, serverId: 'home' };
+  return { model, slice, query: shownQuery, serverId: getAppliedActiveServerSnapshot().serverId! };
 }
 
 const wrap = (node: React.ReactElement, credentials: React.ComponentProps<typeof InjectedAuthProvider>['credentials'] = null) => (
@@ -239,11 +253,23 @@ const wrap = (node: React.ReactElement, credentials: React.ComponentProps<typeof
 );
 
 // Native measurement is the physical boundary; Popover open/close, placement and portal owners run.
-const renderScreen = (node: Parameters<typeof renderScreenAtHost>[0]) => renderScreenAtHost(node, {
+const renderScreen = async (node: Parameters<typeof renderScreenAtHost>[0]) => (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(node, {
   createNodeMock: () => ({
     measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(200, 200, 120, 32),
   }),
 });
+
+async function invokePlanCommand(title: string, input?: string) {
+  const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+  if (!read.ok) throw new Error(read.errorCode);
+  const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === title);
+  expect(command, title).toBeDefined();
+  await act(async () => {
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id, ...(input === undefined ? {} : { input }) },
+      context: { surface: 'agent' } })).toMatchObject({ ok: true });
+  });
+}
 
 it('reveals exact projected percent points without rounding the admitted projection headline', async () => {
   const now = Date.now();
@@ -294,6 +320,47 @@ it('shows the entered monthly amount without inventing a provider billing period
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
   expect(read.current?.subscription).not.toHaveProperty('currentPeriodStartAtMs');
   await screen.unmount();
+});
+
+it('edits the same monthly price draft through mounted commands and the visible fields', async () => {
+  const home = mountedHome!.homes.mounted!;
+  const now = Date.now();
+  const read = quotaRead('work', now, []);
+  const { projectUsagePlans } = await import('./usagePlansModel');
+  const account = projectUsagePlans([read], now).accounts[0]!;
+  const { UsageSubscriptionPriceEditor } = await import('./UsagePlanActions');
+  const screen = await renderScreen(wrap(<UsageSubscriptionPriceEditor account={account} serverId={home.id} testID="price" onSettled={() => {}} />));
+  await screen.pressByTestIdAsync('price-header');
+  await invokePlanCommand(t('usage.board.plans.monthlyPriceAmount'), '24.50');
+  await invokePlanCommand(t('usage.board.plans.monthlyPriceCurrency'), 'eur');
+  expect(screen.findByTestId('price.amount')!.props.value).toBe('24.50');
+  expect(screen.findByTestId('price.currency')!.props.value).toBe('eur');
+  await act(async () => screen.findByTestId('price.amount')!.props.onChangeText('30'));
+  expect(screen.findByTestId('price.amount')!.props.value).toBe('30');
+});
+
+it('opens connected account sign-in from exhausted capacity through mounted and visible commands', async () => {
+  const now = Date.now();
+  const reading = (usedPct: number) => quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { SETTINGS_ROUTES } = await import('@/components/settings/catalog/routes');
+  // The real destination router reaches the native Expo navigation boundary supplied by the testkit.
+  const { router } = await import('expo-router');
+  vi.mocked(router.push).mockClear();
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...bodyProps([reading(100)])} id="usage_capacity" testID="cap" />));
+  expect(screen.findByTestId('cap.nextStep')).toBeTruthy();
+  await invokePlanCommand(t('usage.board.plans.capacityAddAccount'));
+  expect(router.push).toHaveBeenLastCalledWith(SETTINGS_ROUTES.connectedServicesAgentSignIn);
+  vi.mocked(router.push).mockClear();
+  await screen.pressByTestIdAsync('cap.nextStep');
+  expect(router.push).toHaveBeenLastCalledWith(SETTINGS_ROUTES.connectedServicesAgentSignIn);
+  await screen.update(wrap(<UsageCapacityWidget {...bodyProps([reading(40)])} id="usage_capacity" testID="cap" />));
+  expect(screen.findByTestId('cap.nextStep')).toBeNull();
+  const { executeCurrentUiContextAction } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+  const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+  if (!read.ok) throw new Error(read.errorCode);
+  expect(CurrentUiContextSnapshotV1Schema.parse(read.result).commands.some(command => command.title === t('usage.board.plans.capacityAddAccount'))).toBe(false);
 });
 
 it('names available model-meter headroom through the catalog and readable unknown fallback', async () => {
@@ -486,7 +553,7 @@ it('holds the list room its accounts will fill while their first allowance reads
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
     return renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'medium',
       footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' }, geometry: { width: 520, height: 260 } }}>
-      <UsageProjectionsWidget model={model} slice={slice} query={query} serverId="home" id="usage_projections" testID="proj" />
+      <UsageProjectionsWidget model={model} slice={slice} query={query} serverId={mountedHome!.homes.mounted!.id} id="usage_projections" testID="proj" />
     </WidgetPresentationProvider>));
   };
   const heldRoom = (screen: Awaited<ReturnType<typeof render>>) => {
@@ -692,7 +759,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   expect(screen.getTextContent()).toContain('Expiring first');
   expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeNull();
   expect(screen.getTextContent()).not.toContain('62%');
-  await screen.pressByTestIdAsync('cap.usedFirst.pool.why');
+  await invokePlanCommand(t('usage.board.plans.whyTitle'));
   expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeTruthy();
   expect(screen.findByTestId('cap.usedFirst.pool.why.comparison.strategy')).toBeTruthy();
   expect(screen.findByTestId('cap.usedFirst.pool.why.comparison.moment')).toBeTruthy();
@@ -707,10 +774,13 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   ).toContain('used up');
   const comparison = 'cap.usedFirst.pool.why.comparison';
   const strategyControl = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${comparison}.strategy`)!;
-  await act(async () => strategyControl.props.onSelect('priority'));
+  await invokePlanCommand(t('usage.board.plans.whyRule'));
+  expect(strategyControl.props.open).toBe(true);
+  await invokePlanCommand(getPoolStrategyPresentation('priority').label);
   await expect.poll(() => screen.findHostByTestId(`${comparison}.candidate.work`) !== null).toBe(true);
   const momentControl = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${comparison}.moment`)!;
-  await act(async () => momentControl.props.onSelect(String(now + 3 * HOUR)));
+  await act(async () => momentControl.props.onOpenChange(true));
+  await invokePlanCommand(formatPlanMoment(now + 3 * HOUR, now));
   await expect.poll(() => selectionTransport.mock.calls.some(([request]) => request.payload.hypothetical.atMs === now + 3 * HOUR)).toBe(true);
   const comparisonOrder = screen.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string'
     && new RegExp(`^${comparison.replaceAll('.', '\\.')}.candidate.(work|personal|side)$`).test(node.props.testID))
@@ -727,8 +797,12 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   expect.soft(screen.findHostByTestId(`${comparison}.candidate.work`), 'a failed replacement keeps the admitted comparison').toBeTruthy();
   expect.soft(screen.getTextContent()).toContain(t('usage.board.plans.usedFirstReadFailed'));
   comparisonUnavailable = false;
-  await act(async () => { await comparisonEntry.refresh(); });
+  await invokePlanCommand(t('common.retry'));
   expect(screen.findHostByTestId(`${comparison}.candidate.work`)).toBeTruthy();
+  await invokePlanCommand(`${t('usage.board.plans.whyTitle')}: ${t('common.close')}`);
+  expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeNull();
+  await screen.pressByTestIdAsync('cap.usedFirst.pool.why');
+  expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeTruthy();
   const failed = bodyProps(quota, [{ query, value: [{ group, memberAccountIds: ['work', 'personal', 'side'],
     activeAccountId: 'personal', selection: { status: 'error', machineId: 'witnessed-selector', errorCode: 'connected_service_request_failed' } }] }], query,
     { v: 1, results: [props.slice] });
@@ -750,20 +824,20 @@ it('gives a pool the selector lists no member for one quiet line, not a strategy
     memberAccountIds: ['a', 'b'], activeAccountId: null,
     selection: { status: 'available', machineId: 'witnessed-selector', value: { group, observedAtMs: now, selection } } }] }]);
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
-  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} serverId="home" id="usage_capacity" testID="cap" />));
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />));
   expect(screen.findHostByTestId('cap.usedFirst.empty')).toBeTruthy();
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.whyNone'));
   expect(screen.findByTestId('cap.usedFirst.empty.why')).toBeNull();
   expect(screen.getTextContent()).not.toContain('Expiring first');
   await screen.update(wrap(<WidgetPresentationProvider value={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'compact' }, geometry: { width: 320, height: 96 } }}>
-    <UsageCapacityWidget {...props} serverId="home" id="usage_capacity" testID="cap" />
+    <UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />
   </WidgetPresentationProvider>));
   expect(screen.getTextContent()).toContain('empty');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.whyNone'));
   const excluded = bodyProps(['a', 'b'].map(id => quotaRead(id, now, [weekly])), [{ query, value: [{ group,
     memberAccountIds: ['a', 'b'], activeAccountId: null, selection: { status: 'available', machineId: 'witnessed-selector',
       value: { group, observedAtMs: now, selection: { ...selection, excluded: ['a', 'b'].map(profileId => ({ profileId, reason: 'disabled' as const })) } } } }] }]);
-  await screen.update(wrap(<UsageCapacityWidget {...excluded} serverId="home" id="usage_capacity" testID="cap" />));
+  await screen.update(wrap(<UsageCapacityWidget {...excluded} id="usage_capacity" testID="cap" />));
   await screen.pressByTestIdAsync('cap.usedFirst.empty.why');
   expect(screen.getTextContent()).toContain(t('usage.board.plans.whyNone'));
 });
@@ -778,7 +852,7 @@ it('states one unreadable-order cause once under every pool that shares it (H30)
   const props = bodyProps(['a', 'b', 'c', 'd'].map((id) => quotaRead(id, now, [weekly])),
     [{ query, value: [pool('first', ['a', 'b']), pool('second', ['c', 'd'])] }]);
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
-  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} serverId="home" id="usage_capacity" testID="cap" />));
+  const screen = await renderScreen(wrap(<UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />));
   const cause = t('usage.board.plans.usedFirstNoMachine');
   expect(screen.getTextContent().split(cause).length - 1).toBe(1);
   expect(screen.findHostByTestId('cap.usedFirst.cause')).toBeTruthy();
@@ -796,7 +870,7 @@ it('greets an Account with nothing connected with the shared empty state, its co
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
     refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
-  const screen = await renderScreen(wrap(<UsageCapacityWidget model={model} slice={slice} query={query} serverId="home" id="usage_capacity" testID="cap" />));
+  const screen = await renderScreen(wrap(<UsageCapacityWidget model={model} slice={slice} query={query} serverId={mountedHome!.homes.mounted!.id} id="usage_capacity" testID="cap" />));
   const states = screen.findAllByType(SurfaceStateCard);
   expect(states).toHaveLength(1);
   // The widget empty state every frame uses (centred, replacing the body), not an inline line beside a link.
@@ -819,7 +893,7 @@ it('says "nothing connected" once: Capacity owns the cause, the widgets derived 
   const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
   const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
   const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
-  const body = { model, slice, query, serverId: 'home' };
+  const body = { model, slice, query, serverId: mountedHome!.homes.mounted!.id };
   const screen = await renderScreen(wrap(<>
     <UsageCapacityWidget {...body} id="usage_capacity" testID="cap" />
     <UsageProjectionsWidget {...body} id="usage_projections" testID="proj" />
@@ -840,11 +914,7 @@ it('says "nothing connected" once: Capacity owns the cause, the widgets derived 
 it('asks whose order to show when several Machines are in scope, instead of calling the order unreadable (QA U2)', async () => {
   const now = Date.now();
   const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 20, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY };
-  // The Machine inventory follows the selected Home, while the Resource follows its applied Account.
-  const server = await upsertAndActivateServer({ serverUrl: 'https://usage-pool-choices.test' });
-  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
-  storage.setState({ profileScope: { serverId: server.id, accountId: 'pool-choices' },
-    profile: AccountProfileSchema.parse({ id: 'pool-choices' }) });
+  // Machine inventory and mounted commands share the restored Home and its authenticated Account.
   // Machines = All with two online Machines: the Resource has no single selector to read (`unknown`, no Machine id).
   const ambiguous = (groupId: string, memberAccountIds: string[]) => ({
     group: { service, groupId }, memberAccountIds, activeAccountId: memberAccountIds[0]!, selection: { status: 'unknown' as const },
@@ -861,7 +931,7 @@ it('asks whose order to show when several Machines are in scope, instead of call
   const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
   const { UsageDrillProvider } = await import('../../usageDrill');
   const screen = await renderScreen(wrap(<UsageDrillProvider value={drill}>
-    <UsageCapacityWidget {...props} serverId="home" id="usage_capacity" testID="cap" />
+    <UsageCapacityWidget {...props} id="usage_capacity" testID="cap" />
   </UsageDrillProvider>));
   const text = screen.getTextContent();
   expect(text).not.toContain(t('usage.board.plans.usedFirstReadFailed'));
@@ -872,6 +942,10 @@ it('asks whose order to show when several Machines are in scope, instead of call
   expect(chooser).toBeTruthy();
   expect(chooser.props.items.map((item: { id: string; title: string }) => [item.id, item.title]).sort())
     .toEqual([['build', 'Build box'], ['desk', 'Desk']]);
+  await invokePlanCommand(t('usage.board.plans.usedFirstChooseMachine'));
+  expect(chooser.props.open).toBe(true);
+  await act(async () => chooser.props.onOpenChange(false));
+  expect(chooser.props.open).toBe(false);
   await act(async () => chooser.props.onSelect('desk'));
   expect(chosen).toEqual(['machines:desk']);
 });
@@ -889,7 +963,7 @@ it('keeps one unordered pool on one quiet line, and titles the unordered pools "
   const other = t('usage.board.plans.queueOtherTitle');
   // One unordered pool: the label and the name are one line, not a label standing over the name.
   const single = bodyProps(['a', 'b'].map((id) => quotaRead(id, now, [weekly])), [{ query, value: [unread('first', ['a', 'b'])] }]);
-  const alone = await renderScreen(wrap(<UsageCapacityWidget {...single} serverId="home" id="usage_capacity" testID="cap" />));
+  const alone = await renderScreen(wrap(<UsageCapacityWidget {...single} id="usage_capacity" testID="cap" />));
   expect(alone.findAll((node) => typeof node.type === 'string' && typeof node.props.testID === 'string' && node.props.testID.startsWith('cap.usedFirst.first'))).not.toHaveLength(0);
   expect(text(alone)).toMatch(new RegExp(`${used} · \\S`));
   // Beside a pool that shows an order, the unordered pools are not a second "Used first".
@@ -900,7 +974,7 @@ it('keeps one unordered pool on one quiet line, and titles the unordered pools "
         strategy: 'expiry_first' as const, selectionBasis: 'active_stickiness' as const, sticky: true,
         orderedEligibleCandidates: [candidate('a', 0), candidate('b', 1)], candidates: [] } } } } };
   const mixed = bodyProps(['a', 'b', 'c', 'd'].map((id) => quotaRead(id, now, [weekly])), [{ query, value: [ordered, unread('second', ['c']), unread('third', ['d'])] }]);
-  const both = await renderScreen(wrap(<UsageCapacityWidget {...mixed} serverId="home" id="usage_capacity" testID="cap" />));
+  const both = await renderScreen(wrap(<UsageCapacityWidget {...mixed} id="usage_capacity" testID="cap" />));
   expect(text(both).split(other).length - 1).toBe(1);
   expect(text(both).split(`${used} ·`).length - 1).toBe(1);
   expect(text(both).split(used).length - 1).toBe(1);
@@ -1098,6 +1172,10 @@ it("binds one Session's pending message to a reset with the exact witnessed inpu
     const picker = screen
       .findAllByType(DropdownMenu)
       .find((node) => node.props.testID === 'reset.resetStart.local-1.pick')!;
+    await invokePlanCommand(t('usage.board.plans.resetStartAction'));
+    expect(picker.props.open).toBe(true);
+    await act(async () => picker.props.onOpenChange(false));
+    expect(picker.props.open).toBe(false);
     await act(async () => {
       picker.props.onSelect(picker.props.items[0].id);
       await Promise.resolve();
@@ -1139,6 +1217,7 @@ it('binds Account-wide queued identities once across accounts without reading pr
     const unboundEntries = [
       { sessionId: 's1', localId: 'local-1', authorityCurrent: true },
       { sessionId: 's2', localId: 'local-1', authorityCurrent: false },
+      ...Array.from({ length: 10 }, (_, index) => ({ sessionId: `queued-session-${index}`, localId: `queued-local-${index}`, authorityCurrent: true })),
     ];
     const reads = ['work', 'personal'].map(accountId => {
       const bare = quotaRead(accountId, now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 80, resetAtMs: now + 2 * DAY, windowDurationMs: 7 * DAY }]);
@@ -1150,17 +1229,18 @@ it('binds Account-wide queued identities once across accounts without reading pr
     });
     const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
     const screen = await renderScreen(wrap(<UsageResetPlannerWidget {...bodyProps(reads)} serverId={server.id} id="usage_resets" testID="reset" />, credentials));
-    const pickers = screen.findAllByType(DropdownMenu).filter(node => String(node.props.testID).startsWith('reset.resetStart.'));
-    expect(pickers).toHaveLength(2);
+    const pickers = () => screen.findAllByType(DropdownMenu).filter(node => String(node.props.testID).startsWith('reset.resetStart.'));
+    // The list leads with its first rows; the rest wait behind the shared Show all, and the entry this viewer
+    // cannot hold is one quiet line with its reason instead of a disabled row.
+    expect(pickers()).toHaveLength(6);
+    expect(pickers().some(node => String(node.props.testID).includes('s2'))).toBe(false);
+    expect(screen.getTextContent()).toContain(t('usage.board.plans.resetStartUnavailableCount', { count: 1 }));
+    // No Session or message id is ever drawn, whether or not the Session is loaded here.
+    expect(screen.getTextContent()).not.toMatch(/local-|queued-session|\bs[12]\b/);
     expect(screen.getTextContent()).not.toContain(privateText);
-    const available = pickers.find(node => node.props.testID === 'reset.resetStart.s1.local-1.pick')!;
-    const unavailable = pickers.find(node => node.props.testID === 'reset.resetStart.s2.local-1.pick')!;
-    expect(screen.findByTestId('reset.resetStart.s2.local-1.open')!.props.disabled).toBe(true);
-    await act(async () => {
-      unavailable.props.onSelect(unavailable.props.items[0].id);
-      await Promise.resolve();
-    });
-    expect(requests()).toEqual([]);
+    await act(async () => { screen.findByTestId('reset.resetStart.more.toggle')!.props.onPress(); });
+    expect(pickers()).toHaveLength(11);
+    const available = pickers().find(node => node.props.testID === 'reset.resetStart.s1.local-1.pick')!;
     await act(async () => {
       available.props.onSelect(available.props.items[0].id);
       await Promise.resolve();

@@ -18,6 +18,11 @@ import {
   useMotionPreferences,
 } from '@/components/instrument';
 import { Popover } from '@/components/ui/popover';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { t } from '@/text';
 
 import {
   resolveScrubIndex,
@@ -37,7 +42,7 @@ import {
  *   again lets it go.
  * - Keyboard: the chart's own bucket selection shows the same lens where the viewer is reading.
  *
- * Purely gesture-driven: nothing here animates on its own, so reduced motion changes nothing but the
+ * Interaction-driven: nothing here animates on its own, so reduced motion changes nothing but the
  * haptic. It mounts either around a chart (`children`) or as an overlay on a plot (no children).
  */
 
@@ -49,7 +54,7 @@ export type ScrubLensRow = Readonly<{
   /** The series' own colour, shown as its key. */
   color?: string;
   /** Choosing the row while the lens is held, with the localized name of that choice. */
-  onPress?: () => void;
+  onPress?: (context?: ActionExecutorContext) => boolean | void | Promise<boolean | void>;
   pressLabel?: string;
   selected?: boolean;
 }>;
@@ -178,6 +183,13 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   testID,
 }) => {
   useUnistyles();
+  // On a phone the lens takes the screen's width inside the page gutters, under the crosshair, so its
+  // rows keep their names whole; beside a wide chart it stays a narrow card next to the crosshair.
+  const phone = useDeviceType() === 'phone';
+  const windowWidth = usePresentationWindowDimensions().width;
+  const lensWidth = phone
+    ? Math.min(HAPPIER_PAGE_METRICS.dialogWidthPx.narrow, windowWidth - 2 * HAPPIER_PAGE_METRICS.sheetInsetPx)
+    : LENS_WIDTH;
   const motion = useMotionPreferences();
   const [activeIndex, setActiveIndex] = React.useState<number | null>(null);
   const [heldIndex, setHeldIndex] = React.useState<number | null>(null);
@@ -188,6 +200,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
   const heldRef = React.useRef(heldIndex);
   heldRef.current = heldIndex;
   const count = cellCount(layout);
+  const buckets = React.useMemo(() => Array.from({ length: count }, (_, index) => resolveContent(index)), [count, resolveContent]);
 
   // A held bucket that no longer exists (a period change) is let go rather than pointing elsewhere.
   React.useEffect(() => {
@@ -196,23 +209,14 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
 
   const hapticsEnabled = motion.hapticsEnabled;
   const follow = React.useCallback(
-    (x: number, detent: boolean) => {
-      const index = cellAt(x, layoutRef.current);
-      if (index === null || index === lastIndexRef.current) return;
+    (index: number, detent: boolean) => {
+      if (index === lastIndexRef.current) return;
       if (detent && lastIndexRef.current !== null)
         instrumentSelectionTick(hapticsEnabled);
       lastIndexRef.current = index;
       setActiveIndex(index);
     },
     [hapticsEnabled],
-  );
-  const followScrub = React.useCallback(
-    (x: number) => follow(x, true),
-    [follow],
-  );
-  const followHover = React.useCallback(
-    (x: number) => follow(x, false),
-    [follow],
   );
   const release = React.useCallback(() => {
     lastIndexRef.current = null;
@@ -224,13 +228,58 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
     if (heldRef.current !== null) letGoRef.current = { index: heldRef.current, at: Date.now() };
     setHeldIndex(null);
   }, []);
-  const hold = React.useCallback((x: number) => {
-    const index = cellAt(x, layoutRef.current);
-    if (index === null) return;
+  const hold = React.useCallback((index: number) => {
     const letGone = letGoRef.current;
     letGoRef.current = null;
     if (letGone?.index === index && Date.now() - letGone.at < 400) return;
     setHeldIndex(heldRef.current === index ? null : index);
+  }, []);
+
+  // A hold stays put so its rows can be reached; otherwise the pointer leads, then keyboard focus.
+  const shownIndex =
+    heldIndex ??
+    activeIndex ??
+    (focusIndex !== null && focusIndex < count ? focusIndex : null);
+  const content = shownIndex !== null ? buckets[shownIndex] ?? null : null;
+  const held = shownIndex !== null && shownIndex === heldIndex;
+  const definitions: CurrentUiContextLocalCommand[] = [];
+  buckets.forEach((bucket, index) => {
+    if (!bucket) return;
+    definitions.push({
+      key: `bucket:${index}`,
+      title: [bucket.title, bucket.total, ...bucket.rows.map(row => `${row.label} · ${row.value}`)].filter(Boolean).join(' · '),
+      ...(bucket.footer ? { description: bucket.footer } : {}),
+      invoke: input => {
+        if (input === 'hover' || input === 'scrub') follow(index, input === 'scrub');
+        else if (input === 'toggle') hold(index);
+        else setHeldIndex(index);
+      },
+    });
+  });
+  if (content && (heldIndex !== null || activeIndex !== null)) definitions.push({
+    key: 'dismiss', title: `${t('common.close')}: ${content.title}`,
+    invoke: input => {
+      release();
+      if (input !== 'release') letGo();
+    },
+  });
+  if (held && content) for (const row of content.rows) if (row.onPress) definitions.push({
+    key: `row:${row.id ?? row.label}`, title: row.pressLabel ?? row.label,
+    invoke: (_input, context) => row.onPress?.(context),
+  });
+  const commands = useCurrentUiContextLocalCommands(definitions);
+  const commandsRef = React.useRef(commands);
+  commandsRef.current = commands;
+  const followPointer = React.useCallback((x: number, input: 'hover' | 'scrub') => {
+    const index = cellAt(x, layoutRef.current);
+    if (index !== null && index !== lastIndexRef.current) void commandsRef.current.invoke(`bucket:${index}`, input);
+  }, []);
+  const followScrub = React.useCallback((x: number) => followPointer(x, 'scrub'), [followPointer]);
+  const followHover = React.useCallback((x: number) => followPointer(x, 'hover'), [followPointer]);
+  const releasePointer = React.useCallback(() => { void commandsRef.current.invoke('dismiss', 'release'); }, []);
+  const toggleHold = React.useCallback((x: number) => {
+    const index = cellAt(x, layoutRef.current);
+    if (index !== null) void commandsRef.current.invoke(`bucket:${index}`, 'toggle');
   }, []);
 
   const gesture = React.useMemo(() => {
@@ -243,12 +292,12 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
         runOnJS(followScrub)(event.x);
       })
       .onFinalize(() => {
-        runOnJS(release)();
+        runOnJS(releasePointer)();
       });
     const tap = Gesture.Tap()
       .maxDuration(220)
       .onEnd((event) => {
-        runOnJS(hold)(event.x);
+        runOnJS(toggleHold)(event.x);
       });
     const hover = Gesture.Hover()
       .onBegin((event) => {
@@ -258,18 +307,10 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
         runOnJS(followHover)(event.x);
       })
       .onFinalize(() => {
-        runOnJS(release)();
+        runOnJS(releasePointer)();
       });
     return Gesture.Simultaneous(hover, Gesture.Exclusive(pan, tap));
-  }, [followHover, followScrub, hold, release]);
-
-  // A hold stays put so its rows can be reached; otherwise the pointer leads, then keyboard focus.
-  const shownIndex =
-    heldIndex ??
-    activeIndex ??
-    (focusIndex !== null && focusIndex < count ? focusIndex : null);
-  const content = shownIndex !== null ? resolveContent(shownIndex) : null;
-  const held = shownIndex !== null && shownIndex === heldIndex;
+  }, [followHover, followScrub, toggleHold, releasePointer]);
   const anchorX =
     shownIndex !== null ? cellCenter(shownIndex, layout) : 0;
   // The crosshair anchors the lens. Each bucket is a new anchor, so the popover re-places beside it.
@@ -311,11 +352,11 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
               backdrop={false}
               passive={!held}
               // A held lens lets go on Escape or a press anywhere else; that press still lands (a bucket holds anew).
-              {...(held ? { onRequestClose: letGo, consumeOutsidePointerDown: false } : {})}
-              placement="right"
+              {...(held ? { onRequestClose: () => { void commands.invoke('dismiss'); }, consumeOutsidePointerDown: false } : {})}
+              placement={phone ? 'bottom' : 'right'}
               gap={LENS_GAP}
-              maxWidthCap={LENS_WIDTH}
-              minWidth={LENS_WIDTH}
+              maxWidthCap={lensWidth}
+              minWidth={lensWidth}
               edgePadding={{ vertical: LENS_GAP }}
               portal={{
                 web: true,
@@ -328,7 +369,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
               {({ maxHeight, maxWidth }) => (
               <InstrumentCard
                 variant="popover"
-                style={{ width: Math.min(LENS_WIDTH, maxWidth), maxHeight }}
+                style={{ width: Math.min(lensWidth, maxWidth), maxHeight }}
                 testID={testID ? `${testID}-lens` : undefined}
               >
                 <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
@@ -377,7 +418,7 @@ export const ScrubLens: React.FC<ScrubLensProps> = ({
                         }
                         accessibilityRole="button"
                         accessibilityLabel={row.pressLabel ?? row.label}
-                        onPress={row.onPress}
+                        onPress={() => { void commands.invoke(`row:${key}`); }}
                         style={(state) => [
                           styles.lensRow,
                           styles.lensRowHeld,

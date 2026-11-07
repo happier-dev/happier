@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -226,7 +227,7 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
     .filter(row => row.instance.definition.kind === 'builtin' && isUsageQueryWidget(row.instance.definition.id))
     .map(row => row.instance.id) : undefined;
   const inventoryOnly = queryWidgetIds?.length === 0;
-  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly}
+  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={props.page.callerContext} callerQuery={props.page.callerQuery}
     queryWidgetIds={queryWidgetIds}>
     <UsagePageDocumentContent {...props} layout={layout} />
   </UsageWidgetBatchProvider>;
@@ -243,10 +244,10 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const { facts } = pageRead;
   const filterSlices = React.useMemo(() => inventorySlice ? [inventorySlice] : pageRead.filterFallback ?? [], [inventorySlice, pageRead.filterFallback]);
   const presets = React.useMemo(() => USAGE_WIDGET_PRESET_IDS.map(id => ({ id, name: props.names[id] })), [props.names]);
-  const publishedLayoutSelection = React.useRef<((layoutId: string) => Promise<boolean>) | null>(null);
-  const selectPublishedLayout = React.useCallback((layoutId: string) => {
+  const publishedLayoutSelection = React.useRef<((layoutId: string, callerContext?: ActionExecutorContext) => Promise<boolean>) | null>(null);
+  const selectPublishedLayout = React.useCallback((layoutId: string, callerContext?: ActionExecutorContext) => {
     if (!props.authority?.isCurrent()) return Promise.resolve(false);
-    return publishedLayoutSelection.current?.(layoutId) ?? Promise.resolve(false);
+    return publishedLayoutSelection.current?.(layoutId, callerContext) ?? Promise.resolve(false);
   }, [props.authority]);
   const bar = useCorePageWidgetAreaLayoutBar({
     binding,
@@ -345,14 +346,15 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const layoutLoading = layout.state.status === 'loading';
   const costBasisPending = (layoutLoading || usageWidgets.length > 0) && facts.costBasisPending;
   const bindingSelectLayout = binding.selectLayout;
-  const selectAreaLayout = React.useCallback(async (layoutId: string) => (await bindingSelectLayout(layoutId)).ok, [bindingSelectLayout]);
+  const selectAreaLayout = React.useCallback(async (layoutId: string, callerContext?: ActionExecutorContext) =>
+    (await bindingSelectLayout(layoutId, callerContext)).ok, [bindingSelectLayout]);
   const publishedLayouts = React.useMemo(() => tabs.map((tab) => ({ id: tab.id, name: tab.name })), [tabs]);
   const scopeFilters = useUsageWidgetPageFilters(page, filterSlices, props.sessionId !== undefined);
   const filterCommands = React.useMemo(() => scopeFilters.flatMap(filter => filter.options.map(option => ({
     field: filter.field,
     id: option.id,
     title: `${filter.title}: ${option.label}`,
-    invoke: () => filter.select(option.id),
+    invoke: (context?: ActionExecutorContext) => filter.select(option.id, context),
   }))), [scopeFilters]);
   const pageReadRetry = useUsageWidgetPageRetry();
   const homeUnavailable = useActiveHomeUnavailable();
@@ -369,11 +371,13 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
     history: historyRead,
   });
+  const layoutsFailed = !homeUnavailable && bar.readFailure !== undefined;
+  const layoutsFact = React.useMemo(() => layoutsFailed ? { retry: () => { void retryLayouts(); } } : null, [layoutsFailed, retryLayouts]);
   // The bar precedes publication because that publication consumes its acknowledged inventory.
   React.useLayoutEffect(() => { publishedLayoutSelection.current = selectLayout; }, [selectLayout]);
   // Toolbar and chart intents borrow the published command, not a second setter path.
   const admittedFilters = React.useMemo(() => scopeFilters.map(filter => ({
-    ...filter, select: (id: string) => selectFilter(filter.field, id),
+    ...filter, select: (id: string, context?: ActionExecutorContext) => selectFilter(filter.field, id, context),
   })), [scopeFilters, selectFilter]);
   const drill = React.useMemo(() => usageDrillFromPageFilters(admittedFilters), [admittedFilters]);
 
@@ -406,7 +410,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   // The selected document and the named-view inventory settle independently.
   return (
     <>
-      <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
+      <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
+        layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
       <WidgetAreaLayoutBar
@@ -415,7 +420,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         onSelect={bar.onSelect}
         onCreate={bar.create}
         actions={bar.personalActions}
-        readFailure={homeUnavailable || !bar.readFailure ? undefined : { ...bar.readFailure, retry: retryLayouts }}
+        // A failed views read is said once by the page header; the bar keeps the built-in views meanwhile.
         labels={labels}
         testID="usage-views"
       />
@@ -494,27 +499,35 @@ function UsagePageHeader(
     retry: (() => void) | null;
     /** Sessions a wide window has not read yet, with Read now (or a running read with Cancel). */
     history?: UsagePageHistoryFact | null;
+    /** The saved views could not be read: the bar shows the built-in views and this header says so once. */
+    layouts?: Readonly<{ retry: () => void }> | null;
     /** A session's own usage: the page is about that session, so it opens with its name (`surf-SES`). */
     sessionId?: string;
   }>,
 ) {
-  const { retry, history } = props;
+  const { retry, history, layouts } = props;
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const facts = React.useMemo((): PageHeaderMetaFact[] => {
     // Shared read progress, failure and partial coverage are said once for the page.
     const { pending, failed, newerServer, partial, observedAt, machines, agents } = props.facts;
     const reading = [
       ...(failed ? [{ key: 'failed', icon: 'warning' as const, text: failed, testID: 'usage-page.header.failed' }] : []),
-      // The one Retry for it: bodies with nothing to draw only say they were not read (`UsageBodyReadFailed`).
+      // The one Retry for it, which also rereads the views and Sessions that failed: bodies with nothing to draw only
+      // say they were not read (`UsageBodyReadFailed`).
       ...(failed && retry ? [{ key: 'retry', text: t('common.retry'), onPress: retry,
         accessibilityLabel: t('usage.board.page.retryRead'), testID: 'usage-page.header.retry' }] : []),
+      // Only the saved views failed: the same one fact and Retry, for them.
+      ...(!failed && layouts ? [{ key: 'viewsFailed', icon: 'warning' as const, text: t('usage.board.page.viewsReadFailed'), testID: 'usage-page.header.viewsFailed' },
+        { key: 'viewsRetry', text: t('common.retry'), onPress: layouts.retry,
+          accessibilityLabel: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`, testID: 'usage-page.header.viewsRetry' }] : []),
       ...(newerServer ? [{ key: 'newerServer', text: newerServer, testID: 'usage-page.header.newerServer' }] : []),
       // Sessions not read yet are why the shown activity is partial: their count and Read now say it once.
-      ...(history ? [{ key: 'history', text: history.text, ...(history.failed ? { icon: 'warning' as const } : {}), testID: 'usage-page.header.history' },
-        { key: 'historyAction', text: history.label, onPress: history.onPress,
-          accessibilityLabel: history.accessibilityLabel, testID: 'usage-page.header.historyAction' }]
+      ...(history ? [{ key: 'history', text: history.text, testID: 'usage-page.header.history' },
+        ...(history.label && history.onPress ? [{ key: 'historyAction', text: history.label, onPress: history.onPress,
+          accessibilityLabel: history.accessibilityLabel, testID: 'usage-page.header.historyAction' }] : [])]
         : partial ? [{ key: 'partial', text: partial, testID: 'usage-page.header.partial' }] : []),
-      ...(pending ? [{ key: 'reading', text: pending }] : []),
+      // What is still being read is moot while a failure is said: the failure and its Retry stand alone.
+      ...(pending && !failed ? [{ key: 'reading', text: pending }] : []),
     ];
     return [
       ...(observedAt !== null
@@ -546,7 +559,7 @@ function UsagePageHeader(
           ]
         : []),
     ];
-  }, [props.facts, retry, history]);
+  }, [props.facts, retry, history, layouts]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (

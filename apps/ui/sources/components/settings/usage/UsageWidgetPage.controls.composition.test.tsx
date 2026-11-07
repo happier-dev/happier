@@ -21,6 +21,7 @@ import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScope
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { t } from '@/text';
 import { useUsageWidgetPageContext, usePublishUsageWidgetPageContext } from './useUsageWidgetPageContext';
 import { UsageBreakdownsWidget } from './widgets/UsageBreakdownsWidget';
@@ -29,6 +30,11 @@ import { UsageProjectionsWidget } from './widgets/UsageProjectionsWidget';
 import type { UsageWidgetBodyModel } from './useUsageWidgetResource';
 import type { UsageHistoryModel } from './useUsageHistory';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
+import { useUsageWorkDisclosures } from './widgets/UsageWorkParts';
+import { UsageModelPricesEditor } from './widgets/UsageModelPrices';
+import { UsageNightShiftWidget } from './widgets/UsageNightShiftWidget';
+import { UsageBodyInsufficient, UsageCoverageLine } from './widgets/usageBodyKit';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -42,6 +48,8 @@ const NO_COST_BASES = [] as const;
 let showExtraFilter = false;
 let historyModel: UsageHistoryModel | null = null;
 let historyFact: ReturnType<typeof usePublishUsageWidgetPageContext>['history'] = null;
+let pageRetryRead: (() => Promise<void>) | undefined;
+let publishedRetryRead: ReturnType<typeof usePublishUsageWidgetPageContext>['retryRead'] | null = null;
 function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
     const authority = captureActiveServerAccountScopeLifetime();
     const page = useUsageWidgetPageContext({ authority });
@@ -52,8 +60,9 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
         selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex', invoke: () => page.setScope({ agents: ['codex'] }) },
             ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])],
-        history: historyModel });
+        history: historyModel, ...(pageRetryRead ? { retryRead: pageRetryRead } : {}) });
     historyFact = published.history;
+    publishedRetryRead = published.retryRead;
     reader = useOptionalCurrentUiContextReader();
     React.useEffect(() => {
         if (!reader) return;
@@ -89,7 +98,7 @@ async function mount(children: React.ReactNode, retireOnSelection = false) {
     return { screen, retire: () => screen.update(tree(null)) };
 }
 afterEach(async () => {
-    showExtraFilter = false; historyModel = null; historyFact = null;
+    showExtraFilter = false; historyModel = null; historyFact = null; pageRetryRead = undefined; publishedRetryRead = null;
     standardCleanup(); unregister?.(); unregister = undefined; reader = null;
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
 });
@@ -105,6 +114,92 @@ async function invoke(id: string) {
             context: { surface: 'agent' } })).toMatchObject({ ok: true });
     });
 }
+
+function WorkDetails() {
+    const details = useUsageWorkDisclosures([{ id: 'project', title: 'Project details' }, { id: 'branch', title: 'Branch details' }]);
+    return <><Text testID="project-details" onPress={() => details.toggle('project')}>{String(details.isOpen('project'))}</Text>
+        <Text testID="branch-details">{String(details.isOpen('branch'))}</Text></>;
+}
+
+it('publishes visible body recovery and navigation through their mounted owner and retires both', async () => {
+    let retried = 0;
+    let opened = 0;
+    const props = bodyProps({ queries: [normalizeUsageQuery({})], sources: [{ source: 'work', status: 'error' }] });
+    const { screen, retire } = await mount(<>
+        <UsageCoverageLine slice={props.slice} sources={['work']} onRetry={() => { retried++; }} testID="body-retry" />
+        <UsageBodyInsufficient title="No account" testID="body-navigation"
+            action={{ label: 'Open account', onPress: () => { opened++; } }} />
+    </>);
+    const command = (title: string) => reader!.readCurrentUiContext()!.commands.find(row => row.title === title);
+    expect(command('Open account')).toBeDefined();
+    const retry = command(t('common.retry'))!;
+    expect(retry).toBeDefined();
+    await invoke(retry.id);
+    expect(retried).toBe(1);
+    await invoke(command('Open account')!.id);
+    expect(opened).toBe(1);
+    await screen.pressByTestIdAsync('body-navigation-action');
+    expect(opened).toBe(2);
+    await retire();
+    expect(reader!.resolveCurrentUiCommand(retry.id)).toBeNull();
+});
+
+it('opens the exact Work detail from the mounted command and closes it from the same visible control', async () => {
+    const { screen, retire } = await mount(<WorkDetails />);
+    const command = reader!.readCurrentUiContext()!.commands.find(command => command.title.startsWith('Project details'));
+    expect(command).toBeDefined();
+    await invoke(command!.id);
+    expect(screen.findByTestId('project-details')!.props.children).toBe('true');
+    expect(screen.findByTestId('branch-details')!.props.children).toBe('false');
+    await screen.pressByTestIdAsync('project-details');
+    expect(screen.findByTestId('project-details')!.props.children).toBe('false');
+    await retire();
+    expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
+        context: { surface: 'agent' } })).toMatchObject({ ok: false });
+});
+
+it('exposes model price disclosure and its editable draft through the same mounted command owner', async () => {
+    const query = normalizeUsageQuery({});
+    const tokens = { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 };
+    const props = bodyProps({ queries: [query], accounting: [{ query, status: 'available', value: { v: 1,
+        totals: { eventCount: 1, tokens, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [{
+            id: 'price-control', sessionId: null, turnId: null, observedAtMs: 1, agentId: null, modelId: 'parity-private-model',
+            machineId: null, projectKey: null, workspaceId: null, source: null, tokens,
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+        }] } }] });
+    const { screen } = await mount(<UsageModelPricesEditor slice={props.slice} serverId="home" testID="price-controls" />);
+    const command = reader!.readCurrentUiContext()!.commands.find(command => command.title.startsWith('parity-private-model'));
+    expect(command).toBeDefined();
+    await invoke(command!.id);
+    expect(screen.findByTestId('price-controls.model.parity-private-model.input')).not.toBeNull();
+    const rate = reader!.readCurrentUiContext()!.commands.find(command => command.title === `parity-private-model: ${t('usage.board.page.priceInput')}`);
+    expect(rate).toBeDefined();
+    await act(async () => {
+        expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+            input: { commandId: rate!.id, input: '2.5' }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
+    });
+    expect(screen.findByTestId('price-controls.model.parity-private-model.input')!.props.value).toBe('2.5');
+    await screen.pressByTestIdAsync('price-controls.model.parity-private-model.cancel');
+    expect(screen.findAllByType(ExpandableItem).find(row => row.props.testID === 'price-controls.model.parity-private-model')?.props.expanded).toBe(false);
+    expect(reader!.resolveCurrentUiCommand(rate!.id)).toBeNull();
+});
+
+it('changes the night-hour draft through the same mounted option as its visible picker', async () => {
+    const query = normalizeUsageQuery({});
+    const props = bodyProps({ queries: [query], accounting: [] });
+    function NightControls() {
+        const scope = useActiveServerAccountScope();
+        return <UsageNightShiftWidget {...props} serverId={scope!.serverId} id="usage_night_shift" testID="night-controls" />;
+    }
+    const { screen } = await mount(<NightControls />);
+    const command = reader!.readCurrentUiContext()!.commands.find(command => command.title.endsWith(`${t('usage.board.howYouWork.nightStart')}: 22:00`));
+    expect(command).toBeDefined();
+    await invoke(command!.id);
+    const picker = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'night-controls.startHour')!;
+    expect(picker().props.selectedId).toBe('22');
+    await act(async () => { picker().props.onSelect('21'); });
+    expect(picker().props.selectedId).toBe('21');
+});
 
 it('settles an acknowledged view switch after its own publication retires and refuses an old command before effects', async () => {
     const { screen } = await mount(null, true);
@@ -202,6 +297,10 @@ it('uses the same mounted projection-window intent for agent, picker and small m
     </>);
     const picker = () => screen.findAllByType(DropdownMenu).filter(node => node.props.testID?.endsWith('.windowPicker'));
     expect(picker()).toHaveLength(2);
+    const openPicker = reader!.readCurrentUiContext()!.commands.find(command => command.title === `${t('usage.board.plans.windowPicker')}: ${t('common.open')}`);
+    expect(openPicker).toBeDefined();
+    await invoke(openPicker!.id);
+    expect(picker()[0]!.props.open).toBe(true);
     const [initial, sibling] = picker().map(node => node.props.selectedId);
     const other = picker()[0]!.props.items.find((row: { id: string }) => row.id !== initial)!;
     const command = reader!.readCurrentUiContext()!.commands.find(command => command.title.includes(t('usage.board.plans.windowPicker')) && command.title.endsWith(other.title));
@@ -225,11 +324,12 @@ it('uses the same mounted projection-window intent for agent, picker and small m
 
 it('binds unread Sessions to one Read now fact and page command, cancels the running read and settles when read', async () => {
     const calls: string[] = [];
+    const surfaces: (ActionExecutorContext['surface'] | undefined)[] = [];
     const model = (status: NonNullable<UsageHistoryModel['state']>['status'], progress: Partial<NonNullable<UsageHistoryModel['state']>['progress']>): UsageHistoryModel => {
         const state = { status, progress: { selected: 1300, notRead: 0, completed: 0, failed: 0, ...progress } };
         return { state, notRead: state.progress.notRead,
-            readNow: async () => { calls.push('read'); return { ok: true, result: state }; },
-            cancel: async () => { calls.push('cancel'); return { ok: true, result: state }; } };
+            readNow: async (context?: ActionExecutorContext) => { calls.push('read'); surfaces.push(context?.surface); return { ok: true, result: state }; },
+            cancel: async (context?: ActionExecutorContext) => { calls.push('cancel'); surfaces.push(context?.surface); return { ok: true, result: state }; } };
     };
     const historyCommand = () => reader!.readCurrentUiContext()!.commands.filter(command =>
         command.title === t('usage.board.page.historyReadCommand') || command.title === t('usage.board.page.historyCancelCommand'));
@@ -239,6 +339,7 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyReadCommand')]);
     await invoke(historyCommand()[0]!.id);
     expect(calls).toEqual(['read']);
+    expect(surfaces).toEqual(['agent']);
 
     historyModel = model('reading', { notRead: 1120, completed: 120 });
     await rerender();
@@ -247,25 +348,56 @@ it('binds unread Sessions to one Read now fact and page command, cancels the run
     await act(async () => { historyFact!.onPress(); });
     await flushHookEffects({ cycles: 4 });
     expect(calls).toEqual(['read', 'cancel']);
+    expect(surfaces).toEqual(['agent', 'ui']);
 
     // A cancelled read keeps what it converted; the rest are still not read.
     historyModel = model('cancelled', { notRead: 1120, completed: 120 });
     await rerender();
     expect(historyFact).toMatchObject({ text: t('usage.board.page.historyNotRead', { count: formatExactCount(1120) }), label: t('usage.board.page.historyReadNow') });
 
-    // A few failures among many unread Sessions still offer Read now; failures alone offer Retry.
+    // A failed read remains retryable even when other Sessions have not been read yet.
     historyModel = model('partial', { notRead: 1120, completed: 120, failed: 2 });
     await rerender();
-    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyNotRead', { count: formatExactCount(1120) }), failed: false });
+    expect(historyFact).toMatchObject({ label: t('common.retry'), failed: true });
     historyModel = model('partial', { notRead: 3, completed: 1237, failed: 3 });
     await rerender();
-    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyFailed', { count: formatExactCount(3) }), label: t('common.retry'), failed: true });
+    expect(historyFact).toMatchObject({ text: t('usage.board.page.historyFailed', { count: formatExactCount(3) }), failed: true });
+    expect(historyFact).toMatchObject({ label: t('common.retry'), onPress: expect.any(Function) });
+    expect(historyCommand().map(command => command.title)).toEqual([t('usage.board.page.historyReadCommand')]);
+    await invoke(historyCommand()[0]!.id);
+    expect(calls).toEqual(['read', 'cancel', 'read']);
+
+    // QA-R122-HIST: all subjects persisted, but the aggregate read failed ten times.
+    // There need not be an unread subject for the failed operation to be retryable.
+    historyModel = model('partial', { notRead: 0, completed: 33, failed: 10 });
+    await rerender();
+    expect(historyFact).toMatchObject({ label: t('common.retry'), failed: true, onPress: expect.any(Function) });
     await act(async () => { historyFact!.onPress(); });
     await flushHookEffects({ cycles: 4 });
-    expect(calls).toEqual(['read', 'cancel', 'read']);
+    await invoke(historyCommand()[0]!.id);
+    expect(calls).toEqual(['read', 'cancel', 'read', 'read', 'read']);
+    expect(surfaces.slice(-2)).toEqual(['ui', 'agent']);
 
     historyModel = model('complete', { completed: 1240 });
     await rerender();
     expect(historyFact).toBeNull();
     expect(historyCommand()).toEqual([]);
+});
+
+it('says a page read failure and unreadable Sessions once, with one Retry that rereads both', async () => {
+    const calls: string[] = [];
+    const state = { status: 'partial' as const, progress: { selected: 40, notRead: 3, completed: 37, failed: 3 } };
+    historyModel = { state, notRead: 3,
+        readNow: async () => { calls.push('history'); return { ok: true, result: state }; },
+        cancel: async () => { calls.push('cancel'); return { ok: true, result: state }; } };
+    pageRetryRead = async () => { calls.push('page'); };
+    await mount(null);
+    // The page failure carries the unreadable Sessions: no second failure fact and no second Retry.
+    expect(historyFact).toBeNull();
+    const commands = reader!.readCurrentUiContext()!.commands;
+    expect(commands.filter(command => command.title === t('usage.board.page.historyReadCommand'))).toEqual([]);
+    expect(commands.filter(command => command.title === t('usage.board.page.retryRead'))).toHaveLength(1);
+    await act(async () => { await publishedRetryRead!(); });
+    await flushHookEffects({ cycles: 4 });
+    expect(calls.sort()).toEqual(['history', 'page']);
 });

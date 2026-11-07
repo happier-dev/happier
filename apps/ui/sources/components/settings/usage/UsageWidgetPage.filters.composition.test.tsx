@@ -13,6 +13,7 @@ import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, Wid
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -33,8 +34,10 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { UsagePeriodSummaryWidget } from './widgets/UsagePeriodSummaryWidget';
+import { UsageCoachWidget } from './widgets/UsageCoachWidget';
 import { UsageWidgetPage } from './UsageWidgetPage';
 import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRouteParams';
+import { describeUsageWidgetSlotValue, type UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import * as usageAnalytics from '@/sync/api/account/usageAnalytics';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
@@ -48,14 +51,15 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createClientActionReverseDispatcher } from '../../../../../cli/src/session/actions/clientActionReverseDispatch';
 import { createActionToolExecutorBridge } from '../../../../../cli/src/agent/tools/happierTools/createActionToolExecutorBridge';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, getUsageSessionEvidenceDemandKey } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { ClientActionReverseRuntime } from '@/components/appShell/runtime/ClientActionReverseRuntime';
 import { createMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { Socket } from 'socket.io-client';
 import { currentUiContextCommandClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, getUsageSessionEvidenceDemandKey } from '@happier-dev/protocol/usage/usageSessionEvidence';
 
 const currentRoute = vi.hoisted(() => ({ segments: ['(app)', 'settings', 'usage'], params: {} as Record<string, string> }));
 
@@ -135,6 +139,125 @@ afterEach(async () => {
 });
 
 describe('mounted Usage page scope commands', () => {
+    it('retains unchanged offered filter command IDs while a new period read is pending', async () => {
+        let readStarted = createDeferred<void>();
+        let readGate = createDeferred<void>();
+        let holdRead = false;
+        let responseAccounting = accounting;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-period-command-continuity.test', accountId: 'account-a' }],
+            route: async request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') {
+                    if (holdRead) { readStarted.resolve(); await readGate.promise; }
+                    return Response.json(responseAccounting);
+                }
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        let rerender = () => {};
+        function Page() {
+            const [, setRevision] = React.useState(0);
+            rerender = () => setRevision(revision => revision + 1);
+            return <RoutedUsagePage />;
+        }
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><Page />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const filters = () => screen.findAllByType(SelectionListFilterChip).map(node => node.props.filter);
+        await waitForHomeGovernance(() => expect(filters().find(filter => filter.id === 'machines')?.options
+            .some((option: { id: string }) => option.id === 'machine-a')).toBe(true));
+        await flushHookEffects({ cycles: 40 });
+        // Field and option ID establish meaning; titles only locate that option's public descriptor.
+        const offered = () => [...filters().filter(filter => ['agents', 'machines', 'projects', 'sources'].includes(filter.id))
+            .flatMap(filter => filter.options.map((option: { id: string; label: string }) => ({
+                key: JSON.stringify([filter.id, option.id]), title: `${filter.label}: ${option.label}`,
+            }))), ...screen.findByType(UsageFilterBar).props.costBasisOptions.map((basis: UsageWidgetPageScope['costBasis']) => ({
+                key: JSON.stringify(['costBasis', basis]),
+                title: describeUsageWidgetSlotValue('costBasis', basis, screen.findByType(UsageFilterBar).props.page.period),
+            }))];
+        const ids = (choices: ReturnType<typeof offered>) => {
+            const seen = new Map<string, number>();
+            return Object.fromEntries(choices.map(choice => {
+                const index = seen.get(choice.title) ?? 0;
+                seen.set(choice.title, index + 1);
+                return [choice.key, reader!.readCurrentUiContext()!.commands.filter(command => command.title === choice.title)[index]?.id ?? null];
+            }));
+        };
+        const choices = offered();
+        const initial = ids(choices);
+        expect(Object.values(initial).every(id => id !== null)).toBe(true);
+        const registrations = new Set<string>();
+        const initialCommandIds = new Set(reader!.readCurrentUiContext()!.commands.map(command => command.id));
+        const stop = reader!.subscribe(() => {
+            for (const command of reader!.readCurrentUiContext()?.commands ?? []) {
+                if (!initialCommandIds.has(command.id)) registrations.add(command.id);
+            }
+        });
+        try {
+            for (let count = 0; count < 3; count++) {
+                await act(async () => rerender());
+                await flushHookEffects({ cycles: 10 });
+            }
+            expect(registrations.size, 'unchanged page rerenders create zero new executable command addresses').toBe(0);
+            expect(ids(choices)).toEqual(initial);
+            holdRead = true;
+            let refreshed: Promise<void> | undefined;
+            try {
+                await act(async () => { refreshed = screen.findAllByType(UsagePeriodSummaryWidget)[0]!.props.model.refresh(); });
+                await readStarted.promise;
+                await flushHookEffects({ cycles: 20 });
+                expect(ids(choices), 'same-period pending refresh preserves offered command IDs').toEqual(initial);
+            } finally {
+                holdRead = false;
+                await act(async () => { readGate.resolve(); await refreshed; });
+            }
+            await waitForHomeGovernance(() => expect(ids(choices)).toEqual(initial));
+            expect(registrations.size, 'unchanged refreshed facts create zero new executable command addresses').toBe(0);
+            readStarted = createDeferred<void>();
+            readGate = createDeferred<void>();
+            holdRead = true;
+            let pending: ReturnType<typeof ids>;
+            let pendingPublicIds = new Set<string>();
+            try {
+                await act(async () => { screen.findByType(UsageFilterBar).props.onPeriodChange('today'); });
+                await readStarted.promise;
+                await flushHookEffects({ cycles: 20 });
+                pending = ids(choices);
+                pendingPublicIds = new Set(reader!.readCurrentUiContext()!.commands.map(command => command.id));
+            } finally {
+                holdRead = false;
+                await act(async () => readGate.resolve());
+            }
+            await waitForHomeGovernance(() => expect(offered()).toEqual(choices));
+            const settled = ids(choices);
+            const settledPublicIds = new Set(reader!.readCurrentUiContext()!.commands.map(command => command.id));
+            const counts = { before: initialCommandIds.size, pending: pendingPublicIds.size, settled: settledPublicIds.size,
+                removedWhilePending: [...initialCommandIds].filter(id => !pendingPublicIds.has(id)).length,
+                newAfterSettled: [...settledPublicIds].filter(id => !initialCommandIds.has(id)).length };
+            expect({ withdrawn: choices.filter(choice => pending[choice.key] !== initial[choice.key]).length,
+                reminted: choices.filter(choice => settled[choice.key] !== initial[choice.key]).length },
+            `unchanged offered choices survive pending and settled period reads; public IDs ${JSON.stringify(counts)}`)
+                .toEqual({ withdrawn: 0, reminted: 0 });
+            // A settled empty inventory is a genuine membership change, not a pending read.
+            responseAccounting = { ...accounting, breakdowns: {}, engineTimeline: [] };
+            await act(async () => { await screen.findByType(UsageFilterBar).props.onPeriodChange('30days'); });
+            await waitForHomeGovernance(() => expect(filters().filter(filter => ['agents', 'machines', 'projects', 'sources'].includes(filter.id))
+                .every(filter => filter.options.length === 1)).toBe(true));
+            expect(reader!.resolveCurrentUiCommand(initial[JSON.stringify(['machines', 'machine-a'])]!)).toBeNull();
+        } finally {
+            stop();
+            readGate.resolve();
+        }
+    });
+
     it.each([
         { entry: 'settings', sessionId: undefined, readFails: false, pendingCommandRegistration: false },
         { entry: 'Session', sessionId: 'session-usage-parity', readFails: false, pendingCommandRegistration: false },
@@ -480,20 +603,117 @@ describe('mounted Usage page scope commands', () => {
         expect(shownAccounting, 'every committed scroll frame retains the loaded facts').not.toContain(null);
     });
 
-    it('acquires one private evidence cohort through the cold Today Overview entry', async () => {
-        vi.spyOn(Date, 'now').mockReturnValue(1_710_000_000_000);
-        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cold-overview-evidence.test', accountId: 'account-a' }],
+    it('waits for the default Overview Coach body to be near before requesting its transcript facts', async () => {
+        const nowMs = 1_710_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const id = 'overview-visible-summary';
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-overview-viewport.test', accountId: 'account-a' }],
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+                    return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+                        detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({ id, seq: 1 }) } },
+                        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs, turns: [{
+                            turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+                            terminalAt: nowMs - 600, updatedAt: nowMs,
+                        }] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+                    }] });
+                }
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const positions = new Map<string, number>();
+        let offset = 0;
+        type MeasureDone = (x: number, y: number, width: number, height: number) => void;
+        const content = { measureInWindow: (done: MeasureDone) => done(0, -offset, 1000, 6000) };
+        const nodes = new Map<string, Readonly<{ measureInWindow: (done: MeasureDone) => void }>>();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <UsageWidgetPage initialFilters={{ layoutId: 'overview', period: 'today', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>, { createNodeMock: node => {
+            const testId = node.props.testID;
+            if (testId === 'usage-page') return { getInnerViewRef: () => content };
+            if (typeof testId !== 'string' || !/^usage-area\.widget\.[^.]+$/.test(testId)) return null;
+            if (!positions.has(testId)) positions.set(testId, 410 + positions.size * 400);
+            if (!nodes.has(testId)) nodes.set(testId, { measureInWindow: (done: MeasureDone) => done(0, positions.get(testId)! - offset, 1000, 300) });
+            return nodes.get(testId)!;
+        } });
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const evidence = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+            .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+        expect(evidence(), 'the cold page has not admitted a physical viewport').toHaveLength(0);
+        await act(async () => screen.findByTestId('usage-page')!.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } } }));
+        await waitForHomeGovernance(() => expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.howYouWork?.intervals?.agentTimeMs).toBe(300));
+        expect(screen.findAllByType(UsageCoachWidget), 'never-near Coach has no body or transcript demand').toHaveLength(0);
+        expect(evidence().length, 'visible Summary still consumes its real interval facts').toBeGreaterThan(0);
+        expect(evidence().filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(0);
+        await act(async () => {
+            offset = 1111;
+            screen.findByTestId('usage-page')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } });
+        });
+        await waitForHomeGovernance(() => expect(screen.findAllByType(UsageCoachWidget)[0]?.props.slice.sources)
+            .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' }));
+        expect(evidence().filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
+    });
+
+    it.each([false, true])('acquires one private evidence cohort through the cold Today Overview entry (quota arrival: %s)', async connected => {
+        const nowMs = 1_710_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+        const releaseEvidence = createDeferred<void>();
+        const accountingStarted = createDeferred<void>();
+        const releaseAccounting = createDeferred<void>();
+        const quotaStarted = createDeferred<void>();
+        const releaseQuota = createDeferred<void>();
+        const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
+        const source = { bindingKind: 'account' as const, ref };
+        const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+        const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: nowMs, fetchedAtMs: nowMs,
+            staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cold-overview-evidence.test', accountId: 'account-a',
+            profile: { connectedAccountsV4: connected ? [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+                credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] : [] } }],
+            route: async request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+                    features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
+                }));
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') {
+                    accountingStarted.resolve();
+                    if (connected) await releaseAccounting.promise;
+                    return Response.json(accounting);
+                }
+                if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1 || request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1)
+                    return Response.json({ status: 'deleted', revision: 1 });
+                if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
+                    recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: nowMs, staleAfterMs: 600_000 });
+                if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+                    quotaStarted.resolve();
+                    await releaseQuota.promise;
+                    return Response.json({ content: { t: 'plain', v: record }, metadata: { fetchedAt: nowMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+                }
+                if (request.path === '/v4/connect/qualified/provider-account-usage/history') return Response.json({ entries: [], nextCursor: null });
                 if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
                 if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
                     const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                    await releaseEvidence.promise;
                     return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [] })), results: [] });
                 }
-                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
         const server = home.homes.a!;
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
@@ -506,9 +726,23 @@ describe('mounted Usage page scope commands', () => {
         </InjectedAuthProvider>);
         const { sync } = await import('@/sync/sync');
         await sync.awaitBootstrapForegroundAcquisition();
-        await waitForHomeGovernance(() => expect(screen.findAllByType(WidgetSurface).length).toBeGreaterThan(0));
         const evidenceReads = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH);
-        await vi.waitFor(() => expect(evidenceReads().length).toBeGreaterThan(0));
+        try {
+            await waitForHomeGovernance(() => expect(screen.findAllByType(WidgetSurface)).toHaveLength(7));
+            if (connected) {
+                await accountingStarted.promise;
+                await quotaStarted.promise;
+                releaseQuota.resolve();
+                await flushHookEffects({ cycles: 40 });
+                releaseAccounting.resolve();
+            }
+            await waitForHomeGovernance(() => {
+                expect(screen.findAllByType(UsagePeriodSummaryWidget)).toHaveLength(1);
+                expect(screen.findAllByType(UsageCoachWidget)).toHaveLength(1);
+            });
+            await vi.waitFor(() => expect(evidenceReads().length).toBeGreaterThan(0));
+            await flushHookEffects({ cycles: 40 });
+        } finally { releaseQuota.resolve(); releaseAccounting.resolve(); releaseEvidence.resolve(); }
         await flushHookEffects({ cycles: 40 });
         const demands = evidenceReads().flatMap(request => {
             const input = UsageSessionEvidenceRequestSchema.parse(request.body);
@@ -516,6 +750,198 @@ describe('mounted Usage page scope commands', () => {
         });
         expect(new Set(demands.map(demand => demand.key)).size, 'Overview consumers request one canonical private fact demand').toBe(1);
         expect(evidenceReads(), 'comparison and Work projections share one actual HTTP evidence acquisition at the page entry').toHaveLength(1);
+    });
+
+    it.each(['summary', 'transcript'] as const)('projects each opaque Overview %s record before the remaining cohort arrives without publishing an incomplete cohort', async phase => {
+        const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 }, { createSessionFixture },
+            { createPlainSessionWithDisplayRecordFixture }, { createAccountEncryptionCurrentnessFixtureForCredentials },
+            { syncPerformanceTelemetry }] = await Promise.all([
+            import('@/sync/encryption/encryption'), import('@/encryption/base64'), import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
+            import('@/dev/testkit/fixtures/sessionFixtures'), import('@/dev/testkit/fixtures/sessionDisplayFixtures'),
+            import('@/dev/testkit/fixtures/accountEncryptionCurrentness'), import('@/sync/runtime/syncPerformanceTelemetry'),
+        ]);
+        const nowMs = 1_710_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+        const ids = ['overview-opaque-first', 'overview-opaque-last'];
+        const secret = new Uint8Array(32).fill(7);
+        const sessionKey = new Uint8Array(32).fill(9);
+        const encryption = await Encryption.create(secret);
+        await encryption.initializeSessions(new Map(ids.map(id => [id, sessionKey])));
+        const dataEncryptionKey = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey,
+            recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) }), 'base64');
+        const records = await Promise.all(ids.map(async id => {
+            const { ownerMetadata: _owner, displayProjectionV1: _display, ...base } = createPlainSessionWithDisplayRecordFixture({ id, seq: 1 });
+            return { ...base, metadataLayoutVersion: 0, encryptionMode: 'e2ee' as const, dataEncryptionKey,
+                metadata: await encryption.getSessionEncryption(id)!.encryptMetadata(createSessionFixture({ id }).metadata!), agentState: null };
+        }));
+        const ciphertext = await Promise.all(ids.map(id => encryption.getSessionEncryption(id)!.encryptRawRecord({
+            role: 'user', content: { type: 'text', text: `private ${id}` },
+        })));
+        const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        const firstRecord = createDeferred<void>();
+        const releaseTail = createDeferred<void>();
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-incremental-overview.test', accountId: 'account-a',
+            credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', coverage: 'complete', rows: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                    const demand = input.requests[0]!;
+                    const selectedIds = demand.sessionIds ?? ids;
+                    const rows = selectedIds.map(id => ({ sessionId: id, detail: { status: 200 as const, body: { session: records[ids.indexOf(id)]! } },
+                        turns: { status: 200 as const, body: { v: 1 as const, sessionId: id, updatedAt: nowMs - 100, turns: [
+                            { turnId: 'turn', agentId: 'codex', status: 'completed' as const, startedAt: nowMs - 900, terminalAt: nowMs - 600, updatedAt: nowMs - 100 },
+                        ] } }, ...(demand.query.includeTranscriptEvidence ? { messages: { status: 200 as const, body: { messages: [{
+                            id: `message-${id}`, localId: null, seq: 1, createdAt: nowMs - 800, updatedAt: nowMs - 800,
+                            content: { t: 'encrypted' as const, c: ciphertext[ids.indexOf(id)]! },
+                        }], hasMore: false } } } : {}) }));
+                    if (demand.query.includeTranscriptEvidence !== (phase === 'transcript'))
+                        return Response.json({ requests: [{ query: demand.query, sessionIds: selectedIds }], results: rows });
+                    return new Response(new ReadableStream<Uint8Array>({ async start(controller) {
+                        const encoder = new TextEncoder();
+                        controller.enqueue(encoder.encode(`${JSON.stringify({ requests: [{ query: demand.query, sessionIds: selectedIds }] })}\n${JSON.stringify(rows[0])}\n`));
+                        firstRecord.resolve();
+                        await releaseTail.promise;
+                        controller.enqueue(encoder.encode(`${JSON.stringify(rows[1])}\n`));
+                        controller.close();
+                    } }), { headers: { 'Content-Type': 'application/x-ndjson' } });
+                }
+                return artifacts.handle(request.url.toString(), { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        syncPerformanceTelemetry.configure({ enabled: true });
+        syncPerformanceTelemetry.reset();
+        try {
+            const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+                <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                    <UsageWidgetPage initialFilters={{ layoutId: 'overview', period: 'today', metric: 'tokens', costMode: 'auto', focus: null }} />
+                </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            </InjectedAuthProvider>);
+            const { sync } = await import('@/sync/sync');
+            await sync.awaitBootstrapForegroundAcquisition();
+            await waitForHomeGovernance(() => expect(screen.findAllByType(WidgetSurface)).toHaveLength(7));
+            await vi.waitFor(() => expect(home!.httpRequests.some(request => request.path === USAGE_SESSION_EVIDENCE_PATH
+                && UsageSessionEvidenceRequestSchema.parse(request.body).requests.some(demand => demand.query.includeTranscriptEvidence === (phase === 'transcript')))).toBe(true));
+            await firstRecord.promise;
+            await vi.waitFor(() => expect(syncPerformanceTelemetry.snapshot().events
+                .filter(event => event.name === (phase === 'transcript' ? 'sync.encryption.decryptMessages.batchDecrypt' : 'sync.encryption.decryptMetadata'))
+                .reduce((count, event) => count + event.count, 0),
+                'the real crypto owner consumes the first opaque row while the network still holds the rest').toBeGreaterThan(0));
+            expect(screen.findAllByType(UsageCoachWidget)[0]?.props.slice.sources).toContainEqual({
+                source: phase === 'transcript' ? 'how_you_work:transcripts' : 'how_you_work', status: 'pending' });
+            if (phase === 'summary') expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.howYouWork?.intervals?.agentTimeMs).toBeUndefined();
+            releaseTail.resolve();
+            await waitForHomeGovernance(() => {
+                expect(screen.findAllByType(UsageCoachWidget)[0]?.props.slice.sources)
+                    .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
+                expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.howYouWork?.intervals?.agentTimeMs).toBe(600);
+            });
+            expect(home.httpRequests.filter(request => request.path === '/v2/sessions/read-batch')).toHaveLength(0);
+            const demands = home.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+                .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+            expect(demands.filter(demand => !demand.query.includeTranscriptEvidence),
+                'visible Summary and Coach share their equivalent Session summary admission').toHaveLength(1);
+            expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
+        } finally { releaseTail.resolve(); syncPerformanceTelemetry.configure({ enabled: false }); }
+    });
+
+    it('reuses settled opened E2EE Session facts across How-you-work Today route projections', async () => {
+        const [{ Encryption }, { encodeBase64 }, { sealEncryptedDataKeyEnvelopeV1 }, { createSessionFixture },
+            { createPlainSessionWithDisplayRecordFixture }, { createAccountEncryptionCurrentnessFixtureForCredentials },
+            { normalizeSessionAccessProjection }] = await Promise.all([
+            import('@/sync/encryption/encryption'), import('@/encryption/base64'), import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1'),
+            import('@/dev/testkit/fixtures/sessionFixtures'), import('@/dev/testkit/fixtures/sessionDisplayFixtures'),
+            import('@/dev/testkit/fixtures/accountEncryptionCurrentness'),
+            import('@/sync/engine/sessions/normalizeSessionAccessProjection'),
+        ]);
+        const nowMs = 1_710_000_000_000;
+        vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+        const id = 'how-today-opened';
+        const secret = new Uint8Array(32).fill(7);
+        const sessionKey = new Uint8Array(32).fill(9);
+        const encryption = await Encryption.create(secret);
+        await encryption.initializeSessions(new Map([[id, sessionKey]]));
+        const { ownerMetadata: _owner, displayProjectionV1: _display, ...base } = createPlainSessionWithDisplayRecordFixture({ id, seq: 6 });
+        const session = { ...base, metadataLayoutVersion: 0, encryptionMode: 'e2ee' as const,
+            dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey,
+                recipientPublicKey: encryption.contentDataKey, randomBytes: length => new Uint8Array(length).fill(3) }), 'base64'),
+            metadata: await encryption.getSessionEncryption(id)!.encryptMetadata(createSessionFixture({ id }).metadata!), agentState: null };
+        const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'e2ee' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-how-today-settled.test', accountId: 'account-a',
+            credentials, accountMode: 'e2ee', encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v1/account/project-rows/list') return Response.json({ status: 'listed', coverage: 'complete', rows: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+                    return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+                        detail: { status: 200, body: { session } },
+                        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [{
+                            turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+                            terminalAt: nowMs - 600, updatedAt: nowMs - 100,
+                        }] } }, ...(demand.query.includeTranscriptEvidence ? { messages: { status: 200,
+                            body: { messages: [], hasMore: false } } } : {}),
+                    }] });
+                }
+                return artifacts.handle(request.url.toString(), { method: request.method, headers: request.headers,
+                    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        let changeMetric: (metric: 'tokens' | 'cost') => void = () => {};
+        function RoutePage() {
+            const [metric, setMetric] = React.useState<'tokens' | 'cost'>('tokens');
+            changeMetric = setMetric;
+            return <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'today', metric, costMode: 'auto', focus: null }} />;
+        }
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider><RoutePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        const facts = () => screen.findAllByType(UsageRhythmWidget).map(node => node.props.slice.howYouWork?.intervals?.agentTimeMs);
+        await waitForHomeGovernance(() => expect(facts()).toContain(300));
+        await flushHookEffects({ cycles: 40 });
+        const reads = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH);
+        const admittedReads = reads().length;
+        expect(admittedReads).toBeGreaterThan(0);
+        // The ordinary Session hydration path can publish after Usage has
+        // already opened the same server revision. Exercise its real store
+        // action, without replacing any Resource or admission helper.
+        await act(async () => getStorage().getState().applySessions([createSessionFixture({ id,
+            serverId: server.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
+            metadataVersion: session.metadataVersion, agentStateVersion: session.agentStateVersion,
+            metadataLayoutVersion: session.metadataLayoutVersion, encryptionMode: session.encryptionMode,
+            access: normalizeSessionAccessProjection(session) ?? undefined,
+            sessionTurns: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [{
+                turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: nowMs - 900,
+                terminalAt: nowMs - 600, updatedAt: nowMs - 100,
+            }] },
+        })]));
+        await flushHookEffects({ cycles: 40 });
+        expect(facts()).toContain(300);
+        expect(reads(), 'late local hydration of the already opened revision adds no evidence request').toHaveLength(admittedReads);
+        for (const metric of ['cost', 'tokens'] as const) {
+            await act(async () => changeMetric(metric));
+            await flushHookEffects({ cycles: 40 });
+            expect(facts()).toContain(300);
+            expect(reads(), 'a new presentation of already opened unchanged Session facts adds no evidence request').toHaveLength(admittedReads);
+        }
+        const demands = reads().flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+        expect(demands.filter(demand => !demand.query.includeTranscriptEvidence)).toHaveLength(1);
+        expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
     });
 
     it('follows the route-selected view and converges on the last selection', async () => {
@@ -683,22 +1109,24 @@ describe('mounted Usage page scope commands', () => {
         expect.soft(screen.findByTestId('usage-views.loading')).toBeNull();
         inventoryRead.resolve();
         if (inventoryFails) {
-            await vi.waitFor(() => expect(screen.findByType(WidgetAreaLayoutBar).props.readFailure)
-                .toMatchObject({ reasonCode: expect.any(String) }));
+            // The views' failure is said once, by the page header, not as a second failure line under it.
+            await vi.waitFor(() => expect(screen.findHostByTestId('usage-page.header.viewsFailed')).not.toBeNull());
             await vi.waitFor(() => expect(screen.findByType(WidgetAreaLayoutBar).props.layouts.map((view: { id: string }) => view.id).sort())
                 .toEqual([...USAGE_WIDGET_PRESET_IDS].sort()));
-            expect(screen.findAllHostsByTestId('usage-views.readFailed')).toHaveLength(1);
-            expect(screen.findByType(WidgetAreaLayoutBar).props.readFailure).toMatchObject({ reasonCode: expect.any(String) });
+            expect(screen.findAllHostsByTestId('usage-views.readFailed')).toHaveLength(0);
+            expect(screen.findByType(WidgetAreaLayoutBar).props.readFailure).toBeUndefined();
             expect(screen.findAllByType(WidgetSurface).map(node => node.props.instance.id)).toEqual(['work-only']);
+            // The header's one Retry rereads the views: their own command, or the page Retry when a page read failed too.
             const retryCommand = reader!.readCurrentUiContext()!.commands.find(command =>
-                command.title === `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`);
+                command.title === `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`)
+                ?? reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
             expect(retryCommand, 'the visible view inventory Retry has a mounted command').toBeDefined();
             inventoryFails = false;
             await act(async () => {
                 expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
                     input: { commandId: retryCommand!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
             });
-            await vi.waitFor(() => expect(screen.findByTestId('usage-views.readFailed')).toBeNull());
+            await vi.waitFor(() => expect(screen.findHostByTestId('usage-page.header.viewsFailed')).toBeNull());
         }
         await vi.waitFor(() => expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe(layoutId));
         // A rendered preset is immediately available; its personal edited marker arrives with inventory.
@@ -922,10 +1350,12 @@ describe('mounted Usage page scope commands', () => {
         await invoke(`${chip('agents').label}: ${choice('agents', 'pi')}`);
         await invoke(`${chip('agents').label}: ${choice('agents', 'pi')}`);
         await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([[], []]));
-        const stale = await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+        const retainedCommand = await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
             input: { commandId: oldId }, context: { surface: 'ui' } });
-        expect(stale).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
-        expect(bodies().every(input => input.agents.length === 0)).toBe(true);
+        expect(retainedCommand).toMatchObject({ ok: true });
+        await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([['codex'], ['codex']]));
+        await invoke(`${chip('agents').label}: ${choice('agents', 'codex')}`);
+        await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([[], []]));
         // The first mounted body is pinned: changing only the page period must not
         // traverse its chart, ranked, or contribution rows just to name cost bases.
         await flushHookEffects({ cycles: 40 });

@@ -81,8 +81,8 @@ export function evaluateUsageCoach(input: UsageCoachEvaluationInput): UsageCoach
                     'Expected compaction, tool clearing and deliberate model/effort rebuilds are excluded. Missing request causes or prices cannot establish waste.'],
                 advice: ['Use the request’s actual TTL, not a provider-wide default. Where supported, compare 1h versus 5m caching: avoided expiries per write must exceed (1h write rate − 5m write rate) / (5m write rate − read rate). Use the model’s catalog read rate, not a universal read multiplier.'] };
             case 'approval_friction': return { method: 'permission_wait_request_ttl_v1', kind: 'derived',
-                citations: [facts.costs.citation], limitations: ['A wait is cost-linked only when it reaches the witnessed active TTL; this is not a proven cache miss or wasted approval.'],
-                advice: ['Review consistently allowed operations for an appropriate allowlist or sandbox. Preserve meaningful approvals.'] };
+                citations: [facts.costs.citation], limitations: ['Counted only when a wait was long enough that the next reply may have cost more. It does not prove extra cost.'],
+                advice: ['Let the commands you always approve run without asking, and keep the approvals that matter.'] };
             case 'mcp_overhead': return { method: 'witnessed_mcp_definition_loading_v1', kind: 'vendor_fact',
                 citations: [facts.mcp.citation], limitations: ['Unused bindings alone are informational. No assumed tokens-per-tool or dollar saving.',
                     'The context-share threshold is Claude Code tool-search policy, not a research harm threshold.'],

@@ -1,7 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { renderHook, renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook as renderBareHook, renderScreen as renderBareScreen, standardCleanup } from '@/dev/testkit';
+import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { useUsageWork } from './useUsageWork';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
@@ -35,7 +40,6 @@ import { formatUsageObservedAt } from '@/sync/domains/usage/usageCalendarPresent
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { UsagePlanFitWidget } from './UsagePlanFitWidget';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { resolveUsageHowYouWork } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
@@ -43,6 +47,22 @@ import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema
 import { projectProviderAccountUsageQuotaReadV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
+
+let actionHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+let CommandWrapper: React.ComponentType<React.PropsWithChildren>;
+beforeEach(async () => {
+  actionHome = await serveActionHomes({ homes: [{ key: 'work', serverUrl: 'https://usage-work-controls.test', accountId: 'work-account' }],
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  const server = actionHome.homes.work!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  await (await import('@/sync/runtime/getSyncSingleton')).getSyncSingleton().awaitBootstrapForegroundAcquisition();
+  CommandWrapper = await createMountedCurrentUiContextWrapper();
+});
+afterEach(async () => { standardCleanup(); await actionHome?.dispose(); actionHome = undefined; });
+const renderScreen: typeof renderBareScreen = (element, options) => renderBareScreen(element,
+  { ...options, wrapper: options?.wrapper ?? CommandWrapper });
+const renderHook: typeof renderBareHook = (useValue, options) => renderBareHook(useValue,
+  { ...options, wrapper: options?.wrapper ?? CommandWrapper });
 
 const query = normalizeUsageQuery({
   period: { startMs: 0, endMs: 1000 },
@@ -165,15 +185,29 @@ const model: UsageWidgetBodyModel = {
 const props = { model, slice, query, serverId: 'home' };
 
 describe('Work and Coach widget bodies', () => {
+  it('opens a Work Session through its mounted command and withdraws its address on unmount', async () => {
+    const hook = await renderHook(() => ({ work: useUsageWork(slice, query, 'home'), reader: useOptionalCurrentUiContextReader() }));
+    const command = hook.getCurrent().reader!.readCurrentUiContext()!.commands.find(row => row.title === `${t('common.open')}: ${hook.getCurrent().work.sessionLabel('s1')}`);
+    expect(command).toBeDefined();
+    await act(async () => {
+      expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
+        context: { surface: 'agent' } })).toMatchObject({ ok: true });
+    });
+    expect(vi.mocked(router.push).mock.calls.at(-1)?.[0]).toContain('/session/s1/usage');
+    const reader = hook.getCurrent().reader!;
+    await hook.unmount();
+    expect(reader.resolveCurrentUiCommand(command!.id)).toBeNull();
+  });
   it('conceals hidden Work Session labels and restores them after sharing without changing the drill target', async () => {
     const previous = storage.getState();
+    const serverId = actionHome!.homes.work!.id;
     const row = createSessionListRenderableSessionFixture({ id: 's1', metadata: {
       name: 'Private usage project', path: '/private-work', host: 'host', machineId: 'machine',
     } });
-    storage.setState({ sessionListRowsByServerId: { home: { [row.id]: row } } });
-    storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { home: ['private'] } });
-    storage.getState().setSessionTagAssignmentsOptimistic('home', row.id, ['private']);
-    const hook = await renderHook(() => useUsageWork(slice, query, 'home'));
+    storage.setState({ sessionListRowsByServerId: { [serverId]: { [row.id]: row } } });
+    storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+    storage.getState().setSessionTagAssignmentsOptimistic(serverId, row.id, ['private']);
+    const hook = await renderHook(() => useUsageWork(slice, query, serverId));
     try {
       expect(hook.getCurrent().sessionLabel('s1')).toBe('Private usage project');
       await act(async () => { setScreenSharingPrivacyActive(true); });
@@ -187,12 +221,7 @@ describe('Work and Coach widget bodies', () => {
 
   it('conceals hidden parallel timeline Session labels while retaining the measured intervals', async () => {
     const previous = storage.getState();
-    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    const server = await upsertAndActivateServer({ serverUrl: 'https://usage-parallel-privacy.test', scope: 'tab' });
-    const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-    const previousServer = getAppliedActiveServerSnapshot();
-    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
-    publishAppliedActiveServerSnapshot({ ...previousServer, serverId: server.id, serverUrl: server.serverUrl }, true);
+    const server = actionHome!.homes.work!;
     const row = createSessionListRenderableSessionFixture({ id: 's1', metadata: {
       name: 'Private parallel project', path: '/private-parallel', host: 'host', machineId: 'machine',
     } });
@@ -213,7 +242,7 @@ describe('Work and Coach widget bodies', () => {
       expect(intervals()).toHaveLength(count);
       await act(async () => { setScreenSharingPrivacyActive(false); });
       expect(JSON.stringify(intervals())).toContain('Private parallel project');
-    } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); storage.setState(previous, true); publishAppliedActiveServerSnapshot(previousServer, previousAvailable); }
+    } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); storage.setState(previous, true); }
   });
 
   it('reveals exact row money in its own basis when the ledger cannot share one numeric money column', async () => {
@@ -284,6 +313,10 @@ describe('Work and Coach widget bodies', () => {
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).toBeNull();
     expect(screen.findHostByTestId('first-coach.loading')).not.toBeNull();
+    // While it reads, the facts band keeps its three columns and claims no count: an unread check is not one
+    // that needs more evidence, and no finding is not yet zero findings.
+    const metric = (key: string) => screen.findAllByType(HappierDataMetric).find(node => node.props.testID === `first-coach.summary.${key}`)?.props.value;
+    expect(['findings', 'sessions', 'insufficient'].map(metric)).toEqual(['—', '—', '—']);
     // A subsequent progress revision retains the incomplete evaluation as stale.
     // That qualification is not proof that the private evidence has answered.
     const retainedPending = resolveUsagePageAggregation({ queries: [allQuery],
@@ -301,6 +334,7 @@ describe('Work and Coach widget bodies', () => {
     await screen.update(<UsageCoachWidget {...props} query={allQuery} slice={settledSlice}
       id="usage_coach" testID="first-coach" />);
     expect(screen.findHostByTestId('first-coach.empty')).not.toBeNull();
+    expect(metric('findings')).toBe(0);
   });
   it('shows admitted Sessions checked from the canonical result and recovers after retry', async () => {
     const project = (admitted: number, notRead?: number) => resolveUsagePageAggregation({ queries: [query],
@@ -350,7 +384,7 @@ describe('Work and Coach widget bodies', () => {
   });
   it.each(['plain', 'e2ee'] as const)('names Work from the admitted protected Project producer and retires it on Account loss (%s)', async mode => {
     const previous = storage.getState();
-    const scope = { serverId: 'home', accountId: 'work-label-account' };
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
     const cipher = createProjectAccountRowCipherV1({ mode,
       material: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(5) },
       randomBytes: length => new Uint8Array(length).fill(3) });
@@ -369,19 +403,20 @@ describe('Work and Coach widget bodies', () => {
       { ...contribution('opaque', 'opaque-session', null), projectKey: opaqueKey.projectKey },
       { ...contribution('other-opaque', 'other-opaque-session', null), projectKey: otherOpaqueKey.projectKey }], evidence: [] });
     const owner = createProjectAccountRowsSync({ scope, cipher, isCurrent: () => true,
-      transport: { list: async () => ({ status: 'listed', coverage: 'complete', rows: [{ key: rowKey, revision: 1, content },
+      transport: { read: async () => { throw new Error('Label read uses its census'); },
+        list: async () => ({ status: 'listed', coverage: 'complete', rows: [{ key: rowKey, revision: 1, content },
         { key: opaqueKey, revision: 1, content: opaqueContent }, { key: otherOpaqueKey, revision: 1, content: otherOpaqueContent }] }),
         mutate: async () => { throw new Error('Label read must not mutate Project rows'); } },
       apply: (...args) => storage.getState().applyProjectAccountRowsForScope(scope, ...args) });
     try {
       storage.setState({ profileScope: scope });
       storage.getState().activateProjectAccountRowsScope(scope);
-      await owner.refresh();
       const workSlice = { ...slice, work: namedWork };
-      const screen = await renderScreen(<UsageProjectLedgerWidget {...props} slice={workSlice} id="usage_project_ledger" testID="label-ledger" />);
+      const screen = await renderScreen(<UsageProjectLedgerWidget {...props} serverId={scope.serverId} slice={workSlice} id="usage_project_ledger" testID="label-ledger" />);
+      await act(async () => { await owner.refresh(); });
       expect(screen.getTextContent()).toContain('Human project');
       expect(screen.getTextContent()).not.toContain(opaque);
-      const hook = await renderHook(() => useUsageWork(workSlice, query, 'home'));
+      const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId));
       expect(hook.getCurrent().summary?.projects).toMatchObject([
         { projectKey: 'p1' }, { projectKey: null, unnamedProjectCount: 2, amount: 6 },
       ]);
@@ -452,6 +487,7 @@ describe('Work and Coach widget bodies', () => {
   it('does not open digest scheduling without a captured Account', async () => {
     const digestSlice = resolveUsagePageAggregation({ queries: [query],
       accounting: [{ query, value: slice.accounting!, status: 'available', asOfMs: 1000 }] }).results[0]!;
+    storage.setState({ profileScope: null });
     const screen = await renderScreen(<UsageCoachWidget {...props} slice={digestSlice} id="usage_coach" testID="coach" />);
     expect(screen.findByTestId('coach.digest.configure')).toBeTruthy();
     expect(screen.findByTestId('coach.digest.configure')?.props.disabled).toBe(true);

@@ -4,12 +4,13 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionPendingMessages } from '@/sync/store/hooks';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
-import { useSession } from '@/sync/domains/state/storage';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
+import { leadingUsageRows, UsageShowAllRows } from '../usageBodyKit';
 import type { PendingResetStartsReadResultV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { t } from '@/text';
 import {
@@ -115,10 +116,16 @@ export function UsageResetStartSection(
 
 type UnboundEntry = NonNullable<PendingResetStartsReadResultV1['unboundEntries']>[number];
 
-/** The Account read exposes identities only; private Pending text stays in the Session leaf. */
+/**
+ * The Account read exposes identities only; private Pending text stays in the Session leaf. Each queued message
+ * is named by its Session (never an id), the list leads with its first rows behind the shared Show all, and the
+ * messages this viewer cannot hold for a reset are one quiet line instead of disabled rows.
+ */
 export function UsageAccountResetStartSection(props: ResetStartSectionProps) {
   const text = usePlanText();
   const resolved = useResetOptions(props);
+  const [expanded, setExpanded] = React.useState(false);
+  const isSessionVisible = useSessionRecordingVisibility();
   const entries = new Map<string, UnboundEntry>();
   for (const account of props.accounts) {
     if (account.read?.waitingWork.status !== 'available') continue;
@@ -129,7 +136,14 @@ export function UsageAccountResetStartSection(props: ResetStartSectionProps) {
       entries.set(key, previous && !previous.authorityCurrent ? previous : entry);
     }
   }
+  const startable = [...entries.values()].filter((entry) => entry.authorityCurrent);
+  const held = entries.size - startable.length;
+  const sessionKey = startable.map((entry) => entry.sessionId).join('\n');
+  const addresses = React.useMemo(() => sessionKey ? sessionKey.split('\n').map((sessionId) => ({ sessionId, serverId: props.serverId })) : [],
+    [sessionKey, props.serverId]);
+  const titles = useSessionDisplayTitles(addresses);
   if (entries.size === 0) return null;
+  const led = leadingUsageRows(startable.map((entry, index) => ({ entry, title: titles[index] ?? null })), expanded);
   return (
     <View testID={props.testID} style={styles.section}>
       <UsagePlanSectionHead title={t('session.pendingMessages.title')} meta={t('usage.board.plans.resetStartMeta')} />
@@ -138,29 +152,25 @@ export function UsageAccountResetStartSection(props: ResetStartSectionProps) {
           {t(UNAVAILABLE_KEYS[resolved.reason])}
         </Text>
       ) : (
-        [...entries].map(([key, entry]) => (
-          <AccountResetStartRow key={key} entry={entry} options={resolved.options} serverId={props.serverId}
-            onSettled={props.onSettled} testID={`${props.testID}.${entry.sessionId}.${entry.localId}`} />
-        ))
+        <>
+          {led.rows.map(({ entry, title }) => {
+            const named = title !== null && isSessionVisible({ sessionId: entry.sessionId, serverId: props.serverId });
+            return (
+              <ResetStartRow key={`${entry.sessionId}\n${entry.localId}`}
+                title={named ? title : t('usage.board.plans.waitingSession')}
+                {...(named ? { detail: t('usage.board.plans.waitingSession') } : {})}
+                localId={entry.localId} authorityCurrent sessionId={entry.sessionId} options={resolved.options}
+                serverId={props.serverId} onSettled={props.onSettled} testID={`${props.testID}.${entry.sessionId}.${entry.localId}`} />
+            );
+          })}
+          <UsageShowAllRows label={t('session.pendingMessages.title')} total={startable.length} hidden={led.hidden}
+            expanded={expanded} onToggle={() => setExpanded((value) => !value)}
+            unlisted={held > 0 ? t('usage.board.plans.resetStartUnavailableCount', { count: held }) : null}
+            testID={`${props.testID}.more`} />
+        </>
       )}
     </View>
   );
-}
-
-function AccountResetStartRow(props: Readonly<{
-  entry: UnboundEntry;
-  options: readonly ResetOption[];
-  serverId: string;
-  onSettled: () => void;
-  testID: string;
-}>) {
-  const session = useSession(props.entry.sessionId, props.serverId);
-  const isSessionVisible = useSessionRecordingVisibility();
-  const visible = isSessionVisible({ sessionId: props.entry.sessionId, serverId: props.serverId });
-  return <ResetStartRow title={visible && session ? getSessionName(session, props.serverId) : t('usage.board.plans.waitingSession')}
-    detail={visible ? session ? props.entry.localId : `${props.entry.sessionId} · ${props.entry.localId}` : undefined}
-    localId={props.entry.localId} authorityCurrent={props.entry.authorityCurrent}
-    sessionId={props.entry.sessionId} options={props.options} serverId={props.serverId} onSettled={props.onSettled} testID={props.testID} />;
 }
 
 function ResetStartRow(
@@ -180,6 +190,13 @@ function ResetStartRow(
   const [open, setOpen] = React.useState(false);
   const action = useUsagePlanAction();
   const { options, sessionId, localId, serverId, onSettled, authorityCurrent } = props;
+  const disabled = !authorityCurrent || action.state === 'pending' || action.state === 'approval';
+  const picker = useCurrentUiContextLocalCommands([
+    { key: 'open', title: t('usage.board.plans.resetStartAction'), invoke: value => {
+      if (value !== false && disabled) return false;
+      setOpen(typeof value === 'boolean' ? value : !open);
+    } },
+  ]);
   const items = React.useMemo(
     () => options.map((option) => ({ id: option.id, title: option.title, subtitle: option.subtitle })),
     [options],
@@ -198,7 +215,7 @@ function ResetStartRow(
         <Text style={[styles.title, text.title]} numberOfLines={1}>
           {props.title}
         </Text>
-        {props.detail ? <Text style={[styles.quiet, text.detail, styles.identity]}>{props.detail}</Text> : null}
+        {props.detail ? <Text style={[styles.quiet, text.detail]} numberOfLines={1}>{props.detail}</Text> : null}
         {status ? (
           <Text
             style={[styles.quiet, text.detail]}
@@ -212,28 +229,28 @@ function ResetStartRow(
       <DropdownMenu
         testID={`${props.testID}.pick`}
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={value => { void picker.invoke('open', value); }}
         matchTriggerWidth={false}
         items={items}
         onSelect={(id) => {
-          setOpen(false);
+          void picker.invoke('open', false);
           const option = options.find((candidate) => candidate.id === id);
-          if (!option || !authorityCurrent || action.state === 'pending' || action.state === 'approval') return;
+          if (!option || disabled) return;
           void action.run(
             'session.pending.resetStart.set',
             { sessionId, localId, serverId, reset: option.reset },
             onSettled,
           );
         }}
-        trigger={({ toggle }) => (
+        trigger={() => (
           <RoundButton
             size="small"
             display="secondary"
             title={t('usage.board.plans.resetStartAction')}
             testID={`${props.testID}.open`}
             loading={action.state === 'pending'}
-            disabled={!authorityCurrent || action.state === 'pending' || action.state === 'approval'}
-            onPress={toggle}
+            disabled={disabled}
+            onPress={() => { void picker.invoke('open'); }}
           />
         )}
       />
@@ -247,5 +264,4 @@ const styles = StyleSheet.create((theme) => ({
   rowText: { flex: 1, minWidth: 0, gap: 1 },
   title: { ...Typography.default('medium'), color: theme.colors.text.primary },
   quiet: { ...Typography.default(), color: theme.colors.text.tertiary },
-  identity: { ...Typography.mono() },
 }));
