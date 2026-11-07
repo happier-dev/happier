@@ -4641,6 +4641,8 @@ export const ca: TranslationStructure = {
           hiddenInactiveSessionsEmptyStateSubtitle: 'Les sessions inactives estan ocultes en aquesta llista',
           hiddenInactiveSessionsSectionTitle: 'Sessions inactives',
           hiddenInactiveSessionsSectionSubtitle: 'Ocultes a la llista principal perquè allà només es mostren els xats actius',
+        sessionListGroupGitWorktrees: "Agrupa els worktrees de Git per repositori",
+        sessionListGroupGitWorktreesSubtitle: "Mantén juntes les sessions del mateix repositori. Desactiva-ho per agrupar per directori.",
         sessionListActiveGrouping: 'Agrupació de sessions actives',
         sessionListActiveGroupingSubtitle: 'Tria com s\'agrupen les sessions actives a la barra lateral',
         sessionListInactiveGrouping: 'Agrupació de sessions inactives',

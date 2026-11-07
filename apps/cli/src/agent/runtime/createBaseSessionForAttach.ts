@@ -1,5 +1,6 @@
 import type { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import { readSessionAttachFromEnv } from '@/agent/runtime/sessionAttach';
+import { enrichSessionMetadataWithRepository } from './enrichSessionMetadataWithRepository';
 
 export async function createBaseSessionForAttach(opts: Readonly<{
   existingSessionId: string;
@@ -15,6 +16,7 @@ export async function createBaseSessionForAttach(opts: Readonly<{
   if (!attach) {
     throw new Error(`Cannot resume session ${existingSessionId}: missing session attach secret`);
   }
+  await enrichSessionMetadataWithRepository(opts.metadata);
   const seq =
     typeof attach.lastObservedMessageSeq === 'number' && Number.isFinite(attach.lastObservedMessageSeq) && attach.lastObservedMessageSeq >= 0
       ? Math.trunc(attach.lastObservedMessageSeq)

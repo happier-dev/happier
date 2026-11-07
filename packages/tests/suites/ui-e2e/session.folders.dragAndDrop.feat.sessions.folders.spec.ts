@@ -195,6 +195,78 @@ test.describe('ui e2e: session folders drag and drop', () => {
     await server?.stop().catch(() => {});
   });
 
+  test('keeps linked worktree folders scoped while focusing and dragging within one repository heading', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
+    const rootPath = repoRootDir();
+    const linkedPath = `${rootPath}-topic`;
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
+    const workspace = { t: 'workspaceScope' as const, serverId, machineId: SEEDED_MACHINE_ID, rootPath };
+    const linkedWorkspace = { ...workspace, rootPath: linkedPath };
+    const folderId = 'worktree_folder';
+    const mainFolderId = 'main_folder';
+    const sessionIds: string[] = [];
+    for (const path of [rootPath, linkedPath]) {
+      sessionIds.push(await createPlainSession({
+        baseUrl: server.baseUrl, token, rootPath: path, machineId: SEEDED_MACHINE_ID,
+        title: `folder scope ${path}`, tagPrefix: 'worktree-folder-scope',
+        metadata: { sessionRepositoryV1: { v: 1, machineId: SEEDED_MACHINE_ID, rootPath, worktreePath: path } },
+      }));
+    }
+    const linkedSessionId = sessionIds[1]!;
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+    await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+    await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
+    const sessionFoldersV1: SessionFoldersSetting = { v: 1, folders: [
+      folderSetting({ id: mainFolderId, name: 'Main folder', parentId: null, sortKey: 'a0', workspace }),
+      folderSetting({ id: folderId, name: 'Worktree folder', parentId: null, sortKey: 'a0', workspace: linkedWorkspace }),
+    ] };
+    const refresh = () => setSessionFolderDragSettings({
+      page, baseUrl: uiBaseUrl!, apiBaseUrl: server!.baseUrl, token: token!, serverId, sessionFoldersV1,
+    });
+    await refresh();
+    await setSessionFolderAssignment({ baseUrl: server.baseUrl, token, sessionId: linkedSessionId, folderId });
+    await refresh();
+    const projectHeaders = page.locator('[data-testid^="session-list-project-header:"]');
+    const linkedRow = page.getByTestId(`session-list-item-${linkedSessionId}`);
+    await expect(projectHeaders).toHaveCount(1, { timeout: 120_000 });
+    await expect(linkedRow).toBeVisible({ timeout: 120_000 });
+    await page.getByTestId(`session-folder-header-${folderId}`).click();
+    await expect(page.getByTestId('session-folder-clear-focus')).toBeVisible();
+    await expect(projectHeaders).toHaveCount(1);
+    await expect(linkedRow).toBeVisible();
+    await expect(linkedRow.getByTestId('session-item-reorder-handle')).toHaveCount(1);
+    await page.getByTestId('session-folder-clear-focus').click();
+    const assignmentWrites: Array<string | null> = [];
+    const assignmentPath = `/v2/session-organization/folder-assignments/${encodeURIComponent(linkedSessionId)}`;
+    page.on('request', (request) => {
+      if (request.method() !== 'PUT' || new URL(request.url()).pathname !== assignmentPath) return;
+      const body: unknown = request.postDataJSON();
+      if (typeof body === 'object' && body !== null && 'folderId' in body
+        && (typeof body.folderId === 'string' || body.folderId === null)) {
+        assignmentWrites.push(body.folderId);
+      }
+    });
+    const blocked = await dragSessionToTarget(page, {
+      sessionId: linkedSessionId, targetTestId: `session-folder-header-${mainFolderId}`, targetEdge: 'middle',
+    });
+    expect(blocked.ok, blocked.error).toBe(true);
+    await expectFolderAssignment({ baseUrl: server.baseUrl, token, sessionId: linkedSessionId, folderId });
+    const headingId = await projectHeaders.getAttribute('data-testid');
+    if (!headingId) throw new Error('missing repository heading');
+    const cleared = await dragSessionToTarget(page, {
+      sessionId: linkedSessionId, targetTestId: headingId, targetEdge: 'middle',
+    });
+    expect(cleared.ok, cleared.error).toBe(true);
+    await expectFolderAssignment({ baseUrl: server.baseUrl, token, sessionId: linkedSessionId, folderId: null });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(linkedRow).toBeVisible({ timeout: 120_000 });
+    await expect(projectHeaders).toHaveCount(1);
+    expect(assignmentWrites).toContain(null);
+    expect(assignmentWrites).not.toContain(mainFolderId);
+  });
+
   test('session folders drag supports root, nested, blocked, and scrolled drops', async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');

@@ -414,6 +414,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                     ) : null}
                     {canCreateSession ? (
                         <Pressable
+                            testID={`session-workspace-create:${reorderHandleKey}`}
                             style={styles.actionButton}
                             onPress={(event) => {
                                 (event as any)?.stopPropagation?.();

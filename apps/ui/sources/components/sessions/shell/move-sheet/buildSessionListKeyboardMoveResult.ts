@@ -7,6 +7,7 @@ import type {
     SessionListTreeRowMetadata,
 } from '../drop-resolution/sessionListTreeTypes';
 import { DEFAULT_SESSION_LIST_FOLDER_SORT_MODE } from '../drop-resolution/sessionListTreeTypes';
+import { canReorderSessionListSourceAroundTarget } from '../drop-resolution/sessionListDestinationScope';
 
 export type SessionListKeyboardMoveDirection = 'up' | 'down';
 
@@ -38,6 +39,7 @@ function resolveOrderedSiblingRows(params: Readonly<{
             row.orderKey != null
             && row.containerId === params.source.metadata.containerId
             && row.parentRowId === params.source.metadata.parentRowId
+            && canReorderSessionListSourceAroundTarget(params.source.metadata, row)
             && (params.folderSortMode === 'mixed' || row.kind === params.source.metadata.kind)
         )
         .sort((a, b) => a.itemIndex - b.itemIndex);

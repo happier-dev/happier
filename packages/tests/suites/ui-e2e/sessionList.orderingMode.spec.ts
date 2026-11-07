@@ -23,6 +23,7 @@ import {
   importSessionOrganization,
 } from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-ordering-mode' });
 
@@ -200,7 +201,7 @@ test.describe('ui e2e: session list ordering mode', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-session-list-ordering-${run.runId}`,
-        HAPPIER_E2E_UI_WEB_MODE: 'export',
+        HAPPIER_E2E_UI_WEB_MODE: process.env.HAPPIER_E2E_UI_WEB_MODE ?? 'export',
       },
     });
 
@@ -212,6 +213,55 @@ test.describe('ui e2e: session list ordering mode', () => {
     await ui?.stop().catch(() => {});
     await proxyStop?.().catch(() => {});
     await server?.stop().catch(() => {});
+  });
+
+  test('groups linked worktrees with their repository and supports directory grouping', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const rootPath = repoRootDir();
+      const paths = [rootPath, `${rootPath}-clone`, `${rootPath}-topic`];
+      const sessionIds: string[] = [];
+      for (const path of paths) {
+        sessionIds.push(await createPlainSession({
+          baseUrl: server.baseUrl, token, rootPath: path,
+          title: `repository grouping ${path}`, machineId: SEEDED_MACHINE_ID,
+          tagPrefix: 'session-list-repository-grouping',
+          metadata: { sessionRepositoryV1: {
+            v: 1, machineId: SEEDED_MACHINE_ID,
+            rootPath: path.endsWith('-clone') ? path : rootPath, worktreePath: path,
+          } },
+        }));
+        await pauseForDistinctCreatedAt();
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const visitList = async () => {
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
+        await waitForInitialAppUi({ page, timeoutMs: 120_000 });
+        for (const sessionId of sessionIds) {
+          await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+        }
+      };
+      const projectHeaders = page.locator('[data-testid^="session-list-project-header:"]');
+      await visitList();
+      await expect(projectHeaders).toHaveCount(2, { timeout: 120_000 });
+      for (const count of [3, 2]) {
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`, 120_000);
+        await page.getByTestId('settings-session-worktreeGrouping').click();
+        await visitList();
+        await expect(projectHeaders).toHaveCount(count, { timeout: 120_000 });
+      }
+      const basename = rootPath.split('/').at(-1)!;
+      const repositoryHeader = projectHeaders.filter({ hasText: basename }).filter({ hasNotText: `${basename}-clone` });
+      const headerTestId = await repositoryHeader.getAttribute('data-testid');
+      const headerPrefix = 'session-list-project-header:';
+      if (!headerTestId?.startsWith(headerPrefix)) throw new Error('missing repository project header identity');
+      await page.getByTestId(`session-workspace-create:${headerTestId.slice(headerPrefix.length)}`).click();
+      await expect.poll(() => new URL(page.url()).searchParams.get('directory')).toBe(rootPath);
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
   });
 
   test('switches updated and custom modes without mutating dormant custom order', async ({ page }) => {

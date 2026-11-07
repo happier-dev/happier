@@ -4474,6 +4474,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           hiddenInactiveSessionsEmptyStateSubtitle: '非活躍工作階段已在此清單中隱藏',
           hiddenInactiveSessionsSectionTitle: '非活躍工作階段',
           hiddenInactiveSessionsSectionSubtitle: '它們在主清單中被隱藏，因為那裡只顯示活躍聊天',
+        sessionListGroupGitWorktrees: "依儲存庫分組 Git 工作樹",
+        sessionListGroupGitWorktreesSubtitle: "將同一儲存庫的工作階段放在一起。關閉後依目錄分組。",
         sessionListActiveGrouping: '活躍工作階段分組',
         sessionListActiveGroupingSubtitle: '選擇側邊欄中活躍工作階段的分組方式',
         sessionListInactiveGrouping: '非活躍工作階段分組',

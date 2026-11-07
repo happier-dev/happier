@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { z } from 'zod';
 import { logger } from '@/ui/logger'
+import { enrichSessionMetadataWithRepository } from '@/agent/runtime/enrichSessionMetadataWithRepository';
 import type {
   AgentState,
   CreateSessionResponse,
@@ -415,6 +416,7 @@ export class ApiClient {
     metadata: Metadata,
     state: AgentState | null
   }): Promise<Session | null> {
+    await enrichSessionMetadataWithRepository(opts.metadata);
     const sessionsUrl = withConnectedServiceReaderSupport(`${resolveServerHttpBaseUrl()}/v1/sessions`);
 
     const serverBaseUrl = resolveServerHttpBaseUrl();

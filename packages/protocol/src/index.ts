@@ -1,4 +1,10 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export {
+  createSessionRepositoryV1Schema,
+  SessionRepositoryV1Schema,
+  readSessionRepositoryV1FromMetadata,
+  type SessionRepositoryV1,
+} from './sessionMetadata/sessionRepositoryV1.js';
 export { lazySchema } from './lazySchema.js';
 export {
   SessionPermissionResponseSchema,

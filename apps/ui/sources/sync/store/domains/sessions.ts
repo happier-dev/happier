@@ -93,6 +93,7 @@ import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
 import {
     applySessionListRenderableCommitPlan,
+    buildSessionListViewDataForCachedServer,
     refreshSessionListViewDataRowsForRenderables,
     buildNextSessionListRenderableDelta,
     buildSessionListViewDataForRenderableState,
@@ -280,6 +281,7 @@ type SessionsDomainDependencies = {
     // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
     settings: {
         groupInactiveSessionsByProject?: boolean;
+        sessionListGroupGitWorktreesV1?: boolean;
         sessionListActiveGroupingV1?: 'project' | 'date';
         sessionListInactiveGroupingV1?: 'project' | 'date';
         sessionListSectionModeV1?: 'activity' | 'single';
@@ -1329,11 +1331,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     state: { ...state, sessionListRenderables: renderables, sessionListViewData: cached }, patches,
                 });
                 if (plan.noop) return state;
-                const projected = refreshSessionListViewDataRowsForRenderables({
-                    sessionListViewData: cached,
-                    renderables: plan.nextRenderables,
-                    sessionIds: plan.changedSessionIds,
-                });
+                const projected = plan.needsSessionListViewDataRebuild
+                    ? buildSessionListViewDataForCachedServer(state, targetServerId, plan.nextRenderables)
+                    : refreshSessionListViewDataRowsForRenderables({
+                        sessionListViewData: cached,
+                        renderables: plan.nextRenderables,
+                        sessionIds: plan.changedSessionIds,
+                    });
                 return {
                     ...state,
                     sessionListViewDataByServerId: setServerSessionListCache(state.sessionListViewDataByServerId, targetServerId, projected),

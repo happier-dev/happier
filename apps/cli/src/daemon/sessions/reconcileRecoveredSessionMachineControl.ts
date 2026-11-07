@@ -34,13 +34,15 @@ export async function reconcileRecoveredSessionMachineControl(params: Readonly<{
       // Adoption proves local custody, but a handoff may already have published another runner.
       if (metadata.hostPid !== params.runnerPid || metadata.machineId === params.machineId) return metadata;
       const location = SessionWorkspaceLocationV1Schema.safeParse(metadata.sessionWorkspaceLocationV1);
-      return {
+      const next: Record<string, unknown> = {
         ...metadata,
         machineId: params.machineId,
         ...(location.success && location.data.machineId === metadata.machineId
           ? { sessionWorkspaceLocationV1: { ...location.data, machineId: params.machineId } }
           : {}),
       };
+      delete next.sessionRepositoryV1;
+      return next;
     },
   });
 }

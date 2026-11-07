@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { runScmCommand } from '@/scm/runtime';
 
 import { ApiClient } from './api';
 
@@ -24,17 +28,28 @@ vi.mock('@/configuration', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
+    infoFile: vi.fn(),
   },
 }));
 
 describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
+  const tempDirectories: string[] = [];
+  afterEach(async () => {
+    await Promise.all(tempDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  });
   beforeEach(() => {
     mockPost.mockReset();
     mockGet.mockReset();
     vi.unstubAllGlobals();
   });
 
-  it('sends plaintext metadata when server policy is plaintext_only', async () => {
+  it.each([false, true])('publishes only host-proven repository metadata with mapped execution=%s', async (mapped) => {
+    const directory = await mkdtemp(join(tmpdir(), 'session-create-repository-'));
+    tempDirectories.push(directory);
+    expect((await runScmCommand({ bin: 'git', cwd: directory, args: ['init'] })).success).toBe(true);
+    const root = await runScmCommand({ bin: 'git', cwd: directory, args: ['rev-parse', '--show-toplevel'] });
+    expect(root.success).toBe(true);
+    const repositoryPath = root.stdout.replace(/\n$/, '');
     const credential = {
       token: 'token-test',
       encryption: {
@@ -69,6 +84,9 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
       expect(typeof body.metadata).toBe('string');
       expect(body.metadata).toContain('"path":"');
       expect(body.dataEncryptionKey).toBeNull();
+      expect(JSON.parse(body.metadata).sessionRepositoryV1).toEqual(mapped ? undefined : {
+        v: 1, machineId: 'local-machine', rootPath: repositoryPath, worktreePath: repositoryPath,
+      });
 
       return {
         data: {
@@ -89,21 +107,28 @@ describe('ApiClient.getOrCreateSession (plaintext sessions)', () => {
     });
 
     const api = await ApiClient.create(credential as any);
+    const metadata = {
+      path: directory, machineId: 'local-machine', host: 'localhost', homeDir: '/home/user',
+      happyHomeDir: '/home/user/.happy', happyLibDir: '/home/user/.happy/lib',
+      happyToolsDir: '/home/user/.happy/tools',
+      ...(mapped ? {
+        sessionWorkspaceLocationV1: {
+          v: 1 as const, machineId: 'local-machine', agentPath: directory, machinePath: '/host/another-checkout',
+        },
+        sessionRepositoryV1: { v: 1 as const, machineId: 'local-machine', rootPath: '/old/main', worktreePath: directory },
+      } : {}),
+    };
     const session = await api.getOrCreateSession({
       tag: 'tag-plain',
-      metadata: {
-        path: '/tmp',
-        host: 'localhost',
-        homeDir: '/home/user',
-        happyHomeDir: '/home/user/.happy',
-        happyLibDir: '/home/user/.happy/lib',
-        happyToolsDir: '/home/user/.happy/tools',
-      },
+      metadata,
       state: null,
     });
 
     expect(session).not.toBeNull();
-    expect(session?.metadata.path).toBe('/tmp');
+    expect(session?.metadata.path).toBe(directory);
+    expect(metadata.sessionRepositoryV1).toEqual(mapped ? undefined : {
+      v: 1, machineId: 'local-machine', rootPath: repositoryPath, worktreePath: repositoryPath,
+    });
   });
 
   it('uses account mode to decide plaintext session creation when policy is optional', async () => {

@@ -9,6 +9,8 @@ import { buildSessionListDragSource } from '../buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../buildSessionListTreeRows';
 import { resolveSessionListInstruction } from '../resolveSessionListInstruction';
 import { treeRowId } from '../treeRowId';
+import { buildSessionListMoveSheetTargets } from '../../move-sheet/buildSessionListMoveSheetTargets';
+import { buildSessionListKeyboardMoveResult } from '../../move-sheet/buildSessionListKeyboardMoveResult';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -102,6 +104,7 @@ function pinnedItems(): SessionListIndexItem[] {
         {
             type: 'session',
             sessionId: 'pinned-a',
+            workspace: workspaceA,
             serverId: 'server-a',
             storageKind: 'persisted',
             groupKey: PINNED_GROUP_KEY_V1,
@@ -111,6 +114,7 @@ function pinnedItems(): SessionListIndexItem[] {
         {
             type: 'session',
             sessionId: 'pinned-b',
+            workspace: workspaceB,
             serverId: 'server-a',
             storageKind: 'persisted',
             groupKey: PINNED_GROUP_KEY_V1,
@@ -145,6 +149,49 @@ function buildTree(items = mixedWorkspaceItems()) {
 }
 
 describe('resolveSessionListInstruction', () => {
+    it('keeps checkout folder destinations separate under one repository heading while allowing root unassign', () => {
+        const linked: SessionFolderWorkspaceRefV1 = { ...workspaceA, rootPath: '/worktrees/topic' };
+        const tree = buildSessionListTreeRows({
+            items: [
+                projectHeader('repository', workspaceA),
+                folderHeader({ id: 'main', groupKey: 'main-folder', depth: 0, workspace: workspaceA }),
+                sessionItem({ id: 'main-root', groupKey: 'repository', folderId: null, depth: 0, workspace: workspaceA }),
+                folderHeader({ id: 'linked', groupKey: 'linked-folder', depth: 0, workspace: linked }),
+                sessionItem({ id: 'inside-linked', groupKey: 'linked-folder', folderId: 'linked', depth: 1, workspace: linked }),
+                sessionItem({ id: 'linked-root', groupKey: 'repository', folderId: null, depth: 0, workspace: linked }),
+            ],
+            rowBoundsById: new Map([
+                [treeRowId.workspaceRoot('repository'), bounds(0)],
+                [treeRowId.folder('main'), bounds(40)],
+                [treeRowId.session('server-a', 'main-root'), bounds(100)],
+                [treeRowId.folder('linked'), bounds(160)],
+                [treeRowId.session('server-a', 'inside-linked'), bounds(220)],
+                [treeRowId.session('server-a', 'linked-root'), bounds(280)],
+            ]),
+            dropZoneBounds: [
+                { containerId: treeRowId.workspaceRoot('repository'), role: 'root-after-last', bounds: bounds(340) },
+                { containerId: treeRowId.workspaceRoot('repository'), role: 'root-before-first', bounds: bounds(400) },
+            ],
+        });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'linked-root') });
+        for (const y of [42, 60]) {
+            expect(resolveSessionListInstruction({ tree, source, pointer: pointer(y), foldersFeatureEnabled: true, folderSortMode: 'mixed' }).instruction.kind).toBe('blocked');
+            const folderSource = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('linked') });
+            expect(resolveSessionListInstruction({ tree, source: folderSource, pointer: pointer(y), foldersFeatureEnabled: true, folderSortMode: 'mixed' }).instruction.kind).toBe('blocked');
+        }
+        expect(resolveSessionListInstruction({ tree, source, pointer: pointer(180), foldersFeatureEnabled: true }).instruction)
+            .toMatchObject({ kind: 'nest-into', targetId: treeRowId.folder('linked') });
+        const targets = buildSessionListMoveSheetTargets({ tree, source });
+        expect(targets.find((target) => target.id === 'folder:main')).toMatchObject({ disabled: true, disabledReason: 'workspace-scope-mismatch' });
+        expect(targets.find((target) => target.id === 'folder:linked')).toMatchObject({ disabled: false });
+        expect(buildSessionListKeyboardMoveResult({ tree, source, direction: 'up' }).instruction.kind).toBe('blocked');
+        const inside = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'inside-linked') });
+        expect(resolveSessionListInstruction({ tree, source: inside, pointer: pointer(350), foldersFeatureEnabled: true }).instruction)
+            .toMatchObject({ kind: 'move-to-root', containerId: treeRowId.workspaceRoot('repository') });
+        expect(resolveSessionListInstruction({ tree, source: inside, pointer: pointer(410), foldersFeatureEnabled: true }).instruction)
+            .toMatchObject({ kind: 'reorder-before', targetId: treeRowId.session('server-a', 'linked-root') });
+    });
+
     it('resolves a session drop before the first root folder to the root session band', () => {
         const tree = buildTree();
 

@@ -1,5 +1,7 @@
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
+import { readSessionRepositoryV1FromMetadata } from '@happier-dev/protocol';
+import { isSessionPathWithinRepoRoot } from '@/scm/sync/paths';
 
 function normalizePathForProjectGrouping(path: string): string {
     const withForwardSlashes = path.replace(/\\/g, '/');
@@ -29,6 +31,7 @@ export type SessionProjectGroupingKeyParts = Readonly<{
     machineId: string | null;
     homeDir: string | null;
     pathKey: string;
+    repositoryPathKey: string | null;
 }>;
 
 export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
@@ -36,6 +39,7 @@ export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
     machineId?: unknown;
     path?: unknown;
     homeDir?: unknown;
+    sessionRepositoryV1?: unknown;
 }> | null | undefined): SessionProjectGroupingKeyParts {
     const host = normalizeNonEmptyString(metadata?.host);
     const machineId = normalizeNonEmptyString(metadata?.machineId);
@@ -43,6 +47,11 @@ export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
     const homeDir = homeDirRaw ? normalizePathForProjectGrouping(homeDirRaw) : null;
     const pathKey = normalizeSessionPathForProjectGrouping(metadata?.path, homeDir);
     const machineGroupId = machineId ? `id:${machineId}` : 'unknown';
+    const repository = readSessionRepositoryV1FromMetadata(metadata);
+    const worktreePath = repository ? normalizeSessionPathForProjectGrouping(repository.worktreePath, homeDir) : '';
+    const repositoryPathKey = repository && isSessionPathWithinRepoRoot(pathKey, worktreePath)
+        ? normalizeSessionPathForProjectGrouping(repository.rootPath, homeDir) || null
+        : null;
 
     return {
         machineGroupId,
@@ -50,5 +59,6 @@ export function resolveSessionProjectGroupingKeyParts(metadata: Readonly<{
         machineId,
         homeDir,
         pathKey,
+        repositoryPathKey,
     };
 }

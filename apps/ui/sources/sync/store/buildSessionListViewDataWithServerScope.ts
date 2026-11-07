@@ -98,6 +98,7 @@ export function buildSessionListViewDataWithServerScope(params: {
     machineRecords?: Record<string, Machine>;
     serverId?: string | null;
     groupInactiveSessionsByProject: boolean;
+    groupGitWorktreesByRepository?: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';
     sectionModeV1?: 'activity' | 'single';
@@ -120,6 +121,7 @@ export function buildSessionListViewDataWithServerScope(params: {
         params.machines,
         {
             groupInactiveSessionsByProject: params.groupInactiveSessionsByProject,
+            groupGitWorktreesByRepository: params.groupGitWorktreesByRepository,
             activeGroupingV1: params.activeGroupingV1,
             inactiveGroupingV1: params.inactiveGroupingV1,
             sectionModeV1: params.sectionModeV1,

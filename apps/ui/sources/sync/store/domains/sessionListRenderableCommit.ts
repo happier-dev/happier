@@ -1,4 +1,4 @@
-import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
+import { buildMachineDisplayRenderableFromMachine, type MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
 import { resolveSessionListCacheServerId } from '../../domains/session/listing/sessionListPresentation';
 import {
     resolveSessionListDateGroupingAt,
@@ -38,6 +38,7 @@ import {
 
 type SessionListRenderableCommitSettings = Readonly<{
     groupInactiveSessionsByProject?: boolean;
+    sessionListGroupGitWorktreesV1?: boolean;
     sessionListActiveGroupingV1?: 'project' | 'date';
     sessionListInactiveGroupingV1?: 'project' | 'date';
     sessionListSectionModeV1?: 'activity' | 'single';
@@ -61,6 +62,7 @@ export type SessionListRenderableCommitState = Readonly<{
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
     machines: Record<string, Machine>;
     machineDisplayById: Record<string, MachineDisplayRenderable>;
+    machineListByServerId?: Record<string, Machine[] | null>;
     settings: SessionListRenderableCommitSettings;
     getProjectForSession?: (sessionId: string) => ProjectLookupResult;
 }>;
@@ -176,12 +178,43 @@ export function buildSessionListViewDataForRenderableState(
         machineRecords: state.machines,
         serverId: options?.serverId,
         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+        groupGitWorktreesByRepository: state.settings.sessionListGroupGitWorktreesV1,
         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
         sectionModeV1: state.settings.sessionListSectionModeV1,
         workspacePathDisplayModeV1: state.settings.workspacePathDisplayModeV1,
         getProjectForSession: state.getProjectForSession,
     });
+}
+
+export function buildSessionListViewDataForCachedServer(
+    state: SessionListRenderableCommitState,
+    serverId: string,
+    renderables?: Record<string, SessionListRenderableSession>,
+): SessionListViewItem[] | null {
+    const cacheServerId = resolveSessionListCacheServerId(state.sessionListViewDataByServerId, serverId);
+    const cachedRows = cacheServerId ? state.sessionListViewDataByServerId[cacheServerId] : null;
+    if (!cachedRows) return null;
+    const sessions: Record<string, SessionListRenderableSession> = renderables ?? {};
+    if (!renderables) {
+        for (const row of cachedRows) {
+            if (row.type === 'session') sessions[row.session.id] = row.session;
+        }
+    }
+    const machines: Record<string, Machine> = {};
+    const machineDisplayById: Record<string, MachineDisplayRenderable> = {};
+    for (const machine of state.machineListByServerId?.[cacheServerId ?? serverId] ?? []) {
+        machines[machine.id] = machine;
+        machineDisplayById[machine.id] = buildMachineDisplayRenderableFromMachine(machine);
+    }
+    return buildSessionListViewDataForRenderableState({
+        ...state,
+        sessions: {},
+        sessionListRenderables: sessions,
+        machines,
+        machineDisplayById,
+        getProjectForSession: undefined,
+    }, { serverId });
 }
 
 export function planSessionListRenderableReplacementCommit(input: Readonly<{

@@ -4589,6 +4589,8 @@ export const en = {
         hiddenInactiveSessionsEmptyStateSubtitle: 'Inactive sessions are hidden from this list',
         hiddenInactiveSessionsSectionTitle: 'Inactive sessions',
         hiddenInactiveSessionsSectionSubtitle: 'Hidden from the main list because only active chats are shown there',
+        sessionListGroupGitWorktrees: "Group Git worktrees by repository",
+        sessionListGroupGitWorktreesSubtitle: "Keep sessions from the same repository together. Turn off to group by directory.",
         sessionListActiveGrouping: 'Active sessions grouping',
         sessionListActiveGroupingSubtitle: 'Choose how active sessions are grouped in the sidebar',
         sessionListInactiveGrouping: 'Inactive sessions grouping',

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createBackendRunRuntimeActivityLifecycle,
@@ -12,6 +12,7 @@ import type {
   SessionRuntimeActivitySnapshotPublisher,
 } from '@/session/runtimeActivity/types'
 import { createDeferred } from '@/testkit/async/deferred'
+import { HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY } from '@/daemon/spawn/pendingFirstInput'
 
 function createSessionStub(overrides: Partial<ApiSessionClient> = {}): ApiSessionClient {
   return {
@@ -35,6 +36,9 @@ function createSessionResponse(id: string, metadata: Metadata, state: AgentState
 }
 
 describe('initializeBackendRunSession', () => {
+  beforeEach(() => vi.stubEnv(HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY, undefined))
+  afterEach(() => vi.unstubAllEnvs())
+
   it('configures an attached session before reporting it to the daemon', async () => {
     const metadata = { terminal: { mode: 'tmux' } } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState

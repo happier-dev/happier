@@ -63,6 +63,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [workspaceMachineSubtitlesEnabled, setWorkspaceMachineSubtitlesEnabled] = useSettingMutable('workspaceMachineSubtitlesEnabled');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [sessionListSectionModeV1, setSessionListSectionModeV1] = useSettingMutable('sessionListSectionModeV1');
+    const [sessionListGroupGitWorktrees, setSessionListGroupGitWorktrees] = useSettingMutable('sessionListGroupGitWorktreesV1');
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [mobileWorkspaceExperience, setMobileWorkspaceExperience] = useSettingMutable('mobileWorkspaceExperienceV1');
@@ -665,6 +666,15 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={groupingMenuItems}
                     onSelect={(itemId) => selectGrouping(itemId, 'inactive')}
+                />
+                <Item
+                    testID="settings-session-worktreeGrouping"
+                    title={t('settingsFeatures.sessionListGroupGitWorktrees')}
+                    subtitle={t('settingsFeatures.sessionListGroupGitWorktreesSubtitle')}
+                    icon={<Icon name="git-branch" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={<Switch value={sessionListGroupGitWorktrees} onValueChange={setSessionListGroupGitWorktrees} />}
+                    onPress={() => setSessionListGroupGitWorktrees(!sessionListGroupGitWorktrees)}
+                    showChevron={false}
                 />
                 <Item
                     title={t('settingsFeatures.hideInactiveSessions')}

@@ -4756,6 +4756,8 @@ export const zhHans: TranslationStructure = {
       hiddenInactiveSessionsEmptyStateSubtitle: "非活跃会话在此列表中已隐藏",
       hiddenInactiveSessionsSectionTitle: "非活跃会话",
       hiddenInactiveSessionsSectionSubtitle: "它们在主列表中被隐藏，因为那里只显示活跃聊天",
+    sessionListGroupGitWorktrees: "按仓库分组 Git 工作树",
+    sessionListGroupGitWorktreesSubtitle: "将同一仓库的会话放在一起。关闭后按目录分组。",
     sessionListActiveGrouping: "活跃会话分组",
     sessionListActiveGroupingSubtitle: "选择侧边栏中活跃会话的分组方式",
     sessionListInactiveGrouping: "非活跃会话分组",

@@ -3,9 +3,10 @@ import type { Credentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { SessionHandoffCoordinatorInput } from './sessionHandoffCoordinator';
-import type {
-  SessionHandoffPrepareTargetResultGetResponse,
-  SessionHandoffStartResponse,
+import {
+  readSessionRepositoryV1FromMetadata,
+  type SessionHandoffPrepareTargetResultGetResponse,
+  type SessionHandoffStartResponse,
 } from '@happier-dev/protocol';
 
 export async function bindSessionHandoffTarget(params: Readonly<{
@@ -50,6 +51,15 @@ export function buildSessionHandoffTargetMetadata(params: Readonly<{
     nativeResumeId: params.prepared.remoteSessionId,
     agentScopedCurrentState: 'carry',
   }) as Record<string, unknown>;
+  // Final binding can run after the target has already published fresh evidence.
+  const repository = readSessionRepositoryV1FromMetadata(params.metadata);
+  if (repository
+    && params.metadata.machineId === params.request.targetMachineId
+    && params.metadata.path === params.prepared.resume.directory) {
+    next.sessionRepositoryV1 = repository;
+  } else {
+    delete next.sessionRepositoryV1;
+  }
 
   if (targetStorage === 'direct') {
     delete next.externalHistoryImportV1;

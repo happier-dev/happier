@@ -3,6 +3,58 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { runScmCommand } from '../../runtime';
 import { buildScmNonInteractiveEnv } from '../shared/nonInteractiveEnv';
+import { parseGitWorktreeListRecords } from './worktreeListParser';
+import { logger } from '@/ui/logger';
+
+function readGitPathOutput(stdout: string): string {
+    return stdout.endsWith('\n') ? stdout.slice(0, -1) : stdout;
+}
+
+/** A separate git-dir can occupy the first registration without being a checkout. */
+export async function resolveGitMainWorktreePath(input: Readonly<{
+    worktreesOutput: string;
+    currentWorktreePath: string | null;
+}>): Promise<string | null> {
+    const main = parseGitWorktreeListRecords(input.worktreesOutput)[0];
+    if (!main) return null;
+    if (main.bare || main.path === input.currentWorktreePath) return main.path;
+    const proof = await runScmCommand({ bin: 'git', cwd: main.path,
+        args: ['rev-parse', '--show-toplevel'], env: buildScmNonInteractiveEnv({ LC_ALL: 'C' }) });
+    if (proof.success) return readGitPathOutput(proof.stdout) === main.path ? main.path : null;
+    if (!/not a git repository|must be run in a work tree/i.test(proof.stderr)) {
+        logger.infoFile('[sessionRepository] Main checkout inspection unavailable', { path: main.path, error: proof.stderr });
+    }
+    return null;
+}
+
+export async function inspectGitRepositoryIdentity(params: Readonly<{ cwd: string }>): Promise<Readonly<{
+    rootPath: string;
+    worktreePath: string;
+}> | null> {
+    const env = buildScmNonInteractiveEnv({ LC_ALL: 'C' });
+    const listed = await runScmCommand({ bin: 'git', cwd: params.cwd,
+        args: ['worktree', 'list', '--porcelain', '-z'], env });
+    if (!listed.success) {
+        if (/not a git repository/i.test(listed.stderr)) return null;
+        throw new Error(`Git repository inspection unavailable: ${listed.stderr}`);
+    }
+    const checkout = await runScmCommand({ bin: 'git', cwd: params.cwd,
+        args: ['rev-parse', '--show-toplevel'], env });
+    let worktreePath: string;
+    if (checkout.success) {
+        worktreePath = readGitPathOutput(checkout.stdout);
+    } else {
+        const bare = await runScmCommand({ bin: 'git', cwd: params.cwd,
+            args: ['rev-parse', '--is-bare-repository'], env });
+        const main = parseGitWorktreeListRecords(listed.stdout)[0];
+        if (!bare.success || bare.stdout.trim() !== 'true' || !main?.bare) {
+            throw new Error(`Git checkout inspection unavailable: ${checkout.stderr}`);
+        }
+        worktreePath = main.path;
+    }
+    const rootPath = await resolveGitMainWorktreePath({ worktreesOutput: listed.stdout, currentWorktreePath: worktreePath });
+    return rootPath ? { rootPath, worktreePath } : null;
+}
 
 export type GitCheckoutIdentity = Readonly<{
     branchName: string | null;

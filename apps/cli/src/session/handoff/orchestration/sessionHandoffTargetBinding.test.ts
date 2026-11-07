@@ -3,11 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { buildSessionHandoffTargetMetadata } from './sessionHandoffTargetBinding';
 
 describe('buildSessionHandoffTargetMetadata', () => {
-  it('moves the canonical session binding and preserves handoff reconciliation metadata', () => {
+  it.each([false, true])('moves the binding and preserves evidence already published by target=%s', (alreadyTarget) => {
+    const repository = alreadyTarget
+      ? { v: 1, machineId: 'target-machine', rootPath: '/target/main', worktreePath: '/target/workspace' }
+      : { v: 1, machineId: 'source-machine', rootPath: '/source/main', worktreePath: '/source/workspace' };
     const metadata = buildSessionHandoffTargetMetadata({
       metadata: {
-        machineId: 'source-machine',
-        path: '/source/workspace',
+        machineId: alreadyTarget ? 'target-machine' : 'source-machine',
+        path: alreadyTarget ? '/target/workspace' : '/source/workspace',
+        sessionRepositoryV1: repository,
         flavor: 'claude',
         claudeSessionId: 'source-resume',
         codexSessionId: 'stale-other-provider-resume',
@@ -65,5 +69,6 @@ describe('buildSessionHandoffTargetMetadata', () => {
     });
     expect(metadata).not.toHaveProperty('codexSessionId');
     expect(metadata).not.toHaveProperty('externalHistoryImportV1');
+    expect(metadata.sessionRepositoryV1).toEqual(alreadyTarget ? repository : undefined);
   });
 });

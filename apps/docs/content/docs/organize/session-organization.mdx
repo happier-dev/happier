@@ -19,8 +19,18 @@ In development builds, Direct and Happier sessions use the same saved folders
 within a workspace. Each storage tab shows its matching sessions; organizing a
 Direct session does not require importing its transcript. Folder destinations
 belong to the same server, machine and workspace path. Automatic project
-headings group sessions by their working directory and are separate from saved
-folders.
+headings are separate from saved folders.
+
+In development builds, project headings group Git worktrees under their main
+repository by default, separately within Active and Inactive. Independent
+clones remain separate. Turn off **Group Git worktrees by repository** in
+**Settings → Session** to group by working directory instead. Sessions without
+a repository association, including older sessions that have not been observed
+by an updated CLI, continue to use directory grouping.
+
+Grouping does not change a session's working directory, branch or files. Saved
+folders remain scoped to each checkout, and worktree rows show their own path.
+The project heading's new-session action starts in the main repository.
 
 - Create, rename, move and delete them, and nest one inside another.
 - Assign a session by dragging it onto a folder, or through the session's

@@ -98,6 +98,29 @@ and UIs retain message delivery but do not render this new attribution; displayi
 it requires updated consumers. This section describes development source, not a
 released-channel guarantee.
 
+## Repository grouping evidence (development)
+
+The shared local session-metadata preparation path records optional
+`sessionRepositoryV1` evidence for automatic project headings. Its protocol-owned
+reader requires the observing `machineId`, the main repository `rootPath`, and the
+observed checkout `worktreePath`. Git's ordered worktree registrations establish
+the main repository; a separate Git administrative directory is not assumed to be
+a working checkout. Independent clones therefore retain separate local identities.
+
+The UI uses valid evidence only for the same machine and a session path inside
+the observed checkout. This changes heading identity, while execution paths and
+saved folder scopes remain checkout-specific. Handoffs and machine reassignment
+discard source-host evidence; the target can publish a fresh local observation.
+Container paths without a proven host mapping, unsupported repository layouts,
+and sessions without evidence retain directory grouping. Existing historical
+sessions are not scanned speculatively.
+
+The field is additive: released older UI metadata readers accept unknown fields,
+and updated readers fall back to directory grouping when evidence is absent or
+invalid. The machine binding also rejects evidence retained by an older handoff
+writer after reassignment. This describes development source, not a released
+channel guarantee.
+
 ## Claude unified questions and approvals (development)
 
 `backends/claude/localPermissions/routeClaudePermissionHook` owns hook delivery

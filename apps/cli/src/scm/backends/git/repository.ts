@@ -9,7 +9,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { runScmCommand } from '../../runtime';
 import { buildGitSnapshot, resolveGitHostingProviderFromOutputs } from './statusSnapshot';
-import { inspectGitCheckoutIdentity } from './checkoutIdentity';
+import { resolveGitMainWorktreePath } from './checkoutIdentity';
 import { readGitBranchOperationState } from './operations/branchOperationState';
 import { defaultPrStatusCache } from '../../hostingProviders/prStatusCache';
 import { resolveHostingAuthProfileKey } from './operations/pullRequestOperationHelpers';
@@ -17,18 +17,7 @@ import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } fr
 import { parseGitStatusPorcelainV2Z } from './statusParser';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser';
 import { realpath } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { readUntrackedFileStats } from '../../readUntrackedFileStats';
-
-function resolveMainWorktreePathFromCheckoutIdentity(
-    checkoutIdentity: Awaited<ReturnType<typeof inspectGitCheckoutIdentity>>,
-): string | null {
-    if (!checkoutIdentity) {
-        return null;
-    }
-
-    return dirname(checkoutIdentity.commonDirPath);
-}
 
 export async function detectGitRepo(input: { cwd: string }): Promise<ScmRepoDetection> {
     const gitRepoCheck = await runScmCommand({
@@ -114,7 +103,10 @@ export async function getGitSnapshot(input: {
         args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
         timeoutMs: 10_000,
     });
-    const checkoutIdentity = await inspectGitCheckoutIdentity({ cwd: context.cwd });
+    const mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
+        worktreesOutput: worktreesResult.stdout,
+        currentWorktreePath: repoRoot,
+    }) : null;
     const operationState = await readGitBranchOperationState(context);
 
     const statusRaw = statusResult.stdout ?? '';
@@ -135,7 +127,7 @@ export async function getGitSnapshot(input: {
         fetchedAt: Date.now(),
         rootPath: context.detection.rootPath,
         currentWorktreePath: context.cwd,
-        mainWorktreePath: resolveMainWorktreePathFromCheckoutIdentity(checkoutIdentity),
+        mainWorktreePath,
         statusOutput: statusResult.stdout ?? '',
         includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
         pendingNumStatOutput: pendingResult.success ? (pendingResult.stdout ?? '') : '',

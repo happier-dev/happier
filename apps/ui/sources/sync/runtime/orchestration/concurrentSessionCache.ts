@@ -289,6 +289,7 @@ async function refreshServerSnapshot(entry: ManagedConcurrentServer): Promise<vo
         machinesById,
         {
             groupInactiveSessionsByProject: Boolean(storage.getState().settings.groupInactiveSessionsByProject),
+            groupGitWorktreesByRepository: storage.getState().settings.sessionListGroupGitWorktreesV1,
             activeGroupingV1: storage.getState().settings.sessionListActiveGroupingV1,
             inactiveGroupingV1: storage.getState().settings.sessionListInactiveGroupingV1,
             sectionModeV1: storage.getState().settings.sessionListSectionModeV1,

@@ -25,6 +25,7 @@ import type {
 } from '../drop-resolution/sessionListTreeTypes';
 import { DEFAULT_SESSION_LIST_FOLDER_SORT_MODE } from '../drop-resolution/sessionListTreeTypes';
 import { resolveSessionListFolderSortModeDropResult } from '../drop-resolution/resolveSessionListFolderSortModeDrop';
+import { canMoveSessionListSourceToContainer, canReorderSessionListSourceAroundTarget } from '../drop-resolution/sessionListDestinationScope';
 
 type SessionListGroupOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
 type SessionWorkspaceOrderV1 = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
@@ -65,13 +66,14 @@ export type SessionListTreeDropDestination = Readonly<{
 function findContainerEdgeChildRowId(params: Readonly<{
     tree: SessionListTreeModel;
     containerId: string;
-    sourceRowId: string;
+    source: SessionListTreeDragSource;
     edge: 'first' | 'last';
 }>): string | null {
     const children = Array.from(params.tree.rowMetadataById.values())
         .filter((metadata) => metadata.containerId === params.containerId
             && metadata.kind !== 'workspace-root'
-            && metadata.rowId !== params.sourceRowId)
+            && metadata.rowId !== params.source.id
+            && canReorderSessionListSourceAroundTarget(params.source.metadata, metadata))
         .sort((left, right) => left.itemIndex - right.itemIndex);
     const child = params.edge === 'first' ? children[0] : children[children.length - 1];
     return child?.rowId ?? null;
@@ -92,7 +94,13 @@ export function resolveSessionListTreeDropDestination(params: Readonly<{
     if (instruction.kind === 'blocked' || instruction.kind === 'idle') return null;
 
     const container = tree.containerMetadataById.get(instruction.containerId);
-    if (!container) return null;
+    if (!container || !canMoveSessionListSourceToContainer(params.source.metadata, container)) return null;
+
+    if (instruction.kind === 'reorder-before' || instruction.kind === 'reorder-after') {
+        const target = tree.rowMetadataById.get(instruction.targetId);
+        if (!target || target.containerId !== container.containerId
+            || !canReorderSessionListSourceAroundTarget(params.source.metadata, target)) return null;
+    }
 
     if (instruction.kind === 'reorder-before') {
         return {
@@ -115,7 +123,7 @@ export function resolveSessionListTreeDropDestination(params: Readonly<{
         const beforeRowId = findContainerEdgeChildRowId({
             tree,
             containerId: instruction.containerId,
-            sourceRowId: params.source.metadata.rowId,
+            source: params.source,
             edge: 'first',
         });
         return {
@@ -130,7 +138,7 @@ export function resolveSessionListTreeDropDestination(params: Readonly<{
         const afterRowId = findContainerEdgeChildRowId({
             tree,
             containerId: instruction.containerId,
-            sourceRowId: params.source.metadata.rowId,
+            source: params.source,
             edge: 'last',
         });
         return {
@@ -303,6 +311,9 @@ export async function applySessionListTreeDropOperation(params: Readonly<{
     result: SessionListTreeDropResult;
     context: ApplySessionListTreeDropOperationContext;
 }>): Promise<ApplySessionListTreeDropOperationResult> {
+    if (!resolveSessionListTreeDropDestination({ tree: params.tree, source: params.source, instruction: params.result.instruction })) {
+        return { ok: false, operationKind: 'invalid', reason: params.result.instruction.kind };
+    }
     const result = resolveSessionListFolderSortModeDropResult({
         tree: params.tree,
         source: params.source,

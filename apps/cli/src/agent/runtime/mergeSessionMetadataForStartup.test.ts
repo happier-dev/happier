@@ -3,6 +3,34 @@ import { describe, expect, it } from 'vitest';
 import { mergeSessionMetadataForStartup } from './mergeSessionMetadataForStartup';
 
 describe('mergeSessionMetadataForStartup', () => {
+    const runtimePaths = { homeDir: '/home/user', happyHomeDir: '/home/user/.happier',
+        happyLibDir: '/lib/happier', happyToolsDir: '/lib/happier/tools' };
+    it('retains the repository association with the workspace identity preserved on attach', () => {
+        const current = { ...runtimePaths, path: '/old/worktree', host: 'old', machineId: 'old-machine',
+            sessionRepositoryV1: { v: 1 as const, machineId: 'old-machine', rootPath: '/old/main', worktreePath: '/old/worktree' } };
+        const next = { ...runtimePaths, path: '/new/worktree', host: 'new', machineId: 'new-machine',
+            sessionRepositoryV1: { v: 1 as const, machineId: 'new-machine', rootPath: '/new/main', worktreePath: '/new/worktree' } };
+        expect(mergeSessionMetadataForStartup({ current, next, nowMs: 1, mode: 'attach' }).sessionRepositoryV1)
+            .toEqual(current.sessionRepositoryV1);
+    });
+
+    it('clears a stale association when runtime identity moves to a non-repository directory', () => {
+        const current = { ...runtimePaths, path: '/old/worktree', host: 'old', machineId: 'old-machine',
+            sessionRepositoryV1: { v: 1 as const, machineId: 'old-machine', rootPath: '/old/main', worktreePath: '/old/worktree' } };
+        const next = { ...runtimePaths, path: '/new/directory', host: 'new', machineId: 'new-machine' };
+        expect(mergeSessionMetadataForStartup({ current, next, nowMs: 1, mode: 'attach',
+            attachMetadataIdentityPolicy: 'replace_with_runtime_identity' }).sessionRepositoryV1).toBeUndefined();
+    });
+
+    it('uses fresh evidence when attach fills a missing machine identity at the same cwd', () => {
+        const current = { ...runtimePaths, path: '/worktree', host: 'host' };
+        const next = { ...current, machineId: 'machine', sessionRepositoryV1: {
+            v: 1 as const, machineId: 'machine', rootPath: '/main', worktreePath: '/worktree',
+        } };
+        expect(mergeSessionMetadataForStartup({ current, next, nowMs: 1, mode: 'attach' }).sessionRepositoryV1)
+            .toEqual(next.sessionRepositoryV1);
+    });
+
     it('clears the MCP restart marker after startup applies the desired selection', () => {
         const merged = mergeSessionMetadataForStartup({
             current: {

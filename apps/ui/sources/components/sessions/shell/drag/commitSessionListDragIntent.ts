@@ -29,7 +29,6 @@
 import type { TreeInstruction } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/session/listing/sessionListIndex';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
-import { buildSessionFolderWorkspaceRefKey } from '@/sync/domains/session/folders';
 import {
     normalizeSessionListOrderingModeV1,
     resolveEffectiveSessionListOrderingModeForGroup,
@@ -53,6 +52,7 @@ import { buildSessionListDragSource } from '../drop-resolution/buildSessionListD
 import { buildSessionListTreeRows } from '../drop-resolution/buildSessionListTreeRows';
 import { resolveSessionListFolderSortModeDropResult } from '../drop-resolution/resolveSessionListFolderSortModeDrop';
 import { DEFAULT_SESSION_LIST_FOLDER_SORT_MODE } from '../drop-resolution/sessionListTreeTypes';
+import { canMoveSessionListSourceToContainer } from '../drop-resolution/sessionListDestinationScope';
 import type {
     SessionListFolderSortMode,
     SessionListTreeContainerMetadata,
@@ -122,30 +122,6 @@ function collectLatestDescendantRowIds(
         }
     }
     return descendants;
-}
-
-/**
- * True when source and destination container no longer share a compatible
- * scope. Sessions/folders may only move within their own workspace root; a
- * workspace-root may only move inside its own workspace-order container.
- */
-function isScopeMismatch(params: Readonly<{
-    source: SessionListTreeRowMetadata;
-    container: SessionListTreeContainerMetadata;
-}>): boolean {
-    const { source, container } = params;
-    if (source.kind === 'workspace-root') {
-        return container.kind !== 'workspace-order' || container.containerId !== source.containerId;
-    }
-    if (container.kind !== 'children') return true;
-    if (container.rootId !== source.rootId) return true;
-    const sourceWorkspace = source.workspace;
-    const containerWorkspace = container.workspace;
-    if (sourceWorkspace && containerWorkspace) {
-        return buildSessionFolderWorkspaceRefKey(sourceWorkspace)
-            !== buildSessionFolderWorkspaceRefKey(containerWorkspace);
-    }
-    return false;
 }
 
 /**
@@ -322,7 +298,7 @@ export async function commitSessionListDragIntent(params: Readonly<{
     if (!container) return noOp('container-missing');
 
     // Incompatible workspace / server / scope between source and destination.
-    if (isScopeMismatch({ source: sourceMetadata, container })) {
+    if (!canMoveSessionListSourceToContainer(sourceMetadata, container)) {
         return noOp('scope-mismatch');
     }
 
@@ -339,6 +315,9 @@ export async function commitSessionListDragIntent(params: Readonly<{
     if (typeof rebasedInstruction === 'string') return noOp(rebasedInstruction);
 
     const source = buildSessionListDragSource({ tree, sourceRowId: intent.sourceRowId });
+    if (!resolveSessionListTreeDropDestination({ tree, source, instruction: rebasedInstruction })) {
+        return noOp('scope-mismatch');
+    }
 
     // Apply the folder sort-mode rewrite once, so the no-change probe and the
     // committed operation resolve the SAME destination edge. The operation
@@ -357,6 +336,7 @@ export async function commitSessionListDragIntent(params: Readonly<{
         source,
         instruction: result.instruction,
     });
+    if (!destination) return noOp('scope-mismatch');
     if (destination && isSessionSiblingReorderBlockedByOrderingMode({ source, context, destination })) {
         return noOp('date-ordering-mode');
     }

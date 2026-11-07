@@ -13,6 +13,7 @@ import { deriveSessionListMeaningfulActivityAt } from './deriveSessionListActivi
 import { resolveSessionWorkspacePresentation, type WorkspacePathDisplayModeV1 } from './sessionWorkspacePresentation';
 import {
     buildSessionFolderAssignmentKey,
+    buildSessionFolderWorkspaceRefKey,
     buildSessionFolderTree,
     normalizeSessionFolderWorkspaceRef,
     resolveDurableWorkspaceRefForSessionListHeader,
@@ -62,6 +63,7 @@ export type SessionListViewItem =
 
 export interface BuildSessionListViewDataOptions {
     groupInactiveSessionsByProject: boolean;
+    groupGitWorktreesByRepository?: boolean;
     activeGroupingV1?: 'project' | 'date';
     inactiveGroupingV1?: 'project' | 'date';
     sectionModeV1?: 'activity' | 'single';
@@ -136,6 +138,7 @@ type ProjectGroup = {
     workspaceRootPath: string;
     latestCreatedAt: number;
     sessions: SessionListRenderableSession[];
+    workspacesBySessionId: Map<string, ReturnType<typeof resolveWorkspaceForSession>>;
 };
 
 function hasKnownWorkspaceMachine(
@@ -163,6 +166,7 @@ function mergeMissingMachineProjectGroups(
         if (candidates.length !== 1) continue;
         const target = candidates[0];
         target.sessions.push(...group.sessions);
+        for (const [id, workspace] of group.workspacesBySessionId) target.workspacesBySessionId.set(id, workspace);
         target.latestCreatedAt = Math.max(target.latestCreatedAt, group.latestCreatedAt);
         groups.delete(key);
     }
@@ -196,6 +200,7 @@ function resolveWorkspaceForSession(
         machines: Record<string, MachineDisplayRenderable>;
         sessionTargetState?: SessionMachineTargetState;
         workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
+        groupGitWorktreesByRepository?: boolean;
     }>,
 ) {
     const target = params.sessionTargetState
@@ -210,6 +215,7 @@ function resolveWorkspaceForSession(
         machines: params.machines,
         target,
         workspacePathDisplayModeV1: params.workspacePathDisplayModeV1,
+        groupGitWorktreesByRepository: params.groupGitWorktreesByRepository,
     });
 }
 
@@ -218,10 +224,14 @@ function groupSessionsByProject(params: Readonly<{
     machines: Record<string, MachineDisplayRenderable>;
     sessionTargetState?: SessionMachineTargetState;
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
+    groupGitWorktreesByRepository?: boolean;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
     for (const session of params.sessions) {
-        const workspace = resolveWorkspaceForSession(session, params);
+        const checkout = resolveWorkspaceForSession(session, { ...params, groupGitWorktreesByRepository: false });
+        const workspace = params.groupGitWorktreesByRepository === true && session.metadata?.sessionRepositoryV1
+            ? resolveWorkspaceForSession(session, params)
+            : checkout;
         const key = workspace.groupKey;
 
         const existing = groups.get(key);
@@ -237,9 +247,11 @@ function groupSessionsByProject(params: Readonly<{
                 workspaceRootPath: workspace.pathKey,
                 latestCreatedAt: session.createdAt,
                 sessions: [session],
+                workspacesBySessionId: new Map([[session.id, checkout]]),
             });
         } else {
             existing.sessions.push(session);
+            existing.workspacesBySessionId.set(session.id, checkout);
             existing.latestCreatedAt = Math.max(existing.latestCreatedAt, session.createdAt);
             if (!existing.workspaceMachineId && workspace.machineId) {
                 existing.workspaceMachineId = workspace.machineId;
@@ -268,7 +280,6 @@ function pushProjectGroupsToList(params: Readonly<{
     section: SessionListSectionScope;
     serverKey: string;
     serverScopeMeta: ServerScopeMeta;
-    sessionFolders?: BuildSessionListViewDataOptions['sessionFolders'];
 }>): void {
     for (const group of params.groups) {
         const hasGroupHeader = Boolean(group.displayPath);
@@ -292,39 +303,23 @@ function pushProjectGroupsToList(params: Readonly<{
             ...params.serverScopeMeta,
         };
 
-        const workspace = resolveDurableWorkspaceRefForSessionListHeader(projectHeader);
-
         if (hasGroupHeader) {
             params.listData.push(projectHeader);
         }
 
-        const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
-        const folderOptions = params.sessionFolders?.enabled === true && hasGroupHeader ? params.sessionFolders : null;
-        if (folderOptions) {
-            if (workspace) {
-                pushFolderAwareProjectSessionsToList({
-                    listData: params.listData,
-                    sessions: group.sessions,
-                    section: params.section,
-                    projectGroupKey: groupKey,
-                    variant,
-                    serverScopeMeta: params.serverScopeMeta,
-                    renderWorkspaceKey: group.workspaceKey,
-                    workspace,
-                    sessionFolders: folderOptions,
-                });
-                continue;
-            }
-        }
-
         group.sessions.forEach((session) => {
+            const checkout = group.workspacesBySessionId.get(session.id)!;
+            const workspace = normalizeSessionFolderWorkspaceRef({
+                t: 'workspaceScope', serverId: params.serverScopeMeta.serverId,
+                machineId: checkout.machineId, rootPath: checkout.pathKey,
+            });
             params.listData.push({
                 type: 'session',
                 session,
                 section: resolveSectionForSession(params.section, session),
                 groupKey,
                 groupKind: 'project',
-                variant,
+                variant: hasGroupHeader && checkout.pathKey === group.workspaceRootPath ? 'no-path' : 'default',
                 workspace: workspace ?? undefined,
                 ...params.serverScopeMeta,
             });
@@ -350,6 +345,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
     workspace: SessionFolderWorkspaceRefV1;
     sessionFolders: NonNullable<BuildSessionListViewDataOptions['sessionFolders']>;
     sectionBySessionId?: ReadonlyMap<string, SessionListActivitySection>;
+    variantBySessionId?: ReadonlyMap<string, 'default' | 'no-path'>;
 }>): void {
     const tree = buildSessionFolderTree(params.sessionFolders.folders, params.workspace);
     if (tree.rootNodes.length === 0) {
@@ -360,7 +356,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
                 section: params.sectionBySessionId?.get(session.id) ?? resolveSectionForSession(params.section, session),
                 groupKey: params.projectGroupKey,
                 groupKind: 'project',
-                variant: params.variant,
+                variant: params.variantBySessionId?.get(session.id) ?? params.variant,
                 folderId: null,
                 folderDepth: 0,
                 workspace: params.workspace,
@@ -413,7 +409,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
                 section: params.sectionBySessionId?.get(session.id) ?? resolveSectionForSession(params.section, session),
                 groupKey: folderGroupKey,
                 groupKind: 'folder',
-                variant: params.variant,
+                variant: params.variantBySessionId?.get(session.id) ?? params.variant,
                 folderId: node.id,
                 folderDepth: sessionDepth,
                 workspace: params.workspace,
@@ -430,7 +426,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
             section: params.sectionBySessionId?.get(session.id) ?? resolveSectionForSession(params.section, session),
             groupKey: params.projectGroupKey,
             groupKind: 'project',
-            variant: params.variant,
+            variant: params.variantBySessionId?.get(session.id) ?? params.variant,
             folderId: null,
             folderDepth: 0,
             workspace: params.workspace,
@@ -497,27 +493,42 @@ export function applySessionFoldersToSessionListViewData(
 
         out.push(item);
         const beforeLength = out.length;
-        const sectionBySessionId = new Map<string, SessionListActivitySection>();
-        for (const session of sessions) {
-            if (session.section === 'active' || session.section === 'inactive') {
-                sectionBySessionId.set(session.session.id, session.section);
-            }
+        const buckets = new Map<string, { workspace: SessionFolderWorkspaceRefV1; rows: typeof sessions }>();
+        buckets.set(buildSessionFolderWorkspaceRefKey(workspace), { workspace, rows: [] });
+        for (const row of sessions) {
+            const rowWorkspace = row.workspace ?? workspace;
+            const key = buildSessionFolderWorkspaceRefKey(rowWorkspace);
+            const bucket = buckets.get(key) ?? { workspace: rowWorkspace, rows: [] };
+            bucket.rows.push(row);
+            buckets.set(key, bucket);
         }
-        pushFolderAwareProjectSessionsToList({
-            listData: out,
-            sessions: sessions.map((session) => session.session),
-            section: resolveSectionScopeForCollectedProjectSessions(sessions),
-            projectGroupKey: item.groupKey,
-            variant: sessions[0]?.variant ?? 'default',
-            serverScopeMeta: {
-                serverId: item.serverId,
-                serverName: item.serverName,
-            },
-            renderWorkspaceKey: item.workspaceKey ?? item.renderWorkspaceKey ?? '',
-            workspace,
-            sessionFolders: options,
-            sectionBySessionId,
-        });
+        for (const bucket of buckets.values()) {
+            const sectionBySessionId = new Map<string, SessionListActivitySection>();
+            const variantBySessionId = new Map<string, 'default' | 'no-path'>();
+            for (const row of bucket.rows) {
+                if (row.section) sectionBySessionId.set(row.session.id, row.section);
+                variantBySessionId.set(row.session.id, row.variant ?? 'default');
+            }
+            const folderWorkspace = bucket.workspace;
+            const renderWorkspaceKey = folderWorkspace.t === 'workspaceScope'
+                ? resolveSessionWorkspacePresentation({
+                    metadata: { machineId: folderWorkspace.machineId, path: folderWorkspace.rootPath }, machines: {},
+                }).workspaceKey
+                : item.workspaceKey ?? item.renderWorkspaceKey ?? '';
+            pushFolderAwareProjectSessionsToList({
+                listData: out,
+                sessions: bucket.rows.map((row) => row.session),
+                section: resolveSectionScopeForCollectedProjectSessions(bucket.rows),
+                projectGroupKey: item.groupKey,
+                variant: bucket.rows[0]?.variant ?? 'default',
+                serverScopeMeta: { serverId: item.serverId, serverName: item.serverName },
+                renderWorkspaceKey,
+                workspace: folderWorkspace,
+                sessionFolders: options,
+                sectionBySessionId,
+                variantBySessionId,
+            });
+        }
         changed = changed || out.length !== beforeLength + sessions.length;
         index = cursor - 1;
     }
@@ -629,7 +640,7 @@ function pushOwnedSessionsToList(params: Readonly<{
     serverScopeMeta: ServerScopeMeta;
     sessionTargetState?: SessionMachineTargetState;
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
-    sessionFolders?: BuildSessionListViewDataOptions['sessionFolders'];
+    groupGitWorktreesByRepository?: boolean;
 }>): void {
     if (params.sessions.length === 0) return;
 
@@ -641,11 +652,11 @@ function pushOwnedSessionsToList(params: Readonly<{
                 machines: params.machines,
                 sessionTargetState: params.sessionTargetState,
                 workspacePathDisplayModeV1: params.workspacePathDisplayModeV1,
+                groupGitWorktreesByRepository: params.groupGitWorktreesByRepository,
             }),
             section: params.section,
             serverKey: params.serverKey,
             serverScopeMeta: params.serverScopeMeta,
-            sessionFolders: params.sessionFolders,
         });
         return;
     }
@@ -716,7 +727,9 @@ export function buildSessionListViewData(
                 rootPath: presentation.pathKey,
             }) ?? undefined;
         }
-        return listData;
+        return options.sessionFolders?.enabled
+            ? applySessionFoldersToSessionListViewData(listData, options.sessionFolders)
+            : listData;
     };
 
     if (sectionMode === 'single') {
@@ -748,7 +761,7 @@ export function buildSessionListViewData(
                 serverScopeMeta,
                 sessionTargetState: options.sessionTargetState,
                 workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
-                sessionFolders: options.sessionFolders,
+                groupGitWorktreesByRepository: options.groupGitWorktreesByRepository !== false,
             });
         }
         return completeSessionWorkspaces();
@@ -774,7 +787,7 @@ export function buildSessionListViewData(
             serverScopeMeta,
             sessionTargetState: options.sessionTargetState,
             workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
-            sessionFolders: options.sessionFolders,
+            groupGitWorktreesByRepository: options.groupGitWorktreesByRepository !== false,
         });
     }
 
@@ -798,7 +811,7 @@ export function buildSessionListViewData(
             serverScopeMeta,
             sessionTargetState: options.sessionTargetState,
             workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
-            sessionFolders: options.sessionFolders,
+            groupGitWorktreesByRepository: options.groupGitWorktreesByRepository !== false,
         });
     }
 

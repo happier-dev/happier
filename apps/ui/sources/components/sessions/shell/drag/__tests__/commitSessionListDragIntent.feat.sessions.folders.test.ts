@@ -149,6 +149,45 @@ function reorderInsideAfterRootAIntent(): SessionListDragIntent {
 }
 
 describe('commitSessionListDragIntent', () => {
+    it('unassigns a linked checkout session into its own root band under a repository heading', async () => {
+        const linked: SessionFolderWorkspaceRefV1 = { ...workspaceA, rootPath: '/worktrees/topic' };
+        const context = buildContext({ latestItems: latestItems().map((item) =>
+            (item.type === 'session' && item.sessionId === 'inside-a') || (item.type === 'header' && item.folderId === 'folder-a')
+                ? { ...item, workspace: linked } : item) });
+        const result = await commitSessionListDragIntent({
+            intent: { ...reorderInsideAfterRootAIntent(), instructionKind: 'move-to-root', targetRowId: null, rootPlacement: 'after-last' },
+            context,
+        });
+        expect(result).toEqual({ ok: true });
+        expect(context.setSessionFolderAssignment).toHaveBeenCalledWith({ serverId: 'server-a', sessionId: 'inside-a', folderId: null });
+    });
+
+    it('moves a linked checkout child folder to its own root without using a main checkout folder as its sibling', async () => {
+        const linked: SessionFolderWorkspaceRefV1 = { ...workspaceA, rootPath: '/worktrees/topic' };
+        const context = buildContext({
+            latestItems: [
+                projectHeader('project-a', workspaceA),
+                folderHeader({ id: 'linked-parent', groupKey: 'linked-parent', depth: 0, workspace: linked }),
+                folderHeader({ id: 'linked-child', groupKey: 'linked-child', depth: 1, workspace: linked }),
+                folderHeader({ id: 'folder-a', groupKey: 'main-folder', depth: 0, workspace: workspaceA }),
+            ],
+            sessionFoldersV1: { v: 1, folders: [
+                ...latestFolders().folders,
+                { id: 'linked-parent', workspace: linked, parentId: null, name: 'Linked parent', createdAt: 1, updatedAt: 1 },
+                { id: 'linked-child', workspace: linked, parentId: 'linked-parent', name: 'Linked child', createdAt: 1, updatedAt: 1 },
+            ] },
+        });
+        const result = await commitSessionListDragIntent({
+            intent: { ...reorderInsideAfterRootAIntent(), sourceKind: 'container', sourceRowId: treeRowId.folder('linked-child'),
+                instructionKind: 'move-to-root', targetRowId: null, rootPlacement: 'after-last' },
+            context,
+        });
+        expect(result).toEqual({ ok: true });
+        expect(context.setSessionFoldersV1).toHaveBeenCalledWith(expect.objectContaining({
+            folders: expect.arrayContaining([expect.objectContaining({ id: 'linked-child', parentId: null, workspace: linked })]),
+        }));
+    });
+
     it('persists a root session before a root folder as explicit mixed group order', async () => {
         const intent: SessionListDragIntent = {
             sourceRowId: treeRowId.session('server-a', 'root-a'),

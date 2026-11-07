@@ -9,6 +9,7 @@ import {
     buildAcpSessionModeOverrideV1,
     buildModelOverrideV1,
     readSessionMcpSelectionV1FromMetadata,
+    readSessionRepositoryV1FromMetadata,
     type SessionAttachMetadataIdentityPolicy,
 } from '@happier-dev/protocol';
 import { readNonBlankSessionControlIdentifier } from '@/agent/runtime/sessionControlIdentifiers';
@@ -316,10 +317,21 @@ export function mergeSessionMetadataForStartup(opts: {
         for (const key of ['workspaceId', 'workspaceLocationId', 'workspaceCheckoutId'] as const) {
             delete (merged as Record<string, unknown>)[key];
         }
+    }
 
+    // The fact follows the selected placement, including a fresh observation
+    // that removed an association because this cwd is no longer a repository.
+    const preserveRepository = mode === 'attach'
+        && shouldPreserveCurrentIdentityOnAttach(opts.attachMetadataIdentityPolicy)
+        && (merged.path !== opts.next.path || merged.machineId !== opts.next.machineId);
+    const repository = readSessionRepositoryV1FromMetadata(preserveRepository ? opts.current : opts.next);
+    if (repository) merged.sessionRepositoryV1 = repository;
+    else delete merged.sessionRepositoryV1;
+
+    if (mode === 'attach') {
         for (const key of opts.metadataKeysToUnsetOnAttach ?? []) {
             if (typeof key !== 'string' || !key.trim()) continue;
-            delete (merged as any)[key];
+            delete (merged as Record<string, unknown>)[key];
         }
     }
 

@@ -8,7 +8,7 @@ import {
     buildSessionListRenderableFromSession,
     type SessionListRenderableSession,
 } from '../../domains/session/listing/sessionListRenderable';
-import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import { buildSessionListViewData, type SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { settingsDefaults } from '../../domains/settings/settings';
 import type { Machine, Session } from '../../domains/state/storageTypes';
 import { setActiveServerId, upsertServerProfile } from '../../domains/server/serverProfiles';
@@ -32,6 +32,7 @@ type TestState = SettingsDomain & {
     getProjectForSession: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } | null } | null;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
+    machineListByServerId: Record<string, Machine[] | null>;
 };
 
 function createMachine(input: Readonly<{
@@ -144,7 +145,7 @@ function createState() {
     };
 }
 
-function createHarness() {
+function createHarness(overrides: Partial<TestState> = {}) {
     let state = createState() as TestState;
     const get = () => state;
     const set = (updater: ((value: TestState) => Partial<TestState> | TestState) | Partial<TestState>) => {
@@ -153,7 +154,7 @@ function createHarness() {
     };
 
     const domain = createSettingsDomain<TestState>({ set, get });
-    state = { ...state, ...domain };
+    state = { ...state, ...domain, machineListByServerId: {}, ...overrides };
     return { get };
 }
 
@@ -166,6 +167,56 @@ describe('settings domain: sessionListViewData rebuilds', () => {
         setActiveServerId(home.id, { scope: 'device' });
     });
     afterEach(() => vi.unstubAllEnvs());
+
+    it.each(['local', 'synced'] as const)('regroups active and cached server lists when the worktree preference changes (%s)', (source) => {
+        const machine = createMachine({ id: 'machine-1', displayName: 'Work Mac', host: 'work.local', homeDir: '/Users/tester' });
+        const sessions = Object.fromEntries(['/Users/tester/repo', '/Users/tester/worktrees/feature'].map((path, index) => {
+            const session = createSession({ id: `worktree-${index}`, machineId: machine.id, host: 'work.local', path, homeDir: '/Users/tester' });
+            const enriched = {
+                ...session,
+                metadata: {
+                    ...session.metadata,
+                    path,
+                    host: 'work.local',
+                    sessionRepositoryV1: { v: 1 as const, machineId: machine.id, rootPath: '/Users/tester/repo', worktreePath: path },
+                },
+            };
+            return [enriched.id, enriched];
+        }));
+        const renderables = Object.fromEntries(Object.values(sessions).map((session) => [session.id, buildSessionListRenderableFromSession(session)]));
+        const remote = upsertServerProfile({ serverUrl: 'https://cached-worktrees.example.test', name: 'Cached server' });
+        const initialSettings = { ...settingsDefaults, sessionListInactiveGroupingV1: 'project' as const, sessionListGroupGitWorktreesV1: false };
+        const cachedRows = buildSessionListViewData(renderables, { [machine.id]: machine }, {
+            groupInactiveSessionsByProject: true,
+            inactiveGroupingV1: 'project',
+            groupGitWorktreesByRepository: false,
+            serverScope: { serverId: remote.id, serverName: 'Cached server' },
+        });
+        const { get } = createHarness({
+            sessions, sessionListRenderables: renderables,
+            machines: { [machine.id]: machine },
+            machineDisplayById: { [machine.id]: buildMachineDisplayRenderableFromMachine(machine) },
+            getProjectForSession: () => null,
+            settings: initialSettings,
+            sessionListViewData: cachedRows,
+            sessionListViewDataByServerId: { [remote.id]: cachedRows },
+            machineListByServerId: { [remote.id]: [machine] },
+        });
+        const projectHeaders = (rows: SessionListViewItem[] | null | undefined) => rows?.filter((row) => row.type === 'header' && row.headerKind === 'project');
+        expect(projectHeaders(cachedRows)).toHaveLength(2);
+
+        if (source === 'local') get().applySettingsLocal({ sessionListGroupGitWorktreesV1: true });
+        else get().applySettings({ ...initialSettings, sessionListGroupGitWorktreesV1: true }, 1);
+
+        expect(projectHeaders(get().sessionListViewData)).toHaveLength(1);
+        expect(projectHeaders(get().sessionListViewDataByServerId[remote.id])).toHaveLength(1);
+        expect(get().sessionListViewData?.filter((row) => row.type === 'session')).toHaveLength(2);
+        expect(projectHeaders(get().sessionListViewDataByServerId[remote.id])?.[0]).toMatchObject({ serverId: remote.id, serverName: 'Cached server' });
+
+        get().applySettingsLocal({ sessionListGroupGitWorktreesV1: false });
+        expect(projectHeaders(get().sessionListViewData)).toHaveLength(2);
+        expect(projectHeaders(get().sessionListViewDataByServerId[remote.id])).toHaveLength(2);
+    });
 
     it('rebuilds sessionListViewData when grouping settings change', () => {
         const { get } = createHarness();

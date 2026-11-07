@@ -5179,6 +5179,8 @@ localTailscale: {
       hiddenInactiveSessionsEmptyStateSubtitle: "非アクティブなセッションはこのリストで非表示になっています",
       hiddenInactiveSessionsSectionTitle: "非アクティブなセッション",
       hiddenInactiveSessionsSectionSubtitle: "メインの一覧ではアクティブなチャットだけが表示されるため、ここでは非表示になっています",
+    sessionListGroupGitWorktrees: "Gitワークツリーをリポジトリごとにまとめる",
+    sessionListGroupGitWorktreesSubtitle: "同じリポジトリのセッションをまとめます。オフにするとディレクトリごとにまとめます。",
     sessionListActiveGrouping: "アクティブセッションのグループ化",
     sessionListActiveGroupingSubtitle:
       "サイドバーでアクティブセッションをどのようにグループ化するか選択します",

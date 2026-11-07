@@ -75,7 +75,8 @@ describe('git worktree operations', () => {
         runScmCommandMock
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo-linked\n', stderr: '' })
-            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'worktree /repo\0\0worktree /repo-linked\0\0', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: 'abc123\n', stderr: '' })
             .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'already exists' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' });
@@ -104,7 +105,7 @@ describe('git worktree operations', () => {
         });
         expect(mkdirMock).toHaveBeenCalledWith('/repo/.dev/worktree', { recursive: true });
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            5,
+            6,
             expect.objectContaining({
                 bin: 'git',
                 cwd: '/repo',
@@ -112,7 +113,7 @@ describe('git worktree operations', () => {
             }),
         );
         expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            6,
+            7,
             expect.objectContaining({
                 bin: 'git',
                 cwd: '/repo',
@@ -125,7 +126,7 @@ describe('git worktree operations', () => {
         runScmCommandMock
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
-            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'worktree /repo\0\0', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' });
         mkdirMock.mockResolvedValue(undefined);
 

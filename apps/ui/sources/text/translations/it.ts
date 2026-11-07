@@ -5244,6 +5244,8 @@ export const it: TranslationStructure = {
       hiddenInactiveSessionsEmptyStateSubtitle: "Le sessioni inattive sono nascoste in questo elenco",
       hiddenInactiveSessionsSectionTitle: "Sessioni inattive",
       hiddenInactiveSessionsSectionSubtitle: "Nascoste nell'elenco principale perché lì vengono mostrate solo le chat attive",
+    sessionListGroupGitWorktrees: "Raggruppa i worktree Git per repository",
+    sessionListGroupGitWorktreesSubtitle: "Mantieni insieme le sessioni dello stesso repository. Disattiva per raggruppare per directory.",
     sessionListActiveGrouping: "Raggruppamento sessioni attive",
     sessionListActiveGroupingSubtitle:
       "Scegli come raggruppare le sessioni attive nella barra laterale",

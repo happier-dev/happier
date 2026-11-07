@@ -5,6 +5,34 @@ import { createCustomSessionAppearanceColorsSelector, selectEffectiveSessionAppe
 import { createSessionListRowStoreStateSelector, selectSessionListRowStateSnapshot } from '../sessionListRowStateSnapshot';
 
 describe('appearance selectors', () => {
+    it('inherits the repository heading colour for linked worktrees and updates when directory grouping is selected', () => {
+        const metadata = {
+            machineId: 'machine-a', host: 'test.local', path: '/worktrees/feature',
+            sessionRepositoryV1: { v: 1 as const, machineId: 'machine-a', rootPath: '/repo', worktreePath: '/worktrees/feature' },
+        };
+        const session = createSessionFixture({ id: 's1', metadata });
+        const workspaceKey = resolveSessionWorkspacePresentation({
+            metadata: { machineId: 'machine-a', path: '/repo' }, machines: {},
+        }).workspaceKey;
+        const label = { labelKind: 'workspace', scopeKey: workspaceKey, display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 } as const;
+        const state = {
+            sessions: { s1: session },
+            settings: { sessionListGroupGitWorktreesV1: true },
+            sessionOrganizationLabelsByLabelKey: { [`server-a:workspace:${workspaceKey}`]: label },
+        };
+        const params = { serverId: 'server-a', sessionId: 's1', metadata };
+        const select = createSessionListRowStoreStateSelector([params], 'server-a');
+        const grouped = select(state);
+        expect(selectEffectiveSessionAppearanceColor(state, params)).toEqual({ kind: 'accent', key: 'blue' });
+        expect(selectSessionListRowStateSnapshot(grouped, params).appearanceColor).toEqual({ kind: 'accent', key: 'blue' });
+        const directoryState = { ...state, settings: { sessionListGroupGitWorktreesV1: false } };
+        const directory = select(directoryState);
+        expect(directory).not.toBe(grouped);
+        expect(selectSessionListRowStateSnapshot(directory, params).appearanceColor).toBeNull();
+        expect(selectEffectiveSessionAppearanceColor({ ...state, sessionOrganizationAppearancesBySessionKey: {
+            'server-a:s1': { sessionId: 's1', display: { t: 'plain', v: { color: { kind: 'accent', key: 'green' } } }, updatedAt: 1 },
+        } }, params)).toEqual({ kind: 'accent', key: 'green' });
+    });
     it('inherits only the foreign row own workspace, not an active-Home project sharing its session id', () => {
         const metadata = { machineId: 'machine-a', path: '/foreign' };
         const workspaceKey = resolveSessionWorkspacePresentation({ metadata, machines: {} }).workspaceKey;

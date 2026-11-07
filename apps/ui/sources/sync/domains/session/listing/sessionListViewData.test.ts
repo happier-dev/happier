@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { applySessionFoldersToSessionListViewData, buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
-import { buildSessionListRenderableFromSession } from './sessionListRenderable';
+import { buildSessionListRenderableFromSession, didSessionListRenderableProjectGroupingFieldsChange, preserveSessionListRenderableStaleFields } from './sessionListRenderable';
 
 function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
     const active = partial.active ?? false;
@@ -51,6 +51,120 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    function repositorySession(id: string, path: string, rootPath = '/repo', active = true, worktreePath = path): Session {
+        const metadata = {
+            machineId: 'm1', path, host: 'host', version: '0.0.0',
+            sessionRepositoryV1: { v: 1 as const, machineId: 'm1', rootPath, worktreePath },
+        };
+        return makeSession({ id, active, createdAt: 1, metadata });
+    }
+
+    it('groups linked worktrees by repository in each activity section without merging independent clones', () => {
+        const sessions = [
+            repositorySession('main', '/repo'),
+            repositorySession('topic', '/worktrees/topic'),
+            repositorySession('nested-topic', '/worktrees/topic/packages/app', '/repo', true, '/worktrees/topic'),
+            repositorySession('clone', '/clone', '/clone'),
+            repositorySession('old-main', '/repo', '/repo', false),
+            repositorySession('old-topic', '/worktrees/old-topic', '/repo', false),
+        ];
+        const data = buildSessionListViewData(
+            Object.fromEntries(sessions.map((session) => [session.id, buildSessionListRenderableFromSession(session)])),
+            { m1: makeMachine({ id: 'm1' }) },
+            { groupInactiveSessionsByProject: true, serverScope: { serverId: 'server-a' } },
+        );
+        const headers = data.filter((item) => item.type === 'header').filter((item) => item.headerKind === 'project');
+        expect(headers.map((header) => header.title).sort()).toEqual(['clone', 'repo', 'repo']);
+        const rows = data.filter((item) => item.type === 'session');
+        for (const session of sessions) {
+            expect(rows.find((row) => row.session.id === session.id)?.workspace).toEqual({
+                t: 'workspaceScope', serverId: 'server-a', machineId: 'm1', rootPath: session.metadata?.path,
+            });
+        }
+        expect(rows.find((row) => row.session.id === 'topic')?.variant).toBe('default');
+        expect(sessions[1]?.metadata?.path).toBe('/worktrees/topic');
+    });
+
+    it('can retain directory headings for linked worktrees', () => {
+        const sessions = [repositorySession('main', '/repo'), repositorySession('topic', '/worktrees/topic')];
+        const options = { groupInactiveSessionsByProject: true, groupGitWorktreesByRepository: false };
+        const data = buildSessionListViewData(Object.fromEntries(sessions.map((session) => [session.id, session])), {}, options);
+        expect(data.filter((item) => item.type === 'header').filter((item) => item.headerKind === 'project').map((item) => item.title).sort())
+            .toEqual(['repo', 'topic']);
+    });
+
+    it('updates grouping when repository evidence arrives and preserves unchanged renderable identity', () => {
+        const session = repositorySession('topic', '/worktrees/topic');
+        const known = buildSessionListRenderableFromSession(session);
+        const withoutRepository = buildSessionListRenderableFromSession({
+            ...session,
+            metadata: { machineId: 'm1', host: 'host', path: '/worktrees/topic', version: '0.0.0' },
+        });
+        expect(didSessionListRenderableProjectGroupingFieldsChange(withoutRepository, known)).toBe(true);
+        expect(preserveSessionListRenderableStaleFields(withoutRepository, known)).not.toBe(withoutRepository);
+        expect(preserveSessionListRenderableStaleFields(known, buildSessionListRenderableFromSession(session))).toBe(known);
+    });
+
+    it('ignores stale repository evidence outside its recorded checkout', () => {
+        const session = repositorySession('topic', '/worktrees/topic');
+        const moved = makeSession({ ...session, metadata: { ...session.metadata!, path: '/worktrees/topic-other' } });
+        const data = buildSessionListViewData({ moved }, {}, { groupInactiveSessionsByProject: true });
+        expect(data.filter((item) => item.type === 'header').find((item) => item.headerKind === 'project')?.title).toBe('topic-other');
+    });
+
+    it.each([
+        { path: '/src', worktreePath: '/', rootPath: '/', homeDir: undefined, title: '/' },
+        { path: '~\\topic\\src', worktreePath: 'C:\\worktrees\\topic', rootPath: 'C:\\main-repo', homeDir: 'C:\\worktrees\\', title: 'main-repo' },
+        { path: '\\\\server\\share\\topic\\src', worktreePath: '//server/share/topic', rootPath: '//server/share/main-repo', homeDir: undefined, title: 'main-repo' },
+    ])('normalizes repository evidence using the existing path rules ($path)', ({ path, worktreePath, rootPath, homeDir, title }) => {
+        const original = repositorySession('topic', path, rootPath, true, worktreePath);
+        const session = makeSession({ ...original, metadata: { ...original.metadata!, homeDir } });
+        const data = buildSessionListViewData({ topic: session }, {}, { groupInactiveSessionsByProject: true });
+        expect(data.filter((item) => item.type === 'header').find((item) => item.headerKind === 'project')?.title).toBe(title);
+        expect(session.metadata?.path).toBe(path);
+    });
+
+    it('retains checkout-scoped folders under a shared repository heading, including after placement projection', () => {
+        const sessions = [repositorySession('main', '/repo'), repositorySession('topic', '/worktrees/topic')];
+        const sessionMap = Object.fromEntries(sessions.map((session) => [session.id, session]));
+        const machines = { m1: makeMachine({ id: 'm1' }) };
+        const sessionFolders = {
+            enabled: true,
+            folders: { v: 1 as const, folders: sessions.map((session) => ({
+                id: `folder-${session.id}`, name: 'Planning', parentId: null, createdAt: 1, updatedAt: 1,
+                workspace: { t: 'workspaceScope' as const, serverId: 'server-a', machineId: 'm1', rootPath: session.metadata!.path },
+            })) },
+            assignmentsBySessionKey: { 'server-a:main': 'folder-main', 'server-a:topic': 'folder-topic' },
+        };
+        const options = { groupInactiveSessionsByProject: true, serverScope: { serverId: 'server-a' } };
+        const direct = buildSessionListViewData(sessionMap, machines, { ...options, sessionFolders });
+        const projected = applySessionFoldersToSessionListViewData(buildSessionListViewData(sessionMap, machines, options), sessionFolders);
+        expect(projected).toEqual(direct);
+        expect(direct.filter((item) => item.type === 'header' && item.headerKind === 'project')).toHaveLength(1);
+        expect(direct.filter((item) => item.type === 'session').map((item) => [item.session.id, item.folderId, item.workspace?.t === 'workspaceScope' && item.workspace.rootPath]).sort())
+            .toEqual([['main', 'folder-main', '/repo'], ['topic', 'folder-topic', '/worktrees/topic']]);
+    });
+
+    it('shows repository-scope folders when only a linked checkout has visible sessions', () => {
+        const topic = repositorySession('topic', '/worktrees/topic');
+        const data = buildSessionListViewData({ topic }, {}, {
+            groupInactiveSessionsByProject: true,
+            serverScope: { serverId: 'server-a' },
+            sessionFolders: {
+                enabled: true,
+                folders: { v: 1, folders: [{
+                    id: 'main-planning', name: 'Planning', parentId: null, createdAt: 1, updatedAt: 1,
+                    workspace: { t: 'workspaceScope', serverId: 'server-a', machineId: 'm1', rootPath: '/repo' },
+                }] },
+                assignmentsBySessionKey: {},
+            },
+        });
+        expect(data.filter((item) => item.type === 'header' && item.headerKind === 'folder').map((item) => item.folderId))
+            .toEqual(['main-planning']);
+        expect(data.find((item) => item.type === 'session')?.workspace)
+            .toEqual({ t: 'workspaceScope', serverId: 'server-a', machineId: 'm1', rootPath: '/worktrees/topic' });
+    });
+
     it.each(['date', 'project'] as const)('projects producer-scoped workspaces for %s rows with folder view off', (grouping) => {
         const rows = ['server-a', 'server-b'].flatMap((serverId) => {
             const machineId = `${serverId}-machine`;

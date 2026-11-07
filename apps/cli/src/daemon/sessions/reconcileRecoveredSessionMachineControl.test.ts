@@ -41,6 +41,7 @@ describe('recovered runner machine control', () => {
     const initial = {
       machineId: 'old-machine', hostPid: 1234, host: 'old-host', path: '/workspace/repo',
       claudeSessionId: 'provider-session', summary: { text: 'Keep this' },
+      sessionRepositoryV1: { v: 1, machineId: 'old-machine', rootPath: '/workspace/main', worktreePath: '/workspace/repo' },
       sessionWorkspaceLocationV1: { v: 1, machineId: 'old-machine', agentPath: '/sandbox/repo', machinePath: '/workspace/repo' },
     };
     let stored = createSessionRecordFixture({
@@ -67,10 +68,12 @@ describe('recovered runner machine control', () => {
     await reconcileRecoveredSessionMachineControl(params);
 
     expect(binding).toBe(true);
-    expect(decryptStoredSessionPayload({ mode, ctx, value: stored.metadata! })).toEqual({
+    const expected: Record<string, unknown> = {
       ...initial, machineId: 'new-machine',
       sessionWorkspaceLocationV1: { ...initial.sessionWorkspaceLocationV1, machineId: 'new-machine' },
-    });
+    };
+    delete expected.sessionRepositoryV1;
+    expect(decryptStoredSessionPayload({ mode, ctx, value: stored.metadata! })).toEqual(expected);
     const version = stored.metadataVersion;
     await reconcileRecoveredSessionMachineControl(params);
     expect(stored.metadataVersion).toBe(version);

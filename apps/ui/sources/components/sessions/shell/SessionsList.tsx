@@ -157,7 +157,7 @@ import {
 } from './selection/sessionListSelectionKeys';
 import { SessionListSelectionActionBarHost } from './selection/SessionListSelectionActionBar';
 import { Icon } from '@/components/ui/icons/Icon';
-import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession, resolveMachinePathFromSessionBase } from '@/sync/ops/sessionMachineTarget';
 import { resolveSessionOrganizationMutationScope } from '@/sync/domains/session/organization/mutationScope';
 import { NewSessionDraftsSection } from './NewSessionDraftsSection';
 
@@ -1061,7 +1061,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
             ? readMachineControlTargetForSession(seedSessionId)
             : null;
         const directory = seedMachineTarget?.machineId === workspaceScopeHint.machineId
-            ? seedMachineTarget.basePath
+            ? resolveMachinePathFromSessionBase({ ...seedMachineTarget, requestPath: workspaceScopeHint.rootPath })
             : workspaceScopeHint.rootPath;
         const draftId = resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId;
         if (rememberLastProjectSessionSelections && seedSession) {

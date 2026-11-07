@@ -2,6 +2,7 @@ import type { BlockedReason, TreeDropResult } from '@/components/ui/treeDragDrop
 import { SESSION_FOLDER_MAX_DEPTH } from '@/sync/domains/session/folders/constants';
 
 import type { SessionListTreeDragSource, SessionListTreeModel, SessionListTreeRowMetadata } from '../drop-resolution/sessionListTreeTypes';
+import { canMoveSessionListSourceToContainer } from '../drop-resolution/sessionListDestinationScope';
 
 export type SessionListMoveSheetTargetKind = 'root' | 'folder';
 
@@ -105,6 +106,11 @@ export function buildSessionListMoveSheetTargets(params: BuildSessionListMoveShe
     for (const folder of folders) {
         const label = readRowTitle(folder);
         const targetId = `folder:${folder.folderId ?? folder.rowId}`;
+        const container = params.tree.containerMetadataById.get(folder.childContainerId ?? folder.rowId);
+        if (!container || !canMoveSessionListSourceToContainer(source.metadata, container)) {
+            targets.push(buildDisabledTarget({ id: targetId, kind: 'folder', label, reason: 'workspace-scope-mismatch' }));
+            continue;
+        }
         const destinationDepth = folder.folderDepth + 1;
         const destinationExceedsDepth = destinationDepth + sourceSubtreeDepthSpan > maxDepth;
         if (source.excludedDescendantIds.has(folder.rowId)) {

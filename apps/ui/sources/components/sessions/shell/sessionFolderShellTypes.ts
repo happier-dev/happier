@@ -1,9 +1,7 @@
 import type { SessionListViewItem } from '@/sync/domains/state/storage';
-import {
-    compareSessionFolderWorkspaceRefs,
-    resolveDurableWorkspaceRefForSessionListHeader,
-    type SessionFolderViewModeV1,
-    type SessionFolderWorkspaceRefV1,
+import type {
+    SessionFolderViewModeV1,
+    SessionFolderWorkspaceRefV1,
 } from '@/sync/domains/session/folders';
 export type { SessionFolderViewModeV1, SessionFolderWorkspaceRefV1 };
 
@@ -84,15 +82,11 @@ export function filterSessionListItemsByFocusedFolder(
     if (!folderId) return [...items];
 
     const parentByFolderId = new Map<string, string | null>();
-    let focusedWorkspace: SessionFolderWorkspaceRefV1 | null = null;
     for (const item of items) {
         if (item.type !== 'header') continue;
         const folder = asSessionFolderHeaderItem(item);
         if (!folder) continue;
         parentByFolderId.set(folder.folderId, folder.parentFolderId ?? null);
-        if (folder.folderId === folderId) {
-            focusedWorkspace = folder.workspace ?? null;
-        }
     }
 
     const includedFolderIds = new Set<string>([folderId]);
@@ -106,18 +100,31 @@ export function filterSessionListItemsByFocusedFolder(
         }
     }
 
-    return items.filter((item) => {
+    const includedItems = new Set<SessionListViewItem>();
+    let projectHeader: SessionListViewItem | null = null;
+    for (const item of items) {
         if (item.type === 'header') {
-            const headerKind = String(item.headerKind ?? '');
-            if (headerKind === 'active' || headerKind === 'inactive' || headerKind === 'sessions') return true;
-            if (headerKind === 'project' && focusedWorkspace) {
-                const workspace = resolveDurableWorkspaceRefForSessionListHeader(item);
-                return workspace ? compareSessionFolderWorkspaceRefs(workspace, focusedWorkspace) : false;
+            if (item.headerKind === 'project') {
+                projectHeader = item;
+                continue;
             }
             const folder = asSessionFolderHeaderItem(item);
-            return folder != null && includedFolderIds.has(folder.folderId);
+            if (!folder) {
+                projectHeader = null;
+                continue;
+            }
+            if (!includedFolderIds.has(folder.folderId)) continue;
+        } else {
+            const rowFolderId = readSessionFolderId(item);
+            if (rowFolderId == null || !includedFolderIds.has(rowFolderId)) continue;
         }
-        const rowFolderId = readSessionFolderId(item);
-        return rowFolderId != null && includedFolderIds.has(rowFolderId);
+        includedItems.add(item);
+        if (projectHeader) includedItems.add(projectHeader);
+    }
+
+    return items.filter((item) => {
+        if (item.type === 'header'
+            && (item.headerKind === 'active' || item.headerKind === 'inactive' || item.headerKind === 'sessions')) return true;
+        return includedItems.has(item);
     });
 }

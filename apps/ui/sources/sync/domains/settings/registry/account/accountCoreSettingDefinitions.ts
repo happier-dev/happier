@@ -292,6 +292,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    sessionListGroupGitWorktreesV1: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Group Git worktrees from the same repository together in the session list',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     sessionListActiveGroupingV1: {
         schema: z.enum(['project', 'date']),
         default: 'project',

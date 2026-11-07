@@ -1,4 +1,5 @@
 import type { TreeDropResult } from '@/components/ui/treeDragDrop';
+import { canReorderSessionListSourceAroundTarget } from './sessionListDestinationScope';
 
 import type {
     SessionListFolderSortMode,
@@ -10,13 +11,14 @@ import type {
 function orderedContainerChildren(params: Readonly<{
     tree: SessionListTreeModel;
     containerId: string;
-    sourceRowId: string;
+    source: SessionListTreeDragSource;
 }>): SessionListTreeRowMetadata[] {
     return Array.from(params.tree.rowMetadataById.values())
         .filter((metadata) =>
             metadata.containerId === params.containerId
             && metadata.kind !== 'workspace-root'
-            && metadata.rowId !== params.sourceRowId
+            && metadata.rowId !== params.source.id
+            && canReorderSessionListSourceAroundTarget(params.source.metadata, metadata)
         )
         .sort((left, right) => left.itemIndex - right.itemIndex);
 }
@@ -65,7 +67,7 @@ function resolveFoldersFirstSessionBandResult(params: Readonly<{
     const children = orderedContainerChildren({
         tree: params.tree,
         containerId: params.containerId,
-        sourceRowId: params.source.metadata.rowId,
+        source: params.source,
     });
     const firstSession = children.find((child) => child.kind === 'session') ?? null;
     if (firstSession) return buildReorderBeforeResult(firstSession);

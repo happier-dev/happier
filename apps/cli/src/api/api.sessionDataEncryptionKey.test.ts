@@ -28,6 +28,7 @@ vi.mock('@/configuration', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
+    infoFile: vi.fn(),
   },
 }));
 

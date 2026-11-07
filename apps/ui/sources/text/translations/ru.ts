@@ -4838,6 +4838,8 @@ export const ru: TranslationStructure = {
       hiddenInactiveSessionsEmptyStateSubtitle: "Неактивные сессии скрыты в этом списке",
       hiddenInactiveSessionsSectionTitle: "Неактивные сессии",
       hiddenInactiveSessionsSectionSubtitle: "Скрыты в основном списке, потому что там показываются только активные чаты",
+    sessionListGroupGitWorktrees: "Группировать рабочие деревья Git по репозиторию",
+    sessionListGroupGitWorktreesSubtitle: "Объединять сеансы одного репозитория. Отключите для группировки по каталогам.",
     sessionListActiveGrouping: "Группировка активных сессий",
     sessionListActiveGroupingSubtitle:
       "Выберите, как активные сессии группируются в боковой панели",

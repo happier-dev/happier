@@ -24,8 +24,13 @@ import {
     saveAccountPurchases,
 } from '../../domains/state/accountProfilePersistence';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
-import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
-import { setActiveServerSessionListCache } from '../sessionListCache';
+import { buildSessionListViewDataForCachedServer, buildSessionListViewDataForRenderableState } from './sessionListRenderableCommit';
+import {
+    getActiveServerIdForSessionListCache,
+    setActiveServerSessionListCache,
+    setServerSessionListCache,
+} from '../sessionListCache';
+import { areServerProfileIdentifiersEquivalent } from '../../domains/server/serverProfiles';
 import { emitLocalSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { setPreferredLanguageFromSettings } from '@/text/i18n';
@@ -63,6 +68,7 @@ type SettingsDomainDependencies = Readonly<{
     sessionListRenderables: Record<string, SessionListRenderableSession>;
     machines: Record<string, Machine>;
     machineDisplayById: Record<string, MachineDisplayRenderable>;
+    machineListByServerId?: Record<string, Machine[] | null>;
     getProjectForSession?: (sessionId: string) => { key?: { machineId?: string | null; path?: string | null } | null } | null;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
@@ -70,6 +76,7 @@ type SettingsDomainDependencies = Readonly<{
 
 function shouldRebuildSessionListViewData(previous: Settings, next: Settings): boolean {
     return next.groupInactiveSessionsByProject !== previous.groupInactiveSessionsByProject ||
+        next.sessionListGroupGitWorktreesV1 !== previous.sessionListGroupGitWorktreesV1 ||
         next.sessionListActiveGroupingV1 !== previous.sessionListActiveGroupingV1 ||
         next.sessionListInactiveGroupingV1 !== previous.sessionListInactiveGroupingV1 ||
         next.sessionListSectionModeV1 !== previous.sessionListSectionModeV1 ||
@@ -94,20 +101,23 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
     safeSetPreferredLanguageFromSettings(nextSettings.preferredLanguage);
 
     const shouldRebuildSessionListViewDataValue = shouldRebuildSessionListViewData(state.settings, nextSettings);
+    const nextState = { ...state, settings: nextSettings };
     const sessionListViewData = shouldRebuildSessionListViewDataValue
-        ? buildSessionListViewDataWithServerScope({
-            sessions: state.sessionListRenderables,
-            sessionRecords: state.sessions,
-            machines: state.machineDisplayById,
-            machineRecords: state.machines,
-            groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
-            activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
-            inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
-            sectionModeV1: nextSettings.sessionListSectionModeV1,
-            workspacePathDisplayModeV1: nextSettings.workspacePathDisplayModeV1,
-            getProjectForSession: state.getProjectForSession,
-        })
+        ? buildSessionListViewDataForRenderableState(nextState)
         : state.sessionListViewData;
+
+    let sessionListViewDataByServerId = state.sessionListViewDataByServerId;
+    if (shouldRebuildSessionListViewDataValue) {
+        const activeServerId = getActiveServerIdForSessionListCache();
+        sessionListViewDataByServerId = setActiveServerSessionListCache(sessionListViewDataByServerId, sessionListViewData);
+        for (const [serverId, cachedRows] of Object.entries(state.sessionListViewDataByServerId)) {
+            if (!cachedRows || areServerProfileIdentifiersEquivalent(serverId, activeServerId)) continue;
+            // Warm inactive Home rows retain the session facts needed to regroup locally.
+            // Reuse those facts so a preference change does not wait for another network snapshot.
+            const rows = buildSessionListViewDataForCachedServer(nextState, serverId);
+            sessionListViewDataByServerId = setServerSessionListCache(sessionListViewDataByServerId, serverId, rows);
+        }
+    }
 
     return {
         ...state,
@@ -115,9 +125,7 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
         settingsVersion: nextVersion,
         settingsScope: nextScope,
         sessionListViewData,
-        sessionListViewDataByServerId: shouldRebuildSessionListViewDataValue
-            ? setActiveServerSessionListCache(state.sessionListViewDataByServerId, sessionListViewData)
-            : state.sessionListViewDataByServerId,
+        sessionListViewDataByServerId,
     };
 }
 

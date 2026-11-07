@@ -13,6 +13,7 @@ export type SessionWorkspacePresentationMetadata = Readonly<{
     machineId?: unknown;
     path?: unknown;
     homeDir?: unknown;
+    sessionRepositoryV1?: unknown;
 }> | null | undefined;
 
 export type SessionWorkspacePresentationTarget = Readonly<{
@@ -71,7 +72,8 @@ function resolveMachineLabel(machine: MachineDisplayRenderable): string {
 }
 
 function resolveWorkspaceBasename(path: string): string {
-    const normalized = path.trim().replace(/[\\/]+$/, '');
+    const trimmed = path.trim();
+    const normalized = trimmed.replace(/[\\/]+$/, '') || trimmed;
     if (!normalized || normalized === '~') return normalized;
     const segments = normalized.split(/[\\/]+/);
     return normalizeNonEmptyString(segments[segments.length - 1]) ?? normalized;
@@ -83,6 +85,7 @@ export function resolveSessionWorkspacePresentation(params: Readonly<{
     target?: SessionWorkspacePresentationTarget;
     workspaceLabelsV1?: unknown;
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
+    groupGitWorktreesByRepository?: boolean;
 }>): SessionWorkspacePresentation {
     const parts = resolveSessionProjectGroupingKeyParts(params.metadata);
     const targetMachineId = normalizeNonEmptyString(params.target?.machineId);
@@ -97,7 +100,17 @@ export function resolveSessionWorkspacePresentation(params: Readonly<{
     const displayPathInput = targetPath ?? normalizeNonEmptyString(params.metadata?.path);
     const directMachine = displayMachineId ? params.machines[displayMachineId] : undefined;
     const homeDir = normalizeNonEmptyString(directMachine?.metadata?.homeDir) ?? parts.homeDir;
-    const pathKey = normalizeSessionPathForProjectGrouping(displayPathInput, homeDir);
+    const checkoutPathKey = normalizeSessionPathForProjectGrouping(displayPathInput, homeDir);
+    const originalMachine = parts.machineId ? resolveCanonicalMachineId(parts.machineId, params.machines) : null;
+    const originalMachineId = originalMachine?.reason === 'missingReplacementTarget'
+        ? parts.machineId : originalMachine?.machineId ?? parts.machineId;
+    // Repository observations belong to the observed checkout. A reachable target on
+    // another machine or path must supply its own observation before grouping it.
+    const pathKey = params.groupGitWorktreesByRepository === true
+        && displayMachineId === originalMachineId
+        && checkoutPathKey === parts.pathKey
+        ? parts.repositoryPathKey ?? checkoutPathKey
+        : checkoutPathKey;
     const machineGroupId = displayMachineId ? `id:${displayMachineId}` : parts.machineGroupId;
     const groupKey = `${machineGroupId}:${pathKey}`;
     const workspaceHash = hashFNV1a32Hex(groupKey);

@@ -14,15 +14,12 @@ import type { ScmWorktree } from '@happier-dev/protocol';
  * path could otherwise admit an unrelated sibling.
  *
  * Token grammar (per worktree record):
- *   worktree <NUL>
- *   <path-bytes>
- *   <NUL>
+ *   worktree <space> <path-bytes> <NUL>
  *   key <space> value <NUL>     -- zero or more (HEAD, branch, bare, detached, locked, prunable)
  *   <NUL>                       -- empty token = end of record
  *
- * Note: git emits the `worktree` keyword and its path value as TWO tokens
- * (keyword token, then path token). All other keys (`HEAD <oid>`, `branch <ref>`)
- * are single tokens with the value separated by a space.
+ * Both the native single-token worktree path and the two-token form emitted by
+ * some wrappers are accepted without trimming the path bytes.
  */
 
 function normalizeBranchRef(rawBranch: string | null): string | null {
@@ -39,18 +36,16 @@ function normalizeGitPathToken(rawPath: string | null | undefined): string | nul
     return rawPath;
 }
 
-export function parseGitWorktreeListPorcelain(input: {
-    worktreesOutput: string;
-    currentWorktreePath: string | null;
-    mainWorktreePath?: string | null;
-}): ReadonlyArray<ScmWorktree> {
-    const tokens = input.worktreesOutput.split('\0');
-    const currentPath = normalizeGitPathToken(input.currentWorktreePath);
-    const mainPath = normalizeGitPathToken(input.mainWorktreePath);
-    const worktrees: ScmWorktree[] = [];
+export type GitWorktreeRecord = Readonly<{ path: string; branch: string | null; bare: boolean }>;
+
+/** Git reports the main checkout (or bare repository) first; retain that order. */
+export function parseGitWorktreeListRecords(worktreesOutput: string): readonly GitWorktreeRecord[] {
+    const tokens = worktreesOutput.split('\0');
+    const worktrees: GitWorktreeRecord[] = [];
 
     let activePath: string | null = null;
     let activeBranch: string | null = null;
+    let activeBare = false;
 
     const flush = () => {
         const path = normalizeGitPathToken(activePath);
@@ -58,11 +53,11 @@ export function parseGitWorktreeListPorcelain(input: {
         worktrees.push({
             path,
             branch: normalizeBranchRef(activeBranch),
-            isCurrent: currentPath === path,
-            isMain: mainPath === path,
+            bare: activeBare,
         });
         activePath = null;
         activeBranch = null;
+        activeBare = false;
     };
 
     for (let i = 0; i < tokens.length; i += 1) {
@@ -84,8 +79,7 @@ export function parseGitWorktreeListPorcelain(input: {
             continue;
         }
         if (token.startsWith('worktree ')) {
-            // Defensive: some git versions or wrapper outputs use the single-token
-            // `worktree <path>` form even under -z. Treat it as a record start.
+            // Native `worktree <path>` form under -z.
             flush();
             activePath = token.slice('worktree '.length);
             continue;
@@ -94,11 +88,26 @@ export function parseGitWorktreeListPorcelain(input: {
             activeBranch = token.slice('branch '.length);
             continue;
         }
-        // Other keys (HEAD, bare, detached, locked, prunable) are ignored for the
-        // purpose of producing the ScmWorktree shape.
+        if (token === 'bare') activeBare = true;
+        // Other keys do not contribute to the published worktree shape.
     }
 
     flush();
 
-    return worktrees.sort((left, right) => left.path.localeCompare(right.path));
+    return worktrees;
+}
+
+export function parseGitWorktreeListPorcelain(input: {
+    worktreesOutput: string;
+    currentWorktreePath: string | null;
+    mainWorktreePath?: string | null;
+}): ReadonlyArray<ScmWorktree> {
+    const currentPath = normalizeGitPathToken(input.currentWorktreePath);
+    const mainPath = normalizeGitPathToken(input.mainWorktreePath);
+    return parseGitWorktreeListRecords(input.worktreesOutput).map(({ path, branch }) => ({
+        path,
+        branch,
+        isCurrent: currentPath === path,
+        isMain: mainPath === path,
+    })).sort((left, right) => left.path.localeCompare(right.path));
 }

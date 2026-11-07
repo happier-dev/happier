@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import os from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   buildCodexAgentRuntimeDescriptor,
@@ -9,6 +10,8 @@ import {
 } from '@happier-dev/agents';
 import {
   readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  readSessionRepositoryV1FromMetadata,
+  type SessionRepositoryV1,
   type AgentRuntimeDescriptorV1,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
@@ -28,6 +31,13 @@ import {
 } from '@/daemon/connectedServices/connectedServiceRuntimeSnapshot';
 import { listSessionMarkers, type DaemonSessionMarker } from '@/daemon/sessionRegistry';
 import { directSessionMarkerMatches } from '@/api/directSessions/markers/readDirectSessionMarkerIdentity';
+import { enrichSessionMetadataWithRepository } from '@/agent/runtime/enrichSessionMetadataWithRepository';
+
+type RepositoryObservation = Readonly<{
+  machineId: string;
+  path: string;
+  sessionRepositoryV1: SessionRepositoryV1 | null;
+}>;
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -106,6 +116,7 @@ function isMeaningfulSessionTitle(value: unknown, metadata?: Readonly<Record<str
 
 function resolveRefreshedDirectSessionMetadata(params: Readonly<{
   currentMetadata: Readonly<Record<string, unknown>>;
+  repositoryObservation?: RepositoryObservation;
   directSessionIdentity?: Readonly<{
     tag: string;
     machineId: string;
@@ -203,12 +214,23 @@ function resolveRefreshedDirectSessionMetadata(params: Readonly<{
     }
   }
 
+  const observation = params.repositoryObservation;
+  if (observation && nextMetadata.machineId === observation.machineId && nextMetadata.path === observation.path) {
+    const observedRepository = observation.sessionRepositoryV1 ?? undefined;
+    if (!isDeepStrictEqual(nextMetadata.sessionRepositoryV1, observedRepository)) {
+      if (observedRepository) nextMetadata.sessionRepositoryV1 = observedRepository;
+      else delete nextMetadata.sessionRepositoryV1;
+      didChange = true;
+    }
+  }
+
   return didChange ? nextMetadata : null;
 }
 
 async function refreshExistingDirectSessionMetadataIfNeeded(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
+  repositoryMachineId?: string;
   directSessionIdentity?: Readonly<{
     tag: string;
     machineId: string;
@@ -224,6 +246,7 @@ async function refreshExistingDirectSessionMetadataIfNeeded(params: Readonly<{
 }>): Promise<void> {
   if (
     !params.directSessionIdentity
+    && !params.repositoryMachineId
     && !normalizeNullableString(params.titleHint)
     && !normalizeNullableString(params.directoryHint)
     && !hasConnectedServiceBindings(params.connectedServiceRuntimeSnapshot ?? {})
@@ -247,13 +270,26 @@ async function refreshExistingDirectSessionMetadataIfNeeded(params: Readonly<{
   const initialMetadataRecord = asMetadataRecord(initialMetadata);
   if (!initialMetadataRecord) return;
 
-  const nextMetadata = resolveRefreshedDirectSessionMetadata({
+  const refreshParams = {
     currentMetadata: initialMetadataRecord,
     directSessionIdentity: params.directSessionIdentity,
     titleHint: params.titleHint,
     directoryHint: params.directoryHint,
     connectedServiceRuntimeSnapshot: params.connectedServiceRuntimeSnapshot,
-  });
+  };
+  const candidateMetadata = resolveRefreshedDirectSessionMetadata(refreshParams) ?? initialMetadataRecord;
+  let repositoryObservation: RepositoryObservation | undefined;
+  if (params.repositoryMachineId && candidateMetadata.machineId === params.repositoryMachineId
+    && typeof candidateMetadata.path === 'string' && candidateMetadata.path.trim()) {
+    const observedMetadata = { ...candidateMetadata };
+    await enrichSessionMetadataWithRepository(observedMetadata);
+    repositoryObservation = {
+      machineId: params.repositoryMachineId,
+      path: candidateMetadata.path,
+      sessionRepositoryV1: readSessionRepositoryV1FromMetadata(observedMetadata),
+    };
+  }
+  const nextMetadata = resolveRefreshedDirectSessionMetadata({ ...refreshParams, repositoryObservation });
   if (!nextMetadata) return;
 
   await updateSessionMetadataWithRetry({
@@ -264,6 +300,7 @@ async function refreshExistingDirectSessionMetadataIfNeeded(params: Readonly<{
     updater: (currentMetadata) =>
       resolveRefreshedDirectSessionMetadata({
         currentMetadata,
+        repositoryObservation,
         directSessionIdentity: params.directSessionIdentity,
         titleHint: params.titleHint,
         directoryHint: params.directoryHint,
@@ -723,6 +760,7 @@ export async function ensureDirectSessionLink(params: Readonly<{
     await refreshExistingDirectSessionMetadataIfNeeded({
       credentials: params.credentials,
       sessionId: existingSession.sessionId,
+      ...(source.kind !== 'opencodeServer' ? { repositoryMachineId: params.machineId } : {}),
       ...(isImportedPersistedSession
         ? {}
         : {
@@ -756,6 +794,7 @@ export async function ensureDirectSessionLink(params: Readonly<{
     directoryHint: params.directoryHint,
     nowMs: nowMs(),
   });
+  if (source.kind !== 'opencodeServer') await enrichSessionMetadataWithRepository(metadata);
 
   const { session } = await getOrCreateSessionByTag({
     credentials: params.credentials,

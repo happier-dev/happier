@@ -9,5 +9,5 @@ export function isSessionPathWithinRepoRoot(sessionPath: string, repoRoot: strin
     const normalizedRepoRoot = normalizePathForScope(repoRoot);
     if (!normalizedSessionPath || !normalizedRepoRoot) return false;
     if (normalizedSessionPath === normalizedRepoRoot) return true;
-    return normalizedSessionPath.startsWith(`${normalizedRepoRoot}/`);
+    return normalizedSessionPath.startsWith(normalizedRepoRoot.endsWith('/') ? normalizedRepoRoot : `${normalizedRepoRoot}/`);
 }

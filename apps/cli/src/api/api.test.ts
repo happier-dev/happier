@@ -33,7 +33,8 @@ vi.mock('axios', () => ({
 
 vi.mock('@/ui/logger', () => ({
     logger: {
-        debug: vi.fn()
+        debug: vi.fn(),
+        infoFile: vi.fn(),
     }
 }));
 
