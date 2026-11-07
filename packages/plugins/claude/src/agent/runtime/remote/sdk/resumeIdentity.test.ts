@@ -12,6 +12,30 @@ import { createClaudeAgentSdkResumeIdentityOwner } from './resumeIdentity.js';
 import { createDeferred } from '../../../../../../../../apps/cli/src/testkit/async/deferred.js';
 
 describe('createClaudeAgentSdkResumeIdentityOwner', () => {
+    it('leaves transient promotion failures eligible for JSONL redelivery', async () => {
+        let follow: TranscriptFileFollowInputV1 | undefined;
+        const transient = Object.assign(new Error('temporary transport failure'), { code: 'EIO' });
+        let attempts = 0;
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+            transcripts: {
+                append: async () => {}, defineSource: async () => ({ id: 'unused', dispose: async () => {} }),
+                fileFollow: { follow: async input => { follow = input; return { id: 'proof', close: async () => {}, drainNow: async () => {} }; } },
+            },
+        });
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, onProviderSessionId: () => {},
+            onTranscriptPromoted: async () => { if (++attempts === 1) throw transient; },
+        });
+        try {
+            await owner.observeSessionHook('native', { hook_event_name: 'SessionStart', session_id: 'native', transcript_path: '/tmp/native.jsonl' });
+            await owner.observeSessionHook('native', { hook_event_name: 'UserPromptSubmit', session_id: 'native', prompt: 'hello' }, 'local_terminal');
+            if (!follow) throw new Error('Missing transcript follower');
+            const row = { line: JSON.stringify({ type: 'user', sessionId: 'native', message: { role: 'user', content: 'hello' } }), sourcePath: follow.path, sequence: 1 };
+            await expect(follow.onLine(row)).rejects.toBe(transient);
+            await expect(follow.onLine(row)).resolves.toBeUndefined();
+            expect(attempts).toBe(2);
+        } finally { await owner.dispose(); }
+    });
+
     it.each(['acquire', 'onError', 'drain', 'healthy'] as const)('settles the replacement candidate after a retired drain completes (%s)', async phase => {
         const follows: TranscriptFileFollowInputV1[] = [];
         const drains: string[] = [];
@@ -66,7 +90,7 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
                 }) },
             },
         });
-        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, nowMs: () => 10_000,
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx,
             onProviderSessionId: () => {}, onTranscriptPromoted: async promotion => { promotions.push(promotion.providerSessionId); } });
         const start = (id: string) => owner.observeSessionHook(id, { hook_event_name: 'SessionStart',
             session_id: id, transcript_path: `/tmp/${id}.jsonl` }, 'local_terminal');
@@ -118,7 +142,7 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
                 }) },
             },
         });
-        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, nowMs: () => 10_000,
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx,
             onProviderSessionId: () => {},
             onTranscriptPromoted: async promotion => { promotions.push(promotion.providerSessionId); },
         });
@@ -156,7 +180,7 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
                 }) },
             },
         });
-        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, nowMs: () => 10_000,
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx,
             onProviderSessionId: () => {},
             onTranscriptPromoted: async promotion => { promotions.push(promotion.providerSessionId); },
         });
@@ -201,7 +225,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -273,7 +296,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -351,7 +373,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async () => { await promotionPending; },
         });
@@ -419,7 +440,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -529,7 +549,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId,
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -613,7 +632,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         const promotions: Array<Readonly<{ providerSessionId: string; transcriptPath: string }>> = [];
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -688,7 +706,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         });
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId,
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -776,7 +793,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         const promotions: Array<Readonly<{ providerSessionId: string; transcriptPath: string }>> = [];
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -863,7 +879,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         const promotions: Array<Readonly<{ providerSessionId: string; transcriptPath: string }>> = [];
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async (promotion) => {
                 promotions.push({
@@ -938,7 +953,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         // form is a different conversation, so resume must fail rather than adopt it.
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async () => undefined,
             expectedInitialProviderSessionId: '  provider\nses/AB+cd==  ',
@@ -957,7 +971,6 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
         const ctx = createPluginContextFixture(terminalHost.service, events.service);
         const owner = createClaudeAgentSdkResumeIdentityOwner({
             ctx,
-            nowMs: () => 10_000,
             onProviderSessionId: vi.fn(),
             onTranscriptPromoted: async () => undefined,
             expectedInitialProviderSessionId: '  provider\nses/AB+cd==  ',
@@ -965,6 +978,78 @@ describe('createClaudeAgentSdkResumeIdentityOwner', () => {
 
         try {
             expect(owner.validateSdkResultProviderSessionId('  provider\nses/AB+cd==  ')).toBeNull();
+        } finally {
+            await owner.dispose();
+        }
+    });
+
+    it('promotes an accepted prompt whose native acceptance and transcript row arrive long after submission', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const follows: TranscriptFileFollowInputV1[] = [];
+        const promotions: string[] = [];
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+            transcripts: {
+                append: vi.fn(async () => undefined),
+                defineSource: vi.fn(async () => ({ id: 'unused', dispose: vi.fn(async () => undefined) })),
+                fileFollow: { follow: vi.fn(async (input: TranscriptFileFollowInputV1) => {
+                    follows.push(input);
+                    return { id: 'slow-start', drainNow: async () => {}, close: async () => {} };
+                }) },
+            },
+        });
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, onProviderSessionId: () => {},
+            onTranscriptPromoted: async promotion => { promotions.push(promotion.providerSessionId); } });
+        try {
+            vi.setSystemTime(1_000_000);
+            owner.recordSubmittedPrompt('First prompt');
+            // A slow native start (for example MCP initialisation) delays SessionStart,
+            // UserPromptSubmit and the persisted row well past any fixed correlation window.
+            vi.setSystemTime(1_000_000 + 10 * 60_000);
+            await owner.observeSessionHook('slow', { hook_event_name: 'SessionStart', session_id: 'slow',
+                transcript_path: '/tmp/slow.jsonl' });
+            await owner.observeSessionHook('slow', { hook_event_name: 'UserPromptSubmit', session_id: 'slow',
+                prompt: 'First prompt' });
+            vi.setSystemTime(1_000_000 + 20 * 60_000);
+            const follow = follows[0];
+            if (!follow) throw new Error('Missing transcript follow');
+            await follow.onLine({ line: JSON.stringify({ type: 'user', sessionId: 'slow',
+                timestamp: new Date(1_000_000 + 20 * 60_000).toISOString(),
+                message: { role: 'user', content: 'First prompt' } }), sourcePath: follow.path, sequence: 1 });
+            expect(promotions).toEqual(['slow']);
+        } finally {
+            vi.useRealTimers();
+            await owner.dispose();
+        }
+    });
+
+    it('does not promote a transcript row that no accepted prompt for this candidate produced', async () => {
+        const follows: TranscriptFileFollowInputV1[] = [];
+        const promotions: string[] = [];
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+            transcripts: {
+                append: vi.fn(async () => undefined),
+                defineSource: vi.fn(async () => ({ id: 'unused', dispose: vi.fn(async () => undefined) })),
+                fileFollow: { follow: vi.fn(async (input: TranscriptFileFollowInputV1) => {
+                    follows.push(input);
+                    return { id: `follow-${follows.length}`, drainNow: async () => {}, close: async () => {} };
+                }) },
+            },
+        });
+        const owner = createClaudeAgentSdkResumeIdentityOwner({ ctx, onProviderSessionId: () => {},
+            onTranscriptPromoted: async promotion => { promotions.push(promotion.providerSessionId); } });
+        const row = (text: string) => JSON.stringify({ type: 'user', sessionId: 'native',
+            timestamp: new Date().toISOString(), message: { role: 'user', content: text } });
+        try {
+            owner.recordSubmittedPrompt('Submitted but never accepted');
+            await owner.observeSessionHook('native', { hook_event_name: 'SessionStart', session_id: 'native',
+                transcript_path: '/tmp/native.jsonl' });
+            const follow = follows[0];
+            if (!follow) throw new Error('Missing transcript follow');
+            await follow.onLine({ line: row('Submitted but never accepted'), sourcePath: follow.path, sequence: 1 });
+            await follow.onLine({ line: row('Never submitted'), sourcePath: follow.path, sequence: 2 });
+            await owner.observeSessionHook('native', { hook_event_name: 'UserPromptSubmit', session_id: 'native',
+                prompt: 'Never submitted' });
+            expect(promotions).toEqual([]);
         } finally {
             await owner.dispose();
         }

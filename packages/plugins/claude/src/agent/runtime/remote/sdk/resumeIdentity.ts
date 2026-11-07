@@ -7,18 +7,19 @@ import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 import { readClaudeProviderIdentityValue } from '../../../../protocol/providerIdentity.js';
 import { isSidechainSessionHook } from '../../../hooks/sidechain.js';
 
-const DEFAULT_PROMPT_PROOF_WINDOW_MS = 30_000;
-
+/**
+ * One submitted prompt awaiting native acceptance (UserPromptSubmit) and its
+ * persisted transcript row. Intents leave by lifecycle, never by elapsed time:
+ * a later acceptance supersedes earlier unaccepted prompts, promotion consumes
+ * the candidate's proof, and a retired candidate drops what it accepted.
+ */
 type PromptIntent = {
     text: string;
-    submittedAtMs: number;
-    acceptedAtMs: number | null;
     acceptedCandidate: ActiveTranscriptCandidate | null;
 };
 
 type TranscriptEvidence = Readonly<{
     text: string;
-    timestampMs: number;
 }>;
 
 type SessionHookOrigin = 'sdk' | 'local_terminal';
@@ -30,6 +31,8 @@ type ActiveTranscriptCandidate = {
     invalidated: boolean;
     promoted: boolean;
     promotionInFlight: Promise<void> | null;
+    promotionRefusal: 'plugin_external_follow_unavailable' | null;
+    promotionRetryRequested: boolean;
     followHandle: AgentTranscriptFileFollowHandle | null;
     proofReadFailure: unknown;
 };
@@ -97,13 +100,6 @@ function readTranscriptPath(payload: Readonly<Record<string, unknown>>): string 
     return snakeCase ?? camelCase;
 }
 
-function readRowTimestampMs(row: Readonly<Record<string, unknown>>): number | null {
-    const timestamp = readString(row.timestamp);
-    if (!timestamp) return null;
-    const parsed = Date.parse(timestamp);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
 function readUserPromptText(row: Readonly<Record<string, unknown>>): string | null {
     if (row.type !== 'user' || row.isSidechain === true || row.isMeta === true) return null;
     const message = row.message;
@@ -132,15 +128,6 @@ function parseJsonRecord(line: string): Readonly<Record<string, unknown>> | null
     }
 }
 
-function isWithinPromptProofWindow(params: Readonly<{
-    evidenceAtMs: number;
-    acceptedAtMs: number;
-    windowMs: number;
-}>): boolean {
-    return params.evidenceAtMs >= params.acceptedAtMs - params.windowMs
-        && params.evidenceAtMs <= params.acceptedAtMs + params.windowMs;
-}
-
 export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
     ctx: Readonly<{
         logger: ClaudeRuntimeLogger;
@@ -157,14 +144,7 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
     }>): void;
     onTranscriptPromoted(promotion: ClaudeAgentSdkResumeIdentityPromotion): Promise<void>;
     expectedInitialProviderSessionId?: string | null;
-    nowMs?: () => number;
-    promptProofWindowMs?: number;
 }>): ClaudeAgentSdkResumeIdentityOwner {
-    const nowMs = params.nowMs ?? Date.now;
-    const promptProofWindowMs = Math.max(
-        100,
-        Math.trunc(params.promptProofWindowMs ?? DEFAULT_PROMPT_PROOF_WINDOW_MS),
-    );
     const promptIntents: PromptIntent[] = [];
     const retiredCandidateKeys = new Set<string>();
     const inFlightHookOperations = new Set<Promise<void>>();
@@ -194,11 +174,9 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         return `${providerSessionId}\u0000${transcriptPath}`;
     }
 
-    function prunePromptIntents(referenceMs: number): void {
+    function dropIntentsAcceptedFor(candidate: ActiveTranscriptCandidate): void {
         for (let index = promptIntents.length - 1; index >= 0; index -= 1) {
-            const intent = promptIntents[index];
-            const anchorMs = intent?.acceptedAtMs ?? intent?.submittedAtMs ?? referenceMs;
-            if (referenceMs - anchorMs > promptProofWindowMs) promptIntents.splice(index, 1);
+            if (promptIntents[index]?.acceptedCandidate === candidate) promptIntents.splice(index, 1);
         }
     }
 
@@ -207,35 +185,49 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         evidence: TranscriptEvidence,
     ): PromptIntent | null {
         return promptIntents.find((intent) => (
-            intent.acceptedAtMs !== null
-            && intent.acceptedCandidate === candidate
+            intent.acceptedCandidate === candidate
             && intent.text === evidence.text
-            && isWithinPromptProofWindow({
-                evidenceAtMs: evidence.timestampMs,
-                acceptedAtMs: intent.acceptedAtMs,
-                windowMs: promptProofWindowMs,
-            })
         )) ?? null;
     }
 
     async function maybePromote(candidate: ActiveTranscriptCandidate): Promise<void> {
         if (disposed || activeCandidate !== candidate || candidate.invalidated || candidate.promoted) return;
+        if (candidate.promotionRefusal && !candidate.promotionRetryRequested) return;
         if (candidate.promotionInFlight) return await candidate.promotionInFlight;
         const evidence = candidate.evidence.find((item) => findAcceptedIntent(candidate, item) !== null);
         if (!evidence) return;
         const acceptedIntent = findAcceptedIntent(candidate, evidence);
         if (!acceptedIntent) return;
+        candidate.promotionRetryRequested = false;
 
         const promotion = (async () => {
-            await params.onTranscriptPromoted({
-                providerSessionId: candidate.providerSessionId,
-                transcriptPath: candidate.transcriptPath,
-                isCurrent: () => !disposed && activeCandidate === candidate && !candidate.invalidated,
-            });
+            try {
+                await params.onTranscriptPromoted({
+                    providerSessionId: candidate.providerSessionId,
+                    transcriptPath: candidate.transcriptPath,
+                    isCurrent: () => !disposed && activeCandidate === candidate && !candidate.invalidated,
+                });
+            } catch (error) {
+                // A deterministic host admission refusal is an outcome of this proof,
+                // not a failed JSONL read. Acknowledge the row so at-least-once delivery
+                // does not turn the refusal into a polling retry loop.
+                if (error instanceof Error
+                    && Reflect.get(error, 'code') === 'native_agent_terminal_transcript_follow_admission_failed'
+                    && Reflect.get(error, 'phase') === 'bind'
+                    && Reflect.get(error, 'followCode') === 'plugin_external_follow_unavailable') {
+                    if (candidate.promotionRefusal === null) {
+                        candidate.promotionRefusal = 'plugin_external_follow_unavailable';
+                        params.ctx.logger.warn('[ClaudeAgentSdk] transcript identity promotion refused', {
+                            code: candidate.promotionRefusal,
+                        });
+                    }
+                    return;
+                }
+                throw error;
+            }
             if (activeCandidate !== candidate || candidate.invalidated) return;
             candidate.promoted = true;
-            const intentIndex = promptIntents.indexOf(acceptedIntent);
-            if (intentIndex >= 0) promptIntents.splice(intentIndex, 1);
+            dropIntentsAcceptedFor(candidate);
             const followHandle = candidate.followHandle;
             candidate.followHandle = null;
             await followHandle?.close().catch(() => undefined);
@@ -260,20 +252,15 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         const rowProviderSessionId = readProviderSessionId(undefined, row);
         if (rowProviderSessionId !== candidate.providerSessionId) return;
         const text = readUserPromptText(row);
-        const timestampMs = readRowTimestampMs(row);
-        if (text === null || timestampMs === null) return;
+        if (text === null) return;
         const relevantIntent = promptIntents.some((intent) => (
-            (intent.acceptedAtMs === null || intent.acceptedCandidate === candidate)
-            &&
-            intent.text === text
-            && isWithinPromptProofWindow({
-                evidenceAtMs: timestampMs,
-                acceptedAtMs: intent.acceptedAtMs ?? intent.submittedAtMs,
-                windowMs: promptProofWindowMs,
-            })
+            (intent.acceptedCandidate === null || intent.acceptedCandidate === candidate)
+            && intent.text === text
         ));
         if (!relevantIntent) return;
-        candidate.evidence.push({ text, timestampMs });
+        candidate.evidence.push({ text });
+        candidate.promotionRetryRequested = true;
+        candidate.proofReadFailure = null;
         await maybePromote(candidate);
     }
 
@@ -338,6 +325,8 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
             && existing.providerSessionId === providerSessionId
             && (transcriptPath === null || existing.transcriptPath === transcriptPath)
         ) {
+            existing.promotionRetryRequested = true;
+            await maybePromote(existing);
             return;
         }
         const reactivatesInvalidatedCurrentTuple = Boolean(
@@ -372,12 +361,15 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
                 invalidated: false,
                 promoted: false,
                 promotionInFlight: null,
+                promotionRefusal: null,
+                promotionRetryRequested: false,
                 followHandle: null,
                 proofReadFailure: null,
             }
             : null;
         if (existing) {
             retiredCandidateKeys.add(candidateKey(existing.providerSessionId, existing.transcriptPath));
+            dropIntentsAcceptedFor(existing);
         }
         activeCandidate = candidate;
         if (lastPublishedProviderSessionId !== providerSessionId) {
@@ -407,26 +399,33 @@ export function createClaudeAgentSdkResumeIdentityOwner(params: Readonly<{
         if (providerSessionId !== candidate.providerSessionId) return;
         const prompt = typeof payload.prompt === 'string' ? payload.prompt : null;
         if (prompt === null) return;
-        const acceptedAtMs = nowMs();
-        prunePromptIntents(acceptedAtMs);
-        let intent = promptIntents.find((item) => item.acceptedAtMs === null && item.text === prompt);
-        if (!intent && origin === 'local_terminal') {
+        let index = promptIntents.findIndex((item) => item.acceptedCandidate === null && item.text === prompt);
+        if (index < 0 && origin === 'local_terminal') {
             // An owned terminal's authenticated submit hook is the person's input boundary;
             // no host-injected prompt precedes it. The matching transcript row still proves persistence.
-            intent = { text: prompt, submittedAtMs: acceptedAtMs, acceptedAtMs: null, acceptedCandidate: null };
-            promptIntents.push(intent);
+            promptIntents.push({ text: prompt, acceptedCandidate: null });
+            index = promptIntents.length - 1;
         }
-        if (!intent) return;
-        intent.acceptedAtMs = acceptedAtMs;
+        if (index < 0) return;
+        const intent = promptIntents[index]!;
+        // Native acceptance is ordered: earlier prompts still unaccepted were superseded.
+        for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
+            if (promptIntents[earlier]?.acceptedCandidate === null) promptIntents.splice(earlier, 1);
+        }
+        if (candidate.promoted) {
+            // This candidate's resume proof is already durable; nothing left to prove.
+            promptIntents.splice(promptIntents.indexOf(intent), 1);
+            return;
+        }
         intent.acceptedCandidate = candidate;
+        candidate.promotionRetryRequested = true;
         await maybePromote(candidate);
     }
 
     return {
         recordSubmittedPrompt(prompt) {
-            const submittedAtMs = nowMs();
-            prunePromptIntents(submittedAtMs);
-            promptIntents.push({ text: prompt, submittedAtMs, acceptedAtMs: null, acceptedCandidate: null });
+            promptIntents.push({ text: prompt, acceptedCandidate: null });
+            if (activeCandidate) activeCandidate.promotionRetryRequested = true;
         },
         async settleCurrentCandidate() {
             while (!disposed) {
