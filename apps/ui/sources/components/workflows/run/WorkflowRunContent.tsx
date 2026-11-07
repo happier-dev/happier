@@ -1170,8 +1170,32 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         <>{phonePage ? [primaryElement, ...secondaryElements] : [...secondaryElements, primaryElement]}</>
     );
 
+    const stopControl = props.run.availability.cancel && props.onCancel !== undefined ? (
+        // Stop is bordered and neutral: a healthy run is never tinted (07 §3).
+        <ToolbarButton
+            key="stop"
+            testID={`${testIDPrefix}-cancel`}
+            disabled={operationPending}
+            busy={operationPending}
+            onPress={props.onCancel}
+            destructive
+            {...(primaryAction === 'stop' ? { tone: 'primary' as const } : {})}
+            icon={<Icon name="stop" size={ICON_SIZE.sm}
+                color={primaryAction === 'stop' ? theme.colors.button.primary.tint : theme.colors.text.secondary} />}
+            label={props.pendingControl === 'cancel'
+                ? t('workflows.run.stopping')
+                : props.cancelRequested === true
+                    ? t('workflows.run.stopAgain')
+                    : t('workflows.run.stop')}
+            size="md"
+        />
+    ) : null;
+    // A phone page's controls start at the row's leading edge, so Stop leads them there: Pause at boundary
+    // and Resume differ in width and would otherwise push Stop across the spot just tapped. The header's
+    // controls end at its trailing edge, where Stop is last.
     const stateControls = (
         <>
+            {phonePage ? stopControl : null}
             {outcomeActions}
             {props.run.availability.pause && props.onPause !== undefined ? (
                 // Pause is the quiet one beside the bordered Stop (lab run-A): two outlines side by side would
@@ -1185,25 +1209,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     title={t('workflows.run.pauseAtBoundary')}
                 />
             ) : null}
-            {/* Stop is bordered and neutral: a healthy run is never tinted (07 §3). */}
-            {props.run.availability.cancel && props.onCancel !== undefined ? (
-                <ToolbarButton
-                    testID={`${testIDPrefix}-cancel`}
-                    disabled={operationPending}
-                    busy={operationPending}
-                    onPress={props.onCancel}
-                    destructive
-                    {...(primaryAction === 'stop' ? { tone: 'primary' as const } : {})}
-                    icon={<Icon name="stop" size={ICON_SIZE.sm}
-                        color={primaryAction === 'stop' ? theme.colors.button.primary.tint : theme.colors.text.secondary} />}
-                    label={props.pendingControl === 'cancel'
-                        ? t('workflows.run.stopping')
-                        : props.cancelRequested === true
-                            ? t('workflows.run.stopAgain')
-                            : t('workflows.run.stop')}
-                    size="md"
-                />
-            ) : null}
+            {phonePage ? null : stopControl}
         </>
     );
     const overflowControl = menuActions.length === 0 ? null : (

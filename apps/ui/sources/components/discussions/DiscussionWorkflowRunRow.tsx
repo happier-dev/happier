@@ -9,6 +9,7 @@ import type {
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
@@ -31,6 +32,7 @@ import {
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 type DiscussionWorkflowRunProps = Readonly<{
   run: WorkflowRunSummaryV1;
@@ -114,31 +116,70 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
   const savePattern = React.useCallback(() => onSaveAsPattern(publishedMessageIds), [onSaveAsPattern, publishedMessageIds]);
   const canSavePattern = isTerminalWorkflowRunState(props.run.state) && publishedMessageIds.length > 0;
   const operationPending = pending || replayPending || controls.pendingControl !== null;
-  const pause = props.canEdit && controls.availability.pause ? (
+  // A phone keeps the band to one line (lab T4-Fp): Pause, Resume and Stop are named icons of one size, so
+  // Resume takes Pause's place and Stop never slides under the finger that just paused.
+  const phone = useDeviceType() === 'phone';
+  const pauseLabel = t('workflows.run.pauseAtBoundary');
+  const pause = props.canEdit && controls.availability.pause ? phone ? (
+    <IconButton
+      testID={`discussion-workflow-run-pause:${runId}`}
+      iconName="pause-circle"
+      variant="plain"
+      accessibilityLabel={pauseLabel}
+      tooltip={pauseLabel}
+      disabled={operationPending}
+      busy={controls.pendingControl === 'pause'}
+      onPress={() => void controls.submitControl('pause')}
+    />
+  ) : (
     <SectionActionButton
       testID={`discussion-workflow-run-pause:${runId}`}
-      title={t('workflows.run.pauseAtBoundary')}
+      title={pauseLabel}
       icon="pause-circle"
       disabled={operationPending}
       loading={controls.pendingControl === 'pause'}
       onPress={() => void controls.submitControl('pause')}
     />
   ) : null;
-  const resume = controls.canResume ? (
+  const resumeLabel = t('workflows.run.resume');
+  const resume = controls.canResume ? phone ? (
+    <IconButton
+      testID={`discussion-workflow-run-resume:${runId}`}
+      iconName="play-circle"
+      variant="plain"
+      accessibilityLabel={resumeLabel}
+      tooltip={resumeLabel}
+      disabled={operationPending}
+      busy={controls.pendingControl === 'resume'}
+      onPress={() => void controls.submitControl('resume')}
+    />
+  ) : (
     <SectionActionButton
       testID={`discussion-workflow-run-resume:${runId}`}
-      title={t('workflows.run.resume')}
+      title={resumeLabel}
       icon="play-circle"
       disabled={operationPending}
       loading={controls.pendingControl === 'resume'}
       onPress={() => void controls.submitControl('resume')}
     />
   ) : null;
-  const stop = props.canEdit && controls.availability.cancel ? (
+  const stopLabel = controls.pendingControl === 'cancel' ? t('workflows.run.stopping')
+    : controls.cancelRequested ? t('workflows.run.stopAgain') : t('workflows.run.stop');
+  // Stop stays bordered beside the quiet Pause, as on the Run page.
+  const stop = props.canEdit && controls.availability.cancel ? phone ? (
+    <IconButton
+      testID={`discussion-workflow-run-stop:${runId}`}
+      icon={<Icon name="stop" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
+      accessibilityLabel={stopLabel}
+      tooltip={stopLabel}
+      disabled={operationPending}
+      busy={controls.pendingControl === 'cancel'}
+      onPress={() => void controls.submitControl('cancel')}
+    />
+  ) : (
     <ToolbarButton
       testID={`discussion-workflow-run-stop:${runId}`}
-      label={controls.pendingControl === 'cancel' ? t('workflows.run.stopping')
-        : controls.cancelRequested ? t('workflows.run.stopAgain') : t('workflows.run.stop')}
+      label={stopLabel}
       icon={<Icon name="stop" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
       destructive
       disabled={operationPending}

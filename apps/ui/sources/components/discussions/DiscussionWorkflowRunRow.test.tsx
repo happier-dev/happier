@@ -14,7 +14,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+const viewport = vi.hoisted(() => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ useWindowDimensions: () => viewport }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -32,8 +33,32 @@ const { workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns'
 beforeEach(() => homes.reset());
 
 afterEach(async () => {
+    viewport.width = 1440;
+    viewport.height = 900;
     await standardCleanup();
     await homes.reset();
+});
+
+it.each([
+    { state: 'running' as const, availability: { pause: true, cancel: true }, shown: ['pause', 'stop'] as const },
+    { state: 'paused' as const, availability: { pause: false, cancel: true, resumeBoundary: true }, shown: ['resume', 'stop'] as const },
+])('keeps a $state phone band to one line: its lifecycle controls are icons named for assistive technology (L2)', async ({ state, availability, shown }) => {
+    viewport.width = 390;
+    viewport.height = 844;
+    const { t } = await import('@/text');
+    const labels = { pause: t('workflows.run.pauseAtBoundary'), resume: t('workflows.run.resume'), stop: t('workflows.run.stop') };
+    const screen = await renderScreen(<DiscussionWorkflowRunRow
+        run={createWorkflowRunSummaryFixture({ id: 'phone-run', state, attentionRequired: state === 'paused', availability })}
+        metadata={null} supportsAnotherRound={false} canEdit={true}
+        accountLifetime={{ scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }) }}
+        onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
+    const text = screen.getTextContent();
+    for (const control of shown) {
+        const host = screen.findHostByTestId(`discussion-workflow-run-${control}:phone-run`);
+        expect(host?.props.accessibilityLabel ?? host?.props['aria-label']).toBe(labels[control]);
+        expect(text).not.toContain(labels[control]);
+    }
 });
 
 it('pauses and stops the running inline Pattern through the scoped Run Actions', async () => {
