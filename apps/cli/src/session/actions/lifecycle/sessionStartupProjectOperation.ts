@@ -1,10 +1,11 @@
-import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
-import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import type { ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
+import { isSessionSpawnBrokerUnavailable } from '@happier-dev/protocol/spawnSession';
 
 import type { SessionLifecycleActionHandler, SessionLifecycleMachineDeps, SessionLifecycleMachineHandlers } from './sessionLifecycleTypes';
 
@@ -37,16 +38,17 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         // The native-fork owner awaits this same attestation inside its child
         // cleanup scope. Keep its physical child id available before refusal.
         if (options.nativeForkSource) return result;
-        // The webhook acknowledges physical launch. The original execution
-        // remains active, retaining its setup review and cancellation custody.
+        // Runner-created Sessions first prove their committed id at the webhook.
+        // Daemon-committed launches already offered the same acceptance after attach.
+        // In either case the original operation retains native/input custody.
         if (operation.operationAcceptance?.actionId === 'session.spawn_new') {
-            operation.operationAcceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' });
+            operation.operationAcceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: result.sessionId });
         }
         const opened = await input.awaitAgentSessionOpen!({ sessionId: result.sessionId,
             timeoutMs: Math.max(0, startupDeadline! - Date.now()), signal: operation.signal });
         operation.signal.throwIfAborted();
-        // Startup has already been admitted. Returning a spawn response would
-        // let creation reconciliation turn the committed row into success.
+        // A native-mode refusal remains terminal after row commitment;
+        // creation reconciliation must not reinterpret it as success.
         if (opened.status === 'refused') {
             // This operation spawned the refused runner and has not offered its
             // original input. Retire it through the daemon's normal Stop owner,
@@ -78,10 +80,16 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
                 ? options.backendTarget.backendId : undefined;
             const message = readSessionStartupFailurePreview(code, agentId ? resolveAgentDisplayTitle(agentId) : null)
                 ?? 'Agent runner exited before native Session startup completed';
-            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
+            const failure = { type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: message,
                 ...(agentId ? { agentId } : {}),
-                errorDetail: { kind: 'launch_error', code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message,
+                errorDetail: { kind: 'launch_error' as const, code: code ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message,
                     ...(opened.status === 'runner_exited' && opened.failureCause ? { failureCause: opened.failureCause } : {}) } };
+            // The committed birth can accept input even though native open is
+            // waiting on its broker. Message admission retains that input;
+            // the existing Pending activation owner owns subsequent launches.
+            if (operation.operationAcceptance?.actionId === 'session.spawn_new'
+                && isSessionSpawnBrokerUnavailable(failure)) return result;
+            return failure;
         }
         return result;
     };
