@@ -111,8 +111,16 @@ describe('SessionListFilterControl legacy corpus presentation', () => {
         const props = editorControlSpy.mock.lastCall?.[0] as Readonly<{ label: string; active: boolean }>;
         // The collapsed chrome is the only place a compact host can say which facet
         // shortened the list, and it is the control's accessible name as well.
-        expect(props.label).toBe('My work · Needs me');
+        expect(props.label).toBe('My work · Needs you');
         expect(props.active).toBe(true);
+    });
+
+    it('says the attention filter in the same words in the title menu, its token and the collapsed control', async () => {
+        const { buildSessionListConditionLabels } = await import('./SessionListFilterControl');
+        const { buildSessionListFacets } = await import('./sessionListFacets');
+        const menuWord = buildSessionListFacets(controller()).find((facet) => facet.id === 'needs-you')?.label;
+        expect(menuWord).toBe('Needs you');
+        expect(buildSessionListConditionLabels().fields.attention).toBe(menuWord);
     });
 
     it('hands the Archived destination to the scope menu and reads the scope from the label, not the narrowed mark', async () => {

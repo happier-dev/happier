@@ -101,6 +101,8 @@ export const CollectionSpaceTitle = React.memo(function CollectionSpaceTitle(
         testID: `${props.testIDPrefix}-menu-facet:${facet.id}`,
         title: facet.label,
         checked: facet.selected === true,
+        // Each filter turns on and off by itself: Working and Failed can both be on.
+        multiSelect: true,
         category: 'filters',
       })),
       {

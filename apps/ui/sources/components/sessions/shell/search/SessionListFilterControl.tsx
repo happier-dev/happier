@@ -75,7 +75,7 @@ export function buildSessionListFilterEditorLabels(): SessionListFilterEditorPro
         attention: t('sessionsList.filtersAttention'),
         anyAttention: t('sessionsList.filtersAttentionAny'),
         needsMyAttention: t('sessionsList.filtersAttentionNeedsMe'),
-        needsMeOnly: t('sessionsList.filtersNeedsMeOnly'),
+        needsMeOnly: t('workStatus.buckets.needs_you'),
         needsMeOnlyDescription: t('sessionsList.filtersNeedsMeOnlyDescription'),
         inactiveSessions: t('sessionsList.filtersInactive'),
         showInactive: t('sessionsList.filtersInactiveShow'),
@@ -134,7 +134,8 @@ export function buildSessionListConditionLabels(): SessionListConditionCopy {
             scope: t('sessionsList.conditionWhose'),
             projects: t('sessionsList.filtersProject'),
             statuses: t('sessionsList.filtersStatus'),
-            attention: t('sessionsList.conditionNeedsMe'),
+            // The attention facet's one word, also the title menu's (`sessionListFacets`) and the collapsed control's.
+            attention: t('workStatus.buckets.needs_you'),
             tagIds: t('sessionsList.filtersTags'),
             startedBy: t('sessionsList.filtersStartedBy'),
             audiences: t('sessionsList.filtersSharedWith'),
@@ -277,7 +278,7 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
     // collapsed control has to say it is on rather than leaving the list looking
     // inexplicably short. Short form here; the editor keeps the full sentence.
     const controlLabel = controller.filters.attention === 'needs_my_attention'
-        ? `${scopedLabel} · ${t('sessionsList.filtersScopeNeedsMe')}`
+        ? `${scopedLabel} · ${t('workStatus.buckets.needs_you')}`
         : scopedLabel;
 
     const editorControl = (

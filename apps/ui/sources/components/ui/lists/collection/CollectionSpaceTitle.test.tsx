@@ -109,4 +109,25 @@ describe('the list\'s common filters in the title menu', () => {
         expect(screen.tree.findAll((node) => node.props.testID === 'space-menu-facet:needs-you'
             && (node.props.accessibilityState?.checked === true || node.props['aria-checked'] === true)).length).toBeGreaterThan(0);
     });
+
+    it('offers the common filters as independent checkboxes, never one radio choice, so two can be on together', async () => {
+        const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+            <CollectionSpaceTitle scope="account-a" testIDPrefix="space" entityKind="sessionWork" label="My work"
+                spaces={[{ ...base, id: 'a', name: 'My work' }]} spacesEnabled onSetSpacesEnabled={() => {}}
+                selectedSpaceId="a" modified onSelectSpace={() => {}}
+                facets={[
+                    { id: 'working', label: 'Working', valueLabel: 'Working', selected: true, onToggle: () => {} },
+                    { id: 'failed', label: 'Failed', valueLabel: 'Failed', selected: true, onToggle: () => {} },
+                ]}
+                onOpenFilter={() => {}} onSaveAs={() => {}} onSaveChanges={() => {}} onEdit={() => {}} />
+        </HappierUiPlatformProvider>);
+        await screen.pressByTestIdAsync('space-title');
+        await vi.waitFor(() => expect(screen.findByTestId('space-menu-facet:failed')).not.toBeNull());
+        const roles = (id: string) => new Set(screen.tree.findAll((node) => node.props.testID === id)
+            .flatMap((node) => [node.props.accessibilityRole, node.props.role]).filter(Boolean));
+        for (const id of ['space-menu-facet:working', 'space-menu-facet:failed']) {
+            expect(roles(id).has('checkbox')).toBe(true);
+            expect(roles(id).has('radio')).toBe(false);
+        }
+    });
 });

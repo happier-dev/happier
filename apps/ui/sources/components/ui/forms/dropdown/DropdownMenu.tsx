@@ -64,6 +64,11 @@ export type DropdownMenuItem = Readonly<{
     destructive?: boolean;
     /** Current choice state, independent of keyboard highlight. */
     checked?: boolean;
+    /**
+     * One of several independent on/off choices (a menu's filters): a box that checks, announced as a checkbox,
+     * so siblings that are on together never read as one radio choice.
+     */
+    multiSelect?: boolean;
     submenu?: DropdownMenuSubmenu;
     /** Present the item as a round colour choice instead of a text row (`title` stays its label). */
     swatch?: SelectableMenuSwatch;
@@ -398,6 +403,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 category: item.category,
                 disabled: item.disabled,
                 checked: item.checked,
+                multiSelect: item.multiSelect,
                 swatch: item.swatch,
                 left: item.icon ?? null,
                 rowContainerStyle: item.rowContainerStyle,

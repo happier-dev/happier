@@ -38,6 +38,11 @@ export type SelectableMenuItem = Readonly<{
     disabled?: boolean;
     /** Current choice state, independent of keyboard highlight. */
     checked?: boolean;
+    /**
+     * One of several independent on/off choices (a menu's filters): a box that checks, announced as a checkbox,
+     * so siblings that are on together never read as one radio choice.
+     */
+    multiSelect?: boolean;
     /** Renders the option as a round colour choice; consecutive swatches of one group share a row. */
     swatch?: SelectableMenuSwatch;
 }>;

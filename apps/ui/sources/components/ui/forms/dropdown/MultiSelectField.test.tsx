@@ -34,10 +34,10 @@ describe('MultiSelectField', () => {
                 optionTestIDPrefix="place"
             />,
         );
-        const items = screen.findAllByType(DropdownMenu)[0]?.props.items as ReadonlyArray<{ id: string; disabled?: boolean; icon: React.ReactElement<{ children: React.ReactElement<{ name: string }> }> }>;
-        expect(items.map((item) => [item.id, item.disabled === true, item.icon.props.children.props.name])).toEqual([
-            ['home', false, 'check-square'],
-            ['pages', true, 'square'],
+        const items = screen.findAllByType(DropdownMenu)[0]?.props.items as ReadonlyArray<{ id: string; disabled?: boolean; checked?: boolean; multiSelect?: boolean }>;
+        expect(items.map((item) => [item.id, item.disabled === true, item.checked, item.multiSelect])).toEqual([
+            ['home', false, true, true],
+            ['pages', true, false, true],
         ]);
     });
 });

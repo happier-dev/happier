@@ -97,23 +97,13 @@ export const MultiSelectField = React.memo(function MultiSelectField(
             title: candidate.title,
             subtitle: candidate.subtitle,
             disabled: candidate.disabled,
-            icon: (
-                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon
-                        name={checked ? 'check-square' : 'square'}
-                        size={20}
-                        weight={checked ? 'fill' : 'regular'}
-                        color={checked ? theme.colors.text.primary : theme.colors.text.secondary}
-                    />
-                </View>
-            ),
+            checked,
+            multiSelect: true,
         };
     }), [
         props.candidates,
         props.optionTestIDPrefix,
         selected,
-        theme.colors.text.primary,
-        theme.colors.text.secondary,
     ]);
 
     const disabled = props.disabled || props.candidates.length === 0;

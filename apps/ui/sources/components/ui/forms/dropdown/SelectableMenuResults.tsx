@@ -197,6 +197,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: MENU_ROW_METRICS.iconGlyphSizePx,
         height: MENU_ROW_METRICS.iconGlyphSizePx,
     },
+    // A field's option list (`rowKind="item"`) holds its box in the field's 32pt leading column.
+    itemCheckBoxFrame: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     emptyContainer: {
         padding: theme.space.s48,
         alignItems: 'center',
@@ -281,6 +288,22 @@ type SelectableMenuResultsProps = {
     onKeyDown?: (event: unknown) => void;
 };
 
+/** A multi-select row's leading box: checked or empty, so a row reads as checkable before it is on. */
+function MenuCheckBox(props: Readonly<{ checked: boolean; rowKind: 'selectableRow' | 'item' }>) {
+    const { theme } = useUnistyles();
+    const glyph = (
+        <Icon
+            name={props.checked ? 'check-square' : 'square'}
+            size={props.rowKind === 'item' ? ICON_SIZE.md : MENU_ROW_METRICS.iconGlyphSizePx}
+            weight={props.checked ? 'fill' : 'regular'}
+            color={props.checked ? theme.colors.text.primary : theme.colors.text.secondary}
+        />
+    );
+    return props.rowKind === 'item'
+        ? <View style={stylesheet.itemCheckBoxFrame}>{glyph}</View>
+        : glyph;
+}
+
 export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandle, SelectableMenuResultsProps>(function SelectableMenuResults(props, ref) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -291,7 +314,7 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
 
     const allItems = React.useMemo(() => props.categories.flatMap((c) => c.items), [props.categories]);
     // A menu where only some rows carry an icon keeps one text edge: the others hold the same empty slot.
-    const reservesLeadingSlot = React.useMemo(() => allItems.some((item) => item.left != null), [allItems]);
+    const reservesLeadingSlot = React.useMemo(() => allItems.some((item) => item.left != null || item.multiSelect === true), [allItems]);
     React.useImperativeHandle(ref, () => ({
         focusItem(index) {
             if (Platform.OS !== 'web') return;
@@ -354,13 +377,17 @@ export const SelectableMenuResults = React.forwardRef<SelectableMenuResultsHandl
                 if (category.items.length === 0) return null;
 
                 const categoryStartIndex = currentIndex;
-                // Checked rows among siblings are one choice (radios); a lone checked row is an on/off toggle.
-                const checkRole = category.items.filter((entry) => entry.checked !== undefined).length > 1 ? 'radio' as const : 'checkbox' as const;
+                // Checked rows among siblings are one choice (radios) unless they say they are independent
+                // (multi-select); a lone checked row is an on/off toggle.
+                const checkRole = category.items.filter((entry) => entry.checked !== undefined).length > 1
+                    && !category.items.some((entry) => entry.multiSelect === true) ? 'radio' as const : 'checkbox' as const;
                 const categoryItems = category.items.map((item, idx) => {
                     const itemIndex = categoryStartIndex + idx;
                     const isSelected = itemIndex === props.selectedIndex;
-                    const right = item.right ?? (item.checked === true ? checkMark : null);
-                    const left = item.left ?? (reservesLeadingSlot ? <View style={styles.leadingSlot} /> : null);
+                    const right = item.right ?? (item.checked === true && item.multiSelect !== true ? checkMark : null);
+                    const left = item.left
+                        ?? (item.multiSelect === true ? <MenuCheckBox checked={item.checked === true} rowKind={rowKind} /> : null)
+                        ?? (reservesLeadingSlot ? <View style={styles.leadingSlot} /> : null);
                     currentIndex++;
                     const rowAnchorRef = getRowAnchorRef(String(item.id));
                     const submenuAnchorRef = getSubmenuAnchorRef(String(item.id));
