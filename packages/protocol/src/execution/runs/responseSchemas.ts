@@ -48,7 +48,8 @@ import { ProviderAgentTargetKeySchema } from '../../providers/ids.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { ReviewFindingsV2Schema } from '../../messages/structured/reviewFindingsV2.js';
-import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
+import { readSessionRuntimeIssueCode, SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssueV1.js';
+import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/runtimeIssueMetadataV1.js';
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from '../../actions/actionErrorClassV1.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from '../../workflows/workflowTargetUnavailableReasonV1.js';
@@ -254,6 +255,10 @@ export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSche
  */
 export const ExecutionRunSessionUpdateStateSchema = lazyZodSchema(() => z.looseObject({
   ...ExecutionRunPublicStateSchema.shape,
+  error: z.optional(z.pipe(ExecutionRunErrorSchema, z.transform((error): ExecutionRunError => ({
+    code: readSessionRuntimeIssueCode(error.code) ?? error.runtimeIssueV1?.source ?? 'unknown',
+    ...(error.runtimeIssueV1 ? { runtimeIssueV1: projectSessionRuntimeIssueMetadataV1(error.runtimeIssueV1) } : {}),
+  })))),
   inputTurns: z.optional(z.strictObject({
     occurrenceId: z.string().check(z.minLength(1)),
     current: z.optional(z.strictObject(executionRunInputTurnWitnessFields())),
@@ -310,8 +315,8 @@ const executionRunFollowFrontierResponseFields = () => ({
   runId: z.string().check(z.minLength(1)),
   status: ExecutionRunStatusSchema,
   terminalEventId: z.nullable(z.string().check(z.minLength(1))),
-  /** Existing sanitized recovery facts, never a Run result body or read grant. */
-  runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
+  /** Clear Home reads get recovery metadata, never native diagnostic content. */
+  runtimeIssueV1: z.optional(z.pipe(SessionRuntimeIssueV1Schema, z.transform(projectSessionRuntimeIssueMetadataV1))),
   attention: z.optional(ExecutionRunPermissionAttentionSchema),
   outputs: z.optional(z.array(ExecutionRunFollowOutputV1Schema)),
 });

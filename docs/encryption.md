@@ -826,6 +826,13 @@ and client envelope/material checks still fail closed. A server mode refusal
 withdraws the stale observation once; the next demand re-admits without retrying
 or resealing the refused operation.
 
+Protected plugin Package Asset archives and hosted UI Artifact reads also borrow
+the captured Home and credential's admitted identity. Repeated archives and
+platform slots keep the bound request intact instead of fetching currentness
+for each read. Hosted publication still obtains fresh currentness for key
+fingerprint selection. Server authorization and the generic Artifact envelope
+opener continue to enforce access, persisted mode and E2EE material availability.
+
 After the Account-mode decision, each persisted row or domain envelope remains
 authoritative for its representation until the canonical transition owner rewrites
 it. Callers must not infer mode from a token, credential shape, key presence,
@@ -3012,6 +3019,17 @@ Neither hint authorizes a decision: the strict private header/body reader and
 revision-fenced approval transition remain authoritative. Titles, reviewed
 inputs, previews and execution results stay inside their existing envelopes.
 
+In unreleased 0.3, built-in and target-action approval header producers also
+write private `workflowRunId`: the Workflow caller or publication-return Run,
+or explicit null for unrelated requests. This is distinct from the existing
+Automation `runId`. The Artifact store projects these private header facts by
+Run before a viewed Run demands bodies; the private approval list owner uses
+the same relation before hydration. Header/body admission rejects contradictory
+relations. Older stored headers may omit this field: the Artifact owner discovers
+their relationship from the admitted body once. The open Artifact header preserves
+additive metadata, so omission remains readable and older readers can ignore the
+new hint. No server-visible selector, database field, envelope or authority changes.
+
 The same Artifact list owner applies `approvalStates` and `approvalSessionIds`
 before paging. State selection affects approval families only, so an Inbox
 selection can still include its notice kinds. Inbox acquires open approvals;
@@ -3825,6 +3843,16 @@ remain validated by their existing owners. This is not a generic plaintext RPC
 option: client `CALL` cannot supply the stamp, other methods remain encrypted,
 and these dual-use reads still accept ordinary bound E2EE client calls. Missing
 or retired RPC material remains a refusal, including for server-origin reads.
+
+The Follow Run-frontier and clear Session Run-update schemas share one projection
+of retained runtime issues to non-content recovery metadata in both modes:
+typed identifiers, lifecycle/source, timestamps,
+quota reset/retry facts and closed failure causes. Native previews, provider prose,
+native turn identifiers, plan labels and recovery URLs are excluded. Free-form Run
+error fields are excluded from clear Session Run updates too. Full issues remain
+available through the ordinary Run GET and private worker-update channel,
+whose existing mode owners select bound E2EE transport or keyless Plain transport.
+The frontier does not infer Account mode from keys or create encryption material.
 
 ### Machine metadata + daemon state
 

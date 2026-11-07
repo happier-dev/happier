@@ -1,4 +1,4 @@
-import { ExecutionRunPublicStateSchema, type ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunPublicStateSchema, ExecutionRunSessionUpdateStateSchema, type ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { projectExecutionRunRequestedConfiguration, projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 import type { ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
@@ -50,12 +50,14 @@ function projectInputTurnWitness({ result: _result, error: _error, ...witness }:
   return witness;
 }
 
-/** The server reads Session socket frames in clear, so turn content stays on Run reads and the transcript. */
+/** Clear Session socket frames use the Protocol owner's non-content error projection. */
 export function projectExecutionRunSessionUpdateState(run: ExecutionRunPublicState): ExecutionRunSessionUpdateState {
-  const { inputTurns, ...state } = run;
-  if (!inputTurns) return state;
-  const { occurrenceId, current, last } = inputTurns;
-  return { ...state, inputTurns: { occurrenceId,
-    ...(current ? { current: projectInputTurnWitness(current) } : {}),
-    ...(last ? { last: projectInputTurnWitness(last) } : {}) } };
+  const { inputTurns, error, ...state } = run;
+  return { ...state,
+    ...(error ? { error: ExecutionRunSessionUpdateStateSchema.shape.error.parse(error) } : {}),
+    ...(inputTurns ? { inputTurns: {
+      occurrenceId: inputTurns.occurrenceId,
+      ...(inputTurns.current ? { current: projectInputTurnWitness(inputTurns.current) } : {}),
+      ...(inputTurns.last ? { last: projectInputTurnWitness(inputTurns.last) } : {}),
+    } } : {}) };
 }
