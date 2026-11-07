@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionIdentity } from '@/sync/api/account/apiAccountEncryptionMode';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -24,7 +24,7 @@ import {
     type AccountStoredContentCompatibilityHeaderResolution,
 } from '@/sync/http/accountStoredContentCompatibility';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import {
     decodePackageAssetArchiveBodyV1,
     openPackageAssetArchiveV1,
@@ -54,10 +54,10 @@ export type ActivePluginAccountPackageAssetReaderDependencies = Readonly<{
         scope: ServerAccountScope;
         activeRequest: (path: string, init?: RequestInit) => Promise<Response>;
     }>) => Promise<PackageAssetRequestAuthority>;
-    readAccountCurrentness: (input: Readonly<{
+    readAccountIdentity: (input: Readonly<{
         authority: PackageAssetRequestAuthority;
         signal: AbortSignal;
-    }>) => Promise<AccountEncryptionCurrentnessResponse>;
+    }>) => Promise<AccountEncryptionIdentity>;
     resolveStoredContentCompatibility: (
         input: HeadersInit,
         params: Readonly<{ serverUrl: string }>,
@@ -102,11 +102,12 @@ function defaultDependencies(): ActivePluginAccountPackageAssetReaderDependencie
                 } : {}),
             });
         },
-        readAccountCurrentness: async ({ authority, signal }) => {
+        readAccountIdentity: async ({ authority, signal }) => {
             if (!authority.credentials) throw new Error('Account credentials are unavailable.');
-            return await fetchAccountEncryptionCurrentness(authority.credentials, {
-                request: (path, init) => authority.request(path, init),
+            return await fetchAccountEncryptionIdentity(authority.credentials, {
+                request: authority.request,
                 signal,
+                usage: 'identity',
             });
         },
         resolveStoredContentCompatibility: (input, params) =>
@@ -177,7 +178,7 @@ export function createActivePluginAccountPackageAssetSource(
                 activeRequest: (path, init) => apiSocket.request(path, init),
             });
             if (!isCurrent({ requestedLifetime, capturedLifetime, serverSnapshot, getServerSnapshot: dependencies.getServerSnapshot }) || controller.signal.aborted) return null;
-            const currentness = await dependencies.readAccountCurrentness({ authority, signal: controller.signal });
+            const currentness = await dependencies.readAccountIdentity({ authority, signal: controller.signal });
             if (!isCurrent({ requestedLifetime, capturedLifetime, serverSnapshot, getServerSnapshot: dependencies.getServerSnapshot }) || controller.signal.aborted) return null;
             if (currentness.mode === 'e2ee' && !authority.decryptDataEncryptionKey) return null;
             const response = await authority.request(

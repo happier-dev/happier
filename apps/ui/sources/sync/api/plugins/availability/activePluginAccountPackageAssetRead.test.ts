@@ -6,7 +6,7 @@ import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityPackageAssetReadActionOutputV1Schema,
 } from '@happier-dev/protocol/plugins/availability';
-import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 import { createAccountArtifactStoredEnvelope } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -74,7 +74,7 @@ describe('active Account Package Asset source', () => {
             captureLifetime: createLifetime,
             getServerSnapshot: () => ({ serverId: scope.serverId, serverUrl: 'https://server.example', generation: 7 }),
             captureRequestAuthority: async () => Object.freeze({ request }),
-            readAccountCurrentness: async () => Object.freeze({
+            readAccountIdentity: async () => Object.freeze({
                 mode: 'plain' as const,
                 version: 1,
                 signingKeyFingerprint: null,
@@ -110,7 +110,7 @@ describe('active Account Package Asset source', () => {
                     },
                 }), { status: 200 }),
             }),
-            readAccountCurrentness: async () => Object.freeze({
+            readAccountIdentity: async () => Object.freeze({
                 mode: 'plain' as const,
                 version: 1,
                 signingKeyFingerprint: null,

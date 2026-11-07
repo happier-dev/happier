@@ -1,18 +1,16 @@
-import { PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1, PLUGIN_COLLECTION_GET_HTTP_PATH_V1, PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1, PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, PluginCollectionContractReadRequestV1Schema, PluginCollectionContractReadResultV1Schema, PluginCollectionGetRequestV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionForgetRequestV1Schema, PluginCollectionForgetResultV1Schema, PluginCollectionMutationErrorV1Schema, PluginCollectionMutationResultV1Schema, PluginCollectionQueryRequestV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionReadErrorV1Schema, resolveEffectivePluginCollectionLimitsV1, resolvePluginCollectionIdentityTagV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionMutationConflictV1, type PluginCollectionRelationRestrictionContinuationV1, type PluginCollectionEffectiveLimitsV1, type PluginCollectionMutationOperationV1, type PluginCollectionMutationRequestMeasurementV1, type PluginCollectionMutationResultEntryV1, type PluginCollectionProjectionV1, type PluginCollectionQueryRangeV1, type PluginCollectionQuotaDimensionV1, type PluginCollectionRowV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1, PLUGIN_COLLECTION_GET_HTTP_PATH_V1, PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1, PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1, PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1, PluginCollectionContractReadRequestV1Schema, PluginCollectionGetRequestV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionForgetRequestV1Schema, PluginCollectionForgetResultV1Schema, PluginCollectionMutationErrorV1Schema, PluginCollectionMutationResultV1Schema, PluginCollectionQueryRequestV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionReadErrorV1Schema, resolveEffectivePluginCollectionLimitsV1, resolvePluginCollectionIdentityTagV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionMutationConflictV1, type PluginCollectionRelationRestrictionContinuationV1, type PluginCollectionEffectiveLimitsV1, type PluginCollectionMutationOperationV1, type PluginCollectionMutationRequestMeasurementV1, type PluginCollectionMutationResultEntryV1, type PluginCollectionProjectionV1, type PluginCollectionQueryRangeV1, type PluginCollectionQuotaDimensionV1, type PluginCollectionRowV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 import { PLUGIN_DATA_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { PluginCollectionRowIdV1Schema } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
 import { compilePluginJsonSchema, createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { deriveAccountMachineKeyFromRecoverySecret, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
-import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1, preparePluginCollectionLogicalMutationRequestV1, type PluginCollectionLogicalMutationRequestOutcomeV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
+import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import type {
@@ -22,14 +20,13 @@ import type {
 } from '@happier-dev/plugin-sdk/collections';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { isDataKeyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { fetchAccountEncryptionIdentity, invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -46,6 +43,7 @@ import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 
 import { watchActivePluginCollectionChanges } from './pluginCollectionChangeWatch';
+import { parseCollectionContractReadResult, prepareCollectionContractSchema, readHeldCollectionContract } from './collectionContractSchema';
 
 export type ActivePluginCollectionUnavailableReasonV1 =
     | AccountStoredContentCompatibilityUnavailableReason
@@ -152,6 +150,7 @@ export type ActivePluginCollectionForgetOutcomeV1 =
 export type ActivePluginCollectionQueryInputV1 = Readonly<{
     indexId: string;
     prefix?: readonly PluginCollectionIndexScalarValueV1[];
+    prefixes?: readonly (readonly PluginCollectionIndexScalarValueV1[])[];
     range?: PluginCollectionQueryRangeV1;
     order: 'asc' | 'desc';
     cursor?: string;
@@ -286,6 +285,7 @@ export type PreparedCollectionOperationOutcome =
 
 type CollectionHttpObservation = Readonly<{ ok: boolean; httpStatus: number; body: unknown }>;
 const collectionHttpReads = createScopedResolutionSingleFlight<CollectionHttpObservation>();
+const plainIdentityReads = createScopedResolutionSingleFlight<Awaited<ReturnType<typeof fetchAccountEncryptionIdentity>>>();
 
 /** Raw Collection reads only; each borrower retains its admission, mode and content opening. */
 export async function readPluginCollectionHttpResponse(input: Readonly<{
@@ -353,31 +353,14 @@ function resolveCurrentAccountMaterial(input: Readonly<{
     mode: 'plain' | 'e2ee';
     contentKeyFingerprint: string | null;
     credentials?: AuthCredentials;
+    serverId: string;
 }>): AccountScopedCryptoMaterial | null {
-    if (input.mode === 'plain') return null;
-    if (!input.credentials || !input.contentKeyFingerprint) return null;
-    try {
-        const material = resolveAccountScopedCryptoMaterialFromCredentials(input.credentials);
-        const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
-            accountEncryptionMode: 'e2ee',
-            material,
-            ...(isDataKeyAuthCredentials(input.credentials)
-                ? {
-                    dataKeyPublicKey: decodeBase64(
-                        input.credentials.encryption.publicKey,
-                        'base64',
-                    ),
-                }
-                : {}),
-        });
-        return convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-            snapshot.contentPublicKeyFingerprint,
-        ) === input.contentKeyFingerprint
-            ? material
-            : null;
-    } catch {
-        return null;
-    }
+    if (input.mode === 'plain' || !input.credentials) return null;
+    return resolveCurrentAccountScopedCryptoMaterialSnapshot({
+        credentials: input.credentials,
+        serverId: input.serverId,
+        accountCurrentness: { mode: input.mode, contentKeyFingerprint: input.contentKeyFingerprint },
+    })?.material ?? null;
 }
 
 export async function prepareCollectionOperation(
@@ -435,16 +418,26 @@ export async function prepareCollectionOperation(
         }
 
         const credentials = capturedAuthority.context.credentials ?? { token: capturedAuthority.context.token };
-        const currentness = await fetchAccountEncryptionIdentity(credentials, {
-            request: capturedAuthority.request,
-            signal: controller.signal,
-            // A tag can outlive a delayed Plain→E2EE push and later become
-            // server-visible identity. Never mint its unkeyed digest from a
-            // stale Plain observation. E2EE→Plain is already custody-pinned.
-            usage: freshPlainIdentity
-                && readAccountEncryptionObservationBinding(capturedAuthority.request, credentials)?.peek()?.mode === 'plain'
-                ? 'fresh-authority' : 'identity',
-        });
+        // A delayed Plain→E2EE push must not mint an unkeyed persistent identity.
+        // Share only overlapping reads; the pending-only owner forgets on settle.
+        const freshIdentity = freshPlainIdentity
+            && readAccountEncryptionObservationBinding(capturedAuthority.request, credentials)?.peek()?.mode === 'plain';
+        const transport = capturedAuthority.readTransport;
+        const currentness = freshIdentity && transport
+            ? await plainIdentityReads.run(transport.key, signal => fetchAccountEncryptionIdentity(credentials, {
+                usage: 'fresh-authority', signal,
+                // Retain the neutral physical carrier through body consumption;
+                // no initiating borrower's release or signal owns this read.
+                request: (path, init, options) => transport.read(path, init, options, async response =>
+                    new Response(response.body === null ? null : await response.arrayBuffer(), {
+                        status: response.status, statusText: response.statusText, headers: response.headers,
+                    })),
+            }), { scope: [lifetime, transport.scope ?? transport.key], signal: controller.signal })
+            : await fetchAccountEncryptionIdentity(credentials, {
+                request: capturedAuthority.request,
+                signal: controller.signal,
+                usage: freshIdentity ? 'fresh-authority' : 'identity',
+            });
         const currentnessAfterRead = isScopeAndServerCurrent(lifetime, serverSnapshot);
         if (currentnessAfterRead) {
             await release();
@@ -458,6 +451,7 @@ export async function prepareCollectionOperation(
             mode: currentness.mode,
             contentKeyFingerprint: currentness.contentKeyFingerprint,
             credentials: capturedAuthority.context.credentials,
+            serverId: lifetime.scope.serverId,
         });
         if (currentness.mode === 'e2ee' && !material) {
             await release();
@@ -770,7 +764,8 @@ export async function createActivePluginCollectionClientForContractRef<
     /** Exact Data reads bypass pending acquisition sharing; Account identity stays admitted. */
     fresh?: boolean;
 }>): Promise<ActivePluginCollectionClientForContractRefOutcomeV1<TValue>> {
-    const request = PluginCollectionContractReadRequestV1Schema.safeParse({ ref: input.ref });
+    const held = readHeldCollectionContract(input.ref);
+    const request = PluginCollectionContractReadRequestV1Schema.safeParse({ ref: input.ref, ...(held ? { omitContract: true } : {}) });
     if (!request.success) return rejected('collection_query_invalid');
     const prepared = await prepareCollectionOperation(input.options, input.accountLifetime, input.signal);
     if (prepared.status === 'unavailable') return prepared;
@@ -786,17 +781,17 @@ export async function createActivePluginCollectionClientForContractRef<
         });
         if (response.status === 'unavailable') return response;
         if (!response.ok) return mapReadError(response.body);
-        const result = PluginCollectionContractReadResultV1Schema.safeParse(response.body);
-        if (!result.success || !contractMatchesRef(result.data.contract, request.data.ref)) {
+        const result = parseCollectionContractReadResult(response.body, held);
+        if (!result || !contractMatchesRef(result.contract, request.data.ref)) {
             return unavailable('response-invalid');
         }
         return {
             status: 'ready',
-            access: result.data.access,
-            contract: result.data.contract,
+            access: result.access,
+            contract: result.contract,
             client: createActivePluginCollectionClient<TValue>({
-                contract: result.data.contract,
-                access: result.data.access,
+                contract: result.contract,
+                access: result.access,
                 accountLifetime: input.accountLifetime,
                 assertAdmitted: input.assertAdmitted,
                 signal: input.signal,
@@ -824,8 +819,7 @@ export function createActivePluginCollectionClient<
     assertAdmitted?: () => void;
     signal?: AbortSignal;
 }>): ActivePluginCollectionClientV1<TValue> {
-    const validate = compilePluginJsonSchema(params.contract.schema);
-    const storedReadSchema = createStoredReadSchema(createPluginJsonSchemaZodValueAdapter(params.contract.schema));
+    const { validate, storedReadSchema } = prepareCollectionContractSchema(params.contract);
     const prepare = async (options?: ActivePluginCollectionOperationOptionsV1, freshPlainIdentity = false) => {
         params.assertAdmitted?.();
         const prepared = await prepareCollectionOperation(options, params.accountLifetime, params.signal, freshPlainIdentity);

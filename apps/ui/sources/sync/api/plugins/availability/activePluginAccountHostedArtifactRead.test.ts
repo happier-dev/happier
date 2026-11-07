@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
-    encodePlainArtifactStoredContent,
-} from '@happier-dev/protocol';
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    encodeBase64,
+} from '@happier-dev/protocol/crypto/base64';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityUiArtifactReadActionOutputV1Schema,
@@ -17,6 +22,12 @@ import {
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createAccountArtifactStoredEnvelope } from '@/sync/domains/artifacts/accountArtifactEnvelope';
+import { Encryption } from '@/sync/encryption/encryption';
+import * as platformDigest from '@/platform/digest';
+import {
+    materializeVerifiedPluginArtifactSource,
+    type PluginArtifactSourceCandidate,
+} from '@/sync/domains/plugins/availability/artifactLease';
 import type { AccountStoredContentCompatibilityHeaderResolution } from '@/sync/http/accountStoredContentCompatibility';
 
 import {
@@ -64,7 +75,7 @@ const artifactGraph = Object.freeze({
     hostUiApiRange: '^1.0.0',
 });
 
-async function createResponse() {
+async function createResponse(encryption?: Encryption, corruptBytes = false) {
     const archive = createPluginUiArtifactArchiveV1({
         pluginId: release.pluginId,
         artifactGraph,
@@ -72,9 +83,12 @@ async function createResponse() {
     });
     if (!archive) throw new Error('Expected test archive');
     const envelope = await createAccountArtifactStoredEnvelope({
-        mode: 'plain',
+        mode: encryption ? 'e2ee' : 'plain',
         header: archive.header,
-        body: { body: JSON.stringify(archive.body) },
+        body: { body: JSON.stringify(corruptBytes ? { ...archive.body, files: archive.body.files.map(file => ({
+            ...file, bytesBase64: encodeBase64(new Uint8Array(entryBytes.map((byte, index) => index === 0 ? byte ^ 1 : byte)), 'base64'),
+        })) } : archive.body) },
+        ...(encryption ? { encryptDataEncryptionKey: (key: Uint8Array) => encryption.encryptEncryptionKey(key) } : {}),
     });
     if (!envelope) throw new Error('Expected test envelope');
     return PluginAvailabilityUiArtifactReadActionOutputV1Schema.parse({
@@ -120,11 +134,13 @@ function createReader(params: Readonly<{
     lifetime: ActiveServerAccountScopeLifetime;
     request: (path: string, init?: RequestInit) => Promise<Response>;
     compatibility?: 'available' | 'unavailable';
-    readAccountCurrentness?: ActivePluginAccountHostedArtifactReaderDependencies['readAccountCurrentness'];
+    readAccountIdentity?: ActivePluginAccountHostedArtifactReaderDependencies['readAccountIdentity'];
+    decryptDataEncryptionKey?: Awaited<ReturnType<ActivePluginAccountHostedArtifactReaderDependencies['captureRequestAuthority']>>['decryptDataEncryptionKey'];
 }>) {
     const captureRequestAuthority = vi.fn(async () => Object.freeze({
         scope,
         request: params.request,
+        ...(params.decryptDataEncryptionKey ? { decryptDataEncryptionKey: params.decryptDataEncryptionKey } : {}),
     }));
     const reader = createActivePluginAccountHostedArtifactReader({
         captureLifetime: () => params.lifetime,
@@ -134,8 +150,8 @@ function createReader(params: Readonly<{
             generation: 7,
         }),
         captureRequestAuthority,
-        readAccountCurrentness: params.readAccountCurrentness ?? (async (
-            _input: Parameters<ActivePluginAccountHostedArtifactReaderDependencies['readAccountCurrentness']>[0],
+        readAccountIdentity: params.readAccountIdentity ?? (async (
+            _input: Parameters<ActivePluginAccountHostedArtifactReaderDependencies['readAccountIdentity']>[0],
         ) => Object.freeze({
             mode: 'plain' as const,
             version: 1,
@@ -173,7 +189,44 @@ function input(lifetime: ActiveServerAccountScopeLifetime) {
     });
 }
 
+function openedFile(
+    source: Awaited<ReturnType<PluginArtifactSourceCandidate['fetch']>>,
+    relativePath: string,
+): Uint8Array | undefined {
+    return source && 'artifactGraph' in source ? source.files.get(relativePath) : undefined;
+}
+
 describe('active Account-hosted plugin Artifact reader', () => {
+    it('opens real E2EE Account-hosted bytes without a Machine and rejects corrupted decrypted bytes', async () => {
+        const secret = new Uint8Array(32).fill(31);
+        const encryption = await Encryption.create(secret);
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+            material: { type: 'legacy', secret } });
+        const readAccountIdentity: ActivePluginAccountHostedArtifactReaderDependencies['readAccountIdentity'] = async () => ({
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing', updatedAt: 1,
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint),
+            recipientEnvelopeReadiness: { status: 'available' },
+        });
+        const { lifetime } = createLifetime();
+        let response = await createResponse(encryption);
+        const request = vi.fn(async () => Response.json(response));
+        const current = createReader({ lifetime, request, readAccountIdentity,
+            decryptDataEncryptionKey: value => encryption.decryptEncryptionKey(value) });
+        const candidate = createActivePluginAccountHostedArtifactSourceCandidate({ accountLifetime: lifetime, reader: current.reader });
+        const sourceInput = { artifact: { pluginId: release.pluginId, contributionId: slot.contributionId,
+            artifactId: slot.artifactId, tier: slot.tier, platform: slot.platform, digest: artifactDigest,
+            hostUiApiRange: artifactGraph.hostUiApiRange, releaseVersion: release.version }, accountHostedArtifactId: accountArtifactId };
+        await expect(candidate.fetch(sourceInput).then(source => openedFile(source, entryPath))).resolves.toEqual(entryBytes);
+
+        response = await createResponse(encryption, true);
+        await expect(current.reader.read(input(lifetime))).resolves.toEqual({ kind: 'unavailable', code: 'artifact_archive_invalid' });
+
+        const missingKey = createReader({ lifetime, request, readAccountIdentity });
+        request.mockClear();
+        await expect(missingKey.reader.read(input(lifetime))).resolves.toEqual({ kind: 'unavailable', code: 'account_encryption_material_unavailable' });
+        expect(request).not.toHaveBeenCalled();
+    });
+
     it('reads a prospective exact release slot and learns its canonical Artifact id only after digest validation', async () => {
         const { lifetime } = createLifetime();
         const response = await createResponse();
@@ -239,6 +292,119 @@ describe('active Account-hosted plugin Artifact reader', () => {
         )).toBe('3');
     });
 
+    describe('verified Account source through the lease materializer', () => {
+        const selectedArtifact = Object.freeze({
+            pluginId: release.pluginId,
+            contributionId: slot.contributionId,
+            artifactId: slot.artifactId,
+            tier: slot.tier,
+            platform: slot.platform,
+            digest: artifactDigest,
+            hostUiApiRange: artifactGraph.hostUiApiRange,
+            releaseVersion: release.version,
+        });
+
+        async function createE2eeHarness() {
+            const secret = new Uint8Array(32).fill(31);
+            const encryption = await Encryption.create(secret);
+            const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+                material: { type: 'legacy', secret } });
+            const readAccountIdentity: ActivePluginAccountHostedArtifactReaderDependencies['readAccountIdentity'] = async () => ({
+                mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing', updatedAt: 1,
+                contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint),
+                recipientEnvelopeReadiness: { status: 'available' },
+            });
+            return { encryption, readAccountIdentity };
+        }
+
+        async function readThroughLease(params: Readonly<{
+            mode: 'plain' | 'e2ee';
+            corrupt?: boolean;
+            graph?: typeof artifactGraph;
+        }>) {
+            const { lifetime } = createLifetime();
+            const e2ee = params.mode === 'e2ee' ? await createE2eeHarness() : null;
+            const response = await createResponse(e2ee?.encryption, params.corrupt ?? false);
+            const current = createReader({
+                lifetime,
+                request: async () => Response.json(response),
+                ...(e2ee ? {
+                    readAccountIdentity: e2ee.readAccountIdentity,
+                    decryptDataEncryptionKey: (value: Parameters<Encryption['decryptEncryptionKey']>[0]) =>
+                        e2ee.encryption.decryptEncryptionKey(value),
+                } : {}),
+            });
+            const hashing = vi.spyOn(platformDigest, 'digest');
+            try {
+                const result = await materializeVerifiedPluginArtifactSource({
+                    artifact: selectedArtifact,
+                    graph: params.graph ?? artifactGraph,
+                    sources: [createActivePluginAccountHostedArtifactSourceCandidate({
+                        accountLifetime: lifetime,
+                        reader: current.reader,
+                    })],
+                    isCurrent: () => true,
+                    accountHostedArtifactId: accountArtifactId,
+                });
+                return { result, leaseHashes: hashing.mock.calls.length };
+            } finally {
+                hashing.mockRestore();
+            }
+        }
+
+        it.each(['plain', 'e2ee'] as const)('admits the opener-verified %s archive without hashing its bytes again', async (mode) => {
+            const { result, leaseHashes } = await readThroughLease({ mode });
+
+            expect(result).toMatchObject({ kind: 'available', files: [{
+                file: { relativePath: entryPath, digest: entryDigest, byteSize: entryBytes.byteLength },
+                bytes: entryBytes,
+            }] });
+            expect(leaseHashes).toBe(0);
+        });
+
+        it.each(['plain', 'e2ee'] as const)('refuses tampered %s archive bytes', async (mode) => {
+            const { result } = await readThroughLease({ mode, corrupt: true });
+
+            expect(result.kind).toBe('unavailable');
+        });
+
+        it('refuses a verified archive whose graph contradicts the selected graph', async () => {
+            const otherBytes = new TextEncoder().encode('other entry!');
+            const { result } = await readThroughLease({
+                mode: 'plain',
+                graph: Object.freeze({
+                    ...artifactGraph,
+                    files: Object.freeze([{
+                        relativePath: entryPath,
+                        digest: computePluginUiArtifactSha256DigestV1(otherBytes),
+                        byteSize: otherBytes.byteLength,
+                    }]),
+                }),
+            });
+
+            expect(result).toEqual({ kind: 'unavailable', integrityFailed: true });
+        });
+
+        it('still hashes every raw source file set and refuses tampered raw bytes', async () => {
+            const hashing = vi.spyOn(platformDigest, 'digest');
+            try {
+                const materialize = (bytes: Uint8Array) => materializeVerifiedPluginArtifactSource({
+                    artifact: selectedArtifact,
+                    graph: artifactGraph,
+                    sources: [{ kind: 'daemon', fetch: async () => new Map([[entryPath, bytes]]) }],
+                    isCurrent: () => true,
+                });
+
+                await expect(materialize(entryBytes)).resolves.toMatchObject({ kind: 'available' });
+                expect(hashing.mock.calls.length).toBeGreaterThan(0);
+                await expect(materialize(new Uint8Array(entryBytes.map((byte, index) => index === 0 ? byte ^ 1 : byte))))
+                    .resolves.toEqual({ kind: 'unavailable', integrityFailed: true });
+            } finally {
+                hashing.mockRestore();
+            }
+        });
+    });
+
     it('exports one Account-hosted byte source that returns the selected digest file set', async () => {
         const { lifetime } = createLifetime();
         const response = await createResponse();
@@ -266,7 +432,7 @@ describe('active Account-hosted plugin Artifact reader', () => {
                 releaseVersion: release.version,
             },
             accountHostedArtifactId: accountArtifactId,
-        }).then((files) => files?.get(artifactGraph.entry))).resolves.toEqual(entryBytes);
+        }).then((source) => openedFile(source, artifactGraph.entry))).resolves.toEqual(entryBytes);
     });
 
     it('exports a prospective-slot source that reads exact target coordinates without an incumbent Artifact id', async () => {
@@ -295,7 +461,7 @@ describe('active Account-hosted plugin Artifact reader', () => {
                 hostUiApiRange: artifactGraph.hostUiApiRange,
                 releaseVersion: release.version,
             },
-        }).then((files) => files?.get(artifactGraph.entry))).resolves.toEqual(entryBytes);
+        }).then((source) => openedFile(source, artifactGraph.entry))).resolves.toEqual(entryBytes);
     });
 
     it.each([
@@ -419,7 +585,7 @@ describe('active Account-hosted plugin Artifact reader', () => {
         const current = createReader({
             lifetime: active.lifetime,
             request: vi.fn(async (_path: string, _init?: RequestInit) => new Response(null, { status: 500 })),
-            readAccountCurrentness: async ({ signal }) => {
+            readAccountIdentity: async ({ signal }) => {
                 currentnessStarted = true;
                 observedSignal = signal;
                 signal?.addEventListener('abort', () => {

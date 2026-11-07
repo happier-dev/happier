@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { defineAccountCollection, type PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/host/registration';
+import { projectPluginAccountCollectionDeclaration } from '@happier-dev/plugin-sdk/collections';
 import { normalizePluginAccountCollectionContractV1, normalizePluginAccountCollectionContractsV1, PluginCollectionContractReadRequestV1Schema,
     PluginCollectionMutationRequestV1Schema, PluginCollectionForgetRequestV1Schema, PluginCollectionGetRequestV1Schema,
     PluginCollectionRowV1Schema, assertPluginCollectionContentEnvelopeForModeV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol/plugins/data/collectionContributionV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
@@ -21,7 +22,7 @@ import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plug
 import { openPluginCollectionPrivatePayloadV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import tweetnacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit';
+import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, createPlainProjectAccountRowListFixture, renderHook } from '@/dev/testkit';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { sync } from '@/sync/sync';
@@ -237,6 +238,98 @@ describe('Collection acquisition cursor publication', () => {
             credentials: { token: createServedHomeAccountToken('alice'), secret: Buffer.from(secret).toString('base64url') } });
     });
 
+    it('covers an external plugin observation and later dependencies without silencing another binding', async () => {
+        let cursor = 42;
+        const overlappingReadStarted = createDeferred<void>();
+        const overlappingReadRelease = createDeferred<void>();
+        let overlap = false;
+        await withRowReadClient(async request => {
+            if (request.path !== '/v1/plugins/data/query') return undefined;
+            const snapshotCursor = cursor;
+            if (overlap && request.body !== null && typeof request.body === 'object' && 'limit' in request.body && request.body.limit === 2) {
+                overlappingReadStarted.resolve(); await overlappingReadRelease.promise;
+            }
+            return Response.json({ rows: [], changeCursor: snapshotCursor });
+        }, async (_client, home) => {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected Account lifetime');
+            const releaseManifest = PluginManifestV2Schema.parse({ ...manifest, contributes: {
+                accountCollections: [projectPluginAccountCollectionDeclaration(rowReadDefinition.id, rowReadDefinition)],
+            } });
+            const readAvailability = () => createPluginAccountAvailabilityReader({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                    availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                    intent: { pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled', revision: 'one',
+                        writableCollections: [{ ...ref, contractDigest: rowReadContract.contractDigest }] },
+                    release: { ref: { pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                        normalizedManifest: releaseManifest, collectionContracts: [{ ...ref, contractDigest: rowReadContract.contractDigest }], uiSlots: [],
+                        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }, uiArtifacts: [],
+                } }],
+            } });
+            const scope = createPluginUiAccountStorageScope({ pluginId, accountLifetime: lifetime, readAvailability });
+            const collection = scope.collection(rowReadDefinition);
+            const invalidated = vi.fn();
+            const membership = collection.watch({ index: 'by-id', prefix: ['link'], order: 'asc' }, invalidated);
+            const otherBinding = createPluginUiAccountStorageScope({ pluginId, accountLifetime: lifetime, readAvailability });
+            const otherInvalidated = vi.fn();
+            const other = otherBinding.collection(rowReadDefinition).watch({ index: 'by-id', order: 'asc' }, otherInvalidated);
+            let dependency: ReturnType<typeof collection.watch> | undefined;
+            const { buildPluginDomainAccountChangeEntityId } = await import('@happier-dev/protocol/changes');
+            const hint = { pluginDomain: 'dataCollection' as const, pluginId, collectionId: rowReadDefinition.id,
+                contractDigest: rowReadContract.contractDigest, revision: 1, full: true as const };
+            const notice = (changeCursor: number) => ({ cursor: changeCursor, kind: 'pluginDomain',
+                entityId: buildPluginDomainAccountChangeEntityId(hint), changedAt: changeCursor, hint });
+            const { encodePluginCollectionIndexSortKeyV1 } = await import('@happier-dev/protocol/plugins/data/collectionsV1');
+            const preciseNotice = (changeCursor: number, previousCursor: number, rowId: string) => {
+                const { full: _full, ...base } = hint;
+                const key = [...encodePluginCollectionIndexSortKeyV1({ rowId,
+                    fields: [{ kind: 'string', value: rowId, direction: 'asc' }] })]
+                    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+                const precise = { ...base, rowIds: [rowId], indexChanges: { previousCursor, keys: [{ indexId: 'by-id', key }] } };
+                return { ...notice(changeCursor), entityId: buildPluginDomainAccountChangeEntityId(precise), hint: precise };
+            };
+            try {
+                await collection.query({ index: 'by-id', prefix: ['link'], order: 'asc' });
+                dependency = scope.collection(rowReadDefinition).watch({ kind: 'row', rowId: 'link' }, invalidated);
+                const before = home.requests.length;
+                publishActivePluginCollectionChanges([notice(40)]);
+                expect(invalidated).not.toHaveBeenCalled();
+                expect(otherInvalidated).toHaveBeenCalledTimes(1);
+                expect(home.requests).toHaveLength(before);
+                other.dispose();
+                publishActivePluginCollectionChanges(Array.from({ length: 1_000 }, (_, index) => preciseNotice(43 + index, 42 + index, 'other')));
+                expect(invalidated).not.toHaveBeenCalled();
+                cursor = 1_043;
+                publishActivePluginCollectionChanges([preciseNotice(1_043, 1_042, 'link')]);
+                expect(invalidated).toHaveBeenCalledTimes(2); // One wake for each real observation.
+                publishActivePluginCollectionChanges([preciseNotice(1_043, 1_042, 'link')]);
+                expect(invalidated).toHaveBeenCalledTimes(2);
+                publishActivePluginCollectionChanges([preciseNotice(1_045, 1_044, 'other')]);
+                expect(invalidated).toHaveBeenCalledTimes(4); // Missing predecessor must remain conservative.
+                const changedContract = preciseNotice(1_046, 1_045, 'other');
+                publishActivePluginCollectionChanges([{ ...changedContract, hint: { ...changedContract.hint, contractDigest: 'b'.repeat(43) } }]);
+                expect(invalidated).toHaveBeenCalledTimes(6);
+                expect(home.requests).toHaveLength(before);
+                // Distinct page sizes share one selector, but not one physical
+                // request. One acquired snapshot must release this observer
+                // even while its other initial read is still pending.
+                const parallel = createPluginUiAccountStorageScope({ pluginId, accountLifetime: lifetime, readAvailability }).collection(rowReadDefinition);
+                const parallelInvalidated = vi.fn();
+                const parallelWatch = parallel.watch({ index: 'by-id', prefix: ['link'], order: 'asc' }, parallelInvalidated);
+                overlap = true;
+                const first = parallel.query({ index: 'by-id', prefix: ['link'], order: 'asc', limit: 1 });
+                const second = parallel.query({ index: 'by-id', prefix: ['link'], order: 'asc', limit: 2 });
+                try {
+                    await overlappingReadStarted.promise;
+                    await first;
+                    publishActivePluginCollectionChanges([preciseNotice(1_047, 1_046, 'link')]);
+                    expect(parallelInvalidated).toHaveBeenCalledTimes(1);
+                    overlappingReadRelease.resolve(); await second;
+                    expect(parallelInvalidated).toHaveBeenCalledTimes(1);
+                } finally { overlappingReadRelease.resolve(); parallelWatch.dispose(); await Promise.allSettled([first, second]); }
+            } finally { membership.dispose(); dependency?.dispose(); other.dispose(); }
+        });
+    });
 });
 
 describe('Collection raw read acquisition after caller admission', () => {
@@ -287,6 +380,26 @@ describe('Collection raw read acquisition after caller admission', () => {
                 await binding.read();
                 const currentnessCount = () => home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
                 const warmReads = currentnessCount();
+                const { resolveAccountStorageContext } = await import('@/sync/encryption/accountStorageContext');
+                for (let index = 0; index < 200; index++) {
+                    await expect(resolveAccountStorageContext(credentials, { encryption: null, usage: 'identity' }))
+                        .resolves.toEqual({ mode: 'plain', encryption: null });
+                }
+                expect.soft(currentnessCount() - warmReads).toBe(0);
+                const { invalidateAccountEncryptionModeCache } = await import('@/sync/api/account/apiAccountEncryptionMode');
+                invalidateAccountEncryptionModeCache({ serverId: binding.serverId });
+                expect(binding.peek()).toBeNull();
+                const beforeColdReads = currentnessCount();
+                const cold = await Promise.all(Array.from({ length: 200 }, () =>
+                    resolveAccountStorageContext(credentials, { encryption: null, usage: 'identity' })));
+                expect(cold).toHaveLength(200);
+                expect(cold.every(context => context.mode === 'plain' && context.encryption === null)).toBe(true);
+                expect(currentnessCount() - beforeColdReads).toBe(1);
+                const beforeStorageEffect = currentnessCount();
+                await expect(resolveAccountStorageContext(credentials, { encryption: null, usage: 'fresh-authority' }))
+                    .resolves.toEqual({ mode: 'plain', encryption: null });
+                expect(currentnessCount() - beforeStorageEffect).toBe(1);
+                const afterStorageReads = currentnessCount();
                 const requestedRef = { ...ref, contractDigest: rowReadContract.contractDigest };
                 await expect(createActivePluginCollectionClientForContractRef({ ref: requestedRef, fresh: false }))
                     .resolves.toMatchObject({ status: 'ready' });
@@ -306,7 +419,7 @@ describe('Collection raw read acquisition after caller admission', () => {
                     dataReads += currentnessCount() - beforeData;
                     expect.soft(currentnessCount() - beforeData).toBe(0);
                 }
-                const ordinaryReads = currentnessCount() - warmReads;
+                const ordinaryReads = currentnessCount() - afterStorageReads;
                 console.info('ACCOUNT-CURRENTNESS-F1 cost', { mode: 'plain', identityTags: 20, dataOperations: 40, tagReads, dataReads });
                 expect(ordinaryReads).toBe(20);
                 expect(home.requests.filter(request => request.path === '/v1/plugins/data/get')).toHaveLength(20);
@@ -353,6 +466,57 @@ describe('Collection raw read acquisition after caller admission', () => {
                 expect(home.httpRequests).toHaveLength(beforeRetired);
                 expect(dataReads).toBe(0);
             }, () => currentness);
+        } finally { installDisconnectedServerSocketBoundary(); }
+    });
+
+    it.each(['plain', 'e2ee'] as const)('one Load more identity burst makes %s currentness GETs once at most', async mode => {
+        const secret = new Uint8Array(32).fill(47);
+        const material = { type: 'legacy' as const, secret };
+        const currentness: AccountEncryptionCurrentnessResponse = mode === 'plain'
+            ? createPlainAccountEncryptionCurrentnessFixture()
+            : { mode, version: 1, updatedAt: 1, signingKeyFingerprint: 'signing-key-1', contentKeyFingerprint:
+                convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint),
+                recipientEnvelopeReadiness: { status: 'available' } };
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        try {
+            await withRowReadClient(() => undefined, async (client, home) => {
+                const network = await import('@/utils/system/runtimeFetch');
+                const fetch = network.runtimeFetch;
+                let gate = createDeferred<void>();
+                // Hold the external HTTP response so all ten row identities overlap.
+                const boundary = vi.spyOn(network, 'runtimeFetch').mockImplementation(async (input, init) => {
+                    const response = await fetch(input, init);
+                    if (new URL(String(input)).pathname === '/v1/account/encryption/currentness') await gate.promise;
+                    return response;
+                });
+                const count = () => home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
+                try {
+                    for (let burst = 0; burst < 2; burst++) {
+                        const before = count();
+                        const cancelled = new AbortController();
+                        const reads = Promise.all(Array.from({ length: 10 }, (_, index) => client.identityTag(
+                            { field: 'id', components: [`row-${burst}-${index}`] },
+                            index === 0 ? { signal: cancelled.signal } : undefined)));
+                        if (mode === 'plain') {
+                            await vi.waitFor(() => expect(count()).toBeGreaterThan(before));
+                            await vi.dynamicImportSettled();
+                            if (burst === 1) cancelled.abort();
+                        }
+                        gate.resolve();
+                        const results = await reads;
+                        expect(results).toHaveLength(10);
+                        results.forEach((result, index) => expect(result).toMatchObject(
+                            mode === 'plain' && burst === 1 && index === 0
+                                ? { status: 'unavailable', reason: 'operation-cancelled' } : { status: 'ready' }));
+                        expect(count() - before).toBe(mode === 'plain' ? 1 : 0);
+                        // The next press starts a new read: no settled identity is retained.
+                        gate = createDeferred<void>();
+                    }
+                } finally { gate.resolve(); boundary.mockRestore(); }
+            }, () => currentness, mode === 'e2ee'
+                ? { accountMode: mode, credentials: { token: createServedHomeAccountToken('alice'), secret: Buffer.from(secret).toString('base64url') } }
+                : undefined);
         } finally { installDisconnectedServerSocketBoundary(); }
     });
 
@@ -675,6 +839,96 @@ describe('mounted Collection contract acquisition through real Home authority', 
             const pager = await uiData.openCollectionQuery({ collectionId: declaration.id, uiQueryId: 'all', parameters: {} });
             pager.dispose();
         } finally { await home.dispose(); }
+    });
+    it('keeps 32 mounted Collection surfaces idle for 180 seconds and reads only the changed row among 16 Collections', async () => {
+        const definitions = Array.from({ length: 16 }, (_, index) => defineAccountCollection({ ...definition, id: `links-${index}` }));
+        const contracts = definitions.map(definition => normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(definition.id, definition)),
+        }));
+        const refs = contracts.map(({ pluginId, collectionId, schemaVersion, contractDigest }) =>
+            ({ pluginId, collectionId, schemaVersion, contractDigest }));
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://collection-idle.test', accountId: 'alice' }],
+            route: request => {
+                if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {},
+                    capabilities: { accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2,
+                        currentProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
+                }));
+                if (request.path === '/v1/plugins/data/contract') {
+                    const requested = PluginCollectionContractReadRequestV1Schema.parse(request.body);
+                    const contract = contracts.find(contract => contract.collectionId === requested.ref.collectionId);
+                    if (!contract) throw new Error('Unexpected Collection');
+                    return Response.json({ access: 'writable', contract });
+                }
+                if (request.path === '/v1/plugins/data/get') return Response.json({ row: null, absenceEpoch: 0 });
+                return undefined;
+            },
+        });
+        const surfaces: Array<Readonly<{ unmount(): Promise<void> }>> = [];
+        const reads: Promise<unknown>[] = [];
+        try {
+            recordAccountStoredContentServerRequirements({ serverUrl: home.homes.home!.serverUrl,
+                requirements: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
+                    declarationTransport: 'http-header-and-socket-auth-v1' },
+            });
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the real Account lifetime');
+            const readAvailability = () => createPluginAccountAvailabilityReader({ scope: lifetime.scope, snapshot: {
+                availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                    availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                    intent: { pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: refs, revision: 'one' },
+                    release: { ref: { pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                        normalizedManifest: manifest, collectionContracts: refs, uiSlots: [],
+                        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }, uiArtifacts: [],
+                } }],
+            } });
+            for (const definition of definitions) {
+                for (const rowId of ['link', 'other']) {
+                    const collection = createPluginUiAccountStorageScope({ pluginId, accountLifetime: lifetime, readAvailability }).collection(definition);
+                    await expect(collection.get(rowId)).resolves.toBeNull();
+                    surfaces.push(await renderHook(() => {
+                        React.useEffect(() => {
+                            const watch = collection.watch({ kind: 'row', rowId }, () => {
+                                const read = collection.get(rowId);
+                                void read.catch(() => undefined);
+                                reads.push(read);
+                            });
+                            return () => watch.dispose();
+                        }, []);
+                    }));
+                }
+            }
+            const before = home.requests.length;
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(home.requests.slice(before).filter(request => request.path.startsWith('/v1/plugins/data/'))).toEqual([]);
+            const contract = contracts[0]!;
+            const notice = (cursor: number, rowIds: string[]) => ({ cursor, kind: 'pluginDomain',
+                entityId: `pluginDomain/${pluginId}/data-collection/${contract.collectionId}`, changedAt: cursor,
+                hint: { pluginDomain: 'dataCollection', pluginId, collectionId: contract.collectionId,
+                    contractDigest: contract.contractDigest, revision: cursor, rowIds },
+            });
+            publishActivePluginCollectionChanges(Array.from({ length: 1_000 }, (_, index) => notice(index + 1, [`unrelated-${index}`])));
+            expect(reads).toEqual([]);
+            publishActivePluginCollectionChanges([notice(1_001, ['link'])]);
+            await expect(Promise.all(reads)).resolves.toEqual([null]);
+            const requests = home.requests.slice(before).filter(request => request.path === '/v1/plugins/data/get' || request.path === '/v1/plugins/data/query');
+            expect(requests).toHaveLength(1);
+            expect(requests[0]?.body).toMatchObject({ pluginId, collectionId: contract.collectionId, rowId: 'link' });
+            // A precise successor replaces an unseen publication in the
+            // coalesced feed. Both row watches must catch up, even though the
+            // successor names neither row. An observed predecessor is quiet.
+            const precise = (cursor: number, previousCursor: number) => ({ ...notice(cursor, ['unrelated']),
+                hint: { ...notice(cursor, ['unrelated']).hint, indexChanges: { previousCursor, keys: [] } } });
+            publishActivePluginCollectionChanges([precise(1_003, 1_002)]);
+            await expect(Promise.all(reads)).resolves.toEqual([null, null, null]);
+            publishActivePluginCollectionChanges([precise(1_004, 1_003)]);
+            expect(reads).toHaveLength(3);
+        } finally {
+            vi.useRealTimers();
+            for (const surface of surfaces) await surface.unmount();
+            await Promise.allSettled(reads);
+            await home.dispose();
+        }
     });
     it('serves the public Account storage scope without a Machine and retires its real cursor watch', async () => {
         let enabled = true;
@@ -999,5 +1253,58 @@ describe('mounted Collection contract acquisition through real Home authority', 
                 .rejects.toMatchObject({ code: 'plugin_collection_undeclared' });
             expect(home.requests.filter(request => request.path === '/v1/plugins/data/contract')).toHaveLength(3);
         } finally { gate.resolve(); await home.dispose(); }
+    });
+
+    it('re-admits each operation without re-delivering a held contract and still reads a changed contract', async () => {
+        const heldDefinition = defineAccountCollection({ id: 'held-links', schemaVersion: 1,
+            schema: defineProtocolObject({ id: defineProtocolString() }, { policy: 'closed' }),
+            rowIdField: 'id', identityFields: ['id'], serverReadable: ['id'], indexes: [], relations: [] });
+        const changedDefinition = defineAccountCollection({ ...heldDefinition, schemaVersion: 2,
+            schema: defineProtocolObject({ id: defineProtocolString(), title: defineProtocolString() }, { policy: 'closed' }) });
+        const [held, changed] = [heldDefinition, changedDefinition].map(entry => normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(projectPluginAccountCollectionDeclaration(entry.id, entry)) }));
+        const refOf = (entry: typeof held) => ({ pluginId, collectionId: entry!.collectionId,
+            schemaVersion: entry!.schemaVersion, contractDigest: entry!.contractDigest });
+        const served = new Map([held!, changed!].map(entry => [entry.contractDigest, entry]));
+        let allowed = true;
+        let contractBodies = 0;
+        // Mirrors the server contract route: exact-ref admission on every read,
+        // and the contract body only when the caller does not hold that digest.
+        const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: 'https://collection-held-contract.test', accountId: 'alice' }],
+            route: request => {
+                if (request.path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {},
+                    capabilities: { accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: 2,
+                        currentProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } } }));
+                if (request.path !== '/v1/plugins/data/contract') return undefined;
+                const requested = PluginCollectionContractReadRequestV1Schema.parse(request.body);
+                const contract = served.get(requested.ref.contractDigest);
+                if (!allowed || !contract) return Response.json({ error: 'collection_unavailable' }, { status: 404 });
+                if (requested.omitContract === true) return Response.json({ access: 'writable' });
+                contractBodies += 1;
+                return Response.json({ access: 'writable', contract });
+            },
+        });
+        try {
+            recordAccountStoredContentServerRequirements({ serverUrl: home.homes.home!.serverUrl,
+                requirements: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
+                    declarationTransport: 'http-header-and-socket-auth-v1' } });
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Home must establish its real Account lifetime');
+            const contractReads = () => home.requests.filter(request => request.path === '/v1/plugins/data/contract').length;
+            for (let operation = 0; operation < 8; operation++) {
+                const admitted = await createActivePluginCollectionClientForContractRef({ accountLifetime: lifetime, ref: refOf(held) });
+                expect(admitted).toMatchObject({ status: 'ready', access: 'writable', contract: { contractDigest: held!.contractDigest } });
+            }
+            // Admission stays per operation; only the unchanged body is not re-delivered.
+            expect({ contractReads: contractReads(), contractBodies }).toEqual({ contractReads: 8, contractBodies: 1 });
+
+            const upgraded = await createActivePluginCollectionClientForContractRef({ accountLifetime: lifetime, ref: refOf(changed) });
+            expect(upgraded).toMatchObject({ status: 'ready', contract: { contractDigest: changed!.contractDigest, schemaVersion: 2 } });
+            expect(contractBodies).toBe(2);
+
+            allowed = false;
+            const refused = await createActivePluginCollectionClientForContractRef({ accountLifetime: lifetime, ref: refOf(held) });
+            expect(refused.status).not.toBe('ready');
+        } finally { await home.dispose(); }
     });
 });

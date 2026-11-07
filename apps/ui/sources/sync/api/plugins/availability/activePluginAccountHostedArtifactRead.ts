@@ -1,13 +1,9 @@
-import {
-    isDataKeyAuthCredentials,
-    type AuthCredentials,
-} from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { decodeBase64 } from '@/encryption/base64';
 import { randomUUID } from '@/platform/randomUUID';
-import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
+import { fetchAccountEncryptionCurrentness, fetchAccountEncryptionIdentity } from '@/sync/api/account/apiAccountEncryptionMode';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { resolveCurrentAccountScopedCryptoMaterialSnapshot } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -33,9 +29,8 @@ import {
     type AccountStoredContentCompatibilityHeaderResolution,
 } from '@/sync/http/accountStoredContentCompatibility';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityUiArtifactPublishActionInputV1Schema,
@@ -160,6 +155,10 @@ export type ActivePluginAccountHostedArtifactReaderDependencies = Readonly<{
         scope: ServerAccountScope;
         activeRequest: (path: string, init?: RequestInit) => Promise<Response>;
     }>) => Promise<AccountHostedArtifactRequestAuthority>;
+    readAccountIdentity: (input: Readonly<{
+        authority: AccountHostedArtifactRequestAuthority;
+        signal: AbortSignal;
+    }>) => Promise<AccountEncryptionIdentity>;
     readAccountCurrentness: (input: Readonly<{
         authority: AccountHostedArtifactRequestAuthority;
         signal: AbortSignal;
@@ -297,6 +296,7 @@ function publishResponseMatchesExpected(input: Readonly<{
 async function resolveCurrentE2eeArtifactEnvelopeKeySealer(input: Readonly<{
     authority: AccountHostedArtifactRequestAuthority;
     currentness: AccountEncryptionCurrentnessResponse;
+    serverId: string;
 }>): Promise<AccountArtifactEnvelopeKeySealer | null> {
     if (
         input.currentness.mode !== 'e2ee'
@@ -307,24 +307,7 @@ async function resolveCurrentE2eeArtifactEnvelopeKeySealer(input: Readonly<{
     }
     try {
         const credentials = input.authority.credentials;
-        const material = resolveAccountScopedCryptoMaterialFromCredentials(credentials);
-        const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
-            accountEncryptionMode: 'e2ee',
-            material,
-            ...(isDataKeyAuthCredentials(credentials)
-                ? {
-                    dataKeyPublicKey: decodeBase64(
-                        credentials.encryption.publicKey,
-                        'base64',
-                    ),
-                }
-                : {}),
-        });
-        if (
-            convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
-                snapshot.contentPublicKeyFingerprint,
-            ) !== input.currentness.contentKeyFingerprint
-        ) {
+        if (!resolveCurrentAccountScopedCryptoMaterialSnapshot({ credentials, accountCurrentness: input.currentness, serverId: input.serverId })) {
             return null;
         }
         const encryption = await createEncryptionFromAuthCredentials(credentials);
@@ -362,6 +345,16 @@ function defaultDependencies(): ActivePluginAccountHostedArtifactReaderDependenc
                             authority.context.encryption!.decryptEncryptionKey(value),
                     }
                     : {}),
+            });
+        },
+        readAccountIdentity: async ({ authority, signal }) => {
+            if (!authority.credentials) {
+                throw new Error('Account credentials are unavailable for Artifact identity.');
+            }
+            return await fetchAccountEncryptionIdentity(authority.credentials, {
+                request: authority.request,
+                signal,
+                usage: 'identity',
             });
         },
         readAccountCurrentness: async ({ authority, signal }) => {
@@ -461,9 +454,9 @@ export function createActivePluginAccountHostedArtifactReader(
                 return unavailable(input.signal?.aborted ? 'operation_cancelled' : 'account_scope_changed');
             }
 
-            let accountCurrentness: AccountEncryptionCurrentnessResponse;
+            let accountCurrentness: AccountEncryptionIdentity;
             try {
-                accountCurrentness = await dependencies.readAccountCurrentness({
+                accountCurrentness = await dependencies.readAccountIdentity({
                     authority,
                     signal: controller.signal,
                 });
@@ -710,6 +703,7 @@ export function createActivePluginAccountHostedArtifactPublisher(
                 ? await resolveCurrentE2eeArtifactEnvelopeKeySealer({
                     authority,
                     currentness: accountCurrentness,
+                    serverId: input.accountLifetime.scope.serverId,
                 })
                 : undefined;
             const currentnessAfterKeyResolution = readCurrentnessCode({
@@ -837,19 +831,19 @@ export async function publishActivePluginAccountPackageAssets(
     return await installedPublisher.publishPackageAssets(input);
 }
 
-function archiveFileSet(
+function openedArchive(
     result: ActivePluginAccountHostedArtifactReadResult,
-): ReadonlyMap<string, Uint8Array> | null {
+): PluginUiArtifactArchiveOpenedV1 | null {
     if (result.kind === 'unavailable' && (result.code === 'transport_unavailable' || result.code === 'response_invalid')) {
         throw new PluginArtifactSourceError(result.code);
     }
-    return result.kind === 'available' ? result.value.archive.files : null;
+    return result.kind === 'available' ? result.value.archive : null;
 }
 
 /**
  * Account hosting as one Artifact byte source: it reads the selected digest's
- * archive through the current qualified link. It owns neither source order,
- * integrity, nor cache custody.
+ * archive through the current qualified link and hands the lease the opener's
+ * verified result. It owns neither source order nor cache custody.
  */
 export function createActivePluginAccountHostedArtifactSourceCandidate(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
@@ -873,7 +867,7 @@ export function createActivePluginAccountHostedArtifactSourceCandidate(input: Re
                 expectedAccountArtifactId: accountHostedArtifactId,
                 expectedArtifactDigest: artifact.digest,
             });
-            return !signal?.aborted && input.accountLifetime.isCurrent() ? archiveFileSet(result) : null;
+            return !signal?.aborted && input.accountLifetime.isCurrent() ? openedArchive(result) : null;
         },
     });
 }
@@ -903,7 +897,7 @@ export function createActivePluginAccountHostedArtifactTargetSourceCandidate(inp
                 },
                 expectedArtifactDigest: artifact.digest,
             });
-            return !signal?.aborted && input.accountLifetime.isCurrent() ? archiveFileSet(result) : null;
+            return !signal?.aborted && input.accountLifetime.isCurrent() ? openedArchive(result) : null;
         },
     });
 }
