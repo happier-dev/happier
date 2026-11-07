@@ -5272,6 +5272,7 @@ const homeIndexTranslations = { pt: {
         sessionsWorking: ({ count }) => (count === 1 ? '1 sessão a trabalhar' : `${count} sessões a trabalhar`),
         sessionsNeedYou: ({ count }) => `${count} precisa${count === 1 ? '' : 'm'} de você`,
         inboxWaiting: ({ count }) => `${count} aguardando na caixa de entrada`,
+        inboxWaiting: ({ count }) => `${count} aguardando na caixa de entrada`,
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 sessão aguarda sua resposta' : `${count} sessões aguardam sua resposta`,
         nothingRunning: 'Nada em execução ainda',
         customize: 'Personalizar',

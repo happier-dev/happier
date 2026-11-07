@@ -183,7 +183,7 @@ export function HomeHubSpecimen(props: Readonly<{ machines: boolean; firstRun?: 
                 <PageHeader
                     title={t('homeIndex.greetingAfternoon', { name: 'Leeroy' })}
                     alwaysShowTitle
-                    details={<HubStatusLineView working={2} needsYou={1} home={renderHomeLine} />}
+                    details={<HubStatusLineView working={2} inbox={1} home={renderHomeLine} />}
                     actions={(
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
                             {props.brief || phone ? null : <VoiceBriefButtonView onOpen={NEVER_OPENS} />}

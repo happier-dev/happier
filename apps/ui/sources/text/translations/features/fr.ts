@@ -5270,6 +5270,7 @@ const homeIndexTranslations = { fr: {
         sessionsWorking: ({ count }) => (count === 1 ? '1 session en cours' : `${count} sessions en cours`),
         sessionsNeedYou: ({ count }) => `${count} attend${count === 1 ? '' : 'ent'} ta réponse`,
         inboxWaiting: ({ count }) => `${count} en attente dans ta boîte de réception`,
+        inboxWaiting: ({ count }) => `${count} en attente dans ta boîte de réception`,
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 session attend ta réponse' : `${count} sessions attendent ta réponse`,
         nothingRunning: 'Rien en cours pour l’instant',
         customize: 'Personnaliser',

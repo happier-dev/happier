@@ -21,6 +21,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
@@ -45,7 +46,7 @@ import { machinePageHref, machinesIndexHref } from '@/components/settings/machin
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
 
 import type { HubSectionProps } from './hubSectionProps';
-import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
+import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 
 const MARK_SIZE = 18;
 
@@ -57,18 +58,22 @@ export type AttentionItem = Readonly<{
     onAction: (event?: unknown) => void;
 }>;
 
-/** The same pending-Session census as Home's status line and Inbox badge; never reclassified here. */
-function useSessionsNeedingAttention(): AttentionItem[] {
-    const { needsYouCount } = useActivityOverviewSummary();
+/**
+ * What waits in the Inbox, as its own count: the rail badge's number, so approvals, runs, notices and
+ * Sessions are all in it and Home never keeps a smaller census of its own. A count still being read
+ * is left out rather than shown as nothing.
+ */
+function useInboxNeedingAttention(): AttentionItem[] {
+    const { count } = useSharedInboxSummary();
     const router = useRouter();
     const { theme } = useUnistyles();
-    return React.useMemo(() => needsYouCount > 0 ? [{
-        key: 'sessions',
+    return React.useMemo(() => count !== null && count > 0 ? [{
+        key: 'inbox',
         mark: <Icon name="chat-circle" size={MARK_SIZE} color={theme.colors.text.secondary} />,
-        title: t('homeIndex.sessionsAwaitingResponse', { count: needsYouCount }),
+        title: t('homeIndex.inboxWaiting', { count }),
         actionLabel: t('settingsOverview.review'),
         onAction: () => router.push('/inbox'),
-    }] : [], [needsYouCount, router, theme.colors.text.secondary]);
+    }] : [], [count, router, theme.colors.text.secondary]);
 }
 
 /**
@@ -253,47 +258,70 @@ function useSetupNeedingAttention(): AttentionItem[] {
  * absent when nothing does: a healthy setup is quiet.
  */
 export const HubAttentionSection = React.memo(function HubAttentionSection(props: HubSectionProps) {
-    const sessions = useSessionsNeedingAttention();
+    const inbox = useInboxNeedingAttention();
     const machines = useMachinesNeedingYou();
     const setup = useSetupNeedingAttention();
-    return <HubAttentionList items={[...sessions, ...machines, ...setup]} menu={props.menu} />;
+    return <HubAttentionList items={[...inbox, ...machines, ...setup]} menu={props.menu} />;
 });
 
 /**
- * Settings › Overview's list: what setup can repair, on the same rows. Waiting Sessions belong to Home and
- * the Inbox, and the page's own Machines section already says which machines need the person.
+ * Settings › Overview's list: what setup can repair, on the same rows. What waits in the Inbox belongs to
+ * Home and the Inbox, and the page's own Machines section already says which machines need the person.
  */
-export const SettingsAttentionSection = React.memo(function SettingsAttentionSection() {
-    return <HubAttentionList items={useSetupNeedingAttention()} />;
+export const SettingsAttentionSection = React.memo(function SettingsAttentionSection(props: Readonly<{
+    /** Without the rail (phones) the Settings pages lead: several needs fold into one row that opens them. */
+    folded?: boolean;
+}>) {
+    return <HubAttentionList items={useSetupNeedingAttention()} folded={props.folded} />;
 });
 
 
 /** The needs-you rows as drawn, each with its action (the `/dev/home` fixture draws it too). Absent when empty. */
-export function HubAttentionList(props: Readonly<{ items: readonly AttentionItem[]; menu?: React.ReactNode }>) {
+export function HubAttentionList(props: Readonly<{ items: readonly AttentionItem[]; menu?: React.ReactNode; folded?: boolean }>) {
     const { items } = props;
+    const { theme } = useUnistyles();
     if (items.length === 0) return null;
-    return (
-        <ItemGroup title={t('settingsOverview.attentionTitle')} action={props.menu}>
-            {items.map((item) => (
-                <Item
-                    key={item.key}
-                    testID={`settings-overview-attention.${item.key}`}
-                    title={item.title}
-                    // The mark shares the section's leading column (brand marks are identity; the
-                    // glyph marks are the same size), so it is a leading element, not a wrapped icon.
-                    leftElement={item.mark}
-                    showChevron={false}
-                    rightElement={(
-                        <RoundButton
-                            testID={`settings-overview-attention.${item.key}.action`}
-                            size="small"
-                            display="secondary"
-                            title={item.actionLabel}
-                            onPress={item.onAction}
-                        />
-                    )}
-                />
-            ))}
+    const rows = items.map((item) => <HubAttentionRow key={item.key} item={item} />);
+    // Folded, several needs are one row that says what they share and how many, opening them in place;
+    // a single need is already one row, so it stands as itself.
+    if (props.folded && items.length > 1) return (
+        <ItemGroup density="compact">
+            <CountedDisclosureItem
+                testID="settings-overview-attention.folded"
+                title={t('settingsOverview.attentionTitle')}
+                count={items.length}
+                icon={<Icon name="warning-circle" size={MARK_SIZE} color={theme.colors.text.secondary} />}
+            >
+                {rows}
+            </CountedDisclosureItem>
         </ItemGroup>
+    );
+    return (
+        // One line per thing that needs the person: the list shape, so the block stays short above the cards.
+        <ItemGroup title={props.folded ? undefined : t('settingsOverview.attentionTitle')} action={props.menu} density="compact">
+            {rows}
+        </ItemGroup>
+    );
+}
+
+function HubAttentionRow({ item }: Readonly<{ item: AttentionItem }>) {
+    return (
+        <Item
+            testID={`settings-overview-attention.${item.key}`}
+            title={item.title}
+            // The mark shares the section's leading column (brand marks are identity; the
+            // glyph marks are the same size), so it is a leading element, not a wrapped icon.
+            leftElement={item.mark}
+            showChevron={false}
+            rightElement={(
+                <RoundButton
+                    testID={`settings-overview-attention.${item.key}.action`}
+                    size="small"
+                    display="secondary"
+                    title={item.actionLabel}
+                    onPress={item.onAction}
+                />
+            )}
+        />
     );
 }

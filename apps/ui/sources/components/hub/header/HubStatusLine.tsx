@@ -1,42 +1,49 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { Text } from '@/components/ui/text/Text';
+import { useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
 import { t } from '@/text';
 
 /**
- * Home's one line about the present, under the greeting: "◌ 2 sessions working · ● 1 needs you",
- * from the same Activity summary the Inbox badge reads (never a second classification), then which
- * Home this is. It always holds one line, so the page below never moves as sessions start and stop.
- * It is a leaf: a session change re-renders this line only.
+ * Home's one line about the present, under the greeting: "◌ 2 sessions working · ● 8 in your Inbox",
+ * then which Home this is. What waits for the person is the Inbox's own count (the rail badge's, so
+ * approvals and every other Inbox item are in it), never a second classification, and it opens the
+ * Inbox. It always holds one line, so the page below never moves as sessions start and stop. It is a
+ * leaf: a session or Inbox change re-renders this line only.
  */
 export const HubStatusLine = React.memo(function HubStatusLine(props: Readonly<{
     home: (detail: 'full' | 'name') => React.ReactNode;
-    /** Needs your attention is on this page and says it: the line does not say it again. */
-    needsYouListed?: boolean;
 }>) {
     const summary = useActivityOverviewSummary();
-    return <HubStatusLineView working={summary.workingCount} needsYou={summary.needsYouCount} isDataReady={summary.isDataReady} needsYouListed={props.needsYouListed} home={props.home} />;
+    const inbox = useSharedInboxSummary();
+    const router = useRouter();
+    const openInbox = React.useCallback(() => router.push('/inbox'), [router]);
+    return <HubStatusLineView working={summary.workingCount} inbox={inbox.count} onOpenInbox={openInbox} isDataReady={summary.isDataReady} home={props.home} />;
 });
 
 /**
  * The line as drawn for given counts (the `/dev/home` fixture draws it too): what is working and
- * what needs the person, then which Home this is. With nothing running it says so, then the Home and
- * where it lives in full (J1).
+ * what waits in the Inbox, then which Home this is. With nothing running and nothing waiting it says
+ * so, then the Home and where it lives in full (J1). An Inbox count still being read is left out.
  */
 export function HubStatusLineView(props: Readonly<{
     working: number;
-    needsYou: number;
+    /** The Inbox's count; `null` while it is still being read. */
+    inbox: number | null;
+    onOpenInbox?: () => void;
     isDataReady?: boolean;
-    needsYouListed?: boolean;
     home: (detail: 'full' | 'name') => React.ReactNode;
 }>) {
-    const { working, needsYou } = props;
-    const idle = working === 0 && needsYou === 0;
+    const { working } = props;
+    const inbox = props.inbox ?? 0;
+    const idle = working === 0 && inbox === 0;
+    const inboxLabel = t('homeIndex.inboxWaiting', { count: inbox });
     return (
         <View testID="home-hub.status" style={styles.line}>
             {idle && props.isDataReady !== false ? <Text style={styles.text} numberOfLines={1}>{t('homeIndex.nothingRunning')}</Text> : null}
@@ -49,15 +56,21 @@ export function HubStatusLineView(props: Readonly<{
                     <Text style={styles.text}>{t('homeIndex.sessionsWorking', { count: working })}</Text>
                 </View>
             ) : null}
-            {needsYou > 0 && props.needsYouListed !== true ? (
-                <View testID="home-hub.status.needsYou" style={styles.fact}>
+            {inbox > 0 ? (
+                <HappierPressable
+                    testID="home-hub.status.inbox"
+                    accessibilityRole="link"
+                    accessibilityLabel={inboxLabel}
+                    onPress={props.onOpenInbox}
+                    style={styles.fact}
+                >
                     <WorkStatusGlyph
                         status={{ state: 'needs_you', bucket: 'needs_you', tone: 'attention', word: '', attentionType: null, glyph: 'attention' }}
                         testIDSuffix="home-status"
                         animationEnabled={false}
                     />
-                    <Text style={styles.text}>{t('homeIndex.sessionsNeedYou', { count: needsYou })}</Text>
-                </View>
+                    <Text style={styles.link}>{inboxLabel}</Text>
+                </HappierPressable>
             ) : null}
             {props.home(idle ? 'full' : 'name')}
         </View>
@@ -80,6 +93,12 @@ const styles = StyleSheet.create((theme) => ({
     },
     text: {
         color: theme.colors.text.secondary,
+        ...happierPageTextMetrics('pageDescription'),
+        fontVariant: ['tabular-nums'],
+    },
+    // The one fact here that goes somewhere: the same words, in the stronger ink a link takes on this line.
+    link: {
+        color: theme.colors.text.primary,
         ...happierPageTextMetrics('pageDescription'),
         fontVariant: ['tabular-nums'],
     },

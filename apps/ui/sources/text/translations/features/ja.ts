@@ -5270,6 +5270,7 @@ const homeIndexTranslations = { ja: {
         sessionsWorking: ({ count }) => `${count} 件のセッションが作業中`,
         sessionsNeedYou: ({ count }) => `${count} 件があなたを待っています`,
         inboxWaiting: ({ count }) => `受信箱に ${count} 件`,
+        inboxWaiting: ({ count }) => `受信箱に ${count} 件`,
         sessionsAwaitingResponse: ({ count }) => `${count} 件のセッションがあなたの回答を待っています`,
         nothingRunning: 'まだ実行中のものはありません',
         customize: 'カスタマイズ',

@@ -9,6 +9,8 @@ export type HomeIndexTranslation = Readonly<{
     greetingEveningAnonymous: string;
     sessionsWorking: (params: Readonly<{ count: number }>) => string;
     sessionsNeedYou: (params: Readonly<{ count: number }>) => string;
+    /** What waits in the Inbox (its own count), on Home's status line and its attention list. */
+    inboxWaiting: (params: Readonly<{ count: number }>) => string;
     sessionsAwaitingResponse: (params: Readonly<{ count: number }>) => string;
     nothingRunning: string;
     customize: string;
@@ -43,6 +45,7 @@ export const homeIndexTranslationsEnglish = { en: {
         greetingEveningAnonymous: 'Good evening',
         sessionsWorking: ({ count }) => (count === 1 ? '1 session working' : `${count} sessions working`),
         sessionsNeedYou: ({ count }) => (count === 1 ? '1 needs you' : `${count} need you`),
+        inboxWaiting: ({ count }) => (count === 1 ? '1 waiting in your Inbox' : `${count} waiting in your Inbox`),
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 session is waiting for your response' : `${count} sessions are waiting for your response`,
         nothingRunning: 'Nothing running yet',
         customize: 'Customize',

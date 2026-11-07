@@ -5265,6 +5265,7 @@ const homeIndexTranslations = { 'zh-Hans': {
         sessionsWorking: ({ count }) => `${count} 个会话正在工作`,
         sessionsNeedYou: ({ count }) => `${count} 个需要你`,
         inboxWaiting: ({ count }) => `收件箱中有 ${count} 项`,
+        inboxWaiting: ({ count }) => `收件箱中有 ${count} 项`,
         sessionsAwaitingResponse: ({ count }) => `${count} 个会话正在等待你的回复`,
         nothingRunning: '暂无运行中的会话',
         customize: '自定义',

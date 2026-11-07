@@ -5283,6 +5283,7 @@ const homeIndexTranslations = { pl: {
         sessionsWorking: ({ count }) => `Pracujące sesje: ${count}`,
         sessionsNeedYou: ({ count }) => `Czeka na Ciebie: ${count}`,
         inboxWaiting: ({ count }) => `W skrzynce czeka: ${count}`,
+        inboxWaiting: ({ count }) => `W skrzynce czeka: ${count}`,
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 sesja czeka na Twoją odpowiedź'
             : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)
                 ? `${count} sesje czekają na Twoją odpowiedź` : `${count} sesji czeka na Twoją odpowiedź`,

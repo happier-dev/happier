@@ -5272,6 +5272,7 @@ const homeIndexTranslations = { ca: {
         sessionsWorking: ({ count }) => (count === 1 ? '1 sessió treballant' : `${count} sessions treballant`),
         sessionsNeedYou: ({ count }) => `${count} et necessita${count === 1 ? '' : 'n'}`,
         inboxWaiting: ({ count }) => `${count} a la Safata`,
+        inboxWaiting: ({ count }) => `${count} a la Safata`,
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 sessió espera la teva resposta' : `${count} sessions esperen la teva resposta`,
         nothingRunning: 'Encara no hi ha res en marxa',
         customize: 'Personalitza',

@@ -202,7 +202,7 @@ export const SettingsView = React.memo(function SettingsView() {
                 start box; attention keeps what setup repairs, setup is a checklist with its progress. Every
                 section drops out when it has nothing to say. */}
             <HubIdentityHeader />
-            <SettingsAttentionSection />
+            <SettingsAttentionSection folded={!railVisible} />
             {/* Without the rail the Settings pages lead, right under what needs you (owner 11-06, as in 0.2). */}
             {railVisible ? null : <SettingsCatalogGroups {...belowFoldProps} />}
             <HubSetupSection presentation="checklist" />

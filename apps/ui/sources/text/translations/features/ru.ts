@@ -5292,6 +5292,7 @@ const homeIndexTranslations = { ru: {
         sessionsWorking: ({ count }) => `Работает сессий: ${count}`,
         sessionsNeedYou: ({ count }) => `Ждут вас: ${count}`,
         inboxWaiting: ({ count }) => `Ждут во входящих: ${count}`,
+        inboxWaiting: ({ count }) => `Ждут во входящих: ${count}`,
         sessionsAwaitingResponse: ({ count }) => count % 10 === 1 && count % 100 !== 11 ? `${count} сеанс ждёт вашего ответа`
             : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)
                 ? `${count} сеанса ждут вашего ответа` : `${count} сеансов ждут вашего ответа`,

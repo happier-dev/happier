@@ -5265,6 +5265,7 @@ const homeIndexTranslations = { 'zh-Hant': {
         sessionsWorking: ({ count }) => `${count} 個工作階段正在工作`,
         sessionsNeedYou: ({ count }) => `${count} 個需要你`,
         inboxWaiting: ({ count }) => `收件匣中有 ${count} 項`,
+        inboxWaiting: ({ count }) => `收件匣中有 ${count} 項`,
         sessionsAwaitingResponse: ({ count }) => `${count} 個工作階段正在等待你的回覆`,
         nothingRunning: '尚無執行中的工作階段',
         customize: '自訂',

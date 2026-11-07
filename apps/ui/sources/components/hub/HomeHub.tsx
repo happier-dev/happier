@@ -55,7 +55,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import { HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
 import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
 import { HomeBotFaces } from './HomeBotFaces';
@@ -603,8 +603,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
     // Only the acknowledged Account layout can place the composer in the hero.
     const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
-    // Needs your attention says what waits, with its actions; the status line keeps it only when that list is hidden.
-    const needsYouListed = layout.sections.some(section => section.id === HOME_HUB_ATTENTION_SECTION_ID && !section.hidden);
     // Desktop Brief me sits on the greeting's line (lab B0): the hero's headline, or the page header's
     // actions; phone gives it the page's width under the Bots' faces (lab B0p).
     const briefEntry = phone ? null : <VoiceBriefButton open={briefOpen} />;
@@ -714,16 +712,17 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                         showComposer={heroComposer} />
                     {/* The first thing under the hero, whichever it is: Rise's body ends above this. */}
                     <View testID="home-hub.below-hero" ref={heroFrame.nextRef} onLayout={heroFrame.measure}>
-                        {heroComposer ? <HomeHubReadingColumn><HomeCompletedBots /></HomeHubReadingColumn> : null}
-                        {/* The present and Customize sit on the column the hero and the composer share. */}
+                        {/* The present and Customize sit on the column the hero and the composer share, right under the
+                            composer: what waits in the Inbox is said at the fold, before what finished while you were away. */}
                         <HomeHubReadingColumn>
                             <ItemGroup surface="none">
                                 <View style={styles.statusRow}>
-                                    <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} /></View>
+                                    <View style={styles.statusLine}><HubStatusLine home={renderHomeLine} /></View>
                                     {headerActions}
                                 </View>
                             </ItemGroup>
                         </HomeHubReadingColumn>
+                        {heroComposer ? <HomeHubReadingColumn><HomeCompletedBots /></HomeHubReadingColumn> : null}
                     </View>
                     </React.Fragment> : (
                         // The greeting heads the reading column it shares with the composer, Needs your
@@ -734,7 +733,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                                 <PageHeader
                                     title={title}
                                     alwaysShowTitle
-                                    details={<HubStatusLine home={renderHomeLine} needsYouListed={needsYouListed} />}
+                                    details={<HubStatusLine home={renderHomeLine} />}
                                     actions={headerActions}
                                 />
                             </NavigationLargeTitleProvider>

@@ -58,7 +58,8 @@ const SERVICE_DESCRIPTOR = ConnectedAccountUiProjectionEntryV1Schema.parse({
 });
 
 // Collect the real UI closure before a case starts its observable interaction deadline.
-const { HubAttentionSection, SettingsAttentionSection } = await import('./HubAttentionSection');
+const { HubAttentionSection, HubAttentionList, SettingsAttentionSection } = await import('./HubAttentionSection');
+const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -129,6 +130,7 @@ afterEach(async () => {
     connection = undefined;
     if (initialServerId) await setActiveServerId(initialServerId);
     if (state.serverId) await removeServerProfile(state.serverId);
+    state.serverId = '';
     if (studioId) await removeServerProfile(studioId);
     studioId = undefined;
     clearDaemonMergedProjectionCacheForTests();
@@ -209,7 +211,8 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
     expect(resolveFreshMachineAdministrationExecutionTarget(target, { accountScope: lifetime.scope }))
         .toMatchObject({ machine: { id: machine.id }, serverId: home.id });
     rpc.mockClear();
-    const screen = await renderScreen(<Section />);
+    // Home reads the app shell's one Inbox summary, as the routed page does under the navigator.
+    const screen = await renderScreen(<InboxSummaryProvider><Section /></InboxSummaryProvider>);
     await flushHookEffects({ cycles: 3 });
     if (state.loginState === 'logged_out') await vi.waitFor(() =>
         expect(screen.findByTestId('settings-overview-attention.agent:claude.action')).not.toBeNull());
@@ -274,7 +277,7 @@ describe('HubAttentionSection', () => {
         expect(rpc).not.toHaveBeenCalled();
     });
 
-    it('offers the same pending Sessions as the Home count and opens their Inbox', async () => {
+    it("offers what waits in the Inbox with the Inbox's own count and opens it", async () => {
         state.loginState = 'logged_in';
         state.profile = {};
         const { screen, push } = await renderSection();
@@ -289,13 +292,16 @@ describe('HubAttentionSection', () => {
                 ordinarySessionListMembershipByServerId: { [state.serverId]: [session.id] } });
         });
         await flushHookEffects({ cycles: 2 });
-        const action = screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action'
+        await vi.waitFor(() => expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.inbox.action'
+            && typeof node.props.onPress === 'function')).not.toHaveLength(0));
+        const action = screen.findAll((node) => node.props?.testID === 'settings-overview-attention.inbox.action'
             && typeof node.props.onPress === 'function')[0];
-        expect(action).toBeDefined();
+        // The row carries the Inbox's own count (the text module is the testkit's key echo here).
+        expect(screen.getTextContent()).toContain('homeIndex.inboxWaiting(count=1)');
         action!.props.onPress();
         expect(push).toHaveBeenCalledWith('/inbox');
         await act(async () => { storage.setState({ sessions: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} }); });
-        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action')).toHaveLength(0);
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.inbox.action')).toHaveLength(0);
     });
     it('lists a signed-out agent and an expired account, each with the action that fixes it', async () => {
         state.loginState = 'logged_out';
@@ -341,7 +347,7 @@ describe('HubAttentionSection', () => {
                 ordinarySessionListMembershipByServerId: { [state.serverId]: [session.id] } });
         });
         await flushHookEffects({ cycles: 2 });
-        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action')).toHaveLength(0);
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.inbox.action')).toHaveLength(0);
         expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.machines.action')).toHaveLength(0);
         expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.service:happier.example/subscription/acct-1.action').length).toBeGreaterThan(0);
     });
@@ -383,5 +389,25 @@ describe('HubAttentionSection', () => {
         expect(retry).toBeTruthy();
         await retry!.props.onPress();
         expect(refreshed).toHaveBeenCalledWith(studio.id);
+    });
+});
+
+// The drawn list alone: no Home, Account or Machine fixture.
+describe('HubAttentionList folded', () => {
+    it('folded, keeps one need as its own row and folds several into one counted row that opens them', async () => {
+        const item = (key: string, title: string) => ({ key, mark: null, title, actionLabel: 'Fix', onAction: vi.fn() });
+        const single = await renderScreen(<HubAttentionList folded items={[item('updates', '2 updates available')]} />);
+        expect(single.findByTestId('settings-overview-attention.updates.action')).not.toBeNull();
+        expect(single.findByTestId('settings-overview-attention.folded')).toBeNull();
+        const screen = await renderScreen(<HubAttentionList folded items={[item('updates', '2 updates available'), item('home:studio', 'Studio is not answering')]} />);
+        const folded = screen.findByTestId('settings-overview-attention.folded');
+        expect(folded).not.toBeNull();
+        expect(screen.getTextContent()).toContain('2');
+        expect(screen.findByTestId('settings-overview-attention.updates.action')).toBeNull();
+        const header = () => screen.findAllByTestId('settings-overview-attention.folded.header').find((node) => typeof node.type === 'string' && typeof node.props.onPress === 'function')!;
+        await act(async () => { header().props.onPress(); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId('settings-overview-attention.updates.action')).not.toBeNull();
+        expect(screen.findByTestId('settings-overview-attention.home:studio.action')).not.toBeNull();
     });
 });

@@ -5272,6 +5272,7 @@ const homeIndexTranslations = { es: {
         sessionsWorking: ({ count }) => (count === 1 ? '1 sesión trabajando' : `${count} sesiones trabajando`),
         sessionsNeedYou: ({ count }) => `${count} te necesita${count === 1 ? '' : 'n'}`,
         inboxWaiting: ({ count }) => `${count} esperando en la Bandeja`,
+        inboxWaiting: ({ count }) => `${count} esperando en la Bandeja`,
         sessionsAwaitingResponse: ({ count }) => count === 1 ? '1 sesión espera tu respuesta' : `${count} sesiones esperan tu respuesta`,
         nothingRunning: 'Nada en marcha todavía',
         customize: 'Personalizar',
