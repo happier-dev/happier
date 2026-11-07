@@ -7,7 +7,7 @@ import type {
   DeploymentReadDemandV1,
   DeploymentReceiptFactsV1,
 } from '@happier-dev/deployments';
-import type { DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol/v1';
+import { isDeploymentRollbackSourceEligibleV1, type DeploymentMachineResultV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -95,6 +95,8 @@ export const DeploymentReceiptDetail = React.memo(
       cancel: ReturnType<typeof createDeploymentActions>['cancel'] | null;
       /** The Action owner's Deploy, for "Deploy again" of a failed receipt's own commit. */
       deploy: ReturnType<typeof createDeploymentActions>['deploy'] | null;
+      /** Resumes this teardown receipt through the same Action owner. */
+      teardown?: ReturnType<typeof createDeploymentActions>['teardown'] | null;
       promote?: ReturnType<typeof createDeploymentActions>['promote'] | null;
       onOpenPromotionReceipt?: (environmentId: string, deploymentId: string) => void;
       phone: boolean;
@@ -191,7 +193,7 @@ export const DeploymentReceiptDetail = React.memo(
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
     const recovery = deployment.state === 'failed' && facts.failure
       ? readDeploymentFailureRecoveryV1(facts.failure.code, facts.failure) : null;
-    const { rollback, cancel, deploy, promote, environmentId, phone } = props;
+    const { rollback, cancel, deploy, teardown, promote, environmentId, phone } = props;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const canRollBack = retainedTarget !== null && rollback !== null;
@@ -208,17 +210,42 @@ export const DeploymentReceiptDetail = React.memo(
     const canCancel = cancel !== null && value.cancellable === true;
     // An accepted cancel settles on this receipt; it stays pressed until the receipt read stops offering it.
     const cancelRequested = cancelPress.outcome?.kind === 'receipt' || cancelPress.outcome?.kind === 'started';
-    const pressCancel = () => {
+    const requestCancel = () => {
       if (!cancel) return;
       void cancelPress.press(() => cancel({ environmentId, deploymentId: deployment.id,
         expectedReceiptRevision: deployment.revision }), { openReceipt: false });
     };
+    // The receipt owner's phase fact (T2-RECEIPT): when the previous version is or may be stopped, Cancel asks first,
+    // because cancelling never brings it back. No phase check here; without the fact, Cancel runs at once.
+    const consequence = value.cancellationConsequence;
+    const pressCancel = () => {
+      if (!consequence) { requestCancel(); return; }
+      Modal.alert(t('projects.deployments.receipt.cancelAskTitle'),
+        consequence.kind === 'service-down-until-rollback'
+          ? t('projects.deployments.receipt.cancelStopped') : t('projects.deployments.receipt.cancelMayStop'), [
+          { text: t('projects.deployments.receipt.cancelKeepGoing'), style: 'cancel' },
+          { text: t('projects.deployments.receipt.cancelAnyway'), style: 'destructive', onPress: requestCancel },
+        ]);
+    };
     // Deploy again builds this receipt's own commit through the Environment's runtime link, as "Redeploy" does.
     const availability = environmentValue ? deploymentDeployAvailability(environmentValue) : null;
     const againSha = content.sourceIntent?.kind === 'repository' ? content.sourceIntent.sha : null;
-    const againTarget = deployment.state === 'failed' && deploy !== null && againSha !== null
+    // A kept-for-rollback release restarts as it was (Roll back); one that was cleaned up can only be built again
+    // (lab rollback/pruned). Its history must be complete before "not kept" is a fact rather than a gap.
+    const releasePruned = isDeploymentRollbackSourceEligibleV1(deployment.state) && activeId !== null
+      && activeId !== deployment.id && facts.retainedRollbackTarget === null && facts.retainedPreviousCount !== null;
+    const retryTeardown = deployment.operation === 'teardown'
+      && (deployment.state === 'failed' || deployment.state === 'outcome_unknown')
+      && teardown != null && content.teardown !== undefined;
+    const againTarget = deployment.operation !== 'teardown' && (deployment.state === 'failed' || releasePruned) && deploy !== null && againSha !== null
       && availability?.kind === 'ready' ? availability.targetLinkId : null;
     const pressAgain = () => {
+      if (retryTeardown && teardown && content.teardown) {
+        const reason = content.teardown.reason;
+        void againPress.press(() => teardown({ environmentId, targetLinkId: deployment.targetLinkId,
+          requestKey: deployment.requestKey, reason }));
+        return;
+      }
       if (!deploy || !againTarget || !againSha) return;
       void againPress.press(() => deploy({ environmentId, targetLinkId: againTarget, sha: againSha }));
     };
@@ -320,13 +347,13 @@ export const DeploymentReceiptDetail = React.memo(
       />
     ) : null;
     // A failed receipt's way forward beside Roll back (lab d3 `failed` header).
-    const againButton = againTarget ? (
+    const againButton = retryTeardown || (againTarget && deployment.state === 'failed') ? (
       <RoundButton
         testID="project-deployments.receipt.deployAgain"
         size="normal"
         display="secondary"
         style={phone ? styles.phoneAction : undefined}
-        title={t('projects.deployments.deployAgain')}
+        title={retryTeardown ? t('common.retry') : t('projects.deployments.deployAgain')}
         leading={<Icon name="arrow-clockwise" size={14} color={theme.colors.text.secondary} />}
         loading={againPress.running}
         disabled={againPress.running || againPress.reviewPending}
@@ -401,7 +428,23 @@ export const DeploymentReceiptDetail = React.memo(
             {outcomeBanner(rollbackPress, 'rollback')}
             {/* A phone pressed these in its pinned bar, so their answers show there. */}
             {phone ? null : outcomeBanner(cancelPress, 'cancel')}
-            {phone ? null : outcomeBanner(againPress, 'deploy')}
+            {phone && !releasePruned ? null : outcomeBanner(againPress, 'deploy')}
+            {releasePruned && againTarget && againSha ? (
+              <AttentionBanner
+                testID="project-deployments.receipt.pruned"
+                tone="neutral"
+                title={t('projects.deployments.receipt.prunedTitle')}
+                description={t('projects.deployments.receipt.prunedBody', { sha: deploymentSourceLabel(content) ?? againSha.slice(0, 7) })}
+                action={{
+                  label: t('projects.deployments.receipt.deployShaAgain', { sha: deploymentSourceLabel(content) ?? againSha.slice(0, 7) }),
+                  icon: 'arrow-clockwise',
+                  testID: 'project-deployments.receipt.pruned.deployAgain',
+                  loading: againPress.running,
+                  disabled: againPress.running || againPress.reviewPending,
+                  onPress: pressAgain,
+                }}
+              />
+            ) : null}
             {deployment.state === 'failed' ? (
               <AttentionBanner
                 testID="project-deployments.receipt.outcome.failed"

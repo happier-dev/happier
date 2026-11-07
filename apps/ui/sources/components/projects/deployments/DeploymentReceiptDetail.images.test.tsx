@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { createDeploymentReadControllerV1, projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import {
   createDeploymentEnvironmentDetailV1,
   createDeploymentReceiptDetailV1,
@@ -184,6 +184,48 @@ describe('Receipt → failed', () => {
       // The canonical next action opens where the cause is fixed.
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
       expect(opened).toEqual([readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination]);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
+describe('Receipt → release cleaned up', () => {
+  it('offers to deploy that commit again, never a rollback, once complete history says it was not kept', async () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    // Nothing is kept for rollback; another release serves now.
+    const detail = { ...base, content: { ...base.content, retainPreviousDeployments: 0 },
+      targetLinks: base.targetLinks.map(link => ({ ...link, targetLink: { ...link.targetLink, activeDeploymentId: 'serving' } })) };
+    const old = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'old', state: 'succeeded' }) });
+    if (old.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'serving', state: 'succeeded',
+      requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }),
+      content: { ...old.content, sourceIntent: { ...old.content.sourceIntent, sha: 'b'.repeat(40) } } });
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [serving, old]
+        .map(row => ({ ...row.deployment, source: projectDeploymentReceiptFactsV1(row).source })), nextCursor: null } }),
+      readReceipt: async (_scope, _environmentId, id) => ({ ok: true, value: id === 'serving' ? serving : old }),
+    } });
+    const deploy = vi.fn(async () => ({ ok: true as const, deploymentId: 'fresh' }));
+    const screen = await renderScreen(
+      <AccountNoticeInvestigationBoundary>
+        <DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+          deploymentId="old" environmentName="Staging" demand={{ mounted: true, visible: true, focused: true }}
+          accountId={scope.accountId} serverId={scope.serverId} readLogs={null} onBack={() => {}} rollback={vi.fn() as never}
+          cancel={null} deploy={deploy as never} phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }}
+          onOpenReceipt={() => {}} />
+      </AccountNoticeInvestigationBoundary>,
+    );
+    try {
+      await act(async () => {
+        await Promise.race([
+          waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.receipt.pruned'), node => node !== null),
+          new Promise(resolve => setTimeout(resolve, 5_000)),
+        ]);
+      });
+      expect(screen.findByTestId('project-deployments.receipt.rollback')).toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.receipt.pruned.deployAgain');
+      expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ sha: old.content.sourceIntent.sha }));
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

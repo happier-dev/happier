@@ -22,8 +22,13 @@ import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
-import { deploymentRailState, deploymentStepWorkStatus } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentRailState, deploymentStepWorkStatus } from './deploymentPresentation';
+import { useDeploymentCollection } from './useDeploymentReads';
 import { currentStep, deploymentStepCaption } from './DeploymentStepStrip';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
@@ -132,6 +137,18 @@ export const DeploymentEnvironmentCollection = React.memo(
   },
 );
 
+/**
+ * Which Environment the page opens once one is deleted: the nearest sibling of the same Project in the rail's
+ * order (the next one, else the previous one), or none for the empty state. Never another Project's Environment.
+ */
+export function environmentAfterDelete(items: readonly Pick<EnvironmentItem, 'environment'>[], deletedId: string,
+  projectSourceId: string): string | null {
+  const siblings = items.filter((item) => item.environment.projectSourceId === projectSourceId || item.environment.id === deletedId);
+  const index = siblings.findIndex((item) => item.environment.id === deletedId);
+  if (index === -1) return null;
+  return siblings[index + 1]?.environment.id ?? siblings[index - 1]?.environment.id ?? null;
+}
+
 /** Production is said once: a name that already says it ("Production API") needs no qualifier repeating it. */
 function productionQualifier(protection: EnvironmentItem['environment']['protection'], title: string): string | null {
   if (protection !== 'production') return null;
@@ -197,6 +214,48 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
     };
   });
+}
+
+/**
+ * Choose one destination Environment (Promote to, Connect to an app): the Account's collection read, demanded only
+ * while this chooser is open, one radio row per eligible Environment, its finite pages and its load states.
+ */
+export function DeploymentEnvironmentChooser(props: Readonly<{
+  controller: DeploymentReadControllerV1;
+  testID: string;
+  title: string;
+  /** Which Environments can be the destination: the caller's capability rule (and never the source itself). */
+  eligible: (item: EnvironmentItem) => boolean;
+  selectedId: string | null;
+  onSelect: (item: EnvironmentItem) => void;
+  disabled: boolean;
+  loadFailedTitle: string;
+  emptyTitle: string;
+  emptyBody: string;
+}>) {
+  const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true });
+  const rows = (collection.snapshot.value?.items ?? []).filter(props.eligible);
+  const failure = collection.snapshot.failure;
+  return (
+    <ItemGroup title={props.title}>
+      {rows.map(row => <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
+        title={row.title} accessibilityRole="radio" selected={props.selectedId === row.environment.id} disabled={props.disabled}
+        showChevron={false} onPress={() => props.onSelect(row)} />)}
+      {collection.hasPreviousPage ? <SectionActionButton testID={`${props.testID}.previous`}
+        icon="caret-left" title={t('common.previous')} disabled={props.disabled} onPress={collection.previousPage} /> : null}
+      {collection.hasNextPage ? <SectionActionButton testID={`${props.testID}.next`}
+        icon="caret-right" title={t('common.next')} disabled={props.disabled} onPress={collection.nextPage} /> : null}
+      {collection.snapshot.status === 'unavailable' ? <SurfaceStateCard testID={`${props.testID}.loadFailed`}
+        size="line" kind="error" title={props.loadFailedTitle}
+        reason={deploymentActionRefusalRemedy(failure?.code ?? 'deployment_unavailable')}
+        diagnosticCode={failure?.code ?? null}
+        {...(failure?.retryable ? { action: { label: t('common.retry'), onPress: () => { void collection.refresh(); } } } : {})} />
+        : collection.snapshot.status !== 'ready' && rows.length === 0 ? <SurfaceStateCard size="line" kind="loading"
+            testID={`${props.testID}.loading`} title={t('projects.deployments.loading')} />
+        : rows.length === 0 ? <SurfaceStateCard size="line" kind="empty" testID={`${props.testID}.empty`}
+            title={props.emptyTitle} reason={props.emptyBody} /> : null}
+    </ItemGroup>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

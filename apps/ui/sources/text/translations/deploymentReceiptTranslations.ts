@@ -34,6 +34,16 @@ type ReceiptCopy = Readonly<{
   operationTeardown: string;
   imagesTitle: string;
   imagesDescription: string;
+  prunedTitle: string;
+  prunedBody: (params: { sha: string }) => string;
+  deployShaAgain: (params: { sha: string }) => string;
+  rebuildTitle: string;
+  rebuildBody: string;
+  rebuildAction: string;
+  cancelAskTitle: string;
+  cancelMayStop: string;
+  cancelKeepGoing: string;
+  cancelAnyway: string;
 }>;
 
 export const deploymentReceiptTranslations = {
@@ -71,6 +81,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Stop and remove",
     imagesTitle: "Images",
     imagesDescription: "The exact images this release ran. Rolling back to it starts these again.",
+    prunedTitle: "This release was cleaned up",
+    prunedBody: ({ sha }) => "It can’t restart as it was. Deploying {sha} again builds that commit fresh as a new deployment; the result can differ if a base image changed since.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Deploy {sha} again".replace('{sha}', sha),
+    rebuildTitle: "The exact images can’t reach this Environment",
+    rebuildBody: "Promoting can rebuild the same version there instead. A rebuild can differ if a base image changed. To promote the exact images, connect the servers or add a registry, then try again.",
+    rebuildAction: "Rebuild and promote",
+    cancelAskTitle: "Cancel this deploy?",
+    cancelMayStop: "The previous service may already have stopped. Cancelling can leave it down until you roll back.",
+    cancelKeepGoing: "Keep deploying",
+    cancelAnyway: "Cancel deploy",
   },
   "fr": {
     state: "État",
@@ -106,6 +126,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Arrêt et suppression",
     imagesTitle: "Images",
     imagesDescription: "Les images exactes de cette version. Revenir à elle les relance.",
+    prunedTitle: "Cette version a été nettoyée",
+    prunedBody: ({ sha }) => "Elle ne peut pas redémarrer telle quelle. Redéployer {sha} reconstruit ce commit dans un nouveau déploiement ; le résultat peut différer si une image de base a changé.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Redéployer {sha}".replace('{sha}', sha),
+    rebuildTitle: "Les images exactes ne peuvent pas atteindre cet environnement",
+    rebuildBody: "La promotion peut plutôt reconstruire la même version. Une reconstruction peut différer si une image de base a changé. Pour promouvoir les images exactes, reliez les serveurs ou ajoutez un registre, puis réessayez.",
+    rebuildAction: "Reconstruire et promouvoir",
+    cancelAskTitle: "Annuler ce déploiement ?",
+    cancelMayStop: "Le service précédent est peut-être déjà arrêté. Annuler peut le laisser arrêté jusqu’au retour arrière.",
+    cancelKeepGoing: "Continuer le déploiement",
+    cancelAnyway: "Annuler le déploiement",
   },
   "de": {
     state: "Status",
@@ -141,6 +171,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Stoppen und entfernen",
     imagesTitle: "Images",
     imagesDescription: "Die exakten Images dieser Version. Ein Zurücksetzen startet genau diese wieder.",
+    prunedTitle: "Diese Version wurde bereinigt",
+    prunedBody: ({ sha }) => "Sie kann nicht wie zuvor neu starten. {sha} erneut bereitzustellen baut diesen Commit neu als neue Bereitstellung; das Ergebnis kann abweichen, wenn sich ein Basis-Image geändert hat.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "{sha} erneut bereitstellen".replace('{sha}', sha),
+    rebuildTitle: "Die exakten Images erreichen diese Umgebung nicht",
+    rebuildBody: "Die Übernahme kann dieselbe Version stattdessen neu bauen. Ein Neubau kann abweichen, wenn sich ein Basis-Image geändert hat. Für die exakten Images verbinde die Server oder füge eine Registry hinzu und versuche es erneut.",
+    rebuildAction: "Neu bauen und übernehmen",
+    cancelAskTitle: "Diese Bereitstellung abbrechen?",
+    cancelMayStop: "Der vorherige Dienst ist vielleicht schon gestoppt. Ein Abbruch kann ihn bis zum Zurücksetzen gestoppt lassen.",
+    cancelKeepGoing: "Weiter bereitstellen",
+    cancelAnyway: "Bereitstellung abbrechen",
   },
   "es": {
     state: "Estado",
@@ -176,6 +216,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Detener y eliminar",
     imagesTitle: "Imágenes",
     imagesDescription: "Las imágenes exactas de esta versión. Volver a ella las inicia de nuevo.",
+    prunedTitle: "Esta versión se limpió",
+    prunedBody: ({ sha }) => "No puede reiniciarse tal como estaba. Volver a desplegar {sha} compila ese commit de nuevo como un despliegue nuevo; el resultado puede variar si cambió una imagen base.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Desplegar {sha} de nuevo".replace('{sha}', sha),
+    rebuildTitle: "Las imágenes exactas no llegan a este entorno",
+    rebuildBody: "La promoción puede recompilar la misma versión allí. Una recompilación puede variar si cambió una imagen base. Para promover las imágenes exactas, conecta los servidores o añade un registro y vuelve a intentarlo.",
+    rebuildAction: "Recompilar y promover",
+    cancelAskTitle: "¿Cancelar este despliegue?",
+    cancelMayStop: "Puede que el servicio anterior ya se haya detenido. Cancelar puede dejarlo detenido hasta que reviertas.",
+    cancelKeepGoing: "Seguir desplegando",
+    cancelAnyway: "Cancelar despliegue",
   },
   "it": {
     state: "Stato",
@@ -211,6 +261,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Arresta e rimuovi",
     imagesTitle: "Immagini",
     imagesDescription: "Le immagini esatte di questa versione. Ripristinarla le riavvia.",
+    prunedTitle: "Questa versione è stata ripulita",
+    prunedBody: ({ sha }) => "Non può ripartire com’era. Distribuire di nuovo {sha} ricompila quel commit come nuova distribuzione; il risultato può differire se un’immagine di base è cambiata.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Distribuisci di nuovo {sha}".replace('{sha}', sha),
+    rebuildTitle: "Le immagini esatte non raggiungono questo ambiente",
+    rebuildBody: "La promozione può invece ricompilare la stessa versione. Una ricompilazione può differire se un’immagine di base è cambiata. Per promuovere le immagini esatte, collega i server o aggiungi un registro, poi riprova.",
+    rebuildAction: "Ricompila e promuovi",
+    cancelAskTitle: "Annullare questa distribuzione?",
+    cancelMayStop: "Il servizio precedente potrebbe essere già fermo. Annullare può lasciarlo fermo finché non ripristini.",
+    cancelKeepGoing: "Continua la distribuzione",
+    cancelAnyway: "Annulla distribuzione",
   },
   "pt": {
     state: "Estado",
@@ -246,6 +306,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Parar e remover",
     imagesTitle: "Imagens",
     imagesDescription: "As imagens exatas desta versão. Reverter para ela inicia-as de novo.",
+    prunedTitle: "Esta versão foi limpa",
+    prunedBody: ({ sha }) => "Ela não pode reiniciar como estava. Implantar {sha} de novo compila esse commit como uma nova implantação; o resultado pode diferir se uma imagem base mudou.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Implantar {sha} de novo".replace('{sha}', sha),
+    rebuildTitle: "As imagens exatas não chegam a este ambiente",
+    rebuildBody: "A promoção pode recompilar a mesma versão lá. Uma recompilação pode diferir se uma imagem base mudou. Para promover as imagens exatas, conecte os servidores ou adicione um registro e tente de novo.",
+    rebuildAction: "Recompilar e promover",
+    cancelAskTitle: "Cancelar esta implantação?",
+    cancelMayStop: "O serviço anterior pode já ter parado. Cancelar pode deixá-lo parado até você reverter.",
+    cancelKeepGoing: "Continuar implantando",
+    cancelAnyway: "Cancelar implantação",
   },
   "ca": {
     state: "Estat",
@@ -281,6 +351,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Atura i elimina",
     imagesTitle: "Imatges",
     imagesDescription: "Les imatges exactes d’aquesta versió. Tornar-hi les torna a iniciar.",
+    prunedTitle: "Aquesta versió s’ha netejat",
+    prunedBody: ({ sha }) => "No es pot reiniciar tal com era. Tornar a desplegar {sha} compila aquest commit de nou com un desplegament nou; el resultat pot variar si ha canviat una imatge base.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Torna a desplegar {sha}".replace('{sha}', sha),
+    rebuildTitle: "Les imatges exactes no arriben a aquest entorn",
+    rebuildBody: "La promoció pot recompilar la mateixa versió allà. Una recompilació pot variar si ha canviat una imatge base. Per promoure les imatges exactes, connecta els servidors o afegeix un registre i torna-ho a provar.",
+    rebuildAction: "Recompila i promou",
+    cancelAskTitle: "Vols cancel·lar aquest desplegament?",
+    cancelMayStop: "Pot ser que el servei anterior ja s’hagi aturat. Cancel·lar pot deixar-lo aturat fins que revertis.",
+    cancelKeepGoing: "Continua desplegant",
+    cancelAnyway: "Cancel·la el desplegament",
   },
   "pl": {
     state: "Stan",
@@ -316,6 +396,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Zatrzymanie i usunięcie",
     imagesTitle: "Obrazy",
     imagesDescription: "Dokładne obrazy tej wersji. Przywrócenie jej uruchamia je ponownie.",
+    prunedTitle: "Ta wersja została usunięta",
+    prunedBody: ({ sha }) => "Nie może wystartować tak jak wcześniej. Ponowne wdrożenie {sha} buduje ten commit od nowa jako nowe wdrożenie; wynik może się różnić, jeśli zmienił się obraz bazowy.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Wdróż {sha} ponownie".replace('{sha}', sha),
+    rebuildTitle: "Dokładne obrazy nie docierają do tego środowiska",
+    rebuildBody: "Promowanie może zamiast tego zbudować tę samą wersję od nowa. Wynik może się różnić, jeśli zmienił się obraz bazowy. Aby promować dokładne obrazy, połącz serwery lub dodaj rejestr i spróbuj ponownie.",
+    rebuildAction: "Zbuduj i promuj",
+    cancelAskTitle: "Anulować to wdrożenie?",
+    cancelMayStop: "Poprzednia usługa mogła już zostać zatrzymana. Anulowanie może zostawić ją wyłączoną do czasu przywrócenia.",
+    cancelKeepGoing: "Kontynuuj wdrażanie",
+    cancelAnyway: "Anuluj wdrożenie",
   },
   "ru": {
     state: "Состояние",
@@ -351,6 +441,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "Остановка и удаление",
     imagesTitle: "Образы",
     imagesDescription: "Точные образы этой версии. Откат к ней снова запускает их.",
+    prunedTitle: "Эта версия очищена",
+    prunedBody: ({ sha }) => "Её нельзя перезапустить как было. Повторное развёртывание {sha} заново соберёт этот коммит как новое развёртывание; результат может отличаться, если изменился базовый образ.".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "Развернуть {sha} снова".replace('{sha}', sha),
+    rebuildTitle: "Точные образы недоступны этому окружению",
+    rebuildBody: "Продвижение может вместо этого заново собрать ту же версию. Результат может отличаться, если изменился базовый образ. Чтобы продвинуть точные образы, соедините серверы или добавьте реестр и повторите.",
+    rebuildAction: "Пересобрать и продвинуть",
+    cancelAskTitle: "Отменить это развёртывание?",
+    cancelMayStop: "Предыдущий сервис, возможно, уже остановлен. Отмена может оставить его остановленным до отката.",
+    cancelKeepGoing: "Продолжить развёртывание",
+    cancelAnyway: "Отменить развёртывание",
   },
   "ja": {
     state: "状態",
@@ -386,6 +486,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "停止して削除",
     imagesTitle: "イメージ",
     imagesDescription: "このリリースで動いた正確なイメージ。ここへロールバックすると、これらを再び起動します。",
+    prunedTitle: "このリリースはクリーンアップされました",
+    prunedBody: ({ sha }) => "元のままでは再起動できません。{sha} を再デプロイすると、そのコミットを新しいデプロイとして一から構築します。ベースイメージが変わっていると結果が異なる場合があります。".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "{sha} を再デプロイ".replace('{sha}', sha),
+    rebuildTitle: "正確なイメージがこの環境に届きません",
+    rebuildBody: "代わりに同じバージョンを再構築して昇格できます。ベースイメージが変わっていると結果が異なる場合があります。正確なイメージを昇格するには、サーバーを接続するかレジストリを追加してから再試行してください。",
+    rebuildAction: "再構築して昇格",
+    cancelAskTitle: "このデプロイをキャンセルしますか？",
+    cancelMayStop: "以前のサービスはすでに停止している可能性があります。キャンセルすると、ロールバックするまで停止したままになることがあります。",
+    cancelKeepGoing: "デプロイを続ける",
+    cancelAnyway: "デプロイをキャンセル",
   },
   "zh-Hans": {
     state: "状态",
@@ -421,6 +531,16 @@ export const deploymentReceiptTranslations = {
     operationTeardown: "停止并移除",
     imagesTitle: "镜像",
     imagesDescription: "此版本运行的确切镜像。回滚到此版本会重新启动它们。",
+    prunedTitle: "此版本已被清理",
+    prunedBody: ({ sha }) => "它无法按原样重新启动。重新部署 {sha} 会将该提交作为新部署重新构建；如果基础镜像已变化，结果可能不同。".replace('{sha}', sha),
+    deployShaAgain: ({ sha }) => "重新部署 {sha}".replace('{sha}', sha),
+    rebuildTitle: "确切的镜像无法到达此环境",
+    rebuildBody: "提升可以改为在那里重新构建同一版本。如果基础镜像已变化，重新构建的结果可能不同。要提升确切的镜像，请连接服务器或添加镜像仓库，然后重试。",
+    rebuildAction: "重新构建并提升",
+    cancelAskTitle: "取消此次部署？",
+    cancelMayStop: "之前的服务可能已经停止。取消可能会让它保持停止，直到你回滚。",
+    cancelKeepGoing: "继续部署",
+    cancelAnyway: "取消部署",
   },
 } satisfies Record<Exclude<SupportedLanguage, 'zh-Hant'>, ReceiptCopy>; // zh-Hant derives from zh-Hans (zh-HantOverrides).
 
