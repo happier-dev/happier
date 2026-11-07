@@ -93,6 +93,20 @@ function snapshotFor(
     });
 }
 
+describe('error-issue display identity', () => {
+    it('leads with the thrown message and the configured environment instead of the exception class and UUID', () => {
+        const row = fixtureRows()[0];
+        if (row === undefined) throw new Error('fixture must have a first row');
+        const snapshot = snapshotFor(row, { displayName: 'Storefront production' });
+        const published = buildPosthogPresentObservation({ snapshot });
+
+        expect(published.snapshot.title).toBe("Cannot read properties of undefined (reading 'id')");
+        expect(published.snapshot.summary).toBeUndefined();
+        expect(published.locator.displayPath).toBe('Storefront production');
+        expect(published.localRef.entryId).toBe(row.id);
+    });
+});
+
 describe('mapPosthogIssueState', () => {
     it('maps each native state and keeps the provider label visible', () => {
         expect(mapPosthogIssueState('active'))
@@ -199,13 +213,14 @@ describe('buildPosthogEntrySnapshot', () => {
             .not.toContain('4820');
     });
 
-    it('falls back name to description to a localized untitled label', () => {
+    it('falls back from the thrown message to the exception name to a localized untitled label', () => {
         const rows = fixtureRows();
         const named = rows[0] as PosthogIssueRow;
         const unnamed = rows[2] as PosthogIssueRow;
         const blank: PosthogIssueRow = { ...named, name: null, description: null };
 
-        expect(snapshotFor(named).title).toBe('TypeError');
+        expect(snapshotFor(named).title).toBe(named.description);
+        expect(snapshotFor({ ...named, description: '  ' }).title).toBe('TypeError');
         expect(snapshotFor(unnamed).title).toBe('unhandled promise rejection');
         expect(snapshotFor(blank).title).toBe('Untitled issue');
     });
@@ -216,7 +231,7 @@ describe('buildPosthogEntrySnapshot', () => {
 
         expect(snapshotFor(unnamed).description).toBeUndefined();
         expect(snapshotFor(rows[0] as PosthogIssueRow).description)
-            .toBe("Cannot read properties of undefined (reading 'id')");
+            .toBeUndefined();
     });
 
     it('omits a malformed timestamp rather than fabricating one', () => {
@@ -249,8 +264,8 @@ describe('buildPosthogEntrySnapshot with a pathological but provider-valid issue
     const pathological: PosthogIssueRow = {
         id: '00000000-0000-4000-8000-0000000000ff',
         // Astral-plane characters so a naive byte slice would split a code point.
-        name: '🧨'.repeat(5_000),
-        description: 'é'.repeat(50_000),
+        name: 'é'.repeat(50_000),
+        description: '🧨'.repeat(Math.floor(LOOSE_BOUNDS.textUtf8Bytes / utf8ByteLength('🧨')) + 1),
         nativeStatus: 'suppressed',
         firstSeenMs: Date.parse('2026-07-01T00:00:00.000Z'),
         lastSeenMs: Date.parse('2026-08-14T00:00:00.000Z'),
@@ -315,7 +330,7 @@ describe('single-line display projection', () => {
         // A PostHog exception name carries the thrown message, which routinely spans
         // lines. The strict target rejects a control-bearing result ATOMICALLY, so one
         // such row would discard every other issue on the same scan page.
-        const row = { ...fixtureRows()[0], name: 'TypeError: x is undefined\n  at load' };
+        const row = { ...fixtureRows()[0], name: 'TypeError: x is undefined\n  at load', description: null };
         const snapshot = snapshotFor(row, { bounds: PUBLISHED_BOUNDS });
 
         expect(snapshot.title).toBe('TypeError: x is undefined at load');
@@ -329,7 +344,7 @@ describe('single-line display projection', () => {
         )).not.toThrow();
     });
 
-    it('publishes a multi-line description as a one-line summary', () => {
+    it('publishes a multi-line thrown message as a one-line title without duplicating it in the summary', () => {
         const row = {
             ...fixtureRows()[0],
             name: 'Short name',
@@ -337,8 +352,9 @@ describe('single-line display projection', () => {
         };
         const snapshot = snapshotFor(row);
 
-        expect(snapshot.description).toBe('first frame second frame');
-        expect(SINGLE_LINE_V1.test(snapshot.description ?? '')).toBe(true);
+        expect(snapshot.title).toBe('first frame second frame');
+        expect(snapshot.description).toBeUndefined();
+        expect(SINGLE_LINE_V1.test(snapshot.title)).toBe(true);
     });
 
     it('publishes a control-bearing environment name as a one-line scope label', () => {

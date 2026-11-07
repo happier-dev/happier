@@ -114,7 +114,7 @@ export function buildPosthogPresentObservation(
         // No `webUrl` is emitted: the exact issue permalink template is not
         // characterized for self-hosted deployments, and a guessed link would send a
         // user to a URL this source never verified.
-        locator: { v: 1 },
+        locator: { v: 1, displayPath: snapshot.scopeLabel },
         snapshot: {
             v: 1,
             title: snapshot.title,

@@ -87,29 +87,18 @@ export function buildPosthogEntrySnapshot(input: PosthogSnapshotInput): PosthogE
     const { bounds } = input;
     let projectionTruncated = false;
 
-    // A PostHog exception name carries the thrown message, which routinely spans lines.
+    // Lead with the thrown message; the exception class remains in source-native detail.
     // Every V1 string is single-line and the target rejects a control-bearing result
     // ATOMICALLY, so the shared owner normalizes before this projection measures
     // anything. Nothing survives normalization only when the provider supplied nothing
     // renderable, which is what the localized fallback is for.
-    const rawTitle = input.row.name ?? input.row.description ?? '';
+    const rawTitle = input.row.description?.trim() ? input.row.description : input.row.name ?? '';
     const titleSource = rawTitle.trim().length === 0 ? input.untitledLabel : rawTitle;
     const projectedTitle = projectTriageDisplayTextV1(titleSource, bounds.textUtf8Bytes);
     const title = projectedTitle.value.length === 0
         ? projectTriageDisplayTextV1(input.untitledLabel, bounds.textUtf8Bytes)
         : projectedTitle;
     projectionTruncated = projectionTruncated || title.truncated;
-
-    // The description is omitted when it is the same string already used as the title.
-    const rawDescription = input.row.description;
-    const description = rawDescription !== null
-        && rawDescription.trim().length > 0
-        && rawDescription !== titleSource
-        ? projectTriageDisplayTextV1(rawDescription, bounds.textUtf8Bytes)
-        : null;
-    if (description !== null) {
-        projectionTruncated = projectionTruncated || description.truncated;
-    }
 
     const scopeLabel = buildPosthogScopeLabel(input.scope, bounds);
     projectionTruncated = projectionTruncated || scopeLabel.truncated;
@@ -123,9 +112,6 @@ export function buildPosthogEntrySnapshot(input: PosthogSnapshotInput): PosthogE
         kind: POSTHOG_ENTRY_KIND,
         locator: input.locator,
         title: title.value,
-        ...(description === null || description.value.length === 0
-            ? {}
-            : { description: description.value }),
         state: mapPosthogIssueState(input.row.nativeStatus),
         scopeLabel: scopeLabel.value,
         facts: projectedFacts.facts,

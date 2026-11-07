@@ -606,7 +606,7 @@ function SampleFooter({
                     : 'plugins.posthog.ui.sampleDisclosureUnreadable'}
                 fallback={controller.state.omittedRowCount === 0
                     ? SAMPLE_DISCLOSURE
-                    : `${SAMPLE_DISCLOSURE} {count} row(s) in this sample could not be read.`}
+                    : `${SAMPLE_DISCLOSURE} Unreadable rows in this sample: {count}.`}
                 values={{ count: controller.state.omittedRowCount }}
             />
             {/*
@@ -807,7 +807,7 @@ function StackTracePanel({
                         variant="micro"
                         tone="neutral"
                         valueKey="plugins.posthog.ui.sampleStackCounts"
-                        fallback="This stack belongs to one sampled occurrence, not to the latest one. {application} application frame(s), {other} other frame(s)."
+                        fallback="This stack belongs to one sampled occurrence, not to the latest one. Application frames: {application}; other frames: {other}."
                         values={{ application: trace.appFrameCount, other: trace.otherFrameCount }}
                     />
                     <SelectedEvidenceDisclosure input={input} controller={controller} />
