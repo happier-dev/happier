@@ -15,7 +15,7 @@ import {
     TriageReadConfiguredSourceInstancesResultV1Schema,
     type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -26,6 +26,8 @@ import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { readActiveConfiguredSourceRows } from '../corpus/configuration/readConfiguredSourceRows.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../internalTasks/identity.js';
+import { deriveConfiguredSourceInstanceTag } from '../corpus/identity/tags.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 import {
@@ -162,6 +164,37 @@ function createContext(input: Readonly<{
 const INPUT = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1 });
 
 describe('the caller-scoped configured-instance read', () => {
+    it('checks one exact private tuple with one get and no inventory walk, without disclosing foreign rows', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        const wanted = instanceRow({ source: FORGE, seed: 1 });
+        const foreign = instanceRow({ source: TRACKER, seed: 2 });
+        const inventory = [wanted, foreign, ...Array.from({ length: 98 }, (_, index) =>
+            instanceRow({ source: index % 2 === 0 ? FORGE : TRACKER, seed: index + 3 }))];
+        for (const row of inventory) {
+            const instanceTag = await deriveConfiguredSourceInstanceTag(collections.sourceInstances, {
+                source: row.configured.instance.source, binding: row.configured.binding,
+                localInstanceKey: row.configured.localInstanceKey,
+            });
+            control.sourceInstances.seed(toCorpusStoredValue({ ...row, instanceTag }));
+        }
+        const query = vi.fn(collections.sourceInstances.query);
+        const bounded = { ...collections, sourceInstances: { ...collections.sourceInstances, query } };
+        const context = createContext({ collections: bounded, caller: pluginCaller(FORGE.pluginId) });
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        const selected = { v: 1 as const, exact: wanted.configured };
+        expect(await handler(selected, context)).toEqual({ kind: 'read', status: 'complete',
+            instances: [{ v: 1, lifecycle: 'active', configured: wanted.configured }] });
+        expect(control.sourceInstances.getCallCount()).toBe(1);
+        expect(query).not.toHaveBeenCalled();
+        expect(await handler({ ...selected, exact: foreign.configured }, context))
+            .toEqual({ kind: 'read', status: 'complete', instances: [] });
+        expect(control.sourceInstances.getCallCount()).toBe(1);
+        expect(await handler({ ...selected, exact: { ...wanted.configured, instance: {
+            ...wanted.configured.instance, sourceInstanceId: foreign.configured.instance.sourceInstanceId,
+        } } }, context)).toEqual({ kind: 'read', status: 'complete', instances: [] });
+        expect(control.sourceInstances.getCallCount()).toBe(2);
+        expect(query).not.toHaveBeenCalled();
+    });
     it('filters uninstalled contributions from the host read without retiring their durable configuration', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
@@ -172,7 +205,7 @@ describe('the caller-scoped configured-instance read', () => {
         expect(result).toMatchObject({ kind: 'read', status: 'complete' });
         expect(result.kind === 'read' && result.instances.map(record => record.configured.instance.source)).toEqual([FORGE]);
         const retained = await readActiveConfiguredSourceRows(collections.sourceInstances);
-        expect(retained.rows.map(row => row.configured.instance.source)).toEqual([FORGE, TRACKER]);
+        expect(retained.rows.map(row => row.configured.instance.source)).toEqual([INTERNAL_TASK_SOURCE_V1, FORGE, TRACKER]);
     });
     it.each(['background', 'plugin'] as const)('does not treat an absent-caller %s surface as host Action authority', async (surface) => {
         const { collections } = createTestkitCorpusCollections();
@@ -289,7 +322,7 @@ describe('the caller-scoped configured-instance read', () => {
         expect(result).toEqual({ kind: 'invalidCaller' });
     });
 
-    it('asks a caller whose admitted view moved to read again rather than calling it invalid', async () => {
+    it('returns the once-admitted caller rows when the source view invalidates during resolution', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: FORGE, seed: 1 })));
 
@@ -302,9 +335,8 @@ describe('the caller-scoped configured-instance read', () => {
             }),
         );
 
-        // "You are not a configured source" and "ask again" are opposite
-        // sentences for a Settings page to render.
-        expect(result).toEqual({ kind: 'currentnessConflict' });
+        expect(result).toMatchObject({ kind: 'read', status: 'complete',
+            instances: [{ configured: configuredInstance(FORGE, 1) }] });
     });
 
     it('returns every caller-owned active and retired row instead of truncating at thirty-two', async () => {

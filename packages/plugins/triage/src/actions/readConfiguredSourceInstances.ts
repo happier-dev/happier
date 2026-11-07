@@ -14,14 +14,17 @@ import {
     CORPUS_SOURCE_INSTANCES_INDEX_ID,
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
-import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
+import { fromCorpusStoredRow, type CorpusRowV1 } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import {
     advanceConfiguredSourceCollectionCursor,
     configuredSourceInstanceIsOwnedBy,
+    readExactConfiguredSourceInstanceRow,
 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+import { projectInternalTaskSourceCatalogV1 } from '../internalTasks/configuration.js';
 
 /**
  * The caller-scoped configured-instance read.
@@ -41,10 +44,6 @@ import { resolveTriageCallerSources } from './callerSource.js';
 const INVALID_CALLER: TriageReadConfiguredSourceInstancesResultV1 = Object.freeze({
     kind: 'invalidCaller',
 });
-const CURRENTNESS_CONFLICT: TriageReadConfiguredSourceInstancesResultV1 = Object.freeze({
-    kind: 'currentnessConflict',
-});
-
 function recordFrom(row: CorpusSourceInstanceRowV1): TriageConfiguredSourceInstanceRecordV1 {
     return Object.freeze({
         v: 1,
@@ -90,7 +89,7 @@ export async function readTriageConfiguredSourceInstances(
     const options: PluginCancellationOptions | undefined = deps.signal
         ? { signal: deps.signal }
         : undefined;
-    const owned: TriageConfiguredSourceInstanceRecordV1[] = [];
+    const records: CorpusRowV1<CorpusSourceInstanceRowV1>[] = [];
     const sources = 'pluginId' in source ? [source] : source;
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
@@ -101,14 +100,14 @@ export async function readTriageConfiguredSourceInstances(
             ...(cursor === undefined ? {} : { cursor }),
         }, options);
         for (const stored of page.rows) {
-            const row = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(stored).value;
-            if (!sources.some((candidate) => configuredSourceInstanceIsOwnedBy(row, candidate))) continue;
-            owned.push(recordFrom(row));
+            records.push(fromCorpusStoredRow<CorpusSourceInstanceRowV1>(stored));
         }
         cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
-    return fitTriageConfiguredSourceInstancesResult(owned);
+    return fitTriageConfiguredSourceInstancesResult(projectInternalTaskSourceCatalogV1(records)
+        .filter(record => sources.some(candidate => configuredSourceInstanceIsOwnedBy(record.value, candidate)))
+        .map(record => recordFrom(record.value)));
 }
 
 export function createTriageReadConfiguredSourceInstancesActionHandler(): TriageDataActionHandler<
@@ -120,14 +119,21 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
             ? { signal: context.signal }
             : undefined;
         const resolution = await resolveTriageCallerSources(context, cancellation, input.source);
-        // The two refusals stay distinct: one says "you are not a configured
-        // source", the other says "ask again". Collapsing them would tell a
-        // Settings page whose admitted view moved mid-read that its own source
-        // is not configured.
         if (resolution.kind === 'invalidCaller') return INVALID_CALLER;
-        if (resolution.kind === 'currentnessConflict') return CURRENTNESS_CONFLICT;
 
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
+        if (input.exact !== undefined) {
+            const exact = input.exact;
+            // Resolve caller authority BEFORE deriving or reading another source's private row.
+            if (!resolution.callers.some(caller => sameTriageSourceIdentity(caller.source, exact.instance.source))) {
+                return fitTriageConfiguredSourceInstancesResult([]);
+            }
+            const stored = await readExactConfiguredSourceInstanceRow(sourceInstances, exact, cancellation);
+            const row = stored?.value ?? null;
+            return fitTriageConfiguredSourceInstancesResult(row !== null
+                && resolution.callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
+                ? [recordFrom(row)] : []);
+        }
         return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
             sourceInstances,
             ...(context.signal ? { signal: context.signal } : {}),

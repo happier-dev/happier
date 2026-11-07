@@ -46,6 +46,8 @@ export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 = Object.freeze({
 export const TriageReadConfiguredSourceInstancesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     source: PluginContributionIdentityV1Schema.optional(),
+    /** Existing private tuple witness for currentness reads; never a new stored identity. */
+    exact: TriageConfiguredSourceInstanceV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReadConfiguredSourceInstancesInputV1 = ReturnType<
     typeof TriageReadConfiguredSourceInstancesInputV1Schema.parse

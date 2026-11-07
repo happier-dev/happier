@@ -4,6 +4,7 @@ import {
     defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolUnion,
+    TriageIdentifierV1ProtocolSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageConfiguredSourceInstanceV1Schema,
@@ -25,9 +26,8 @@ export const TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1 = 'entries/read-
  * observation, is already in the reader's device-local projection. Both paths
  * compose the strict input through the one boundary builder.
  *
- * Mounted self and authenticated host agent/MCP/CLI/API callers use this exact
- * contract. The handler enforces provenance and source admission; a supplied
- * entry/source address never grants another plugin access to private config.
+ * Same-Account callers use this exact contract. The handler enforces admitted
+ * source/kind selection and configured-instance correspondence.
  */
 
 export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
@@ -40,6 +40,8 @@ export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
      * choosing "the first" would silently show a different provider's truth.
      */
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
+    /** A known private row address; the stored row still owns identity and lifecycle. */
+    sourceInstanceRowId: TriageIdentifierV1ProtocolSchema.optional(),
     /** Absent reads the first linked-Session page; present continues it opaquely. */
     linkedSessionsCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });

@@ -1,4 +1,5 @@
 import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
     PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
@@ -12,7 +13,7 @@ import {
     type TriageConfiguredSourceInstanceV1,
     type TriageEntryRefV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -35,6 +36,7 @@ import {
 } from './entryDetailProtocol.js';
 import { createTriageReadEntryDetailActionHandler } from './readEntryDetail.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
+import { readTriageEntryDetailState } from '../ui/detail/useTriageEntryDetail.js';
 
 /**
  * The durable half of one mounted detail input.
@@ -111,6 +113,7 @@ function createContext(input: Readonly<{
     collections: CorpusCollectionsV1;
     callerPluginId?: string;
     hostSurface?: PluginAccountActionContext['surface'];
+    relationFailure?: Error;
 }>): PluginAccountActionContext {
     return {
         signal: new AbortController().signal,
@@ -123,11 +126,14 @@ function createContext(input: Readonly<{
                         contributor: { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId },
                         descriptor: { v: 1, purpose: 'triage-source', displayName: 'Example source', kinds: [
                             { id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
-                        ] }, operations: {},
+                        ] }, operations: input.relationFailure === undefined ? {} : {
+                            readSessionLinks: { role: 'readSessionLinks' }, linkSession: { role: 'linkSession' },
+                        },
                     } as unknown as TriageAdmittedSourceV1] }),
                     dispose: () => {},
                 }),
             },
+            actions: { executeAdmittedTargetedOperation: async () => { throw input.relationFailure; } },
             storage: {
                 account: {
                     collection: (definition: PluginAccountCollectionDefinition) => (
@@ -165,6 +171,64 @@ async function seedTwoConnections(): Promise<Readonly<{ collections: CorpusColle
 }
 
 describe('the entry detail read', () => {
+    it.each(['present', 'wrongId', 'retired', 'wrongSource', 'missing', 'denied'] as const)(
+        'resolves a known row address without catalog discovery when it is %s', async mode => {
+            const { collections, control } = createTestkitCorpusCollections();
+            const sourceInstanceRowId = `a${'0'.repeat(42)}`;
+            const configured = configuredInstance({ source: mode === 'wrongSource' ? OTHER_SOURCE : SOURCE,
+                sourceInstanceId: mode === 'wrongId' ? INSTANCE_B : INSTANCE_A, token: 'canonical' });
+            if (mode !== 'missing') control.sourceInstances.seed(toCorpusStoredValue(instanceRow({
+                tag: sourceInstanceRowId, configured, ...(mode === 'retired' ? { lifecycle: 'retired' } : {}),
+            })));
+            for (let index = 0; index < 200; index++) control.sourceInstances.seed(toCorpusStoredValue(instanceRow({
+                tag: String(index).padStart(43, 'b'), configured: configuredInstance({ source: OTHER_SOURCE,
+                    sourceInstanceId: `22222222-2222-4222-8222-${String(index).padStart(12, '0')}`, token: `unrelated-${index}` }),
+            })));
+            const get = vi.spyOn(collections.sourceInstances, 'get');
+            const query = vi.spyOn(collections.sourceInstances, 'query');
+            if (mode === 'denied') get.mockRejectedValueOnce(new Error('Account row read denied'));
+            const context = createContext({ collections, hostSurface: 'ui' });
+            const state = await readTriageEntryDetailState({ executeAction: async (_action, input) => (
+                await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context)
+            ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A, sourceInstanceRowId }, observation: {
+                entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+            } });
+            expect(state).toMatchObject({ kind: mode === 'present' ? 'ready' : mode === 'denied' ? 'unreachable' : 'unavailable' });
+            if (state.kind === 'ready') expect(state.input.instance).toEqual(configured);
+            expect(get).toHaveBeenCalledTimes(1);
+            expect(query).not.toHaveBeenCalled();
+        },
+    );
+
+    it('lets another same-Account plugin load the configured entry detail', async () => {
+        const { collections } = await seedTwoConnections();
+        const context = createContext({ collections, callerPluginId: OTHER_SOURCE.pluginId });
+        const state = await readTriageEntryDetailState({ executeAction: async (_action, input) => (
+            await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context)
+        ) }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
+            entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+        } });
+        expect(state).toMatchObject({ kind: 'ready' });
+    });
+
+    it.each(['typed', 'untyped'] as const)('preserves a %s source failure through the real relation and detail owners to the mounted reader', async kind => {
+        const { collections } = await seedTwoConnections();
+        const failure = new PluginError({ code: 'machine_not_found', retryable: false,
+            details: { requestId: 'detail-request-51' }, diagnostics: [{ code: 'target_machine_required', severity: 'error' }] });
+        const context = createContext({ collections, relationFailure: kind === 'typed' ? failure : new Error('External transport failed') });
+        let reads = 0;
+        const state = await readTriageEntryDetailState({ executeAction: async (_action, input) => {
+            reads++;
+            return await createTriageReadEntryDetailActionHandler()(TriageReadEntryDetailInputV1Schema.parse(input), context);
+        } }, { selection: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE_A }, observation: {
+            entryRef: ENTRY_REF, observedAtMs: 2_000, locator: testkitLocator(), snapshot: testkitSnapshot(), viewer: testkitViewer(),
+        } });
+        expect(state).toMatchObject({ kind: 'unreachable', failure: kind === 'typed' ? {
+            code: 'machine_not_found', retryable: false, details: { requestId: 'detail-request-51' },
+        } : { code: 'sessionLinksReadFailed', retryable: true } });
+        expect(reads).toBe(1);
+    });
+
     it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'api'] as const)('returns the exact admitted configured connection to a host %s caller', async (hostSurface) => {
         const { collections } = await seedTwoConnections();
         const handler = createTriageReadEntryDetailActionHandler();

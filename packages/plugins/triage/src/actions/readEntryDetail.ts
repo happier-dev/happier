@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
+import { readConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
 } from '../corpus/collections/ids.js';
@@ -93,7 +94,7 @@ export async function readTriageEntryDetail(
     const options: PluginCancellationOptions | undefined = deps.signal
         ? { signal: deps.signal }
         : undefined;
-    const row = await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId);
+    const row = await deps.sourceRelations.findConfiguredInstance(input.sourceInstanceId, input.entryRef);
     // A retired row is not a connection a detail may be read through. It is kept
     // so an explicit reactivation stays possible, not so a mounted surface can
     // keep opening it.
@@ -140,8 +141,12 @@ export function createTriageReadEntryDetailActionHandler(): TriageDataActionHand
         const { sourceInstances, sessionLinks } = bindCorpusCollections(
             requireTriageAccountStorage(context),
         );
+        const selected = input.sourceInstanceRowId === undefined ? undefined : {
+            entryRef: input.entryRef,
+            record: await readConfiguredSourceInstanceRow(sourceInstances, input.sourceInstanceRowId, { signal: context.signal }),
+        };
         return await readTriageEntryDetail(input, {
-            sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }),
+            sourceRelations: createTriageSourceSessionRelations(context, { sourceInstances, sessionLinks }, selected),
             // Portable Account execution has no Session service. These optional
             // display facts stay absent while authoritative links remain present.
             readSessionSummary: async () => null,
