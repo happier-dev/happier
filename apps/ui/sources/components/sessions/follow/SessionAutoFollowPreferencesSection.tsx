@@ -6,7 +6,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 import { COORDINATION_SETTINGS } from '@/components/settings/coordination/coordinationSettings';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
-import { useSessionAutoFollowPreferences } from './useSessionAutoFollowPreferences';
+import type { useSessionAutoFollowPreferences } from './useSessionAutoFollowPreferences';
 
 const FIELDS = ['assigned', 'direct', 'team', 'group'] as const;
 const FIELD_SETTINGS = {
@@ -21,8 +21,12 @@ type AutoFollowLevel = 'important' | 'off';
  * Follow automatically (Settings → Coordination, lab P5): each default rule is a level — Important follows
  * the matching sessions, Off does not. The Home's four `follow.preferences` switches stay the stored value.
  */
-export function SessionAutoFollowPreferencesSection({ serverId }: Readonly<{ serverId: string }>) {
-    const { enabled, displayed, online, saving, error, save, retry } = useSessionAutoFollowPreferences(serverId);
+export function SessionAutoFollowPreferencesSection({ preferences }: Readonly<{
+    preferences: ReturnType<typeof useSessionAutoFollowPreferences>;
+}>) {
+    const { enabled, displayed, confirmed, failed, online, saving, error, save, retry } = preferences;
+    const failedField = FIELDS.find(field => failed?.patch[field] !== undefined);
+    const sectionError = error && (!failed || failedField !== undefined);
     if (!enabled) return null;
     const levels = [
         { id: 'important' as const, label: t('session.follow.policy.important') },
@@ -41,14 +45,17 @@ export function SessionAutoFollowPreferencesSection({ serverId }: Readonly<{ ser
                 onChange={(level) => { void save({ patch: { [field]: level === 'important' } }); }}
             />
         </SettingAnchor>) : <Item title={t('common.loading')} loading={!error && online} mode="info" />}
-        {!online || error ? <Item
+        {!online || sectionError ? <Item
             testID="session-auto-follow-error"
-            title={!online ? t('session.follow.offline') : t('errors.unknownError')}
+            title={!online ? t('session.follow.offline') : failedField && confirmed
+                ? t('settingsCoordination.followDefaultSaveFailed', { field: t(FIELD_SETTINGS[failedField].titleKey),
+                    value: confirmed[failedField] ? t('session.follow.policy.important') : t('common.off') })
+                : t('errors.unknownError')}
             titleLines={0}
             mode="info"
             accessibilityLiveRegion="polite"
         /> : null}
-        {online && error ? <Item
+        {online && sectionError ? <Item
             testID="session-auto-follow-retry"
             title={t('common.retry')}
             onPress={retry}

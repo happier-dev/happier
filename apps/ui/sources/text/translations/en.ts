@@ -1348,6 +1348,7 @@ const enPluginSurfaces = {
       reason: 'More than one source can run it. Pick one to load it.',
     },
     namedUnavailable: ({ name }: { name: string }) => `${name} can’t open`,
+    namedPageUnavailable: ({ name }: { name: string }) => `This page isn't available from ${name}`,
     namedFailed: ({ name }: { name: string }) => `${name} couldn’t load`,
   },
   offlineSnapshot: {
@@ -1913,6 +1914,8 @@ const enMemoryContext = {
     accessPrivate: 'Only you can see it',
     sharingUnknown: "Sharing unknown",
     sharingUnknownDescription: "Who can see this memory couldn’t be checked. It isn’t treated as private. Saving is off until it is.",
+    decisionsFollow: "Decisions your agents follow",
+    addDecision: "Add a decision",
     reviewChange: "Review the change",
     accessShared: 'Shared',
     writesWithoutAsking: 'saved without asking',

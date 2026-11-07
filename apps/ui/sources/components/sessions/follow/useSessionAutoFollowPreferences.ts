@@ -1,5 +1,8 @@
 import * as React from 'react';
-import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol';
+import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { t } from '@/text';
 
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { sessionAutoFollowPreferencesGet, sessionAutoFollowPreferencesSet } from '@/sync/api/session/sessionFollowApi';
@@ -25,6 +28,11 @@ import {
  * of resurrecting the rest of a stale object.
  */
 export type SessionAutoFollowPreferencesIntent = Readonly<{ patch: Partial<SessionAutoFollowPreferencesV1> }>;
+export type SessionAutoFollowPreferencesSaveOutcome =
+    | Readonly<{ kind: 'saved'; previous: SessionAutoFollowPreferencesIntent; value: SessionAutoFollowPreferencesV1 }>
+    | Readonly<{ kind: 'failed'; cause: Extract<Awaited<ReturnType<typeof sessionAutoFollowPreferencesSet>>, { kind: 'failed' }>
+        | Readonly<{ kind: 'exception'; cause: unknown }> }>
+    | Readonly<{ kind: 'unchanged' }>;
 
 function reduceAutoFollowMutation(
     state: SessionFollowMutationIntentState<SessionAutoFollowPreferencesIntent>,
@@ -48,6 +56,10 @@ export function useSessionAutoFollowPreferences(serverId: string) {
         reduceAutoFollowMutation,
         createIdleSessionFollowMutationIntent<SessionAutoFollowPreferencesIntent>(),
     );
+    const preferencesRef = React.useRef(preferences);
+    preferencesRef.current = preferences;
+    const mutationRef = React.useRef(mutation);
+    mutationRef.current = mutation;
     const [saving, setSaving] = React.useState(false);
     const [online, setOnline] = React.useState(isServerReachabilityNetworkAllowed);
     const currentOperation = React.useRef<object | null>(null);
@@ -108,7 +120,7 @@ export function useSessionAutoFollowPreferences(serverId: string) {
         const changes = subscribeHomeAccountChange((event) => {
             if (!retired && areServerProfileIdentifiersEquivalent(event.serverId, serverId)
                 && isAccountFollowConfigurationChangeRelevant(event)) void refresh();
-        });
+        }, { reconnect: { readNotCurrent: () => preferencesRef.current === null || mutationRef.current.error !== null } });
         // Load the current Account preference as soon as the settings section mounts.
         // Without this initial read, the section remains in its loading placeholder until
         // a reconnect or account-change event happens to trigger refresh().
@@ -125,46 +137,73 @@ export function useSessionAutoFollowPreferences(serverId: string) {
         };
     }, [enabled, refresh, serverId]);
 
-    const save = React.useCallback(async (intent: SessionAutoFollowPreferencesIntent) => {
-        const base = preferences;
-        if (!online || savingRef.current || !base) return;
+    const save = React.useCallback(async function save(intent: SessionAutoFollowPreferencesIntent): Promise<SessionAutoFollowPreferencesSaveOutcome> {
+        const base = preferencesRef.current;
+        if (!isServerReachabilityNetworkAllowed() || savingRef.current || !base) return { kind: 'unchanged' };
+        const combinedIntent = { patch: { ...mutationRef.current.failed?.patch, ...intent.patch } };
+        const changedFields = (Object.keys(combinedIntent.patch) as (keyof SessionAutoFollowPreferencesV1)[])
+            .filter(field => !sameStrictJsonValue(base[field], combinedIntent.patch[field]));
+        if (changedFields.length === 0) return { kind: 'unchanged' };
+        const previous: SessionAutoFollowPreferencesIntent = { patch: Object.fromEntries(changedFields.map(field => [field, base[field]])) };
+        const noticeKey = `follow-preferences:${serverId}`;
+        retirePresentationNotice(noticeKey);
         const operation = {};
         currentOperation.current = operation;
         savingRef.current = true;
         setSaving(true);
-        dispatchMutation({ kind: 'started', intent });
+        // A second section edit keeps the exact failed fields until a write applies them.
+        // The confirmed Home baseline still supplies every neighbouring field at retry time.
+        dispatchMutation({ kind: 'started', intent: combinedIntent });
         try {
-            const result = await sessionAutoFollowPreferencesSet(serverId, { ...base, ...intent.patch });
-            if (currentOperation.current !== operation) return;
+            const result = await sessionAutoFollowPreferencesSet(serverId, { ...base, ...combinedIntent.patch });
+            if (currentOperation.current !== operation) return { kind: 'unchanged' };
             if (result.kind === 'ok') {
+                preferencesRef.current = result.value;
                 setPreferences(result.value);
                 dispatchMutation({ kind: 'succeeded' });
+                publishPresentationNotice({ key: noticeKey, severity: 'info', message: t('settingsCoordination.followDefaultsSaved'),
+                    undo: { label: t('common.undo'), run: () => {
+                        void save(previous).then(outcome => {
+                            if (outcome.kind === 'failed') publishPresentationNotice({ key: noticeKey, severity: 'error',
+                                message: t('settingsCoordination.followDefaultsFailed') });
+                        });
+                    } } });
+                return { kind: 'saved', previous, value: result.value };
             } else {
                 dispatchMutation({ kind: 'failed', error: true });
+                return { kind: 'failed', cause: result };
             }
-        } catch {
+        } catch (cause) {
             if (currentOperation.current === operation) dispatchMutation({ kind: 'failed', error: true });
+            return { kind: 'failed', cause: { kind: 'exception', cause } };
         } finally {
-            if (currentOperation.current !== operation) return;
-            savingRef.current = false;
-            setSaving(false);
-            if (refreshAfterSaveRef.current) {
-                refreshAfterSaveRef.current = false;
-                await refresh();
+            if (currentOperation.current === operation) {
+                savingRef.current = false;
+                setSaving(false);
+                if (refreshAfterSaveRef.current) {
+                    refreshAfterSaveRef.current = false;
+                    await refresh();
+                }
             }
         }
-    }, [online, preferences, refresh, serverId]);
+    }, [refresh, serverId]);
 
-    const outstanding = mutation.pending ?? mutation.failed;
+    const outstanding = mutation.pending;
     return {
         enabled,
         online,
         saving,
         error: mutation.error !== null,
-        // The confirmed Home value is the baseline; an in-flight or failed change overlays it.
+        confirmed: preferences,
+        failed: mutation.failed,
+        // A failed intent stays with Retry; the control returns to the confirmed Home value.
         displayed: preferences && outstanding ? { ...preferences, ...outstanding.patch } : preferences,
         save,
         /** Retries the exact change that failed; a failed load retries by loading again. */
-        retry: () => { if (mutation.failed) void save(mutation.failed); else void refresh(); },
+        retry: async (): Promise<SessionAutoFollowPreferencesSaveOutcome> => {
+            if (mutation.failed) return save(mutation.failed);
+            await refresh();
+            return { kind: 'unchanged' };
+        },
     };
 }
