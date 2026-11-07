@@ -889,6 +889,8 @@ export function projectExternalActionApprovalDecisionAdmissionV1(input: unknown)
 /** V2 is closed at every routing and encryption boundary; content is opaque. */
 export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), requestId: ExternalActionRequestIdV1Schema,
+  /** Non-content Browser Session operand; checked against the sealed command on open. */
+  browserSessionId: z.optional(ExternalActionTargetIdV1Schema),
   /** Declaration-derived pre-effect runtime demand; private operands remain sealed. */
   machineRuntimeDemand: z.optional(z.literal('required')),
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
