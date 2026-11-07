@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginNoticePageV1Schema } from '../../activity/accountNoticePageV1.js';
 import { PluginClientExecutionPlatformsV1Schema, PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
+import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
 
 /** V1 development author contract. All identity, routing and runtime objects are closed. */
 export const PLUGIN_WORK_ITEMS_LOCAL_ID_V1 = 'work-items' as const;
@@ -35,8 +35,14 @@ export const PluginWorkItemsResolveResultV1Schema = lazyZodSchema(() => z.record
 export type PluginWorkItemsResolveResultV1 = z.infer<typeof PluginWorkItemsResolveResultV1Schema>;
 export const PluginWorkItemsFindLinkedRequestV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({ serverId: ItemId, sessionIds: z.readonly(z.array(ItemId)) })));
 export type PluginWorkItemsFindLinkedRequestV1 = z.infer<typeof PluginWorkItemsFindLinkedRequestV1Schema>;
-export const PluginWorkItemsFindLinkedResultV1Schema = lazyZodSchema(() => z.array(ItemId));
+/** Known accessible candidates survive incomplete source coverage; completeness never follows from emptiness. */
+export const PluginWorkItemsFindLinkedResultV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
+  itemIds: z.readonly(z.array(ItemId)),
+  complete: z.boolean(),
+})));
+export type PluginWorkItemsFindLinkedResultV1 = z.infer<typeof PluginWorkItemsFindLinkedResultV1Schema>;
 export const PluginWorkItemsWatchRequestV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({ serverId: ItemId, itemIds: z.readonly(z.array(ItemId)), sessionIds: z.optional(z.readonly(z.array(ItemId))) })));
 export type PluginWorkItemsWatchRequestV1 = z.infer<typeof PluginWorkItemsWatchRequestV1Schema>;
-export const PluginWorkItemTransitionInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: ItemId, itemId: ItemId, transitionId: ItemId }));
-export type PluginWorkItemTransitionInputV1 = z.infer<typeof PluginWorkItemTransitionInputV1Schema>;
+const WorkItemTransitionInput = lazyZodSchema(() => z.strictObject({ serverId: ItemId, itemId: ItemId, transitionId: ItemId }));
+export const PluginWorkItemTransitionInputV1Schema = projectZodProtocolSchema(WorkItemTransitionInput);
+export type PluginWorkItemTransitionInputV1 = z.infer<typeof WorkItemTransitionInput>;
