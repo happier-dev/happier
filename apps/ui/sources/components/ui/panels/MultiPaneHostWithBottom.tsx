@@ -17,6 +17,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { t } from '@/text';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
+import { SessionCockpitBottomChromeHeightContext, useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 export type BottomPanePresentation = ResolvedBottomPanePresentation;
 
@@ -61,6 +62,10 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
     const isBottomOverlayPresented = bottomPresentation === 'overlay' && bottomPresence.present;
     const bottomRegionVisible = bottomPresence.present && bottomPresentation !== 'hidden';
     const bottomRegionFocus = usePaneRegionFocusBoundary('bottom', bottomRegionVisible);
+    // A docked bottom pane takes the page's bottom edge, so the phone's floating tab bar covers it and
+    // not the panes above it: those clear no bar, and the docked pane keeps the clearance.
+    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
+    const aboveBottomChromeHeight = shouldRenderBottomPane && bottomPresentation === 'docked' ? 0 : bottomChromeHeight;
     const bottomModalLabel = t('ui.modalPane.bottom');
     const bottomModalBoundary = useModalPaneBoundary({
         active: isBottomOverlayPresented,
@@ -93,7 +98,9 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                 {...bottomModalBoundary.underlayProps}
             >
                 <PluginSurfaceFocusEligibilityProvider active={!isBottomOverlayPresented}>
-                    <MultiPaneHost {...multiPaneProps} />
+                    <SessionCockpitBottomChromeHeightContext.Provider value={aboveBottomChromeHeight}>
+                        <MultiPaneHost {...multiPaneProps} />
+                    </SessionCockpitBottomChromeHeightContext.Provider>
                 </PluginSurfaceFocusEligibilityProvider>
             </ModalPaneBoundaryView>
 
@@ -127,7 +134,9 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                                 backgroundColor: 'transparent',
                                 borderTopWidth: 1,
                                 borderTopColor: theme.colors.border.default,
-                                overflow: 'hidden',
+                                // The sheet clips the content; on the web the overlay leaves its resize seam open so the
+                                // handle's target reaches above the top edge.
+                                overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
                                 transform: [{
                                     translateY: bottomPresence.progress.interpolate({
                                         inputRange: [0, 1],
@@ -186,7 +195,7 @@ export const MultiPaneHostWithBottom = React.memo((props: MultiPaneHostWithBotto
                                     active={bottomPresentation !== 'hidden' && (bottomPresentation !== 'overlay' || !bottomPresence.closing)}
                                 >
                                     <GlassSurface surfaceGroup="content" solidColor={theme.colors.surface.base} finishRole={null}
-                                        nested={bottomPresentation !== 'overlay'} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                                        nested={bottomPresentation !== 'overlay'} style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden' }}>
                                         <PaneHeaderScrollIsolation>{renderedBottomPane}</PaneHeaderScrollIsolation>
                                     </GlassSurface>
                                 </PluginSurfaceFocusEligibilityProvider>

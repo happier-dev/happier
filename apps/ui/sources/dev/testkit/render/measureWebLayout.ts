@@ -35,6 +35,11 @@ export type WebLayoutRect = Readonly<{
      * element, even an invisible one, sits on top of it and takes the click.
      */
     receivesPointer?: boolean;
+    /**
+     * For ids named in `edgeProbeTestIds`: whether a pointer one pixel inside each side of the box reaches
+     * this element. A clipping ancestor or a cover on that side answers false (a resize target cut at a pane edge).
+     */
+    receivesPointerAtEdges?: Readonly<{ left: boolean; right: boolean; top: boolean; bottom: boolean }>;
     outlineWidth?: number;
     outlineStyle?: string;
     /**
@@ -144,6 +149,8 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
     texts?: readonly string[];
     /** Apply real browser focus to the already-rendered control when measuring its visible ring. */
     focusedTestId?: string;
+    /** Test ids whose box sides are hit-tested too (`receivesPointerAtEdges`). */
+    edgeProbeTestIds?: readonly string[];
     /** Optional visual evidence of the same settled layout measured below. */
     screenshotPath?: string;
     /**
@@ -221,7 +228,11 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                 return chain.join('\n  ');
             }).join('\n'), process.env.HAPPIER_TEST_WEB_LAYOUT_DEBUG));
         }
-        const measured = await page.evaluate((texts: readonly string[]) => {
+        const measured = await page.evaluate(({ texts, edgeProbeTestIds }: { texts: readonly string[]; edgeProbeTestIds: readonly string[] }) => {
+            const reaches = (element: Element, x: number, y: number) => {
+                const topmost = document.elementFromPoint(x, y);
+                return topmost !== null && element.contains(topmost);
+            };
             const box = (element: Element) => {
                 const r = element.getBoundingClientRect();
                 const clipped = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
@@ -231,6 +242,14 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                 return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height,
                     clipped, text: (element as HTMLElement).innerText ?? '',
                     receivesPointer: topmost !== null && element.contains(topmost),
+                    ...(edgeProbeTestIds.includes(element.getAttribute('data-testid') ?? '') && r.width > 2 && r.height > 2 ? {
+                        receivesPointerAtEdges: {
+                            left: reaches(element, r.left + 1, r.top + r.height / 2),
+                            right: reaches(element, r.right - 1, r.top + r.height / 2),
+                            top: reaches(element, r.left + r.width / 2, r.top + 1),
+                            bottom: reaches(element, r.left + r.width / 2, r.bottom - 1),
+                        },
+                    } : null),
                     outlineWidth: parseFloat(computed.outlineWidth), outlineStyle: computed.outlineStyle,
                     fontFamily: computed.fontFamily,
                     clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft };
@@ -255,7 +274,7 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                 }
             }
             return { byTestId, byText };
-        }, options.texts ?? []);
+        }, { texts: options.texts ?? [], edgeProbeTestIds: options.edgeProbeTestIds ?? [] });
         if (options.screenshotPath) await page.screenshot({ path: options.screenshotPath });
         const rects = new Map<string, WebLayoutRect[]>();
         for (const [id, rect] of measured.byTestId) rects.set(id, [...(rects.get(id) ?? []), rect]);

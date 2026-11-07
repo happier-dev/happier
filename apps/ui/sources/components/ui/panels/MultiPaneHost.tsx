@@ -675,7 +675,8 @@ function PaneColumn(props: Readonly<{
                 bottom: props.mainBottomInsetPx ?? 0,
                 width: props.widthPx,
                 zIndex: props.mainZIndex,
-                overflow: 'hidden',
+                // The sheet clips the content; on the web the column leaves its resize seam open (as below).
+                overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
                 opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
                 transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
             } : docked ? {
@@ -713,7 +714,9 @@ function PaneColumn(props: Readonly<{
                 ...(overlay ? {
                     ...(props.mirrored ? { borderTopRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX }
                         : { borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX }),
-                    overflow: 'hidden',
+                    // The rounded sheet inside clips the content; on the web the column itself stays open so the resize
+                    // handle's target reaches past the pane edge, over the page it floats above.
+                    overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
                     ...shadowLevelStyle(theme.colors.shadowLevels[6]),
                 } : {}),
                 transform: [{ translateX: overlay
@@ -767,6 +770,9 @@ function PaneColumn(props: Readonly<{
                             flex: 1, minHeight: 0, minWidth: 0,
                             ...(props.onCanvas ? CANVAS_PANEL_SHEET_STYLE : null),
                             ...(props.onCanvas && props.joinsTopTab ? { borderTopRightRadius: 0 } : null),
+                            ...(overlay ? (props.mirrored
+                                ? { borderTopRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomRightRadius: PANE_OVERLAY_CORNER_RADIUS_PX }
+                                : { borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX }) : null),
                             borderLeftWidth: docked && !props.mirrored && !props.onCanvas && props.divider !== 'shadow' ? StyleSheet.hairlineWidth : 0,
                             borderRightWidth: docked && props.mirrored ? StyleSheet.hairlineWidth : 0,
                             borderLeftColor: theme.colors.border.subtle, borderRightColor: theme.colors.border.subtle,

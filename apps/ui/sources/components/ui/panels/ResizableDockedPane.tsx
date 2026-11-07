@@ -65,6 +65,7 @@ export const ResizableDockedPane = React.memo((props: ResizableDockedPaneProps) 
     const renderHandle = (edge: 'left' | 'right', handleProps: Readonly<{ webHandleProps: typeof webHandleProps; panHandlers: typeof panHandlers }>) => canResize ? (
         <ResizablePaneDividerHandle
             labels={{ label: t('ui.resizableDockedPane.resizeA11y'), hint: t('ui.resizableDockedPane.resizeHint'), value: (px) => t('ui.resizableDockedPane.resizeValue', { px }) }}
+            testID={props.testID ? `${props.testID}-resize-${edge}` : undefined}
             axis="x"
             edge={edge === 'left' ? 'start' : 'end'}
             interactionProps={Platform.OS === 'web' ? handleProps.webHandleProps : handleProps.panHandlers}
