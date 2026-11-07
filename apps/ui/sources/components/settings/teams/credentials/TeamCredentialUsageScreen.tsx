@@ -571,6 +571,11 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                         kind={usage.error.kind === 'forbidden' || usage.error.kind === 'unauthorized' ? 'denied' : 'error'}
                         size="line"
                         title={credentialFailureMessage(usage.error)}
+                        reason={(usage.error.code === 'not_found_or_not_visible' || usage.error.code === 'forbidden') && target.subject
+                            ? target.subject.kind === 'home'
+                                ? t('teams.credentials.usage.homeAdminRequired')
+                                : t('teams.credentials.usage.teamCredentialManagerRequired')
+                            : undefined}
                         action={{ label: t('common.retry'), onPress: () => void usage.reload(), testID: 'team-credential-usage-retry' }}
                         accessibilitySemantics="alert"
                     />

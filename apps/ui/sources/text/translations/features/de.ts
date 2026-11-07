@@ -6277,6 +6277,9 @@ const de: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} ist auf ${machine} abgemeldet.`,
     setupOwner: ({ owner }) => `Bitte ${owner}, die Einrichtung vorzunehmen.`,
     setupMachineOwner: 'Bitte den Besitzer dieser Maschine, die Einrichtung vorzunehmen.',
+    updatePendingNotice: ({ agent }) => `Das Update für ${agent} steht aus`,
+    updateFailedNotice: ({ agent }) => `${agent} konnte nicht aktualisiert werden`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `Deine Sitzung wurde auf ${machine} mit der installierten Version gestartet.`,
     draftKept: 'Deine Nachricht bleibt erhalten.',
     alreadySetUp: ({ machine, home }) => `${machine} ist bereits mit ${home} verbunden`,
     startSession: 'Sitzung starten',
@@ -7123,6 +7126,11 @@ const machineDetailPageTranslations = { de: translated({
                 afterCleanupFree: ({ free }) => `${free} frei`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "Nach dem Leeren des Papierkorbs:",
+                cleanupUnavailable: {
+                    system_partition: "Das ist eine Systempartition, Happier räumt sie nicht auf.",
+                    permission_denied: "Happier kann hier nicht aufräumen: Es darf auf diese Festplatte nicht schreiben.",
+                    read_only: "Happier kann hier nicht aufräumen: Diese Festplatte ist schreibgeschützt.",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}: ${free} frei von ${total}`,
             },
             breakdown: {

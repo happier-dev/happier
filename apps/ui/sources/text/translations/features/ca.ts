@@ -6285,6 +6285,9 @@ const ca: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} no té sessió a ${machine}.`,
     setupOwner: ({ owner }) => `Demana a ${owner} que el configuri.`,
     setupMachineOwner: 'Demana al propietari d’aquesta màquina que el configuri.',
+    updatePendingNotice: ({ agent }) => `L’actualització de ${agent} està pendent`,
+    updateFailedNotice: ({ agent }) => `No s’ha pogut actualitzar ${agent}`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `La sessió s’ha iniciat a ${machine} amb la versió instal·lada.`,
     draftKept: 'El teu missatge es conserva.',
     alreadySetUp: ({ machine, home }) => `${machine} ja està connectat a ${home}`,
     startSession: 'Inicia una sessió',
@@ -7131,6 +7134,11 @@ const machineDetailPageTranslations = { ca: translated({
                 afterCleanupFree: ({ free }) => `${free} lliures`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "Quan es buidi la paperera:",
+                cleanupUnavailable: {
+                    system_partition: "És una partició del sistema, així que Happier no la neteja.",
+                    permission_denied: "Happier no pot netejar aquí: no té permís per escriure en aquest disc.",
+                    read_only: "Happier no pot netejar aquí: aquest disc és només de lectura.",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}: ${free} lliures de ${total}`,
             },
             breakdown: {

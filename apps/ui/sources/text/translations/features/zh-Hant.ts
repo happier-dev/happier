@@ -6275,6 +6275,9 @@ const zhHant: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} 在 ${machine} 上已登出。`,
     setupOwner: ({ owner }) => `請 ${owner} 進行設定。`,
     setupMachineOwner: '請此機器的擁有者進行設定。',
+    updatePendingNotice: ({ agent }) => `${agent} 的更新待處理`,
+    updateFailedNotice: ({ agent }) => `無法更新 ${agent}`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `工作階段已在 ${machine} 上使用已安裝的版本啟動。`,
     draftKept: '你的訊息已保留。',
     alreadySetUp: ({ machine, home }) => `${machine} 已連線到 ${home}`,
     startSession: '開始工作階段',
@@ -7121,6 +7124,11 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 afterCleanupFree: ({ free }) => `可用 ${free}`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "垃圾桶清空後：",
+                cleanupUnavailable: {
+                    system_partition: "這是系統分割區，Happier 不會清理它。",
+                    permission_denied: "Happier 無法在此清理：沒有寫入此磁碟的權限。",
+                    read_only: "Happier 無法在此清理：此磁碟為唯讀。",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}：${total} 中可用 ${free}`,
             },
             breakdown: {

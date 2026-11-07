@@ -6285,6 +6285,9 @@ const pt: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} está desconectado em ${machine}.`,
     setupOwner: ({ owner }) => `Pede a ${owner} para o configurar.`,
     setupMachineOwner: 'Pede ao proprietário desta máquina para o configurar.',
+    updatePendingNotice: ({ agent }) => `A atualização de ${agent} está pendente`,
+    updateFailedNotice: ({ agent }) => `Não foi possível atualizar ${agent}`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `A sessão foi iniciada em ${machine} com a versão instalada.`,
     draftKept: 'Sua mensagem foi mantida.',
     alreadySetUp: ({ machine, home }) => `${machine} já está conectado a ${home}`,
     startSession: 'Iniciar uma sessão',
@@ -7131,6 +7134,11 @@ const machineDetailPageTranslations = { pt: translated({
                 afterCleanupFree: ({ free }) => `${free} livres`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "Depois de a Lixeira esvaziar:",
+                cleanupUnavailable: {
+                    system_partition: "É uma partição do sistema, por isso o Happier não a limpa.",
+                    permission_denied: "O Happier não pode limpar aqui: não tem permissão para escrever neste disco.",
+                    read_only: "O Happier não pode limpar aqui: este disco é só de leitura.",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}: ${free} livres de ${total}`,
             },
             breakdown: {

@@ -6312,6 +6312,9 @@ const ru: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} на ${machine}: выполнен выход.`,
     setupOwner: ({ owner }) => `Попросите ${owner} выполнить настройку.`,
     setupMachineOwner: 'Попросите владельца этой машины выполнить настройку.',
+    updatePendingNotice: ({ agent }) => `Обновление ${agent} ожидается`,
+    updateFailedNotice: ({ agent }) => `Не удалось обновить ${agent}`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `Сессия запущена на ${machine} с установленной версией.`,
     draftKept: 'Ваше сообщение сохранено.',
     alreadySetUp: ({ machine, home }) => `${machine} уже подключена к ${home}`,
     startSession: 'Начать сессию',
@@ -7158,6 +7161,11 @@ const machineDetailPageTranslations = { ru: translated({
                 afterCleanupFree: ({ free }) => `свободно ${free}`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "После очистки корзины:",
+                cleanupUnavailable: {
+                    system_partition: "Это системный раздел, Happier его не очищает.",
+                    permission_denied: "Happier не может очищать здесь: у него нет права записи на этот диск.",
+                    read_only: "Happier не может очищать здесь: этот диск только для чтения.",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}: свободно ${free} из ${total}`,
             },
             breakdown: {

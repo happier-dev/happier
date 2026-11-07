@@ -6275,6 +6275,9 @@ const zhHans: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} 在 ${machine} 上已退出登录。`,
     setupOwner: ({ owner }) => `请 ${owner} 进行设置。`,
     setupMachineOwner: '请此机器的所有者进行设置。',
+    updatePendingNotice: ({ agent }) => `${agent} 的更新待处理`,
+    updateFailedNotice: ({ agent }) => `无法更新 ${agent}`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `会话已在 ${machine} 上使用已安装的版本启动。`,
     draftKept: '你的消息已保留。',
     alreadySetUp: ({ machine, home }) => `${machine} 已连接到 ${home}`,
     startSession: '开始会话',
@@ -7121,6 +7124,11 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 afterCleanupFree: ({ free }) => `可用 ${free}`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "回收站清空后：",
+                cleanupUnavailable: {
+                    system_partition: "这是系统分区，Happier 不会清理它。",
+                    permission_denied: "Happier 无法在此清理：没有写入此磁盘的权限。",
+                    read_only: "Happier 无法在此清理：此磁盘为只读。",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}：${total} 中可用 ${free}`,
             },
             breakdown: {

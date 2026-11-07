@@ -230,31 +230,61 @@ describe('TeamCredentialUsageScreen', () => {
         },
     );
 
-    it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)('renders the $kind aggregate query owner refusal as denied rather than empty usage', async subject => {
+    it.each([
+        { subject: { kind: 'team', teamId: 'team-1' }, status: 404, error: 'not_found_or_not_visible', title: 'teams.credentials.detail.notFound' },
+        { subject: { kind: 'home' }, status: 404, error: 'not_found_or_not_visible', title: 'teams.credentials.detail.notFound' },
+        { subject: { kind: 'home' }, status: 403, error: 'forbidden', title: 'teams.credentials.forbidden' },
+    ] as const)('renders the $subject.kind aggregate query owner refusal ($error) as denied rather than empty usage', async ({ subject, status, error, title }) => {
         const serverId = await addHome();
         const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
         harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
-        harness.answer(serverId, USAGE_QUERY_PATH, { status: 404, body: { error: 'not_found_or_not_visible' } });
+        harness.answer(serverId, USAGE_QUERY_PATH, { status, body: { error } });
         const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={subject} />);
         await waitForTestId(screen, 'team-credential-usage-error');
         expect(screen.findAllByTestId('team-credential-usage-error').some(node => node.props.kind === 'denied')).toBe(true);
-        expect(screen.getTextContent()).toContain('teams.credentials.detail.notFound');
+        expect(screen.getTextContent()).toContain(title);
+        expect(screen.getTextContent()).toContain(subject.kind === 'home'
+            ? 'teams.credentials.usage.homeAdminRequired'
+            : 'teams.credentials.usage.teamCredentialManagerRequired');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-series');
     });
 
     it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
-        'refreshes the $kind aggregate only on relevant pushed usage writes', async subject => {
+        'refreshes the $kind aggregate only on relevant usage writes delivered over a real socket', async subject => {
             const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
-            const deliver = (sourceServerId: string, teamId: string) => handleEphemeralSocketUpdate({
-                update: { type: 'team-credential-usage-changed', resourceId: 'resource-not-loaded', teamId },
-                sourceServerId,
-                addActivityUpdate: () => {},
-                addMachineActivityUpdate: () => {},
-                getSessionEncryption: () => null,
-                getSession: () => undefined,
-                applyMessages: () => {},
-            });
+            const { createServer } = await import('node:http');
+            const { Server } = await import('socket.io');
+            // Exercise the actual network boundary rather than the app's socket test double.
+            const { io } = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+            const deliver = async (sourceServerId: string, teamId: string) => {
+                const http = createServer();
+                const server = new Server(http);
+                await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+                const address = http.address();
+                if (!address || typeof address === 'string') throw new Error('Expected loopback socket address');
+                const client = io(`http://127.0.0.1:${address.port}`, { transports: ['websocket'], reconnection: false });
+                try {
+                    const delivered = new Promise<void>((resolve, reject) => {
+                        client.once('connect_error', reject);
+                        client.once('ephemeral', update => {
+                            void handleEphemeralSocketUpdate({
+                                update, sourceServerId,
+                                addActivityUpdate: () => {}, addMachineActivityUpdate: () => {},
+                                getSessionEncryption: () => null, getSession: () => undefined, applyMessages: () => {},
+                            }).then(resolve, reject);
+                        });
+                    });
+                    // Exact content-free producer payload from ef7348272bfc / eventPayloadBuilders.ts.
+                    server.once('connection', socket => socket.emit('ephemeral', {
+                        type: 'team-credential-usage-changed', resourceId: 'resource-not-loaded', teamId,
+                    }));
+                    await delivered;
+                } finally {
+                    client.disconnect();
+                    await new Promise<void>(resolve => server.close(() => resolve()));
+                }
+            };
             const serverId = await addHome();
             const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
             harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });

@@ -6280,6 +6280,9 @@ const ja: MachineAgentsTranslation = {
     spawnSignedOut: ({ agent, machine }) => `${agent} は ${machine} でサインアウトしています。`,
     setupOwner: ({ owner }) => `${owner} にセットアップを依頼してください。`,
     setupMachineOwner: 'このマシンの所有者にセットアップを依頼してください。',
+    updatePendingNotice: ({ agent }) => `${agent} の更新は保留中です`,
+    updateFailedNotice: ({ agent }) => `${agent} を更新できませんでした`,
+    sessionStartedWithInstalledVersion: ({ machine }) => `インストール済みのバージョンで ${machine} のセッションを開始しました。`,
     draftKept: 'メッセージは保持されています。',
     alreadySetUp: ({ machine, home }) => `${machine} は ${home} に接続済みです`,
     startSession: 'セッションを開始',
@@ -7126,6 +7129,11 @@ const machineDetailPageTranslations = { ja: translated({
                 afterCleanupFree: ({ free }) => `空き ${free}`,
                 afterCleanupGain: ({ amount }) => `(+${amount})`,
                 afterTrashEmpties: "ゴミ箱を空にした後:",
+                cleanupUnavailable: {
+                    system_partition: "システムパーティションのため、Happier はクリーンアップしません。",
+                    permission_denied: "ここはクリーンアップできません: このディスクへの書き込みが許可されていません。",
+                    read_only: "ここはクリーンアップできません: このディスクは読み取り専用です。",
+                },
                 barLabel: ({ volume, free, total }) => `${volume}: ${total} 中 ${free} 空き`,
             },
             breakdown: {
