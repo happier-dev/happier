@@ -119,7 +119,8 @@ function LegendListBackendInner<T>(
 
     // The web runtime publishes virtual extents through its state listeners rather than the native
     // ScrollView callback. Adapt that push here so panels and page scrollers consume one size contract.
-    React.useEffect(() => {
+    // Follow the imperative ref's layout lifecycle: Suspense disconnects it while retaining passive effects.
+    React.useLayoutEffect(() => {
         if (Platform.OS !== 'web' || !onContentSizeChange) return;
         const list = innerRef.current;
         if (!list) return;
