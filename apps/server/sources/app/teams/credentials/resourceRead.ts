@@ -1,9 +1,10 @@
-import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
-import { readTeamCredentialResourceCandidatesInTx, teamCredentialAudienceDeliveryWhere } from './resourceCandidateRead';
 import { computeTeamCredentialSourceMemberKeyV1, matchesTeamCredentialSourceVersionBasisV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialDeliveryModeV1Schema, TeamCredentialDisclosureCeilingV1Schema, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceAudienceGrantV1Schema, TeamCredentialResourceMemberGrantV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialSessionUsePolicyV1Schema, decodeTeamCredentialResourcesCursorV1, encodeTeamCredentialResourcesCursorV1, teamCredentialResourcesQueryKeyV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialSourceBindingV1Schema, type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
+import { readTeamCredentialResourceCandidatesInTx, teamCredentialAudienceDeliveryWhere } from './resourceCandidateRead';
+import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
+import { readManagedNativeCredentialTargetInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialSourceResourceAdministrationV1Schema, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
@@ -38,6 +39,7 @@ import {
     resolveTeamCredentialResourceSourcesInTx,
     type TeamCredentialResourceSourceResolution,
 } from "./resourceSourceResolver";
+import { projectSourceAuthenticationReadiness, sourceRequiresReconnect } from './sourceReadiness';
 import { matchesTeamCredentialRecipientBinding } from "./recipientMaterialCurrentness";
 import { hasTeamCredentialDirectDeliveryActivityInTx } from "./resourceActivity";
 import { resolveCurrentTeamCredentialUsageCapabilitiesForResource } from './usageCapabilities';
@@ -323,6 +325,8 @@ async function resolveProjectionStatusInTx(
     if (resolved.status !== "current") {
         return { readiness: { kind: "source_unavailable" } as const, recoveryAction: "source_owner_action" as const };
     }
+    const authenticationReadiness = projectSourceAuthenticationReadiness(resolved);
+    if (authenticationReadiness) return { readiness: authenticationReadiness, recoveryAction: "source_owner_action" as const };
     if (source.kind === "provider_connection") {
         return { readiness: { kind: "resource_unavailable" } as const, recoveryAction: "choose_another_resource" as const };
     }
@@ -562,7 +566,8 @@ export type TeamCredentialCatalogProjectionRequest = Readonly<{
     brokerPoolId: string | null;
     source: ReturnType<typeof TeamCredentialSourceBindingV1Schema.parse>;
     allowedModelIds: readonly string[] | null;
-    deliveryMode: 'brokered' | 'direct';
+    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+    nativeTarget?: NonNullable<Awaited<ReturnType<typeof readManagedNativeCredentialTargetInTx>>>;
     directMaterialReferences: readonly Readonly<{ sourceMemberKey: string; sourceVersion: string }>[];
 }>;
 
@@ -690,6 +695,7 @@ async function projectCatalogEntryInTx(
         entitlement: Extract<Awaited<ReturnType<typeof resolveTeamCredentialEntitlementInTx>>, { ok: true }>;
         source: ReturnType<typeof TeamCredentialSourceBindingV1Schema.parse> | null;
         sessionUsePolicyValid: boolean;
+        sourceIsCurrent: boolean;
         directMaterialReferences: readonly Readonly<{ sourceMemberKey: string; sourceVersion: string }>[];
     }>) => void,
     prefetchedUsageEvaluation?: TeamCredentialUsageAdmissionLimitEvaluation | null,
@@ -774,7 +780,7 @@ async function projectCatalogEntryInTx(
         ? { kind: "resource_corrupt" as const }
         : sourceResolution?.status === "unavailable"
             ? { kind: "source_unavailable" as const }
-            : source?.kind === 'provider_connection'
+            : projectSourceAuthenticationReadiness(sourceResolution) ?? (source?.kind === 'provider_connection'
                 ? { kind: "source_unavailable" as const }
                 : usageLimit
                     ? {
@@ -782,7 +788,7 @@ async function projectCatalogEntryInTx(
                         metric: usageLimit.metric,
                         resetsAtUtc: usageLimit.resetsAtUtc,
                     }
-                    : { kind: "available" as const };
+                    : { kind: "available" as const });
     const recoveryAction = readiness.kind === "available" ? null
         : readiness.kind === "source_unavailable" ? "source_owner_action" as const
             : readiness.kind === "resource_corrupt" ? "source_owner_action" as const
@@ -826,7 +832,8 @@ async function projectCatalogEntryInTx(
     }
     const placementRead = readTeamCredentialBrokerPlacement(row);
     const hasBrokerPlacement = placementRead.ok && placementRead.placement !== null;
-    captureProjectionFacts?.({ entitlement, source, sessionUsePolicyValid: policy.success, directMaterialReferences: currentDirectReferences });
+    captureProjectionFacts?.({ entitlement, source, sourceIsCurrent: sourceResolution?.status === 'current',
+        sessionUsePolicyValid: policy.success, directMaterialReferences: currentDirectReferences });
     const projected = TeamCredentialResourceCatalogEntryV1Schema.safeParse({
         id: row.id,
         teamId: row.teamId,
@@ -908,9 +915,11 @@ async function qualifyTeamCredentialOperationsInTx(
 
 type CredentialReadInput = Readonly<{
     teamId: string;
+    resourceId?: string;
     actorAccountId: string;
     authentication: TeamOperationAuthenticationContext;
     application?: ProviderBrokerApplicationBindingV1;
+    executionMachineId?: string;
     cursor?: string;
     limit?: number;
     search?: string;
@@ -922,7 +931,7 @@ export async function readTeamCredentialCatalogInTx(tx: Tx, input: CredentialRea
     if (!actor?.capabilities.viewTeam) return { ok: false as const, error: "not_found_or_not_visible" as const };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;
-    const queryKey = `v1:credential-recipient:${input.teamId}:${input.application ? JSON.stringify(input.application) : ''}`;
+    const queryKey = `v1:credential-recipient:${input.teamId}:${input.application ? JSON.stringify(input.application) : ''}${input.resourceId ? `:resource:${JSON.stringify(input.resourceId)}` : ''}`;
     return readAdmittedTeamCredentialCatalogInTx(tx, { ...input, teamIds: [input.teamId], queryKey });
 }
 
@@ -971,23 +980,9 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
     const after = decoded?.status === 'ok' ? decoded.cursor : null;
     const projected: Array<{ row: ResourceRow; resource: NonNullable<Awaited<ReturnType<typeof projectCatalogEntryInTx>>> }> = [];
     const projectionFactsByResourceId = new Map<string, Parameters<NonNullable<Parameters<typeof projectCatalogEntryInTx>[8]>>[0]>();
-    let candidateWindow: ResourceRow[] = [];
-    // Retain only the leading page between bind chunks. The database orders the
-    // union, preserving its collation and keyset semantics on every provider.
-    for (const teamIds of portableQueryChunks({ values: input.teamIds, bindingsPerValue: 1,
-        fixedBindings: limit + 1 + 5 })) {
-        candidateWindow = await tx.teamCredentialResource.findMany({
-            where: { AND: [
-                { OR: [{ teamId: { in: [...teamIds] } },
-                    ...(candidateWindow.length > 0 ? [{ id: { in: candidateWindow.map(row => row.id) } }] : [])] },
-                ...(after ? [{ OR: [
-                    { displayName: { gt: after.displayName } },
-                    { displayName: after.displayName, id: { gt: after.id } },
-                ] }] : []),
-            ] },
-            orderBy: [{ displayName: 'asc' }, { id: 'asc' }], take: limit + 1,
-        });
-    }
+    const candidateWindow = await readTeamCredentialResourceCandidatesInTx(tx, {
+        selection: { kind: 'recipient', teamIds: input.teamIds, resourceId: input.resourceId }, after, limit,
+    });
     const hasMoreCandidates = candidateWindow.length > limit;
     const candidates = candidateWindow.slice(0, limit);
     if (candidates.length > 0) {
@@ -1093,12 +1088,14 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
     const resources = selected.map(value => value.resource);
     const lastProcessedRow = candidates.at(-1) ?? null;
     const projectionRequests: TeamCredentialCatalogProjectionRequest[] = [];
+    const nativeTargetsByCustodian = new Map<string, ReturnType<typeof readManagedNativeCredentialTargetInTx>>();
     if (input.application) {
         for (const row of rows) {
             const resource = resources.find((candidate) => candidate.id === row.id);
             if (!resource) continue;
+            if (sourceRequiresReconnect(resource.readiness)) continue;
             const facts = projectionFactsByResourceId.get(row.id);
-            if (!facts || (!facts.entitlement.mayBroker && !facts.entitlement.mayReceiveDirect)) continue;
+            if (!facts || facts.entitlement.allowedRoutes.length === 0) continue;
             const entitlement = facts.entitlement;
             const placementRead = readTeamCredentialBrokerPlacement(row);
             const hasBrokerPlacement = placementRead.ok && placementRead.placement !== null;
@@ -1130,6 +1127,22 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
             if (entitlement.mayReceiveDirect) {
                 projectionRequests.push({ ...base, deliveryMode: "direct", directMaterialReferences });
             }
+            if (entitlement.allowedRoutes.includes('vendor-native')) {
+                let target = nativeTargetsByCustodian.get(row.custodianAccountId);
+                if (!target && input.executionMachineId && source.kind === 'provider_connection') {
+                    target = readManagedNativeCredentialTargetInTx(tx, { accountId: input.actorAccountId,
+                        executionMachineId: input.executionMachineId, resourceCustodianAccountId: row.custodianAccountId });
+                    nativeTargetsByCustodian.set(row.custodianAccountId, target);
+                }
+                const nativeTarget = target ? await target : null;
+                if (nativeTarget) projectionRequests.push({ ...base, deliveryMode: 'vendor-native',
+                    nativeTarget,
+                    directMaterialReferences: [] });
+                else {
+                    resource.deliveryUnavailableReason = 'provider_credential_transport_unavailable';
+                    resource.recoveryAction = 'choose_another_resource';
+                }
+            }
         }
     }
     return { ok: true as const, page: {
@@ -1137,7 +1150,18 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
         nextCursor: hasMoreCandidates && lastProcessedRow ? encodeTeamCredentialResourcesCursorV1({
             queryKey, displayName: lastProcessedRow.displayName, id: lastProcessedRow.id,
         }) : null,
-    }, projectionRequests };
+    }, projectionRequests,
+    // Private inputs for the route's live placement projection; never serialized
+    // into the recipient DTO or used as a second entitlement decision.
+    brokerReadinessRequests: selected.flatMap(({ row, resource }) => resource.mayBroker
+        && !sourceRequiresReconnect(resource.readiness)
+        && projectionFactsByResourceId.get(row.id)?.sourceIsCurrent
+        && projectionFactsByResourceId.get(row.id)?.sessionUsePolicyValid ? [{
+        resource: { id: row.id, custodianAccountId: row.custodianAccountId,
+            brokerMachineId: row.brokerMachineId, brokerPoolId: row.brokerPoolId },
+        hasCurrentDirectMaterial: resource.mayReceiveDirect && resource.directMaterialState === 'current',
+    }] : []),
+    };
 }
 
 export async function readTeamCredentialResourcePageInTx(tx: Tx, input: CredentialReadInput) {

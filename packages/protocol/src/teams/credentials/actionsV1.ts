@@ -51,7 +51,7 @@ import {
   TeamCredentialSourceResourceListInputV1Schema,
   TeamCredentialSourceResourceListOutputV1Schema,
 } from './sourceCandidatesV1.js';
-import { TeamCredentialResourceReadinessV1Schema } from './readinessV1.js';
+import { TeamCredentialResourceReadinessV1Schema } from './resourceReadinessV1.js';
 import { TeamCredentialUsageExportInputV1Schema } from './usageExportV1.js';
 import { UsageFileResultSchema } from '../../usage/usageExport.js';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, TeamCredentialExternalProviderErrorCodeV1Schema } from './externalProviderApiV1.js';
@@ -65,6 +65,13 @@ export type TeamCredentialTestActionInputV1 = z.infer<typeof TeamCredentialTestA
 export const TeamCredentialTestActionOutputV1Schema = lazyZodSchema(() => z.strictObject({
   result: z.enum(['available', 'needs_attention', 'partially_available']),
   readiness: TeamCredentialResourceReadinessV1Schema,
+  requestId: z.optional(z.string()),
+  failureDetail: z.optional(z.strictObject({
+    code: z.optional(TeamCredentialBrokerApplicationFailureCodeV1Schema),
+    stage: z.enum(['feature', 'signing', 'relay_authorization', 'relay_admission', 'request_write',
+      'response_headers', 'application_response', 'dispatch', 'response_body']),
+    httpStatus: z.optional(z.number().check(z.int())),
+  })),
   code: z.optional(z.union([TeamCredentialBrokerApplicationFailureCodeV1Schema, TeamCredentialExternalProviderErrorCodeV1Schema])),
   recovery: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(240))),
 }));

@@ -6,7 +6,7 @@ import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } f
 import { decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, TeamCredentialProviderBrokerApplicationCarrierRequestV1Schema, TeamCredentialExternalProviderApplicationRequestV1Schema, TeamCredentialResourceTestApplicationRequestV1Schema, type TeamCredentialResourceTestApplicationRequestV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
-import { TeamCredentialUsageLimitDenialV1Schema } from '@happier-dev/protocol/teams';
+import { TeamCredentialUsageLimitDenialV1Schema, type TeamCredentialTestActionOutputV1 } from '@happier-dev/protocol/teams';
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER,
     PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER,
@@ -25,7 +25,7 @@ import { inTx } from '@/storage/inTx';
 import { admitTeamCredentialBrokerMachineForResourceInTx } from '@/app/teams/credentials/brokerPlacementResolver';
 import { authorizeTeamCredentialResourceTestActorInTx } from '@/app/teams/credentials/resourceTest';
 import { logger } from '@/utils/logging/log';
-import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { TeamCredentialBrokerApplicationFailureCodeV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 
 function send(transport: ReturnType<PeerTcpTunnelRelayTransportFactory>, envelope: PeerTcpTunnelRelayEnvelope) {
     transport.send(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope);
@@ -34,7 +34,7 @@ function send(transport: ReturnType<PeerTcpTunnelRelayTransportFactory>, envelop
 type ProviderBrokerCarrierDispatchResult = Extract<Awaited<ReturnType<ExternalProviderBrokerDispatch>>, { ok: true }>
     | (Extract<Awaited<ReturnType<ExternalProviderBrokerDispatch>>, { ok: false }> & Readonly<{
         reason?: 'incompatible';
-        applicationCode?: TeamCredentialBrokerApplicationFailureCodeV1;
+        failureDetail?: TeamCredentialTestActionOutputV1['failureDetail'];
     }>);
 
 type ProviderBrokerCarrierDispatch = (input: Readonly<{
@@ -50,10 +50,10 @@ export function mapProviderBrokerApplicationFailure(
     headers: Readonly<Record<string, string>>,
 ): Readonly<{
     error: 'invalid_request' | 'policy_denied' | 'broker_unavailable' | 'request_cancelled'
-        | 'resource_unavailable' | 'team_credential_usage_limit' | 'cost_limit_unavailable' | 'upstream_unavailable';
+        | 'resource_unavailable' | 'team_credential_usage_limit' | 'cost_limit_unavailable' | 'upstream_unavailable'
+        | 'connected_service_credential_reconnect_required';
     retryAtMs?: number;
     reason?: 'incompatible';
-    applicationCode?: TeamCredentialBrokerApplicationFailureCodeV1;
 }> {
     const code = headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER];
     if (statusCode === 413 && code === 'request_too_large') return { error: 'invalid_request' };
@@ -69,6 +69,7 @@ export function mapProviderBrokerApplicationFailure(
             : { error: 'team_credential_usage_limit' };
     }
     if (statusCode === 403 && code === 'cost_limit_unavailable') return { error: 'cost_limit_unavailable' };
+    if (statusCode === 403 && code === 'connected_service_credential_reconnect_required') return { error: code };
     if (statusCode === 403 && (code === 'source_unavailable' || code === 'source_invalid')) return { error: 'upstream_unavailable' };
     if (statusCode === 403 && (code === 'resource_changed' || code === 'resource_unavailable'
         || code === 'operation_not_current' || code === 'session_not_active')) return { error: 'resource_unavailable' };
@@ -109,11 +110,11 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
         const enabled = await input.enabled() === true;
         if (!enabled) {
             logger.warn({ module: 'provider-broker-carrier', stage: 'feature', code: 'disabled' });
-            return { ok: false, error: 'broker_unavailable' };
+            return { ok: false, error: 'broker_unavailable', failureDetail: { code: 'broker_unavailable', stage: 'feature' } };
         }
         if (!signing.ok) {
             logger.warn({ module: 'provider-broker-carrier', stage: 'signing', code: signing.reasonCode });
-            return { ok: false, error: 'broker_unavailable' };
+            return { ok: false, error: 'broker_unavailable', failureDetail: { code: 'broker_unavailable', stage: 'signing' } };
         }
         const transport = input.createRelayTransport({ accountId: target.custodianAccountId });
         const tunnelId = `provider_broker_${randomUUID()}`;
@@ -134,7 +135,7 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
         if (!authorization.ok) {
             logger.warn({ module: 'provider-broker-carrier', stage: 'relay_authorization', code: authorization.reasonCode });
             transport.close();
-            return { ok: false, error: 'broker_unavailable' };
+            return { ok: false, error: 'broker_unavailable', failureDetail: { code: 'broker_unavailable', stage: 'relay_authorization' } };
         }
         let relay: ReturnType<typeof createPeerTcpTunnelRelayStream> | null = null;
         let admissionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -189,7 +190,10 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
             }),
             onRelease: cleanup,
         });
-        if (signal.aborted) { await relay.stream.abort('request_cancelled'); return { ok: false, error: 'request_cancelled' }; }
+        if (signal.aborted) {
+            await relay.stream.abort('request_cancelled');
+            return { ok: false, error: 'request_cancelled', failureDetail: { stage: 'relay_admission' } };
+        }
         signal.addEventListener('abort', abort, { once: true });
         // The signed relay grant already owns the admission window. A lost
         // OPEN/reply cannot retain this request after that window expires.
@@ -220,7 +224,7 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
         if (!written.ok) {
             logger.warn({ module: 'provider-broker-carrier', stage: 'request_write', code: 'write_failed' });
             cleanup();
-            return { ok: false, error: 'broker_unavailable' };
+            return { ok: false, error: 'broker_unavailable', failureDetail: { code: 'broker_unavailable', stage: 'request_write' } };
         }
         // Content-Length terminates the HTTP request. Keep TCP's write side
         // open until the response completes; an early FIN can make the HTTP
@@ -237,12 +241,12 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
             if (buffered.byteLength > config.serverRoutedMaxBinaryHeaderBytes) {
                 logger.warn({ module: 'provider-broker-carrier', stage: 'response_headers', code: 'headers_too_large' });
                 cleanup();
-                return { ok: false, error: 'upstream_unavailable' };
+                return { ok: false, error: 'upstream_unavailable', failureDetail: { stage: 'response_headers' } };
             }
             const next = await iterator.next();
             if (next.done) {
                 logger.warn({ module: 'provider-broker-carrier', stage: 'response_headers', code: 'response_incomplete' });
-                cleanup(); return { ok: false, error: 'upstream_unavailable' };
+                cleanup(); return { ok: false, error: 'upstream_unavailable', failureDetail: { stage: 'response_headers' } };
             }
             buffered = Buffer.concat([buffered, Buffer.from(next.value)]);
             boundary = buffered.indexOf('\r\n\r\n');
@@ -252,7 +256,7 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
         const status = /^HTTP\/1\.1 (\d{3})/u.exec(lines.shift() ?? '');
         if (!status) {
             logger.warn({ module: 'provider-broker-carrier', stage: 'response_headers', code: 'status_invalid' });
-            cleanup(); return { ok: false, error: 'upstream_unavailable' };
+            cleanup(); return { ok: false, error: 'upstream_unavailable', failureDetail: { stage: 'response_headers' } };
         }
         const statusCode = Number(status[1]);
         const headers: Record<string, string> = {};
@@ -263,7 +267,8 @@ function createProviderBrokerCarrierDispatch(input: Readonly<{
             logger.warn({ module: 'provider-broker-carrier', stage: 'application_response',
                 code: applicationCode.success ? applicationCode.data : 'application_refusal_unclassified', statusCode });
             return { ok: false, ...mapProviderBrokerApplicationFailure(statusCode, headers),
-                ...(applicationCode.success ? { applicationCode: applicationCode.data } : {}) };
+                failureDetail: { stage: 'application_response', httpStatus: statusCode,
+                    ...(applicationCode.success ? { code: applicationCode.data } : {}) } };
         }
         const initial = buffered.subarray(boundary + 4);
         async function* responseBody() {

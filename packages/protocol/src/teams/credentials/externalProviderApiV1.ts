@@ -1,10 +1,10 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../../connect/connectedServiceUxDiagnostics.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { ProviderPublicHeadersV1Schema } from '../../providers/publicHeadersSchema.js';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '../../providers/safety/limits.js';
-import { ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerApplicationBindingV1Schema, ProviderBrokerRequestFactsV1Schema } from '../../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerAdmissionFailureCodeV1Schema, ProviderBrokerSourceApplicationBindingV1Schema, ProviderBrokerRequestFactsV1Schema } from '../../providers/brokerRouteGrantV1.js';
 import {
   ProviderBrokerExternalApiKeyRelayBindingV1Schema,
   ProviderBrokerResourceTestRelayBindingV1Schema,
@@ -33,21 +33,6 @@ export const TeamCredentialExternalProviderOperationRetireResponseV1Schema = laz
 export type TeamCredentialExternalProviderOperationRetireResponseV1 = z.infer<typeof TeamCredentialExternalProviderOperationRetireResponseV1Schema>;
 export const TEAM_CREDENTIAL_RESOURCE_TEST_ADMISSION_HTTP_PATH_V1 = '/v1/teams/credential-resources/broker/resource-test/admit' as const;
 export const TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1 = '/__happier/provider-broker/external/v1' as const;
-export const TEAM_CREDENTIAL_EXTERNAL_PROVIDER_RAW_BODY_MAX_BYTES_V1 =
-  PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes;
-export const TEAM_CREDENTIAL_EXTERNAL_PROVIDER_BODY_BASE64_MAX_CHARS_V1 =
-  Math.ceil(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_RAW_BODY_MAX_BYTES_V1 / 3) * 4;
-/** Canonical Provider request metadata/header reserve above the maximally
- * encoded body. The boundary is derived from the shared Provider safety
- * catalog rather than a public-ingress-only byte ceiling. */
-export const TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1 =
-  TEAM_CREDENTIAL_EXTERNAL_PROVIDER_BODY_BASE64_MAX_CHARS_V1
-  + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxUrlChars
-  + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPublicHeaders * (
-    PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderNameChars
-    + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars
-    + 8
-  );
 
 export const TeamCredentialExternalProviderRouteV1Schema = lazyZodSchema(() => z.enum([
   'models',
@@ -82,7 +67,7 @@ export const TeamCredentialExternalProviderCallerV1Schema = lazyZodSchema(() => 
 }));
 export type TeamCredentialExternalProviderCallerV1 = z.infer<typeof TeamCredentialExternalProviderCallerV1Schema>;
 
-const CanonicalRequestBodyBase64V1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_BODY_BASE64_MAX_CHARS_V1), z.refine((value) => {
+const CanonicalRequestBodyBase64V1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.refine((value) => {
   try {
     return encodeBase64(decodeBase64(value, 'base64'), 'base64') === value;
   } catch {
@@ -172,7 +157,7 @@ export const TeamCredentialExternalProviderAdmissionV1Schema = lazyZodSchema(() 
   binding: ProviderBrokerExternalApiKeyRelayBindingV1Schema,
   brokerMachineId: ExternalProviderIdentityV1Schema,
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  application: ProviderBrokerApplicationBindingV1Schema,
+  application: ProviderBrokerSourceApplicationBindingV1Schema,
   requestFacts: ProviderBrokerRequestFactsV1Schema,
 }));
 
@@ -183,7 +168,7 @@ export const TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema = l
   binding: ProviderBrokerExternalApiKeyRelayBindingV1Schema,
   brokerMachineId: ExternalProviderIdentityV1Schema,
   expectedResourceRevision: z.number().check(z.int(), z.nonnegative()),
-  application: ProviderBrokerApplicationBindingV1Schema,
+  application: ProviderBrokerSourceApplicationBindingV1Schema,
 }));
 export type TeamCredentialExternalProviderModelCatalogAuthorizationV1 = z.infer<
   typeof TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema
@@ -210,6 +195,7 @@ export const TeamCredentialExternalProviderAdmissionResponseV1Schema = lazyZodSc
     ok: z.literal(false),
     reasonCode: z.enum([
       'invalid_request', 'resource_forbidden', 'resource_unavailable', 'resource_changed',
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
       'operation_not_current', 'broker_unavailable', 'team_credential_usage_limit',
       'token_limit_unavailable', 'cost_limit_unavailable', 'duplicate_request',
     ]),
@@ -230,8 +216,8 @@ export type TeamCredentialExternalProviderAdmissionResponseV1 = z.infer<typeof T
  * token block when that route's protocol carries one; otherwise the fact stays
  * `unavailable` and analytics leaves the request's tokens unknown.
  *
- * Cost is deliberately absent: no canonical price exists for these routes, an
- * estimate is not a Team fact, and an omitted field cannot decay into `$0.00`.
+ * Only an explicitly observed request charge may accompany the token fact;
+ * missing cost remains absent, and estimates never cross this boundary.
  * Reuse the canonical UsageEvent token shape so the writer, the personal
  * observation path and this report cannot drift into three token vocabularies.
  */
@@ -244,9 +230,13 @@ export const TeamCredentialExternalProviderTerminalUsageV1Schema = lazyZodSchema
   outcome: z.enum(['succeeded', 'failed', 'cancelled']),
   measurement: z.enum(['reported', 'unavailable']),
   /** The model the Provider actually answered with, when it names one. */
-  actualModelId: z.nullable(z.string().check(z.minLength(1), z.maxLength(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars))),
+  actualModelId: z.nullable(z.string().check(z.minLength(1))),
   tokens: z.nullable(UsageObservationTokensSchema),
+  reportedCostUsd: z.optional(z.number().check(z.minimum(0))),
 }).check(z.superRefine((usage, context) => {
+  if (usage.reportedCostUsd !== undefined && (usage.outcome !== 'succeeded' || usage.measurement !== 'reported')) {
+    context.addIssue({ code: 'custom', path: ['reportedCostUsd'], message: 'A reported request charge requires successful terminal usage.' });
+  }
   if ((usage.measurement === 'reported') !== (usage.tokens !== null)) {
     context.addIssue({
       code: 'custom',
@@ -295,6 +285,7 @@ export const TeamCredentialResourceTestAdmissionResponseV1Schema = lazyZodSchema
   z.strictObject({
     ok: z.literal(false),
     reasonCode: z.enum([
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
       'invalid_request', 'resource_forbidden', 'resource_unavailable', 'resource_changed',
       'operation_not_current', 'broker_unavailable', 'team_credential_usage_limit',
       'token_limit_unavailable', 'cost_limit_unavailable', 'duplicate_request',
@@ -310,6 +301,7 @@ export type TeamCredentialResourceTestAdmissionV1 = z.infer<typeof TeamCredentia
 export type TeamCredentialResourceTestAdmissionResponseV1 = z.infer<typeof TeamCredentialResourceTestAdmissionResponseV1Schema>;
 
 export const TeamCredentialExternalProviderErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   'invalid_api_key',
   'invalid_request',
   'resource_unavailable',

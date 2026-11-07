@@ -122,6 +122,13 @@ vi.mock("@/storage/db", async () => {
         ...inTxPostgresControlStatementMock,
         ...uniqueConflictTransaction,
         teamCredentialResource: { findMany: async () => [] },
+        async $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number> {
+            if (query === 'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?'
+                && values.length === 1 && values[0] === "account-concurrent-create") {
+                return 1;
+            }
+            return inTxPostgresControlStatementMock.$executeRawUnsafe(query, ...values);
+        },
         async $queryRawUnsafe(query: string) {
             if (query.includes('FROM "Account"') && /FOR (KEY SHARE|NO KEY UPDATE)/.test(query)) {
                 return [{ id: "account-concurrent-create" }];
@@ -148,8 +155,12 @@ describe("qualified Connected Account group repository", () => {
 
     it("preserves an explicit predecessor pool strategy", () => {
         const current = row();
-        current.policyJson = JSON.stringify({ strategy: "least_limited" });
-        expect(toQualifiedConnectedAccountGroup(current).policy.strategy).toBe("least_limited");
+        // cli-v0.2.17 / current ../0.2 stored policy fields, not a new mutation request.
+        current.policyJson = JSON.stringify({ strategy: "least_limited", maxSwitchesPerTurn: 1, maxSwitchesPerSessionHour: 3 });
+        const policy = toQualifiedConnectedAccountGroup(current).policy;
+        expect(policy.strategy).toBe("least_limited");
+        expect(policy).not.toHaveProperty("maxSwitchesPerTurn");
+        expect(policy).not.toHaveProperty("maxSwitchesPerSessionHour");
     });
 
     it("exposes an active-since timestamp only for the active member it describes", () => {

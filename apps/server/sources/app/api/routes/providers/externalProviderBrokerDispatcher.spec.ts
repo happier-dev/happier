@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { logger } from '@/utils/logging/log';
+import { TeamCredentialTestActionOutputV1Schema } from '@happier-dev/protocol/teams/credentials/actionsV1';
 
 import {
     createExternalProviderBrokerDispatcher,
@@ -139,10 +140,24 @@ describe('external Provider broker dispatcher', () => {
         return { result, removeAbortListener, transportCloseCount: () => transportCloseCount };
     }
 
+    it('keeps transport cancellation valid for the Team credential Test consumer', async () => {
+        const cancellation = new AbortController();
+        cancellation.abort();
+        const { result } = await dispatchWithUpstreamResponse(httpResponse('unused'), { cancellation });
+        expect(result).toMatchObject({ ok: false, error: 'request_cancelled',
+            failureDetail: { stage: 'relay_admission' } });
+        if (result.ok) throw new Error('Expected cancellation');
+        expect(TeamCredentialTestActionOutputV1Schema.parse({
+            result: 'needs_attention', code: result.failureDetail?.code ?? result.error,
+            failureDetail: result.failureDetail, readiness: { kind: 'source_unavailable' },
+        })).toMatchObject({ code: 'request_cancelled', failureDetail: { stage: 'relay_admission' } });
+    });
+
     it('preserves the broker request-size refusal through the relay without classifying an upstream outage', async () => {
         const response = new TextEncoder().encode('HTTP/1.1 413 Payload Too Large\r\nx-happier-provider-broker-error-code: request_too_large\r\nContent-Length: 0\r\n\r\n');
         const { result } = await dispatchWithUpstreamResponse(response);
-        expect(result).toEqual({ ok: false, error: 'invalid_request', applicationCode: 'request_too_large' });
+        expect(result).toEqual({ ok: false, error: 'invalid_request',
+            failureDetail: { code: 'request_too_large', stage: 'application_response', httpStatus: 413 } });
     });
 
     function httpResponse(body: string) {
@@ -174,7 +189,7 @@ describe('external Provider broker dispatcher', () => {
     ] as const)('records a content-free stage when carrier setup fails: %j', async (options, stage, code) => {
         const diagnostics = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const { result } = await dispatchWithUpstreamResponse(httpResponse('ok'), options);
-        expect(result).toEqual({ ok: false, error: 'broker_unavailable' });
+        expect(result).toEqual({ ok: false, error: 'broker_unavailable', failureDetail: { code: 'broker_unavailable', stage } });
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage, code });
     });
 
@@ -210,7 +225,7 @@ describe('external Provider broker dispatcher', () => {
         const { result } = await dispatchWithUpstreamResponse(
             new TextEncoder().encode(`HTTP/1.1 200 OK\r\nX-Oversized: ${'h'.repeat(24 * 1024)}`),
         );
-        expect(result).toEqual({ ok: false, error: 'upstream_unavailable' });
+        expect(result).toEqual({ ok: false, error: 'upstream_unavailable', failureDetail: { stage: 'response_headers' } });
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage: 'response_headers', code: 'headers_too_large' });
     });
 
@@ -221,18 +236,22 @@ describe('external Provider broker dispatcher', () => {
     ])('diagnoses a closed or malformed application response: %j', async (wire, code) => {
         const diagnostics = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const { result } = await dispatchWithUpstreamResponse(new TextEncoder().encode(wire));
-        expect(result).toEqual({ ok: false, error: 'upstream_unavailable' });
+        expect(result).toEqual({ ok: false, error: 'upstream_unavailable', failureDetail: { stage: 'response_headers' } });
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage: 'response_headers', code });
     });
 
-    it.each(['resource_changed', 'source_unavailable', 'model_not_allowed', 'private-unknown'])('preserves only a closed application refusal: %s', async code => {
+    it.each(['resource_changed', 'source_unavailable', 'model_not_allowed', 'connected_service_credential_reconnect_required', 'private-unknown'])('preserves only a closed application refusal: %s', async code => {
         const diagnostics = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const { result } = await dispatchWithUpstreamResponse(new TextEncoder().encode(
             `HTTP/1.1 403 Forbidden\r\nX-Happier-Provider-Broker-Error-Code: ${code}\r\n\r\nprivate body`,
         ));
         expect(result).toMatchObject({ ok: false });
-        if (code === 'private-unknown') expect(result).not.toHaveProperty('applicationCode');
-        else expect(result).toHaveProperty('applicationCode', code);
+        expect(result).toMatchObject({ failureDetail: { stage: 'application_response', httpStatus: 403 } });
+        if (code === 'private-unknown') expect(result).not.toHaveProperty('failureDetail.code');
+        else expect(result).toHaveProperty('failureDetail.code', code);
+        if (code === 'source_unavailable') expect(result).toHaveProperty('error', 'upstream_unavailable');
+        expect(JSON.stringify(result)).not.toContain('private');
+        if (code === 'connected_service_credential_reconnect_required') expect(result).toHaveProperty('error', code);
         expect(diagnostics).toHaveBeenCalledWith({ module: 'provider-broker-carrier', stage: 'application_response',
             code: code === 'private-unknown' ? 'application_refusal_unclassified' : code, statusCode: 403 });
         expect(JSON.stringify(diagnostics.mock.calls)).not.toContain('private');

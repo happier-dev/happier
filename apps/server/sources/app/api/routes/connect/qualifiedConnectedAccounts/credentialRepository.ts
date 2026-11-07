@@ -17,8 +17,10 @@ import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/ac
 import { acquireAccountCredentialSourceTeamAdmissionInTx } from '@/app/teams/teamChanges';
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { validateSavedSecretResourceReferencesInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import {
     decodeAccountContentFromAtRestStorage,
     encodeAccountContentForAtRestStorage,
@@ -89,7 +91,8 @@ export type QualifiedConnectedServiceCredentialMutationResult =
     | Readonly<{ status: "revision_required" }>
     | Readonly<{ status: "storage_mode_mismatch" }>
     /** The row's key is held by Saved Secret records; a write may not replace or inline beside them. */
-    | Readonly<{ status: "saved_secret_held" }>;
+    | Readonly<{ status: "saved_secret_held" }>
+    | Readonly<{ status: "saved_secret_reference_invalid" }>;
 
 export type QualifiedConnectedAccountConfigurationMutationResult =
     | Readonly<{
@@ -444,6 +447,8 @@ type QualifiedCredentialMutationCommonParams = Readonly<{
     contributionContractVersion?: string;
     /** Saved Secret resources the sealed content references; omission on an update retains the stored set. */
     savedSecretResourceIds?: readonly string[];
+    /** Input-only selected-reference proof; the Saved Secret owner admits it at this write. */
+    savedSecretRevisions?: readonly Readonly<{ resourceId: string; expectedRevision: number }>[];
     reconnect?: Readonly<{ allowProviderIdentityChange?: boolean }>;
     refreshLeaseOwnerId?: string;
     legacyIdentity?: Readonly<{ serviceId: string; profileId: string }>;
@@ -559,6 +564,7 @@ export type QualifiedConnectedAccountSourceIdentity = Readonly<{
     credentialRevision: string;
     configurationRevision: string | null;
     authenticationModeId: string;
+    status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
     directExportContract:
         | typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
         | null;
@@ -579,6 +585,7 @@ function projectQualifiedConnectedAccountSourceIdentity(
         credentialRevision,
         configurationRevision: current.configurationRevision,
         authenticationModeId: current.authenticationModeId,
+        status: projection.status,
         directExportContract: projection.directExportContract,
         contributionContractVersion: projection.contributionContractVersion,
     };
@@ -849,6 +856,12 @@ async function mutateQualifiedConnectedServiceCredentialWithPreparedInTx(
         );
     }
 
+    if (params.savedSecretRevisions && !await validateSavedSecretResourceReferencesInTx(tx, {
+        accountId: params.accountId,
+        ownResourcesOnly: true,
+        references: params.savedSecretRevisions.map(capture => formatSharedSavedSecretRefV1(capture.resourceId)),
+        savedSecretRevisions: params.savedSecretRevisions,
+    })) return { status: 'saved_secret_reference_invalid' };
     const account = await tx.account.findUnique({
         where: { id: params.accountId },
         select: {
@@ -1174,6 +1187,7 @@ function canonicalizeQualifiedCredentialMutation(
         ...(params.savedSecretResourceIds
             ? { savedSecretResourceIds: [...params.savedSecretResourceIds] }
             : {}),
+        ...(params.savedSecretRevisions ? { savedSecretRevisions: params.savedSecretRevisions } : {}),
         ...(params.refreshLeaseOwnerId
             ? { refreshLeaseOwnerId: params.refreshLeaseOwnerId }
             : {}),

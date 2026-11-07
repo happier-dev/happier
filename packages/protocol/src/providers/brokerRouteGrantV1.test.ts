@@ -38,6 +38,16 @@ const payload = {
 const authority = { payload, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } };
 
 describe('Provider broker authority V1', () => {
+  it('carries same-Machine Team authority through encoding and the exact carrier handshake', () => {
+    const localAuthority = { ...authority, payload: { ...payload,
+      target: { ...payload.target, machineId: payload.initiator.machineId, endpointId: payload.initiator.endpointId },
+    } };
+    const admitted = SignedProviderBrokerRouteGrantV1Schema.parse(localAuthority);
+    expect(decodeProviderBrokerAuthorityV1(encodeProviderBrokerAuthorityV1(admitted))).toEqual(admitted);
+    expect(IrohProviderBrokerHandshakeV1Schema.parse({ v: 1, kind: 'provider_broker', authority: admitted }))
+      .toMatchObject({ authority: admitted });
+  });
+
   it('refuses a personal hub open directed back to the initiating Machine', () => {
     expect(ProviderBrokerAccountOpenRequestV2Schema.safeParse({
       v: 2, source: { kind: 'account_connection', connectionId: 'personal-connection',

@@ -330,6 +330,8 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
         poolInitiator?: Readonly<{ machineId: string; endpointId: string }>;
         poolEligibleMachineIds?: ReadonlySet<string>;
         expectedPoolMachineId?: string;
+        /** Read projections reuse their already acquired canonical Pool snapshot. Launch admission omits this. */
+        poolSnapshotForProjection?: MachinePoolCandidateSnapshot;
     }>,
 ): Promise<TeamCredentialBrokerPlacementResolution> {
     const read = readTeamCredentialBrokerPlacement(input.resource);
@@ -348,7 +350,9 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
         }
         selectedMachineId = placement.machineId;
     } else if (pinnedMachineId === null) {
-        const snapshot = await getMachinePoolCandidateSnapshotInTx(tx, {
+        const snapshot = input.poolSnapshotForProjection
+            ? { ok: true as const, value: input.poolSnapshotForProjection }
+            : await getMachinePoolCandidateSnapshotInTx(tx, {
             accountId: input.resource.custodianAccountId,
             poolId: placement.poolId,
             presence: input.presence,

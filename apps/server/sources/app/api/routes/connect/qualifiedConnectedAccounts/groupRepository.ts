@@ -3,6 +3,7 @@ import { ConnectedServiceAuthGroupMemberStateV1Schema, ConnectedServiceAuthGroup
 import { QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { clearConnectedServiceAuthGroupMemberRuntimeBlockers, readConnectedServiceManualActiveProfileRuntimeBlocker } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
 import { type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { Prisma } from "@prisma/client";
 import { isDeepStrictEqual } from "node:util";
 
@@ -157,7 +158,7 @@ export function toQualifiedConnectedAccountGroup(
         incarnation: row.id,
         displayName: row.displayName,
         policy: parseStoredJson(
-            ConnectedServiceAuthGroupPolicyV1Schema,
+            createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
             row.policyJson,
         ),
         activeConnectedAccountId: row.activeConnectedAccountId,
@@ -339,6 +340,7 @@ export type QualifiedConnectedAccountGroupSourceSnapshot = Readonly<{
     incarnation: string;
     generation: number;
     runtimeStateRevision: number;
+    activeConnectedAccountId: string | null;
     members: readonly Readonly<{
         account: Readonly<{
             service: QualifiedConnectedAccountServiceRef;
@@ -348,6 +350,7 @@ export type QualifiedConnectedAccountGroupSourceSnapshot = Readonly<{
         credentialRevision: string | null;
         configurationRevision: string | null;
         authenticationModeId: string;
+        status: ReturnType<typeof resolveQualifiedConnectedAccountStoredMetadata>["status"];
         directExportContract:
             | typeof CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1
             | null;
@@ -371,6 +374,7 @@ function projectQualifiedConnectedAccountGroupSourceSnapshot(
         incarnation: current.id,
         generation: projected.generation,
         runtimeStateRevision: projected.runtimeStateRevision,
+        activeConnectedAccountId: projected.activeConnectedAccountId,
         members: Object.freeze(projected.members.map((member) => {
             const storedMember = current.members.find(candidate => (
                 candidate.credential.connectedAccountId
@@ -403,6 +407,7 @@ function projectQualifiedConnectedAccountGroupSourceSnapshot(
                     storedMember.credential.configurationRevision ?? null,
                 authenticationModeId:
                     storedMember.credential.authenticationModeId,
+                status: sourceMetadata.status,
                 directExportContract: sourceMetadata.directExportContract,
                 contributionContractVersion:
                     sourceMetadata.contributionContractVersion,
@@ -892,7 +897,7 @@ export async function patchQualifiedConnectedAccountGroup(
                 {
                     // Feature-masked readers omit the reset opt-in; an unrelated
                     // policy edit must preserve that saved choice.
-                    ...parseStoredJson(ConnectedServiceAuthGroupPolicyV1Schema, current.policyJson),
+                    ...parseStoredJson(createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema), current.policyJson),
                     ...patch.policy,
                 },
             );

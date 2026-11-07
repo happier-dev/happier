@@ -1,15 +1,5 @@
-import { createConnectedServiceCredentialRevision } from "@/app/api/routes/connect/credentials/credentialRevision";
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
-import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
-    completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
-    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from './sessionBinding';
-import { readSessionTeamCredentialNativeSelectionInTx } from './nativeDeliveryRead';
-import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
-import tweetnacl from 'tweetnacl';
-import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import tweetnacl from 'tweetnacl';
 import type { RouteOptions } from "fastify";
 import { ClusterAdapter, MessageType, type ClusterMessage } from "socket.io-adapter";
 import { io as connect } from "socket.io-client";
@@ -23,6 +13,7 @@ import {
     TeamCredentialResourceSummaryV1Schema,
 } from "@happier-dev/protocol/teams";
 import {
+    MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
     decodePeerTcpTunnelBinaryFrameV2,
     encodePeerTcpTunnelBinaryFrameV2,
     encodePasswordCredentialFieldV1,
@@ -32,11 +23,13 @@ import {
     type PeerTcpTunnelRelayEnvelope,
     API_TOKEN_FULL_GRANT_V1,
     ApiTokenGrantV1Schema,
+    PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER,
 } from "@happier-dev/protocol";
 import type { ProviderConnectionId } from "@happier-dev/protocol/providers/ids";
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema } from "@happier-dev/protocol/teams/credentials/resourceV1";
 
 import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAccountIdentityDigest, createQualifiedConnectedAccountServiceDigest } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
+import { createConnectedServiceCredentialRevision } from "@/app/api/routes/connect/credentials/credentialRevision";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { isRestrictedAuthTokenDeniedForRoute } from "@/app/api/utils/apiTokenRouteAdmission";
 import { getMachineSocketRoom, getSocketRooms, getUserMachinesSocketRoom } from "@/app/api/socketRooms";
@@ -52,8 +45,18 @@ import { projectTeamCredentialResourceSummaryInTx, readTeamCredentialCatalogInTx
 import { resolveTeamCredentialSourceMemberCurrentnessInTx } from "./resourceSourceResolver";
 import { inTx } from "@/storage/inTx";
 import { recordConnectedServiceAccountProfileChange } from "@/app/api/routes/connect/connectedServicesAccountProfileChange";
-import { TEAM_CHANGE_ENTITY_ID } from "../teamChanges";
+import { TEAM_CHANGE_ENTITY_ID, publishTeamChangedInTx } from "../teamChanges";
+import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
+import { ChangesResponseSchema } from "@happier-dev/protocol/changes";
 import { recordTeamCredentialDirectDeliveryActivityInTx } from "./resourceActivity";
+import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from './sessionBinding.testkit';
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from './sessionBinding';
+import { readSessionTeamCredentialNativeSelectionInTx } from './nativeDeliveryRead';
+import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { createTeamCredentialResourceTestBrokerDispatcher } from "@/app/api/routes/providers/externalProviderBrokerDispatcher";
 
 describe("Team credential resource routes (SQLite integration)", () => {
@@ -68,6 +71,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             initAuth: false,
             env: {
                 HAPPIER_FEATURE_TEAMS__ENABLED: "1",
+                HAPPIER_SERVER_IDENTITY_ID: `srv_${'a'.repeat(32)}`,
                 HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: "1",
                 HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
@@ -88,12 +92,44 @@ describe("Team credential resource routes (SQLite integration)", () => {
             }
         });
         registerTeamCredentialResourceRoutes(app);
+        changesRoutes(app);
         await app.ready();
     }, 180_000);
 
     afterAll(async () => {
         if (app) await app.close();
         if (harness) await harness.close();
+    });
+
+    it("narrows the recipient HTTP catalog to one resource without bypassing entitlement", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
+        const team = await db.team.create({ data: { name: "Exact HTTP catalog" } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: "owner" },
+            { teamId: team.id, accountId: recipient.id, role: "member" },
+        ] });
+        const resources = await Promise.all(["First", "Selected"].map(displayName => db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: owner.id, displayName, sourceBindingJson: "{}",
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", allMembersDeliveryMode: "brokered",
+        } })));
+        const input = { teamId: team.id, resourceId: resources[1]!.id };
+        const read = (payload = input) => post("/v1/teams/credential-resources/entitled/list", recipient.id, payload);
+        const result = await read();
+        expect(result.statusCode, result.body).toBe(200);
+        expect(result.json().resources.map((row: { id: string }) => row.id)).toEqual([resources[1]!.id]);
+        expect(result.json().nextCursor).toBeNull();
+        await db.teamCredentialResource.update({ where: { id: resources[1]!.id }, data: { allMembersDeliveryMode: null } });
+        const withdrawn = await read();
+        expect(withdrawn.statusCode, withdrawn.body).toBe(200);
+        expect(withdrawn.json().resources).toEqual([]);
+        const otherTeam = await db.team.create({ data: { name: "Unrelated" } });
+        const hidden = await read({ ...input, teamId: otherTeam.id });
+        expect(hidden.statusCode).toBe(404);
+        await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: recipient.id, role: 'member' } });
+        const wrongTeam = await read({ teamId: otherTeam.id, resourceId: resources[0]!.id });
+        expect(wrongTeam.statusCode, wrongTeam.body).toBe(200);
+        expect(wrongTeam.json().resources).toEqual([]);
     });
 
     it('selects only the authenticated custodian direct sources and observes authority changes', async () => {
@@ -277,7 +313,25 @@ describe("Team credential resource routes (SQLite integration)", () => {
         }
     });
 
-    it("tests a newly saved revision-zero resource through signed relay admission", async () => {
+    it.each([
+        { name: 'success', status: '200 OK', applicationCode: null,
+            expected: { result: 'available', readiness: { kind: 'available' } } },
+        { name: 'typed source refusal', status: '403 Forbidden', applicationCode: 'source_invalid',
+            expected: { result: 'needs_attention', code: 'source_invalid', readiness: { kind: 'source_unavailable' },
+                failureDetail: { code: 'source_invalid', stage: 'application_response', httpStatus: 403 } } },
+        { name: 'unavailable source refusal', status: '403 Forbidden', applicationCode: 'source_unavailable',
+            expected: { result: 'needs_attention', code: 'source_unavailable', readiness: { kind: 'source_unavailable' },
+                failureDetail: { code: 'source_unavailable', stage: 'application_response', httpStatus: 403 } } },
+        { name: 'typed broker refusal', status: '503 Service Unavailable', applicationCode: 'broker_unavailable',
+            expected: { result: 'needs_attention', code: 'broker_unavailable', readiness: { kind: 'broker_unavailable' },
+                failureDetail: { code: 'broker_unavailable', stage: 'application_response', httpStatus: 503 } } },
+        { name: 'unclassified upstream refusal', status: '401 Unauthorized', applicationCode: null,
+            expected: { result: 'needs_attention', code: 'upstream_unavailable', readiness: { kind: 'source_unavailable' },
+                failureDetail: { stage: 'application_response', httpStatus: 401 } } },
+        { name: 'malformed application response', status: 'invalid', applicationCode: null,
+            expected: { result: 'needs_attention', code: 'upstream_unavailable', readiness: { kind: 'source_unavailable' },
+                failureDetail: { stage: 'response_headers' } } },
+    ] as const)("preserves signed brokered Test correlation and $name for a revision-zero resource", async ({ status, applicationCode, expected }) => {
         const custodian = await createAccount();
         const team = await db.team.create({ data: { name: "Initial resource Test" } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: custodian.id, role: "owner" } });
@@ -363,7 +417,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
                         sender: { kind: "machine", machineId: broker.id },
                         recipient: { kind: "user", socketId: relaySocketId },
                     });
-                    const payload = new TextEncoder().encode("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+                    const errorHeader = applicationCode ? `${PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER}: ${applicationCode}\r\n` : '';
+                    const payload = new TextEncoder().encode(`HTTP/1.1 ${status}\r\n${errorHeader}Content-Length: 2\r\n\r\nok`);
                     const header = { version: 2 as const, tunnelId: decoded.header.tunnelId,
                         substreamId: decoded.header.substreamId, direction: "daemon_to_client" as const };
                     reply(encodePeerTcpTunnelBinaryFrameV2({ header: { ...header, kind: "data",
@@ -380,13 +435,196 @@ describe("Team credential resource routes (SQLite integration)", () => {
             });
             expect(tested.statusCode, tested.body).toBe(200);
             expect(tested.json(), JSON.stringify(diagnostics.mock.calls))
-                .toMatchObject({ result: "available", readiness: { kind: "available" } });
+                .toMatchObject({ ...expected, requestId: "initial-resource-test" });
             expect(admitted).toBe(true);
         } finally {
             app.machineDaemonPresence = previousPresence;
             app.forwardRpcForUser = previousRpc;
             app.forwardTeamCredentialBrokerResourceTest = previousDispatch;
         }
+    });
+
+    it("uses live broker presence for generic and exact recipient catalogs without probing an offline broker", async () => {
+        const owner = await createAccount();
+        const recipient = await createAccount();
+        const team = await db.team.create({ data: { name: "Broker presence catalog" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
+        const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
+        const account = { service: { pluginId: "happier.agent.codex", localId: "openai-codex" }, accountId: "presence-account" };
+        const credential = await db.serviceAccountToken.create({ data: {
+            accountId: owner.id, servicePluginId: account.service.pluginId, serviceLocalId: account.service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(account.service),
+            connectedAccountId: account.accountId, qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account),
+            authenticationModeId: "api-key", token: Buffer.from("constructed-test-credential"),
+            metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: createConnectedServiceCredentialRevision(), values: {} },
+        } });
+        const broker = await db.machine.create({ data: {
+            id: `presence-broker-${owner.id}`, accountId: owner.id, metadata: "{}", kind: "persistent", active: true,
+            operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: owner.id, displayName: "Team account",
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", brokerMachineId: broker.id,
+            sourceBindingJson: JSON.stringify({ v: 1, kind: "connected_account", target: { kind: "account", account },
+                credentialIncarnation: credential.id }),
+            memberGrants: { create: { teamMembershipId: member.id, deliveryMode: "brokered" } },
+        } });
+        const admitted = await inTx(tx => readTeamCredentialCatalogInTx(tx, {
+            teamId: team.id, actorAccountId: recipient.id, authentication: { authenticationAuthority: "present_user" },
+        }));
+        expect(admitted).toMatchObject({ ok: true, page: { resources: [{ id: resource.id, readiness: { kind: "available" } }] } });
+        const previousPresence = app.machineDaemonPresence;
+        const previousRpc = app.forwardRpcForUser;
+        let connected = false;
+        let rpcCount = 0;
+        const rooms: unknown[] = [];
+        // Socket.IO and daemon RPC are network boundaries; all admission and storage stay real.
+        app.machineDaemonPresence = { in: (room: string | string[]) => {
+            rooms.push(room);
+            return { fetchSockets: async () => connected ? [{
+                data: { clientType: "machine-scoped", userId: owner.id, machineId: broker.id },
+            }] : [] };
+        } };
+        app.forwardRpcForUser = async () => { rpcCount += 1; return { ok: false, error: "offline" }; };
+        const application = {
+            agentTargetKey: "agent:happier.agent.codex/codex",
+            implementationIdentity: { pluginId: "happier.provider.openai", localId: "openai" },
+            endpointTemplateId: "responses", protocol: "openai-responses",
+        } as const;
+        try {
+            for (const url of ["/v1/teams/credential-resources/entitled/list", TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1]) {
+                for (const exact of [false, true]) {
+                    const response = await post(url, recipient.id, {
+                        ...(url === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 ? { teamIds: [team.id] } : { teamId: team.id }),
+                        ...(exact ? { application } : {}),
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json().resources).toContainEqual(expect.objectContaining({
+                        id: resource.id, readiness: { kind: "broker_unavailable" }, recoveryAction: "source_owner_action",
+                        connectedServiceSelections: [{ source: "team_resource", resourceId: resource.id, deliveryMode: "brokered" }],
+                    }));
+                }
+            }
+            expect(rpcCount).toBe(0);
+            expect(rooms).toHaveLength(4);
+            expect(rooms.every(room => room === getMachineSocketRoom(owner.id, broker.id))).toBe(true);
+            connected = true;
+            const recovered = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id });
+            expect(recovered.json().resources).toContainEqual(expect.objectContaining({
+                id: resource.id, readiness: { kind: "available" },
+                connectedServiceSelections: [{ source: "team_resource", resourceId: resource.id, deliveryMode: "brokered" }],
+            }));
+            expect((await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } })).revision).toBe(resource.revision);
+            app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => { throw new Error("constructed presence failure"); } }) };
+            const unknown = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id });
+            expect(unknown.json().resources).toContainEqual(expect.objectContaining({
+                id: resource.id, readiness: { kind: "broker_unavailable", reason: "projection_unavailable" }, recoveryAction: "retry",
+            }));
+            await db.serviceAccountToken.delete({ where: { id: credential.id } });
+            const missingSource = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id });
+            expect(missingSource.json().resources).toContainEqual(expect.objectContaining({
+                id: resource.id, readiness: { kind: "source_unavailable" }, recoveryAction: "source_owner_action",
+            }));
+        } finally {
+            app.machineDaemonPresence = previousPresence;
+            app.forwardRpcForUser = previousRpc;
+        }
+    });
+
+    it.each(["connected_account", "connected_pool"] as const)("preserves reconnect-required source health in generic and exact %s catalogs", async kind => {
+        const owner = await createAccount();
+        const recipient = await createAccount();
+        const team = await db.team.create({ data: { name: "Source health catalog" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
+        const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: "member" } });
+        const service = { pluginId: "happier.agent.codex", localId: "openai-codex" };
+        const account = { service, accountId: "reauth-source" };
+        const metadata = { v: 4, storage: "stored_envelope_v1", credentialRevision: createConnectedServiceCredentialRevision(), values: {} };
+        const credential = await db.serviceAccountToken.create({ data: {
+            accountId: owner.id, servicePluginId: service.pluginId, serviceLocalId: service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            connectedAccountId: account.accountId, qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account),
+            authenticationModeId: "api-key", token: Buffer.from("constructed-test-credential"),
+            metadata: { ...metadata, health: { v: 1, status: "needs_reauth", reconnectRequired: true } },
+        } });
+        const groupId = "source-health-pool";
+        const pool = await db.connectedServiceAuthGroup.create({ data: {
+            accountId: owner.id, servicePluginId: service.pluginId, serviceLocalId: service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId }),
+            groupId, displayName: "Source health pool", policyJson: "{}", activeConnectedAccountId: account.accountId,
+        } });
+        await db.connectedServiceAuthGroupMember.create({ data: {
+            groupDbId: pool.id, accountId: owner.id, credentialId: credential.id,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId }),
+            qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account), priority: 0, enabled: true,
+        } });
+        if (kind === 'connected_pool') {
+            const backupAccount = { service, accountId: 'healthy-alternative' };
+            const backup = await db.serviceAccountToken.create({ data: { accountId: owner.id,
+                servicePluginId: service.pluginId, serviceLocalId: service.localId,
+                qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service), connectedAccountId: backupAccount.accountId,
+                qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(backupAccount),
+                authenticationModeId: 'api-key', token: Buffer.from('constructed-backup-token'), metadata } });
+            await db.connectedServiceAuthGroupMember.create({ data: { groupDbId: pool.id, accountId: owner.id, credentialId: backup.id,
+                qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+                qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({ service, groupId }),
+                qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(backupAccount), priority: 1, enabled: true } });
+        }
+        const broker = await db.machine.create({ data: {
+            id: `source-health-broker-${owner.id}`, accountId: owner.id, metadata: "{}", kind: "persistent", active: true,
+            operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
+        } });
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: owner.id, displayName: "Reconnect source", disclosureCeiling: "brokered_only",
+            sessionUsePolicy: "personal_allowed", brokerMachineId: broker.id,
+            sourceBindingJson: JSON.stringify(kind === "connected_account"
+                ? { v: 1, kind, target: { kind: "account", account }, credentialIncarnation: credential.id }
+                : { v: 1, kind, target: { kind: "group", service, groupId }, poolIncarnation: pool.id }),
+            memberGrants: { create: { teamMembershipId: member.id, deliveryMode: "brokered" } },
+        } });
+        const previousPresence = app.machineDaemonPresence;
+        const previousRpc = app.forwardRpcForUser;
+        let rpcCount = 0;
+        app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [] }) };
+        app.forwardRpcForUser = async () => { rpcCount += 1; return { ok: false, error: "offline" }; };
+        const application = { agentTargetKey: "agent:happier.agent.codex/codex",
+            implementationIdentity: { pluginId: "happier.provider.openai", localId: "openai" },
+            endpointTemplateId: "responses", protocol: "openai-responses" } as const;
+        try {
+            for (const url of ["/v1/teams/credential-resources/entitled/list", TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1]) {
+                for (const exact of [false, true]) {
+                    const response = await post(url, recipient.id, {
+                        ...(url === TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1 ? { teamIds: [team.id] } : { teamId: team.id }),
+                        ...(exact ? { application } : {}),
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json().resources).toContainEqual(expect.objectContaining({ id: resource.id,
+                        readiness: { kind: "source_unavailable", reason: "connected_service_credential_reconnect_required" },
+                        recoveryAction: "source_owner_action" }));
+                }
+            }
+            expect(rpcCount).toBe(0);
+            const tested = await post("/v1/teams/credential-resources/test", owner.id, { teamId: team.id, resourceId: resource.id });
+            expect(tested.statusCode, tested.body).toBe(200);
+            expect(tested.json()).toMatchObject({ result: "needs_attention", code: "connected_service_credential_reconnect_required", requestId: expect.any(String),
+                readiness: { kind: "source_unavailable", reason: "connected_service_credential_reconnect_required" } });
+            const support = await post('/v1/teams/credential-resources/request-policy-support/get', owner.id, { scope: 'resource', resourceId: resource.id });
+            expect(support.statusCode, support.body).toBe(200);
+            expect(support.json()).toEqual({ status: 'unavailable', reason: 'connected_service_credential_reconnect_required' });
+            const administration = await post('/v1/teams/credential-resources/get', owner.id, { resourceId: resource.id });
+            expect(administration.statusCode, administration.body).toBe(200);
+            expect(administration.json()).toMatchObject({ readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
+                recoveryAction: 'source_owner_action' });
+            await db.serviceAccountToken.update({ where: { id: credential.id }, data: { metadata } });
+            const recovered = await inTx(tx => readTeamCredentialCatalogInTx(tx, {
+                teamId: team.id, actorAccountId: recipient.id, authentication: { authenticationAuthority: "present_user" },
+            }));
+            expect(recovered).toMatchObject({ ok: true, page: { resources: [{ id: resource.id, readiness: { kind: "available" } }] } });
+            expect((await db.connectedServiceAuthGroup.findUniqueOrThrow({ where: { id: pool.id } })).activeConnectedAccountId).toBe(account.accountId);
+        } finally { app.machineDaemonPresence = previousPresence; app.forwardRpcForUser = previousRpc; }
     });
 
     it("keeps valid catalog siblings when one resource source binding is malformed", async () => {
@@ -608,7 +846,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(connectedAccount),
             authenticationModeId: "api-key",
             token: Buffer.from("request-policy-private-credential"),
-            metadata: { credentialRevision: "csr_request_policy_account" },
+            metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: createConnectedServiceCredentialRevision(), values: {} },
         } });
         const connectedGroupId = "request-policy-pool";
         const connectedGroup = await db.connectedServiceAuthGroup.create({ data: {
@@ -1026,6 +1264,98 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(denied.statusCode, denied.body).toBe(403);
         expect(denied.json()).toEqual({ error: "resource_forbidden" });
         expect(rpc).not.toHaveBeenCalled();
+    });
+
+    it.each(['resource', 'source_draft'] as const)('admits %s request-policy Pool placement through the canonical enabled and ownership decision', async (scope) => {
+        const owner = await createAccount();
+        const outsider = await createAccount();
+        const team = await db.team.create({ data: {
+            name: 'Request-policy Pool admission', memberships: { create: { accountId: owner.id, role: 'owner' } },
+        } });
+        const broker = await db.machine.create({ data: {
+            id: `policy-pool-admission-${owner.id}`, accountId: owner.id, metadata: '{}', kind: 'persistent',
+            operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const pool = await db.machinePool.create({ data: {
+            id: crypto.randomUUID(), accountId: owner.id, name: 'Policy brokers',
+            members: { create: { machineId: broker.id, priorityTier: 0, enabled: true } },
+        } });
+        const foreignPool = await db.machinePool.create({ data: {
+            id: crypto.randomUUID(), accountId: outsider.id, name: 'Another custodian’s brokers',
+        } });
+        const source = {
+            v: 1, kind: 'provider_connection', connectionId: 'pool-admission-source',
+            connectionSecurityFingerprint: `connection-security:v1:${'a'.repeat(43)}`, credentialSlotId: 'apiKey',
+        } as const;
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: owner.id, displayName: 'Pool policy source',
+            disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed',
+            sourceBindingJson: JSON.stringify(source), brokerPoolId: pool.id,
+        } });
+        const previousPools = process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED;
+        const previousPresence = app.machineDaemonPresence;
+        const previousRpc = app.forwardRpcForUser;
+        let online = true;
+        // Presence discovery and daemon RPC are network boundaries; placement, feature and source owners remain real.
+        const presence = vi.fn(async () => online
+            ? [{ data: { clientType: 'machine-scoped', userId: owner.id, machineId: broker.id } }]
+            : []);
+        const rpc = vi.fn(async () => ({ ok: true as const, result: {
+            status: 'success', models: [{
+                descriptor: { id: 'gpt-5', name: 'GPT-5' },
+                application: {
+                    agentTargetKey: 'agent:happier.agent.codex/codex',
+                    implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
+                    endpointTemplateId: 'responses', protocol: 'openai-responses',
+                },
+                sourceRevision: 'pool-admission-source-revision', protocolKind: 'openai_responses',
+                model: { canonicalId: 'gpt-5', aliases: [] }, reasoningEffort: { supported: false },
+            }],
+        } }));
+        const support = (poolId = pool.id) => post('/v1/teams/credential-resources/request-policy-support/get', owner.id,
+            scope === 'resource'
+                ? { scope, resourceId: resource.id }
+                : { scope, teamId: team.id, source, brokerPlacement: { kind: 'machine_pool', poolId } });
+        try {
+            process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED = 'true';
+            app.machineDaemonPresence = { in: () => ({ fetchSockets: presence }) };
+            app.forwardRpcForUser = rpc;
+            expect((await support()).json()).toMatchObject({ status: 'available', models: [{ descriptor: { id: 'gpt-5' } }] });
+
+            online = false;
+            presence.mockClear();
+            rpc.mockClear();
+            expect((await support()).json()).toEqual({ status: 'unavailable', reason: 'broker_unavailable' });
+            expect(presence).toHaveBeenCalledOnce();
+            expect(rpc).not.toHaveBeenCalled();
+
+            online = true;
+            process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED = 'false';
+            presence.mockClear();
+            expect((await support()).json()).toEqual({ status: 'unavailable', reason: 'broker_unavailable' });
+            expect(presence).not.toHaveBeenCalled();
+            expect(rpc).not.toHaveBeenCalled();
+
+            process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED = 'true';
+            await db.teamCredentialResource.update({ where: { id: resource.id }, data: { brokerPoolId: foreignPool.id } });
+            expect((await support(foreignPool.id)).json()).toEqual({ status: 'unavailable', reason: 'broker_unavailable' });
+            expect(presence).not.toHaveBeenCalled();
+            expect(rpc).not.toHaveBeenCalled();
+            if (scope === 'resource') {
+                await db.teamCredentialResource.update({ where: { id: resource.id }, data: { brokerMachineId: broker.id } });
+                const corrupt = await support();
+                expect(corrupt.statusCode, corrupt.body).toBe(400);
+                expect(corrupt.json()).toEqual({ error: 'resource_corrupt' });
+                expect(presence).not.toHaveBeenCalled();
+                expect(rpc).not.toHaveBeenCalled();
+            }
+        } finally {
+            if (previousPools === undefined) delete process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED;
+            else process.env.HAPPIER_FEATURE_MACHINES_POOLS__ENABLED = previousPools;
+            app.machineDaemonPresence = previousPresence;
+            app.forwardRpcForUser = previousRpc;
+        }
     });
 
     it("requires consensus before reporting a Pool-wide request-policy broker refusal", async () => {
@@ -1599,7 +1929,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account),
             authenticationModeId: "api-key",
             token: Buffer.from("attention-source-material"),
-            metadata: { credentialRevision: "csr_attention_source_revision" },
+            metadata: { v: 4, storage: 'stored_envelope_v1', credentialRevision: createConnectedServiceCredentialRevision(), values: {} },
         } });
         const source = {
             v: 1 as const,
@@ -2557,7 +2887,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             }],
         });
         expect(response.json().resources.find((resource: { id: string }) => resource.id === brokerlessResource.id)).toMatchObject({
-            readiness: { kind: "source_unavailable" },
+            readiness: { kind: "broker_unavailable" },
             mayBroker: true,
             providerModels: [],
         });
@@ -2567,10 +2897,6 @@ describe("Team credential resource routes (SQLite integration)", () => {
             mayReceiveDirect: true,
             providerModels: expect.arrayContaining([
                 expect.objectContaining({
-                    selection: expect.objectContaining({ deliveryMode: "brokered", modelId: "gpt-5" }),
-                    availability: "available",
-                }),
-                expect.objectContaining({
                     selection: expect.objectContaining({ deliveryMode: "direct", modelId: "gpt-5" }),
                     availability: "available",
                     direct: { sourceMemberKey, sourceVersion },
@@ -2578,7 +2904,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             ]),
         });
         expect(response.json().resources.find((resource: { id: string }) => resource.id === combinedResource.id).providerModels)
-            .toHaveLength(2);
+            .toHaveLength(1);
         // The source daemon needs these fields to prepare recipient-private
         // material, but the recipient catalog is only a selection surface.
         expect(response.body).not.toContain('"normalizedUrl"');
@@ -2599,7 +2925,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
             && input !== null
             && "method" in input
             && input.method === `${broker.id}:daemon.providers.model.projection`
-        ))).toHaveLength(1);
+        ))).toHaveLength(0);
         expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
             userId: custodian.id,
             method: `${sourceProjectionMachineId}:daemon.providers.model.projection`,
@@ -2608,22 +2934,18 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 includeDirectMaterialization: true,
             }),
         }));
-        expect(rpc).toHaveBeenCalledWith(expect.objectContaining({
-            userId: custodian.id,
-            method: `${broker.id}:daemon.providers.model.projection`,
-            params: expect.objectContaining({ machineId: broker.id }),
-        }));
 
         for (const [result, reason] of [
             [{ status: "success", agentTargetKey: application.agentTargetKey, groups: [] }, "catalog_empty"],
             [{}, "response_invalid"],
             [{ status: "error", error: { v: 1, code: "provider_endpoint_unavailable", retryable: true, action: "retry" } }, "projection_unavailable"],
+            [{ status: "error", error: { v: 1, code: "connected_service_credential_reconnect_required", retryable: false, action: "review_connection" } }, "connected_service_credential_reconnect_required"],
         ] as const) {
             app.forwardRpcForUser = vi.fn(async () => ({ ok: true as const, result }));
             const failed = await post("/v1/teams/credential-resources/entitled/list", recipient.id, { teamId: team.id, application });
             expect(failed.statusCode, failed.body).toBe(200);
             expect(failed.json().resources.find((resource: { id: string }) => resource.id === combinedResource.id)).toMatchObject({
-                readiness: { kind: "broker_unavailable", reason },
+                readiness: { kind: reason === "connected_service_credential_reconnect_required" ? "source_unavailable" : "broker_unavailable", reason },
                 mayBroker: true,
                 mayReceiveDirect: true,
                 providerModels: [],
@@ -3063,6 +3385,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
         ))).toBe(true);
         expect(catalog.json().resources).toHaveLength(12);
         expect(catalog.json().resources.every((entry: { providerModels: unknown[] }) => entry.providerModels.length === 1)).toBe(true);
+        console.info('POOL_ONLY_CATALOG_CENSUS', JSON.stringify({ pools: 12, unrelatedDaemons: 1000,
+            censuses: presenceRequests.length, transportedIdentities }));
         expect.soft(presenceRequests).toHaveLength(1);
         expect.soft(presenceRequests[0]?.slice().sort()).toEqual([machineA, machineB].map(machine => getMachineSocketRoom(custodian.id, machine.id)).sort());
         expect.soft(transportedIdentities).toBe(2);
@@ -3134,6 +3458,7 @@ describe("Team credential resource routes (SQLite integration)", () => {
         expect(mixedCatalog.statusCode, mixedCatalog.body).toBe(200);
         expect(mixedCatalog.json().resources.find((entry: { id: string }) => entry.id === otherResource.id).providerModels).toHaveLength(1);
         expect(forwardRpcForUser.mock.calls.some(([input]) => input.method.startsWith('unrelated-catalog-daemon-'))).toBe(true);
+        console.info('MIXED_CATALOG_CENSUS', JSON.stringify({ censuses: presenceRequests.length, transportedIdentities }));
         expect.soft(presenceRequests).toHaveLength(2);
         expect.soft(presenceRequests).toEqual(expect.arrayContaining([
             [getUserMachinesSocketRoom(custodian.id)], [getMachineSocketRoom(otherCustodian.id, otherMachine.id)],
@@ -3738,6 +4063,11 @@ describe("Team credential resource routes (SQLite integration)", () => {
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
             operationProtocolCapabilitiesRevision: 1,
         } });
+        // This positive catalog/recipient-privacy case uses a genuinely present
+        // broker. Persisted Machine content alone no longer proves readiness.
+        app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [{
+            data: { clientType: "machine-scoped", userId: custodian.id, machineId: privateBrokerMachineId },
+        }] }) };
         const resource = await db.teamCredentialResource.create({ data: {
             id: "catalog-current-resource",
             teamId: team.id,
@@ -3963,6 +4293,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
             mayReceiveDirect: true,
             directMaterialState: "current",
             sessionUsePolicy: "personal_allowed",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
+            allowedRoutes: ["direct"],
             usageCapabilities: {
                 costUsd: "unavailable",
                 inferenceRequests: "unavailable",
@@ -4024,6 +4356,8 @@ describe("Team credential resource routes (SQLite integration)", () => {
             // unpublished resource below).
             directMaterialState: "preparing",
             sessionUsePolicy: "personal_allowed",
+            deliveryPolicy: { preferredAllowedModes: ["brokered", "direct"] },
+            allowedRoutes: ["direct"],
             usageCapabilities: {
                 costUsd: "unavailable",
                 inferenceRequests: "unavailable",
@@ -4347,10 +4681,9 @@ describe("Team credential resource routes (SQLite integration)", () => {
 
     // Child 06 L10D-R13 and row invariants (:94, :372): preparation is a
     // missing/stale census and an upsert of the same logical tuple is
-    // idempotent. A re-upload of an unchanged tuple must not wake the Team:
-    // that wake re-hydrates the source daemon's catalog, whose snapshot starts
-    // the next reconciliation, so publishing it made the cycle renew itself.
-    it("reports current direct tuples to preparation and publishes a Team change only for a logical tuple change", async () => {
+    // idempotent. Delivery changes refresh material readers without asking
+    // the source custodian to census its already-known mutation again.
+    it("publishes changed direct material to its readers without creating source-authority census demand", async () => {
         const custodian = await createAccount();
         const recipient = await createAccount();
         const team = await db.team.create({ data: { name: "Direct publication" } });
@@ -4451,8 +4784,15 @@ describe("Team credential resource routes (SQLite integration)", () => {
                 }] },
             });
         };
-        const teamWake = () => db.accountChange.findFirst({
-            where: { accountId: recipient.id, kind: "account", entityId: TEAM_CHANGE_ENTITY_ID },
+        const materialWakes = () => db.accountChange.findMany({
+            where: { accountId: { in: [custodian.id, recipient.id] }, kind: "account", entityId: "team-credential-material" },
+            select: { accountId: true },
+        });
+        const authorityWakeCount = () => db.accountChange.count({
+            where: { accountId: custodian.id, kind: "account", entityId: TEAM_CHANGE_ENTITY_ID },
+        });
+        const clearWakes = () => db.accountChange.deleteMany({
+            where: { accountId: { in: [custodian.id, recipient.id] } },
         });
 
         expect((await preparation()).recipients).toEqual([expect.objectContaining({
@@ -4460,11 +4800,12 @@ describe("Team credential resource routes (SQLite integration)", () => {
             expectedStoredSourceVersion: null,
             storedTupleCurrent: false,
         })]);
-        await db.accountChange.deleteMany({ where: { entityId: TEAM_CHANGE_ENTITY_ID } });
+        await clearWakes();
         const first = await upload("first-token", null);
         expect(first.statusCode, first.body).toBe(200);
         expect(first.json().results).toEqual([expect.objectContaining({ status: "stored", sourceVersion })]);
-        await expect(teamWake()).resolves.not.toBeNull();
+        await expect(authorityWakeCount()).resolves.toBe(0);
+        expect((await materialWakes()).map(row => row.accountId).sort()).toEqual([custodian.id, recipient.id].sort());
         const storedAfterFirst = await db.teamCredentialRecipientMaterial.findFirstOrThrow({
             where: { resourceId: resource.id, recipientAccountId: recipient.id },
         });
@@ -4474,14 +4815,37 @@ describe("Team credential resource routes (SQLite integration)", () => {
             storedTupleCurrent: true,
         })]);
 
-        await db.accountChange.deleteMany({ where: { entityId: TEAM_CHANGE_ENTITY_ID } });
+        await clearWakes();
         const repeated = await upload("repeated-token", sourceVersion);
         expect(repeated.statusCode, repeated.body).toBe(200);
         expect(repeated.json().results).toEqual([expect.objectContaining({ status: "stored", sourceVersion })]);
-        await expect(teamWake()).resolves.toBeNull();
+        await expect(materialWakes()).resolves.toEqual([]);
+        await expect(authorityWakeCount()).resolves.toBe(0);
         const storedAfterRepeat = await db.teamCredentialRecipientMaterial.findFirstOrThrow({
             where: { resourceId: resource.id, recipientAccountId: recipient.id },
         });
         expect(Buffer.from(storedAfterRepeat.storedMaterial).equals(Buffer.from(storedAfterFirst.storedMaterial))).toBe(true);
+        const withdraw = () => app.inject({
+            method: "DELETE", url: directMaterialPath, headers: { "x-test-user-id": custodian.id },
+            payload: { sourceMemberKey, expectedResourceRevision: resource.revision, expectedPublishedSourceVersion: sourceVersion },
+        });
+        const withdrawn = await withdraw();
+        expect(withdrawn.statusCode, withdrawn.body).toBe(200);
+        await expect(authorityWakeCount()).resolves.toBe(0);
+        expect((await materialWakes()).map(row => row.accountId).sort()).toEqual([custodian.id, recipient.id].sort());
+        await expect(db.teamCredentialRecipientMaterial.count({ where: { resourceId: resource.id } })).resolves.toBe(0);
+        expect((await preparation()).recipients).toEqual([expect.objectContaining({ storedTupleCurrent: false })]);
+        await clearWakes();
+        expect((await withdraw()).statusCode).toBe(200);
+        await expect(materialWakes()).resolves.toEqual([]);
+        await expect(authorityWakeCount()).resolves.toBe(0);
+        // A subsequent delivery must not replace a pending authority fact.
+        await inTx(tx => publishTeamChangedInTx(tx, { teamId: team.id }));
+        expect((await upload("restored-token", null)).statusCode).toBe(200);
+        const feed = await get('/v2/changes?after=0', recipient.id);
+        expect(feed.statusCode, feed.body).toBe(200);
+        const page = ChangesResponseSchema.parse(feed.json());
+        expect(page.changes.map(change => change.entityId).sort()).toEqual(["team-credential-material", TEAM_CHANGE_ENTITY_ID].sort());
+        expect(page.nextCursor).toBe((await db.account.findUniqueOrThrow({ where: { id: recipient.id } })).seq);
     });
 });

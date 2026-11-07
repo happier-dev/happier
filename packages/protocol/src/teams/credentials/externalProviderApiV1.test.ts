@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { ProviderBrokerApplicationBindingV1Schema } from '../../providers/brokerRouteGrantV1.js';
+import { TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceReadInputV1Schema } from './resourceV1.js';
 
 import {
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_API_BASE_PATH_V1,
   TEAM_CREDENTIAL_EXTERNAL_PROVIDER_HTTP_ROUTES_V1,
-  TEAM_CREDENTIAL_EXTERNAL_PROVIDER_BODY_BASE64_MAX_CHARS_V1,
   TeamCredentialExternalProviderApplicationRequestV1Schema,
   TeamCredentialExternalProviderAdmissionResponseV1Schema,
   TeamCredentialExternalProviderModelCatalogAuthorizationV1Schema,
@@ -38,15 +39,15 @@ function request(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('Team credential external Provider API v1', () => {
-  it('enforces its declared carrier message bound at and just below the base64 boundary', () => {
-    const maxChars = TEAM_CREDENTIAL_EXTERNAL_PROVIDER_BODY_BASE64_MAX_CHARS_V1;
-    for (const chars of [maxChars - 4, maxChars, maxChars + 4]) {
+  it('preserves complete canonical request bodies beyond the retired catalog-derived carrier cap', () => {
+    const previousMaxChars = Math.ceil(5 * 1024 * 1024 / 3) * 4;
+    for (const chars of [previousMaxChars, previousMaxChars + 4]) {
       const bodyBase64 = 'A'.repeat(chars);
-      expect(TeamCredentialExternalProviderApplicationRequestV1Schema.safeParse(request({ bodyBase64 })).success).toBe(chars <= maxChars);
+      expect(TeamCredentialExternalProviderApplicationRequestV1Schema.safeParse(request({ bodyBase64 })).success).toBe(true);
       expect(TeamCredentialResourceTestApplicationRequestV1Schema.safeParse({
         v: 1, kind: 'resource_test', requestId: 'test-large', teamId: 'team-1', resourceId: 'resource-1',
         route: 'responses', method: 'POST', pathAndQuery: '/v1/responses', bodyBase64,
-      }).success).toBe(chars <= maxChars);
+      }).success).toBe(true);
     }
   });
 
@@ -234,11 +235,13 @@ describe('Team credential external Provider API v1', () => {
 
   it('authorizes external model metadata with the exact key, revision, broker and application only', () => {
     const application = {
-      agentTargetKey: 'codex',
       implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
       endpointTemplateId: 'openai-responses',
       protocol: 'openai-responses',
     } as const;
+    expect(ProviderBrokerApplicationBindingV1Schema.safeParse(application).success).toBe(false);
+    expect(TeamCredentialResourceReadInputV1Schema.safeParse({ teamId: 'team-1', application }).success).toBe(false);
+    expect(TeamCredentialResourceDiscoverInputV1Schema.safeParse({ teamIds: ['team-1'], application }).success).toBe(false);
     const authorization = {
       v: 1,
       binding: {
@@ -324,8 +327,17 @@ describe('Team credential external Provider API v1', () => {
       ...terminal,
       tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
     }).success).toBe(false);
-    // Cost is never carried: no canonical Provider price exists for these
-    // routes, and an absent field cannot be mistaken for a zero-cost request.
+    // Only the explicitly reported request charge crosses this boundary;
+    // estimates and arbitrary cost objects remain outside the broker DTO.
+    expect(TeamCredentialExternalProviderTerminalUsageV1Schema.parse({
+      ...reported, reportedCostUsd: 0,
+    })).toMatchObject({ reportedCostUsd: 0 });
+    for (const reportedCostUsd of [-1, Infinity, NaN, '0.12']) {
+      expect(TeamCredentialExternalProviderTerminalUsageV1Schema.safeParse({ ...reported, reportedCostUsd }).success).toBe(false);
+    }
+    expect(TeamCredentialExternalProviderTerminalUsageV1Schema.safeParse({
+      ...terminal, reportedCostUsd: 0.1,
+    }).success).toBe(false);
     expect(TeamCredentialExternalProviderTerminalUsageV1Schema.safeParse({
       ...reported,
       cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },

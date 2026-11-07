@@ -4,9 +4,8 @@ import { constants } from 'node:os';
 import { AxiosError } from 'axios';
 import { z } from 'zod/mini';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
-import { ProviderPublicHeadersV1Schema } from '@happier-dev/protocol/providers/public-headers';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1, TeamCredentialProviderBrokerApplicationCarrierRequestV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, TeamCredentialProviderBrokerApplicationCarrierRequestV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 
 import { startFirstBytesLocalCapabilityProxy, type FirstBytesLocalCapabilityProxy } from '@/daemon/peer/mediation/loopback/firstBytesLocalCapability';
 import type {
@@ -17,6 +16,8 @@ import type {
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_PRIVATE_CLOSE_PATH,
     PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER } from './providerBrokerPrivateProtocol';
 import { logger } from '@/ui/logger';
+import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { ProviderBrokerApplicationPhaseError } from './providerBrokerApplicationFailureContext';
 import { ProviderBrokerApplicationFailureError, providerBrokerApplicationFailureBody, type ProviderBrokerApplicationFailure } from './providerBrokerApplicationFailure';
 import { PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER,
@@ -110,6 +111,23 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     const proxies = new Set<FirstBytesLocalCapabilityProxy>();
     const streamLifetimes = new Set<Pick<ProviderBrokerApplicationStreamLifetime, 'close' | 'retire'>>();
     const app = fastify({ logger: false });
+    // This private, authenticated carrier carries complete requests. Fastify's
+    // string/buffer parsers impose an unrelated default body cap, so consume
+    // its cancellable payload stream and retain its secure JSON decoder.
+    const parseJson = app.getDefaultJsonParser('error', 'error');
+    app.removeContentTypeParser('application/json');
+    app.addContentTypeParser('application/json', async (request, payload) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of payload) {
+            if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+            else if (typeof chunk === 'string') chunks.push(Buffer.from(chunk));
+            else throw new TypeError('Invalid Provider carrier body chunk');
+        }
+        return await new Promise<unknown>((resolve, reject) => parseJson(request, Buffer.concat(chunks).toString('utf8'), (error, body) => {
+            if (error) reject(error);
+            else resolve(body);
+        }));
+    });
     const requestDiagnostic = (request: FastifyRequest) => {
         const remotePort = request.raw.socket.remotePort;
         const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
@@ -141,6 +159,9 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     app.setErrorHandler((error: FastifyError, _request, reply) => {
         const original = error instanceof ProviderBrokerApplicationPhaseError ? error.cause : error;
         if (original instanceof ProviderBrokerApplicationFailureError) return writeProviderBrokerApplicationFailure(reply, original.failure);
+        if (isConnectedAccountSourceReconnectRequiredError(original)) return writeProviderBrokerApplicationFailure(reply, {
+            ok: false, reasonCode: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
+        });
         // Preserve Fastify's parser/size refusals. Unexpected application
         // failures use the same closed refusal as other broker unavailability,
         // so neither its default 500 body nor Provider exception text escapes.
@@ -157,7 +178,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
     ) => {
         if (response.ok && response.response.status >= 400) {
             const reasonCode = response.response.headers[PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER];
-            if (reasonCode === 'broker_unavailable' || reasonCode === 'source_unavailable') {
+            if (reasonCode === 'broker_unavailable' || reasonCode === 'source_unavailable'
+                || reasonCode === 'connected_service_credential_reconnect_required') {
                 await response.response.body?.cancel().catch(() => undefined);
                 response = { ok: false, reasonCode };
             }
@@ -224,9 +246,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
         })()));
     };
 
-    app.post(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, {
-        bodyLimit: TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1,
-    }, async (request, reply) => {
+    app.post(TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, async (request, reply) => {
         const remotePort = request.raw.socket.remotePort;
         const context = remotePort === undefined ? undefined : contextsByRemotePort.get(remotePort);
         if (!context || context.kind !== 'external') return reply.code(403).send();
@@ -280,14 +300,8 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 delete headers.authorization;
                 // Private diagnostics must never become upstream Provider headers.
                 delete headers[PROVIDER_BROKER_CLOSE_REQUEST_ID_HEADER];
-                // Native HTTP adds Host, Connection and framing headers. They are
-                // transport facts, not public Provider headers; managed access
-                // correctly rejects them. Project once at this shared ingress,
-                // after authenticating the original local capability headers.
-                const publicHeaders = Object.fromEntries(Object.entries(headers).flatMap(([name, value]) => {
-                    const parsed = ProviderPublicHeadersV1Schema.safeParse({ [name]: value });
-                    return parsed.success ? Object.entries(parsed.data) : [];
-                }));
+                // The canonical request-policy owner needs the complete
+                // Connection context to remove its nominated headers together.
                 const body = request.body;
                 const controller = new AbortController();
                 request.raw.once('aborted', () => controller.abort());
@@ -295,7 +309,7 @@ export async function startProviderBrokerApplicationServer(input: Readonly<{
                 const forwardedRequest: ManagedServiceRequest = {
                     pathAndQuery: request.raw.url ?? request.url,
                     method: request.method as ManagedServiceRequest['method'],
-                    headers: publicHeaders,
+                    headers,
                     ...(body ? { body } : {}),
                     signal: controller.signal,
                 };

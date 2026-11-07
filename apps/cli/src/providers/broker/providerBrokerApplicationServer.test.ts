@@ -13,7 +13,7 @@ import {
   type SignedProviderBrokerRouteGrantV1,
 } from '@happier-dev/protocol';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
-import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1, TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
+import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -104,7 +104,8 @@ async function requestThroughApplicationTarget(input: Readonly<{
     'Host: 127.0.0.1',
     ...(input.authority ? [`Authorization: Bearer ${encodeProviderBrokerAuthorityV1(input.authority)}`] : []),
     'X-Provider-Request: retained',
-    'Connection: close',
+    'X-Remove: connection-scoped',
+    'Connection: close, X-Remove',
     'Content-Type: application/json',
     `Content-Length: ${Buffer.byteLength(body)}`,
     '',
@@ -416,22 +417,18 @@ describe('Provider broker target application integration', () => {
       diagnostics.mockRestore();
     }
   });
-  it('keeps the separate external carrier envelope boundary and reports a typed size refusal', async () => {
+  it('parses complete external carrier envelopes above retired local caps before enforcing carrier admission', async () => {
     const server = await startProviderBrokerApplicationServer({ handler: createProviderBrokerRequestHandler({
       resolveTrustRoots: () => [], nowMs: () => 0, resolveRequestPolicy: async () => null,
       createRequestId: () => 'unused', admit: async () => ({ ok: false, reasonCode: 'resource_unavailable' }),
     }) });
     try {
-      const limit = TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_ENVELOPE_MAX_BYTES_V1;
-      for (const bytes of [limit - 1, limit, limit + 1]) {
+      for (const bytes of [1024 * 1024 + 1, 8 * 1024 * 1024]) {
         const response = await server.app.inject({ method: 'POST',
           url: TEAM_CREDENTIAL_EXTERNAL_PROVIDER_APPLICATION_HTTP_PATH_V1,
           headers: { 'content-type': 'application/json' }, payload: `{}` + ' '.repeat(bytes - 2),
         });
-        // Under/at the parser boundary, the absent authenticated carrier is
-        // refused by admission; only an oversized envelope is a size error.
-        expect(response.statusCode).toBe(bytes <= limit ? 403 : 413);
-        if (bytes > limit) expect(response.json().code).toBe('FST_ERR_CTP_BODY_TOO_LARGE');
+        expect(response.statusCode).toBe(403);
       }
     } finally {
       await server.close();

@@ -1,6 +1,3 @@
-import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
-import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import { readManagedNativeCredentialBindingForGuestInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialErrorCodeV1Schema, teamCredentialErrorHttpStatusV1, TeamCredentialResourceAudienceInputV1Schema, TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceDeleteInputV1Schema, TeamCredentialResourceErrorV1Schema, TeamCredentialResourcePageV1Schema, TeamCredentialResourceEntitledPageV1Schema, TeamCredentialResourceGetInputV1Schema, TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceListInputV1Schema, TeamCredentialResourceSummaryV1Schema, TeamCredentialResourceMutationResultV1Schema, TeamCredentialResourceUpdateInputV1Schema, TeamCredentialResourceActivityReadInputV1Schema, TeamCredentialResourceActivityPageV1Schema, TeamCredentialRequestPolicySupportInputV1Schema, TeamCredentialRequestPolicySupportOutputV1Schema, type TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { TeamCredentialTestActionInputV1Schema, TeamCredentialTestActionOutputV1Schema, TeamCredentialPreparationOutputV1Schema } from '@happier-dev/protocol/teams/credentials/actionsV1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -8,12 +5,14 @@ import { TeamCredentialSourceCandidateListInputV1Schema, TeamCredentialSourceCan
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
 import { RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { TeamCredentialDirectMaterialRouteParamsV1Schema, TeamCredentialDirectMaterialReadQueryV1Schema, TeamCredentialDirectMaterialMineResponseV1Schema, TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialPreparationResponseV1Schema, TeamCredentialDirectMaterialUpsertRequestV1Schema, TeamCredentialDirectMaterialUpsertResponseV1Schema, TeamCredentialDirectMaterialWithdrawRequestV1Schema, TeamCredentialDirectMaterialWithdrawResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { TeamCredentialNativeBindingReadRequestV1Schema, TeamCredentialNativeBindingReadResponseV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { readManagedNativeCredentialBindingForGuestInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
 import { TeamCredentialDirectMaterialCensusOutputV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialCensusV1';
 import { PROVIDER_BROKER_READINESS_AUTHORIZE_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { resolveTeamCredentialExternalApiAvailability } from '@happier-dev/protocol/features/payload/capabilities/teamCredentialCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { parseProviderContributionIdentityV1 } from "@happier-dev/protocol/providers/contribution-identity";
-import { DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { DaemonProviderConnectionsDescribeResponseV1Schema, DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema, DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { z } from "zod/mini";
 import { logger } from "@/utils/logging/log";
 import type { Fastify } from "@/app/api/types";
@@ -25,7 +24,8 @@ import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverF
 import { readHomeEffectiveEnv, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
-import { publishTeamChangedInTx } from "../teamChanges";
+import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
+import { publishTeamCredentialMaterialChangedInTx } from "../teamChanges";
 import { acquireTeamMutationAccountAdmissionInTx } from "../memberships/sessionAccessEffects";
 import { classifyMachineDaemonPresence, getMachineDaemonPresenceInventory } from "@/app/machines/machineDaemonPresence";
 import {
@@ -50,7 +50,9 @@ import {
 } from "./externalApiKey";
 import { authorizeRunnerBrokerReadiness } from "./runnerBrokerReadinessAuthorization";
 import { registerTeamCredentialProviderBrokerRoutes } from "./providerBrokerRoutes";
+import { projectTeamCredentialCatalogModels } from './catalogModels';
 import { readTeamCredentialBrokerPresenceDemand } from './brokerPlacementResolver';
+import { projectTeamCredentialCatalogBrokerReadiness, readTeamCredentialBrokerReadiness } from './brokerReadiness';
 import {
     prepareTeamCredentialRecipientMaterialInTx,
     readTeamCredentialDirectMaterialCensusInTx,
@@ -75,10 +77,6 @@ import {
 } from "./resourceTest";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { createExecutionRunBrokerCurrentnessResolver } from "./executionRunBrokerAuthorityResolver";
-import {
-    projectTeamCredentialProviderModels,
-    selectPoolBackedTeamCredentialProviderModels,
-} from "./providerModelProjection";
 import {
     prepareTeamCredentialRequestPolicySupportInTx,
     readTeamCredentialBrokerRefusalReason,
@@ -270,6 +268,11 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             poolSnapshots.set(`${accountId}\u0000${poolId}`, snapshot);
         }
     }));
+    const { unavailable: placementReadiness } = await readTeamCredentialBrokerReadiness(app, sourceViews.map(({ sourceView }) => ({
+        id: sourceView.id, custodianAccountId: sourceView.custodianAccountId,
+        brokerMachineId: sourceView.brokerPlacement?.kind === 'machine' ? sourceView.brokerPlacement.machineId : null,
+        brokerPoolId: sourceView.brokerPlacement?.kind === 'machine_pool' ? sourceView.brokerPlacement.poolId : null,
+    })), presenceByAccountId, new Set(), poolSnapshots);
     const brokerEligibilityPromises = new Map<string, Promise<Readonly<{
         machineId: string;
         eligibility: TeamCredentialBrokerEligibility | null;
@@ -437,10 +440,12 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             }
         }
         const sourceChanged = hasChangedSource || providerSourceState === 'changed';
+        const sourceAuthenticationFailure = eligibility.some(candidate => candidate.eligibility?.status === 'unavailable'
+            && candidate.eligibility.reason === 'connected_service_credential_reconnect_required');
         const nonBrokerAllowed = resource.deliveryPolicy.preferredAllowedModes.some(route => route !== 'brokered');
         const brokerReady = nonBrokerAllowed
             ? hasEligibleSource
-            : resource.brokerPlacement !== null && hasEligibleSource;
+            : !placementReadiness.has(resource.id) && hasEligibleSource;
         const brokerObservationUnknown = presence.state !== 'known'
             || eligibility.some(candidate => candidate.eligibility === null)
             || selectedPool?.availability === 'not_verified'
@@ -451,8 +456,12 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
             ? resource.readiness
             : source.kind !== 'provider_connection' && nonBrokerAllowed
                 ? resource.readiness
+            : sourceAuthenticationFailure
+            ? { kind: 'source_unavailable' as const, reason: 'connected_service_credential_reconnect_required' as const }
             : sourceChanged
             ? { kind: 'source_unavailable' as const }
+            : !nonBrokerAllowed && placementReadiness.has(resource.id)
+                ? placementReadiness.get(resource.id)!
             : brokerReady && (source.kind !== 'provider_connection' || providerSourceState === 'current')
                 ? { kind: 'available' as const }
                 : resource.readiness.kind === 'update_required'
@@ -536,7 +545,7 @@ export function registerTeamCredentialResourceRoutes(
                 ...params.data, ...body.data, actorAccountId: request.userId,
                 authentication: readTeamOperationAuthenticationFromRequest(request),
             });
-            if (withdrawn.ok && withdrawn.changed) await publishTeamChangedInTx(tx, { teamId: params.data.teamId });
+            if (withdrawn.ok && withdrawn.changed) await publishTeamCredentialMaterialChangedInTx(tx, { teamId: params.data.teamId });
             return withdrawn;
         }, { isolationLevel: "ReadCommitted" /* Exclusive complete Account admission precedes withdrawal's Team/resource and source-version checks. */ });
         if (!result.ok) return fail(reply, result.reason === 'source_changed' || result.reason === 'resource_changed'
@@ -757,11 +766,10 @@ export function registerTeamCredentialResourceRoutes(
                             : result.reason,
                 });
             }
-            // Only a changed logical tuple is news to the Team. Waking it for an
-            // idempotent re-upload re-hydrates the source daemon's catalog,
-            // whose settings snapshot starts the next reconciliation.
+            // Only changed material is news to its readers. It does not change
+            // source authority and must not start another source census.
             if (changedAnyTuple) {
-                await publishTeamChangedInTx(tx, { teamId: params.data.teamId });
+                await publishTeamCredentialMaterialChangedInTx(tx, { teamId: params.data.teamId });
             }
             return { ok: true as const, results: itemResults };
         }, { isolationLevel: "ReadCommitted" /* Complete batch Account admission precedes the Team guard and fresh tuple currentness checks. */ });
@@ -964,12 +972,20 @@ export function registerTeamCredentialResourceRoutes(
         if (request.validationError) return fail(reply, "invalid_resource_input");
         const body = TeamCredentialTestActionInputV1Schema.safeParse(request.body);
         if (!body.success) return fail(reply, "invalid_resource_input");
+        const sendResult = (result: z.infer<typeof TeamCredentialTestActionOutputV1Schema>) => reply.send(
+            TeamCredentialTestActionOutputV1Schema.parse({ ...result, requestId: result.requestId ?? request.id }),
+        );
         const authorized = await inTx(tx => authorizeTeamCredentialResourceTestInTx(tx, {
             actorAccountId: request.userId,
             ...body.data,
             authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!authorized.ok) return fail(reply, authorized.error);
+        if (authorized.authenticationFailure) return sendResult({
+            result: "needs_attention", code: authorized.authenticationFailure,
+            readiness: { kind: "source_unavailable", reason: authorized.authenticationFailure },
+            recovery: "Reconnect the shared account and try again.",
+        });
         const brokerPresence = await getMachineDaemonPresenceInventory({
             accountId: authorized.authorization.custodianAccountId,
             io: app.machineDaemonPresence,
@@ -985,13 +1001,13 @@ export function registerTeamCredentialResourceRoutes(
                 if (prepared.error === "broker_unavailable") {
                     logger.warn({ module: "team-credential-resource-test", stage: "placement", code: "broker_unavailable" });
                 }
-                return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+                return sendResult({
                     result: "needs_attention",
                     readiness: { kind: prepared.error },
                     recovery: prepared.error === "update_required"
                         ? "Update the selected broker Machine and try again."
                         : "Reconnect or select the broker Machine and try again.",
-                }));
+                });
             }
             return fail(reply, prepared.error);
         }
@@ -1026,6 +1042,13 @@ export function registerTeamCredentialResourceRoutes(
         }
         const selected = candidateResults.find(result => result.machineId === brokerMachineId)?.candidate ?? null;
         if (brokerMachineId === null || selected === null || selected.status === "unavailable") {
+            const authenticationFailure = candidateResults.some(({ candidate }) => candidate?.status === 'unavailable'
+                && candidate.reason === 'connected_service_credential_reconnect_required');
+            if (authenticationFailure) return sendResult({
+                result: 'needs_attention', code: 'connected_service_credential_reconnect_required',
+                readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' },
+                recovery: 'Reconnect the shared account and try again.',
+            });
             const sourceUnavailable = candidateResults.some(({ candidate }) => candidate?.status === "unavailable"
                 && candidate.reason === "source_unavailable");
             const brokerRefusalReason = readTeamCredentialBrokerRefusalReason(candidateResults.map(({ candidate }) => (
@@ -1034,7 +1057,7 @@ export function registerTeamCredentialResourceRoutes(
             if (sourceUnavailable || brokerRefusalReason === null) {
                 logger.warn({ module: "team-credential-resource-test", stage: "candidate", code: sourceUnavailable ? "source_unavailable" : "candidate_unavailable" });
             }
-            return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+            return sendResult({
                 result: "needs_attention",
                 readiness: sourceUnavailable
                     ? { kind: "source_unavailable" }
@@ -1047,26 +1070,26 @@ export function registerTeamCredentialResourceRoutes(
                         : brokerRefusalReason
                             ? "Review the broker application and model availability, then try again."
                             : "Reconnect the broker Machine and try again.",
-            }));
+            });
         }
         if (
             selected.request.teamId !== snapshot.teamId
             || selected.request.resourceId !== snapshot.resourceId
         ) {
-            return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+            return sendResult({
                 result: "needs_attention",
                 readiness: { kind: "resource_unavailable" },
                 recovery: "Refresh the credential resource and try again.",
-            }));
+            });
         }
         const dispatch = app.forwardTeamCredentialBrokerResourceTest;
         if (!dispatch) {
             logger.warn({ module: "team-credential-resource-test", stage: "dispatch", code: "dispatcher_unavailable" });
-            return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+            return sendResult({
                 result: "needs_attention",
                 readiness: { kind: "broker_unavailable" },
                 recovery: "Reconnect the broker Machine and try again.",
-            }));
+            });
         }
         const cancellation = new AbortController();
         const abort = () => cancellation.abort();
@@ -1091,215 +1114,48 @@ export function registerTeamCredentialResourceRoutes(
                     : dispatched.error === "policy_denied"
                         ? "policy_denied" as const
                         : "source_unavailable" as const;
-                const code = dispatched.applicationCode ?? dispatched.error;
+                const code = dispatched.failureDetail?.code ?? dispatched.error;
                 logger.warn({ module: "team-credential-resource-test", stage, code });
-                return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+                return sendResult({
                     result: "needs_attention",
                     code,
+                    requestId: selected.request.requestId,
+                    failureDetail: dispatched.failureDetail,
                     readiness: { kind: readiness, ...(readiness === "broker_unavailable" && "reason" in dispatched
-                        ? { reason: dispatched.reason } : {}) },
+                        ? { reason: dispatched.reason } : {}), ...(code === 'connected_service_credential_reconnect_required'
+                            ? { reason: code } : {}) },
                     recovery: readiness === "broker_unavailable"
                         ? "reason" in dispatched && dispatched.reason === "incompatible"
                             ? "Update the broker Machine and try again."
                             : "Reconnect the broker Machine and try again."
                         : "Review the credential source and policy, then try again.",
-                }));
+                });
             }
             stage = "response_body";
             for await (const _chunk of dispatched.body) {
                 // Drain the bounded production response so the carrier closes.
             }
-            return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+            return sendResult({
                 result: "available",
+                requestId: selected.request.requestId,
                 readiness: { kind: "available" },
-            }));
+            });
         } catch {
             logger.warn({ module: "team-credential-resource-test", stage,
                 code: cancellation.signal.aborted ? "request_cancelled" : "exception" });
-            return reply.send(TeamCredentialTestActionOutputV1Schema.parse({
+            return sendResult({
                 result: "needs_attention",
+                requestId: selected.request.requestId,
+                failureDetail: { code: "broker_unavailable", stage },
                 readiness: { kind: "broker_unavailable" },
                 recovery: "Reconnect the broker Machine and try again.",
-            }));
+            });
         } finally {
             request.raw.off("aborted", abort);
             reply.raw.off("close", abort);
         }
     });
 
-    async function projectTeamCredentialCatalogModels(
-        result: Extract<Awaited<ReturnType<typeof readTeamCredentialCatalogInTx>>, { ok: true }>,
-        application: NonNullable<z.infer<typeof TeamCredentialResourceReadInputV1Schema>["application"]>,
-    ) {
-        const resourcesById = new Map(result.page.resources.map(resource => [resource.id, resource] as const));
-        const directAccountIds = new Set<string>();
-        const poolIdsByAccount = new Map<string, Set<string>>();
-        for (const projectionRequest of result.projectionRequests) {
-            if (!resourcesById.has(projectionRequest.resourceId)) continue;
-            if (projectionRequest.deliveryMode === 'direct') directAccountIds.add(projectionRequest.custodianAccountId);
-            if (projectionRequest.deliveryMode === 'brokered' && projectionRequest.brokerPoolId) {
-                const poolIds = poolIdsByAccount.get(projectionRequest.custodianAccountId) ?? new Set<string>();
-                poolIds.add(projectionRequest.brokerPoolId);
-                poolIdsByAccount.set(projectionRequest.custodianAccountId, poolIds);
-            }
-        }
-        const presenceByAccount = new Map<string, ReturnType<typeof getMachineDaemonPresenceInventory>>();
-        for (const accountId of directAccountIds) {
-            presenceByAccount.set(accountId, getMachineDaemonPresenceInventory({ accountId, io: app.machineDaemonPresence }));
-        }
-        const poolSnapshotsByAccount = new Map<string, ReturnType<typeof getMachinePoolCandidateSnapshots>>();
-        for (const [accountId, poolIds] of poolIdsByAccount) {
-            const directPresence = presenceByAccount.get(accountId);
-            poolSnapshotsByAccount.set(accountId, directPresence
-                ? directPresence.then(presence => getMachinePoolCandidateSnapshots({ accountId, poolIds: [...poolIds], presence }))
-                : getMachinePoolCandidateSnapshots({ accountId, poolIds: [...poolIds], io: app.machineDaemonPresence }));
-        }
-        const projectionRpcByKey = new Map<string, ReturnType<typeof app.forwardRpcForUser>>();
-        type ProjectionFailureReason = 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'incompatible' | 'catalog_empty';
-        const projectionFailuresByResourceId = new Map<string, ProjectionFailureReason[]>();
-        await Promise.all(result.projectionRequests.map(async projectionRequest => {
-            const resource = resourcesById.get(projectionRequest.resourceId);
-            if (!resource) return;
-            const poolSnapshot = projectionRequest.deliveryMode === 'brokered' && projectionRequest.brokerPoolId
-                ? await (async () => {
-                    const snapshots = await poolSnapshotsByAccount.get(projectionRequest.custodianAccountId);
-                    const snapshot = snapshots?.get(projectionRequest.brokerPoolId!);
-                    return snapshot ? { ok: true as const, value: snapshot } : null;
-                })()
-                : null;
-            const machineIds = projectionRequest.deliveryMode === 'direct'
-                ? await (async () => {
-                    const presence = await presenceByAccount.get(projectionRequest.custodianAccountId)!;
-                    return presence.state !== 'unavailable' ? [...presence.machineIds] : [];
-                })()
-                : projectionRequest.brokerMachineId
-                    ? [projectionRequest.brokerMachineId]
-                    : poolSnapshot?.ok
-                        ? poolSnapshot.value.members.flatMap(member => (
-                            member.enabled && poolSnapshot.value.availableMachineIds.has(member.machineId)
-                                ? [member.machineId]
-                                : []
-                        ))
-                        : [];
-            const projections = await Promise.all(machineIds.map(async machineId => {
-                const rpcKey = JSON.stringify([projectionRequest.custodianAccountId, machineId,
-                    projectionRequest.source, application,
-                    projectionRequest.deliveryMode === 'direct' && projectionRequest.directMaterialReferences.length === 1]);
-                let rpc = projectionRpcByKey.get(rpcKey);
-                if (!rpc) {
-                    rpc = app.forwardRpcForUser({
-                    userId: projectionRequest.custodianAccountId,
-                    method: `${machineId}:${RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION}`,
-                    params: {
-                    machineId,
-                    agentTargetKey: application!.agentTargetKey,
-                    application: application,
-                    sourceCatalog: true,
-                    ...(poolSnapshot?.ok ? { refreshPolicy: "current_only" as const } : {}),
-                    ...(projectionRequest.deliveryMode === 'direct'
-                        && projectionRequest.directMaterialReferences.length === 1
-                        ? { includeDirectMaterialization: true as const }
-                        : {}),
-                    ...(projectionRequest.source.kind === 'provider_connection'
-                        ? { providerConnection: {
-                            connectionId: projectionRequest.source.connectionId,
-                            expectedConnectionSecurityFingerprint: projectionRequest.source.connectionSecurityFingerprint,
-                        } }
-                        : { connectedAccountTarget: projectionRequest.source.target }),
-                    },
-                    });
-                    projectionRpcByKey.set(rpcKey, rpc);
-                }
-                const rpcResult = await rpc.catch(() => ({ ok: false as const, error: 'projection_unavailable' }));
-                if (!rpcResult.ok) return { machineId, models: [], response: null, failure: 'projection_unavailable' as const };
-                const projection = projectTeamCredentialProviderModels({
-                    response: rpcResult.result,
-                    resourceId: projectionRequest.resourceId,
-                    teamId: projectionRequest.teamId,
-                    resourceRevision: projectionRequest.resourceRevision,
-                    agentTargetKey: application!.agentTargetKey,
-                    application: application!,
-                    allowedModelIds: projectionRequest.allowedModelIds,
-                    source: projectionRequest.source,
-                    deliveryMode: projectionRequest.deliveryMode,
-                    directMaterialReferences: projectionRequest.directMaterialReferences,
-                });
-                return {
-                    machineId,
-                    models: [...projection.models],
-                    failure: projection.status === 'unavailable' ? projection.reason : null,
-                    response: rpcResult.result,
-                };
-            }));
-            const projectedModels = poolSnapshot?.ok
-                ? selectPoolBackedTeamCredentialProviderModels({
-                    members: poolSnapshot.value.members,
-                    availableMachineIds: poolSnapshot.value.availableMachineIds,
-                    candidates: projections.flatMap(({ machineId, models }) => models.map(model => ({ machineId, model }))),
-                    requestKey: `credential-catalog\u0000${projectionRequest.resourceId}\u0000${projectionRequest.resourceRevision}`,
-                })
-                : projections.flatMap(projection => projection.models);
-            const models = new Map<string, (typeof resource.providerModels)[number]>();
-            for (const model of [...resource.providerModels, ...projectedModels]) {
-                const key = [model.selection.modelId, model.sourceRevision,
-                    model.selection.deliveryMode,
-                    model.application.agentTargetKey, model.application.implementationIdentity.pluginId,
-                    model.application.implementationIdentity.localId, model.application.endpointTemplateId,
-                    model.application.protocol].join('\u0000');
-                models.set(key, model);
-            }
-            resource.providerModels = [...models.values()];
-            if (projectedModels.length === 0) {
-                const reasons: ProjectionFailureReason[] = projections.length === 0
-                    ? ['projection_unavailable']
-                    : projections.map(projection => projection.failure ?? 'catalog_empty');
-                const current = projectionFailuresByResourceId.get(resource.id) ?? [];
-                projectionFailuresByResourceId.set(resource.id, [...current, ...reasons]);
-            }
-            if (projectionRequest.source.kind === 'provider_connection') {
-                const providerConnectionSource = projectionRequest.source;
-                const sourceAuthority = projections.flatMap(({ response }) => {
-                    const projection = DaemonProviderModelProjectionResponseV1Schema.safeParse(response);
-                    if (!projection.success || projection.data.status !== 'success') return [];
-                    const authority = projection.data.groups.find(group => (
-                        group.connectionId === providerConnectionSource.connectionId
-                        && group.sourceAuthority?.connectionSecurityFingerprint
-                            === providerConnectionSource.connectionSecurityFingerprint
-                    ))?.sourceAuthority;
-                    return authority ? [authority] : [];
-                })[0];
-                if (!sourceAuthority || resource.providerModels.length === 0) return;
-                resource.sourcePresentation = {
-                    kind: 'provider',
-                    provider: sourceAuthority.provider,
-                };
-            }
-        }));
-        for (const resource of resourcesById.values()) {
-            // Live catalog observations never clear a configured allowance or
-            // an independently observed structural source/entitlement refusal.
-            if (resource.readiness.kind !== 'available'
-                && resource.readiness.kind !== 'broker_unavailable'
-                && !(resource.readiness.kind === 'source_unavailable'
-                    && result.projectionRequests.some(request => request.resourceId === resource.id
-                        && request.source.kind === 'provider_connection'))) continue;
-            if (resource.providerModels.some(model => model.availability === 'available')) {
-                resource.readiness = { kind: 'available' };
-                resource.recoveryAction = null;
-            } else if (resource.providerModels.length === 0) {
-                const reasons = projectionFailuresByResourceId.get(resource.id);
-                if (!reasons?.length) continue;
-                const reason = reasons.every(candidate => candidate === reasons[0]) ? reasons[0]! : 'projection_unavailable';
-                resource.readiness = { kind: 'broker_unavailable', reason };
-                resource.recoveryAction = reason === 'not_granted' || reason === 'incompatible'
-                    ? 'source_owner_action' : 'retry';
-            }
-        }
-        return TeamCredentialResourceEntitledPageV1Schema.parse({
-            resources: [...resourcesById.values()],
-            nextCursor: result.page.nextCursor,
-        });
-    }
 
     routes.post(homeDomainActionPathForMethod("teams.credentials.entitled.list", "POST"), {
         preHandler: app.authenticate, attachValidation: true,
@@ -1311,14 +1167,17 @@ export function registerTeamCredentialResourceRoutes(
         const result = await inTx(tx => readTeamCredentialCatalogInTx(tx, {
             teamId: body.data.teamId,
             actorAccountId: request.userId,
+            ...(body.data.resourceId ? { resourceId: body.data.resourceId } : {}),
             ...(body.data.application ? { application: body.data.application } : {}),
+            ...(body.data.executionMachineId ? { executionMachineId: body.data.executionMachineId } : {}),
             ...(body.data.cursor ? { cursor: body.data.cursor } : {}),
             limit: body.data.limit,
             authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!result.ok) return fail(reply, result.error);
-        if (!body.data.application || result.projectionRequests.length === 0) return reply.send(result.page);
-        return reply.send(await projectTeamCredentialCatalogModels(result, body.data.application));
+        const current = await projectTeamCredentialCatalogBrokerReadiness(app, result);
+        if (!body.data.application || current.projectionRequests.length === 0) return reply.send(current.page);
+        return reply.send(await projectTeamCredentialCatalogModels(app, current, body.data.application));
     });
 
     routes.post(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, {
@@ -1334,8 +1193,9 @@ export function registerTeamCredentialResourceRoutes(
             authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!result.ok) return fail(reply, result.error);
-        const page = body.data.application && result.projectionRequests.length > 0
-            ? await projectTeamCredentialCatalogModels(result, body.data.application) : result.page;
+        const current = await projectTeamCredentialCatalogBrokerReadiness(app, result);
+        const page = body.data.application && current.projectionRequests.length > 0
+            ? await projectTeamCredentialCatalogModels(app, current, body.data.application) : current.page;
         return reply.send({ ...page, failures: result.page.failures });
     });
 
@@ -1561,7 +1421,8 @@ export function registerTeamCredentialResourceRoutes(
                         if ("error" in prepared) return { ok: false as const, error: prepared.error };
                         return {
                             ok: false as const,
-                            error: prepared.unavailable === "broker_unavailable"
+                            error: prepared.unavailable === 'connected_service_credential_reconnect_required'
+                                ? prepared.unavailable : prepared.unavailable === "broker_unavailable"
                                 ? "broker_unavailable" as const
                                 : prepared.unavailable === "source_unavailable"
                                     ? "source_replaced_or_missing" as const
@@ -1572,7 +1433,8 @@ export function registerTeamCredentialResourceRoutes(
                     if (support.status !== "available") {
                         return {
                             ok: false as const,
-                            error: support.reason === "broker_unavailable"
+                            error: support.reason === 'connected_service_credential_reconnect_required'
+                                ? support.reason : support.reason === "broker_unavailable"
                                 ? "broker_unavailable" as const
                                 : support.reason === "source_unavailable"
                                     ? "source_replaced_or_missing" as const
@@ -1659,8 +1521,10 @@ export function registerTeamCredentialResourceRoutes(
                     : {}),
             }));
             if (!prepared.ok && "error" in prepared) return fail(reply, prepared.error);
+            if (!prepared.ok && prepared.unavailable === 'connected_service_credential_reconnect_required') return fail(reply, prepared.unavailable);
             if (prepared.ok) {
                 const support = await resolveTeamCredentialRequestPolicySupport(app, prepared);
+                if (support.status === 'unavailable' && support.reason === 'connected_service_credential_reconnect_required') return fail(reply, support.reason);
                 if (support.status === "available") {
                     result = await attempt({
                         source: prepared.source,

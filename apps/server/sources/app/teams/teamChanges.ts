@@ -1,6 +1,6 @@
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from "@happier-dev/protocol/changes";
+import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from "@happier-dev/protocol/changes";
 import { readDiscussionGrantAudienceForTeamsInTx, reconcileDiscussionGrantAudienceForTeamsInTx } from "@/app/discussions/accessService";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { readTeamCredentialSourceBinding } from './credentials/sourceBindingRead';
@@ -80,6 +80,7 @@ export async function readTeamChangePublicationAudienceInTx(
 async function publishTeamsChangedInTx(
     tx: Tx,
     input: Readonly<{ teamIds: readonly string[]; additionalAccountIds?: readonly string[]; excludeAccountIds?: readonly string[] }>,
+    entityId: typeof TEAM_CHANGE_ENTITY_ID | typeof TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 = TEAM_CHANGE_ENTITY_ID,
 ): Promise<number> {
     const teamIds = [...new Set(input.teamIds)].sort();
     if (teamIds.length === 0) return 0;
@@ -91,7 +92,7 @@ async function publishTeamsChangedInTx(
     });
     return (await markAccountsChanged(tx, {
         accountIds: recipients,
-        entityId: TEAM_CHANGE_ENTITY_ID,
+        entityId,
     })).length;
 }
 
@@ -145,6 +146,16 @@ export async function publishTeamChangedInTx(
         additionalAccountIds: input.additionalAccountIds,
         excludeAccountIds: input.excludeAccountIds,
     });
+}
+
+/** Material delivery changes recipient currentness and administration readiness,
+ * including on the custodian's other clients, but cannot change source authority.
+ * Keep the canonical Team audience while avoiding source-census feedback. */
+export async function publishTeamCredentialMaterialChangedInTx(
+    tx: Tx,
+    input: Readonly<{ teamId: string }>,
+): Promise<number> {
+    return await publishTeamsChangedInTx(tx, { teamIds: [input.teamId] }, TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1);
 }
 
 /**
