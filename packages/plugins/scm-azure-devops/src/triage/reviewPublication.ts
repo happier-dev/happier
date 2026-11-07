@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   createReviewCommentPublicationSettlementRequestV1,
   formatReviewCommentPublicationMarkerV1,
@@ -359,7 +359,7 @@ async function finalObservation(mutation: AzureMutationContext) {
 }
 
 async function claimPlan(
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   mutation: AzureMutationContext,
   plan: ReviewCommentPublicationPlanV1,
 ): Promise<ReviewCommentClaimPublicationDispatchResponseV1> {
@@ -450,7 +450,7 @@ async function executePublication(input: Readonly<{
   plan: ReviewCommentPublicationPlanV1;
   mode: PublicationMode;
   mutation: AzureMutationContext;
-  context: PluginInvocationContext;
+  context: PluginAccountActionContext;
 }>): Promise<AzureReviewPublicationResultV1> {
   const current = await observeAzureMutation(input.mutation);
   if (current.row === null) {
@@ -845,7 +845,7 @@ async function executePublication(input: Readonly<{
 
 async function runAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
   mode: PublicationMode,
 ): Promise<AzureReviewPublicationResultV1> {
   const parsed = mode.kind === 'submit'
@@ -881,21 +881,21 @@ async function runAction(
 
 export async function submitAzureDevOpsPullRequestReview(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ) {
   return await runAction(input, context, { kind: 'submit' });
 }
 
 export async function createAzureDevOpsPullRequestThreadComment(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ) {
   return await runAction(input, context, { kind: 'comment' });
 }
 
 export async function replyAzureDevOpsPullRequestThread(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ) {
   const parsed = AzureThreadReplyInputV1Schema.safeParse(input);
   if (!parsed.success) {

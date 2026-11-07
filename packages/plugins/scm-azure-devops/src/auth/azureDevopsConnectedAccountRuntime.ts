@@ -1,4 +1,5 @@
-import { Buffer } from 'node:buffer';
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 
 import type {
   ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
@@ -39,7 +40,7 @@ function diagnostic(code: string, message: string) {
  * on a mutable value that has nothing to do with the credential.
  */
 export function encodeAzureDevOpsPatAuthorization(token: string): string {
-  return `Basic ${Buffer.from(`:${token}`, 'utf8').toString('base64')}`;
+  return `Basic ${encodeBase64(new TextEncoder().encode(`:${token}`))}`;
 }
 
 /**
@@ -223,7 +224,7 @@ function isAdmissibleAzureDevOpsOrigin(origin: string): boolean {
   return normalized.ok && normalized.origin.requestOrigin === origin;
 }
 
-const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+export const azureDevopsPortableAuthentication = Object.freeze({
   authentication: {
     modes: {
       [AZURE_DEVOPS_MANUAL_MODE_ID]: {
@@ -276,17 +277,6 @@ const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntim
       },
     },
   },
-  async refresh(context, options) {
-    return readHealth(context, options);
-  },
-  async revoke() {
-    // A personal access token is revoked in Azure DevOps itself; claiming otherwise would tell a
-    // user their token is dead while it still authorizes every other client that holds it.
-    return { status: 'remoteUnsupported' as const };
-  },
-  async status(context, options) {
-    return readHealth(context, options);
-  },
   async materialize(request, context) {
     if (request.kind !== 'httpHeaders') {
       throw new Error('Azure DevOps connected accounts support HTTP-header materialization only');
@@ -305,7 +295,22 @@ const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntim
       kind: 'httpHeaders' as const,
       headers: { Authorization: encodeAzureDevOpsPatAuthorization(token) },
     };
+  }
+} satisfies ConnectedAccountPortableRuntime);
+
+const azureDevopsConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
+  ...azureDevopsPortableAuthentication,
+  async refresh(context, options) {
+    return readHealth(context, options);
   },
+  async revoke() {
+    // A personal access token is revoked in Azure DevOps itself; claiming otherwise would tell a
+    // user their token is dead while it still authorizes every other client that holds it.
+    return { status: 'remoteUnsupported' as const };
+  },
+  async status(context, options) {
+    return readHealth(context, options);
+  }
 };
 
 export const azureDevopsConnectedAccountRuntime = Object.freeze(

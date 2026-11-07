@@ -1,3 +1,5 @@
+import { azureDevopsPortableAuthentication } from './auth/azureDevopsConnectedAccountRuntime.js';
+import { AZURE_DEVOPS_ACCOUNT_ACTIONS, sources, READ_HOST_ACCESS, INSTANCE_ACCOUNT_BINDINGS } from './accountActions.js';
 /**
  * The sole Azure DevOps plugin manifest and registration spine.
  *
@@ -14,13 +16,8 @@
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import {
-  TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
-  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-  TriageSourcesContributionProtocolV1,
-  TriageSourceConnectedAccountInputsV1,
-} from '@happier-dev/triage-protocol/v1';
+
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   AZURE_DEVOPS_BASE_CONFIGURATION_FIELD,
@@ -32,61 +29,13 @@ import {
   AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID,
 } from './azureDevopsContracts.js';
 import { azureDevopsOperationsAdapter } from './operations/azureDevopsAdapter.js';
-import { AZURE_DEVOPS_UI_TRANSLATIONS } from './ui/translations.js';
-import {
-  AZURE_DEVOPS_TRIAGE_ACTION_IDS,
-  getAzureDevOpsSourceEntryAction,
-  listAzureDevOpsInstancesAction,
-  prepareAzureDevOpsReviewWorkspaceAction,
-  scanAzureDevOpsSourceAction,
-  verifyAzureDevOpsReviewWorkspaceAction,
-} from './triage/actions.js';
-import {
-  AzureCommitsInputV1Schema,
-  AzureCommitsResultV1Schema,
-  AzureIterationChangesInputV1Schema,
-  AzureIterationChangesResultV1Schema,
-  AzureIterationsInputV1Schema,
-  AzureIterationsResultV1Schema,
-  AzurePoliciesInputV1Schema,
-  AzurePoliciesResultV1Schema,
-  AzureThreadsInputV1Schema,
-  AzureThreadsResultV1Schema,
-} from './triage/detail/contracts.js';
-import {
-  AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS,
-  listAzureDevOpsCommits,
-  listAzureDevOpsIterationChanges,
-  readAzureDevOpsIterations,
-  readAzureDevOpsPolicies,
-  readAzureDevOpsThreads,
-} from './triage/detailActions.js';
-import {
-  AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS,
-  abandonAzureDevOpsPullRequest,
-  completeAzureDevOpsPullRequest,
-  reactivateAzureDevOpsPullRequest,
-  requestAzureDevOpsPullRequestReview,
-  setAzureDevOpsPullRequestThreadStatus,
-} from './triage/mutationActions.js';
-import {
-  createAzureDevOpsPullRequestThreadComment,
-  replyAzureDevOpsPullRequestThread,
-  submitAzureDevOpsPullRequestReview,
-} from './triage/reviewPublication.js';
-import {
-  AzureAbandonInputV1Schema,
-  AzureCompleteInputV1Schema,
-  AzureMutationResultV1Schema,
-  AzureReactivateInputV1Schema,
-  AzureReviewPublicationResultV1Schema,
-  AzureRequestReviewInputV1Schema,
-  AzureSubmitReviewInputV1Schema,
-  AzureThreadCommentCreateInputV1Schema,
-  AzureThreadReplyInputV1Schema,
-  AzureThreadStatusInputV1Schema,
-  AzureThreadStatusResultV1Schema,
-} from './triage/mutations/contracts.js';
+
+import { AZURE_DEVOPS_TRIAGE_ACTION_IDS, prepareAzureDevOpsReviewWorkspaceAction, verifyAzureDevOpsReviewWorkspaceAction } from './triage/actions.js';
+
+
+
+
+
 import {
   AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
   AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
@@ -112,7 +61,7 @@ export {
   AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID,
 };
 
-const sources = TriageSourcesContributionProtocolV1;
+
 
 /**
  * The `azure-devops-account` deployment field.
@@ -172,14 +121,8 @@ const TOKEN_FIELD = {
  * no declaration-time authority. `listInstances` carries no account at all, because producing
  * account references is what it performs.
  */
-const READ_HOST_ACCESS = [
-  AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
-  AZURE_DEVOPS_TRIAGE_PURPOSE,
-];
-const INSTANCE_ACCOUNT_BINDINGS = [{
-  path: 'instance.binding.account',
-  purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
-}];
+
+
 
 export const AZURE_DEVOPS_PLUGIN = definePlugin({
   id: AZURE_DEVOPS_PLUGIN_ID,
@@ -190,9 +133,19 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
   brand: { iconResourceId: 'brand-icon', monochrome: true },
   resources: {
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
-  engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -280,70 +233,31 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: AZURE_DEVOPS_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: withTriageSourceSettingsTranslationsV1([
-      { locale: 'en', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.en, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs & Issues', 'plugins.azureDevops.settings.sources.subtitle': 'Choose which Azure DevOps accounts and projects appear in PRs & Issues.' } },
-      { locale: 'ru', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ru, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR и задачи', 'plugins.azureDevops.settings.sources.subtitle': 'Выберите учетные записи и проекты Azure DevOps, которые будут отображаться в разделе PR и задач.' } },
-      { locale: 'pl', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.pl, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR-y i zgłoszenia', 'plugins.azureDevops.settings.sources.subtitle': 'Wybierz konta i projekty Azure DevOps wyświetlane w sekcji PR-ów i zgłoszeń.' } },
-      { locale: 'es', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.es, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR e incidencias', 'plugins.azureDevops.settings.sources.subtitle': 'Elige qué cuentas y proyectos de Azure DevOps aparecen en PR e incidencias.' } },
-      { locale: 'fr', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.fr, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR et tickets', 'plugins.azureDevops.settings.sources.subtitle': 'Choisis les comptes et projets Azure DevOps affichés dans PR et tickets.' } },
-      { locale: 'it', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.it, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR e segnalazioni', 'plugins.azureDevops.settings.sources.subtitle': 'Scegli gli account e i progetti Azure DevOps da mostrare in PR e segnalazioni.' } },
-      { locale: 'pt', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.pt, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs e problemas', 'plugins.azureDevops.settings.sources.subtitle': 'Escolha as contas e os projetos Azure DevOps apresentados em PRs e problemas.' } },
-      { locale: 'de', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.de, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs & Tickets', 'plugins.azureDevops.settings.sources.subtitle': 'Wähle aus, welche Azure-DevOps-Konten und -Projekte unter PRs & Tickets angezeigt werden.' } },
-      { locale: 'ca', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ca, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR i incidències', 'plugins.azureDevops.settings.sources.subtitle': 'Tria els comptes i projectes d’Azure DevOps que es mostren a PR i incidències.' } },
-      { locale: 'zh-Hans', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hans'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 和问题', 'plugins.azureDevops.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Azure DevOps 帐户和项目。' } },
-      { locale: 'zh-Hant', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hant'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 與問題', 'plugins.azureDevops.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Azure DevOps 帳戶和專案。' } },
-      { locale: 'ja', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ja, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR と課題', 'plugins.azureDevops.settings.sources.subtitle': 'PR と課題に表示する Azure DevOps アカウントとプロジェクトを選択します。' } },
-    ]),
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
   },
   actions: {
-    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances]: {
-      title: 'Discover Azure DevOps organizations',
-      description: 'Lists the Azure DevOps deployments each connected account can reach.',
-      surfaces: sources.operations.listInstances.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
-      inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
-      resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-      // Discovery reads account metadata only; it neither calls Azure nor needs a network binding.
-      hostAccess: [AZURE_DEVOPS_TRIAGE_PURPOSE],
-      run: listAzureDevOpsInstancesAction,
-    },
-    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan]: {
-      title: 'Scan Azure DevOps pull requests',
-      description: 'Reads one bounded page of the configured Azure DevOps pull-request walk.',
-      surfaces: sources.operations.scan.declaration.surfaces,
-      dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
-      resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: scanAzureDevOpsSourceAction,
-    },
-    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.get]: {
-      title: 'Read an Azure DevOps pull request',
-      description: 'Reads one pull request authoritatively through its configured deployment.',
-      surfaces: sources.operations.get.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
-      resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: getAzureDevOpsSourceEntryAction,
-    },
+    ...AZURE_DEVOPS_ACCOUNT_ACTIONS,
     [AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       title: 'Prepare Azure DevOps review workspace',
       description: 'Revalidates one selected pull request and materializes its source tip locally.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      // The person's own press is the consent for the checkout they asked for;
+      // agents, MCP and a saved Ask keep the writes-local default.
+      confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceConnectedAccountInputsV1.prepareReviewWorkspace.jsonSchema,
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
@@ -360,254 +274,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: verifyAzureDevOpsReviewWorkspaceAction,
-    },
-    // The five source-native detail planes. Only this plugin's own mounted
-    // detail artifact invokes them, through the mounted Plugin UI host —
-    // present-user authority — so they declare `ui` and nothing else.
-    [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: {
-      title: 'Read the Azure DevOps iterations of a pull request',
-      description: 'Reads the pull request\u2019s iteration list once, and names the real'
-        + ' current iteration the Files and Activity tabs both compare against.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: AzureIterationsInputV1Schema.jsonSchema,
-      resultSchema: AzureIterationsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readAzureDevOpsIterations,
-    },
-    [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits]: {
-      title: 'Read an Azure DevOps commit page',
-      description: 'Reads one bounded page of the commits of one pull request, positioned only'
-        + ' by the continuation token Azure DevOps issued.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: AzureCommitsInputV1Schema.jsonSchema,
-      resultSchema: AzureCommitsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listAzureDevOpsCommits,
-    },
-    [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges]: {
-      title: 'Read an Azure DevOps iteration change page',
-      description: 'Reads one bounded page of the files one pull-request iteration changes,'
-        + ' advancing only through the skip and top Azure DevOps issued.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: AzureIterationChangesInputV1Schema.jsonSchema,
-      resultSchema: AzureIterationChangesResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: listAzureDevOpsIterationChanges,
-    },
-    [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies]: {
-      title: 'Read the Azure DevOps policies of a pull request',
-      description: 'Reads the statuses and policy evaluations of one pull request, with'
-        + ' enforcement taken only from a returned evaluation.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: AzurePoliciesInputV1Schema.jsonSchema,
-      resultSchema: AzurePoliciesResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readAzureDevOpsPolicies,
-    },
-    [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: {
-      title: 'Read the Azure DevOps threads of a pull request',
-      description: 'Reads every review thread of one pull request in the one response the'
-        + ' documented endpoint returns.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: AzureThreadsInputV1Schema.jsonSchema,
-      resultSchema: AzureThreadsResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: readAzureDevOpsThreads,
-    },
-    // The five enabled Azure DevOps pull-request writes.
-    //
-    // UI, agent, MCP and CLI share these native handlers and the host approval
-    // policy. Non-safe danger levels and confirmations require approval by
-    // default; exact configured-account admission and provider preconditions
-    // remain with the source.
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.complete]: {
-      title: 'Complete an Azure DevOps pull request',
-      description: 'Completes one active pull request with the branch decision the user chose,'
-        + ' only while its merge source is still the commit they saw, and reports the polled'
-        + ' terminal state rather than the accepted request.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      // Irreversible on the forge, and it may delete the source branch.
-      dangerLevel: 'destructive',
-      // The body names the two things Azure will NOT do, because both are decisions a user could
-      // reasonably assume completion makes for them: it never moves Work Items and never bypasses
-      // branch policy, and both are sent as an explicit `false` rather than left to a default.
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.complete.confirm.title', fallback: 'Complete this pull request?' },
-        body: {
-          key: 'plugins.azureDevops.actions.complete.confirm.body',
-          fallback: 'Completing is permanent in Azure DevOps. Work items are not transitioned and branch'
-            + ' policy is not bypassed. The source branch is deleted only if you chose that, and'
-            + ' completion runs against the merge source shown here — if new commits arrive first,'
-            + ' nothing is completed and you are asked again.',
-        },
-        confirmLabel: { key: 'plugins.azureDevops.actions.complete.confirm.label', fallback: 'Complete' },
-      },
-      inputSchema: AzureCompleteInputV1Schema.jsonSchema,
-      resultSchema: AzureMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: completeAzureDevOpsPullRequest,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.abandon]: {
-      title: 'Abandon an Azure DevOps pull request',
-      description: 'Abandons one active pull request. Azure can reactivate an abandoned pull'
-        + ' request later.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.abandon.confirm.title', fallback: 'Abandon this pull request?' },
-        body: {
-          key: 'plugins.azureDevops.actions.abandon.confirm.body',
-          fallback: 'The pull request stops being active and its reviewers stop being asked. Azure can'
-            + ' reactivate it later, so this is not permanent.',
-        },
-        confirmLabel: { key: 'plugins.azureDevops.actions.abandon.confirm.label', fallback: 'Abandon' },
-      },
-      inputSchema: AzureAbandonInputV1Schema.jsonSchema,
-      resultSchema: AzureMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: abandonAzureDevOpsPullRequest,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.reactivate]: {
-      title: 'Reactivate an Azure DevOps pull request',
-      description: 'Reactivates one abandoned pull request, which is Azure’s reopen. A'
-        + ' completed pull request is refused rather than reactivated.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      // The body says what comes back with it, because reactivating is not a private bookkeeping
-      // change: the pull request becomes active again and its reviewers are asked again.
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.reactivate.confirm.title', fallback: 'Reactivate this pull request?' },
-        body: {
-          key: 'plugins.azureDevops.actions.reactivate.confirm.body',
-          fallback: 'The pull request becomes active again and its reviewers are asked to look at it'
-            + ' again. You can abandon it once more afterwards.',
-        },
-        confirmLabel: { key: 'plugins.azureDevops.actions.reactivate.confirm.label', fallback: 'Reactivate' },
-      },
-      inputSchema: AzureReactivateInputV1Schema.jsonSchema,
-      resultSchema: AzureMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: reactivateAzureDevOpsPullRequest,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.requestReview]: {
-      title: 'Request review on an Azure DevOps pull request',
-      description: 'Adds the selected identities as reviewers of one active pull request through'
-        + ' one additive request, leaving every existing reviewer and vote untouched.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      // The body states the one thing this write does NOT do, because the reviewer routes Azure
-      // publishes can do it: nobody is removed and no existing vote is reset.
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.requestReview.confirm.title', fallback: 'Request review from these people?' },
-        body: {
-          key: 'plugins.azureDevops.actions.requestReview.confirm.body',
-          fallback: 'They are added as reviewers and notified. Nobody currently reviewing is removed and'
-            + ' no existing vote is changed.',
-        },
-        confirmLabel: { key: 'plugins.azureDevops.actions.requestReview.confirm.label', fallback: 'Request review' },
-      },
-      inputSchema: AzureRequestReviewInputV1Schema.jsonSchema,
-      resultSchema: AzureMutationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: requestAzureDevOpsPullRequestReview,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadStatus]: {
-      title: 'Set the status of an Azure DevOps review thread',
-      description: 'Sets one review thread’s status and confirms it from the thread itself.'
-        + ' The conversation in the thread is never rewritten.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.threadStatus.confirm.title', fallback: 'Change this thread’s status?' },
-        body: {
-          key: 'plugins.azureDevops.actions.threadStatus.confirm.body',
-          fallback: 'Everyone on the pull request sees the new status. Nothing in the conversation is'
-            + ' changed, and you can set the status again afterwards.',
-        },
-        confirmLabel: { key: 'plugins.azureDevops.actions.threadStatus.confirm.label', fallback: 'Set status' },
-      },
-      inputSchema: AzureThreadStatusInputV1Schema.jsonSchema,
-      // A thread write settles into the thread's own vocabulary, not the pull request's: the
-      // entity it changed is the thread, and returning an entry observation would answer a
-      // question the caller did not ask.
-      resultSchema: AzureThreadStatusResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: setAzureDevOpsPullRequestThreadStatus,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
-      title: 'Submit an Azure DevOps pull request review',
-      description: 'Publishes the selected canonical review comments in order and submits the'
-        + ' viewer verdict last, only while the exact base and head remain current.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'externalSideEffect',
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.submitReview.confirm.title', fallback: 'Submit this review?' },
-        body: { key: 'plugins.azureDevops.actions.submitReview.confirm.body', fallback: 'Selected comments are published in order, then the verdict is submitted. If the pull request comparison moved, nothing is written.' },
-        confirmLabel: { key: 'plugins.azureDevops.actions.submitReview.confirm.label', fallback: 'Submit review' },
-      },
-      inputSchema: AzureSubmitReviewInputV1Schema.jsonSchema,
-      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: submitAzureDevOpsPullRequestReview,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadCommentCreate]: {
-      title: 'Publish an Azure DevOps pull request review comment',
-      description: 'Publishes one canonical Happier proposal as a new review thread at its exact'
-        + ' preflighted Azure DevOps anchor.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'externalSideEffect',
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
-        body: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.body', fallback: 'This comment becomes visible as a new Azure DevOps review thread at the comparison you reviewed.' },
-        confirmLabel: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.label', fallback: 'Publish comment' },
-      },
-      inputSchema: AzureThreadCommentCreateInputV1Schema.jsonSchema,
-      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: createAzureDevOpsPullRequestThreadComment,
-    },
-    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadReply]: {
-      title: 'Reply to an Azure DevOps pull request review thread',
-      description: 'Publishes one canonical Happier proposal as a reply to the exact Azure DevOps'
-        + ' thread and parent comment selected by the reader.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: ['detailsPanel'],
-      dangerLevel: 'writesRemote',
-      confirmation: {
-        title: { key: 'plugins.azureDevops.actions.threadReply.confirm.title', fallback: 'Post this thread reply?' },
-        body: { key: 'plugins.azureDevops.actions.threadReply.confirm.body', fallback: 'This reply becomes visible in the selected Azure DevOps review conversation.' },
-        confirmLabel: { key: 'plugins.azureDevops.actions.threadReply.confirm.label', fallback: 'Post reply' },
-      },
-      inputSchema: AzureThreadReplyInputV1Schema.jsonSchema,
-      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
-      hostAccess: READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
-      run: replyAzureDevOpsPullRequestThread,
-    },
+    }
   },
   scmHostingProviders: {
     [AZURE_DEVOPS_SCM_HOSTING_PROVIDER_LOCAL_ID]: {
@@ -636,10 +303,17 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
           fallback: 'Azure DevOps deployment and personal access token used to read pull requests.',
         },
         authentication: {
+          account: { artifactId: 'azure-devops-account-runtime', exportName: 'activate' },
           defaultModeId: AZURE_DEVOPS_MANUAL_MODE_ID,
           modes: [{
             id: AZURE_DEVOPS_MANUAL_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops',
+              checklist: ['In the Azure DevOps deployment you will connect, open User settings > Personal access tokens and create a token.', 'Select the organization, expiration, and Code and Work Items permissions needed for the actions you want to use.', 'Copy the token and enter the matching organization or collection URL here.'],
+              createKeyTitle: 'Read Azure DevOps token instructions',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: {
               key: 'plugins.azureDevops.auth.manual.title',
@@ -659,6 +333,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         capabilities: ['scmHostingBasicAuth'],
       },
       runtime: azureDevopsConnectedAccountRuntime,
+      accountRuntime: azureDevopsPortableAuthentication,
     },
   },
   systemTools: {

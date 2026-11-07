@@ -16,6 +16,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./happier-plugin-ui/azure-devops-account-runtime": {
+      "happier-source": "./src/accountRuntime.ts",
+      "default": "./dist/accountRuntime.js"
+    },
     "./happier-plugin-ui/azure-devops-detail-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/azure-devops-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx"
   },

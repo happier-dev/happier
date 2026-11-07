@@ -1,3 +1,4 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 /**
  * The Azure DevOps detail body's tab declarations.
  *
@@ -14,6 +15,8 @@
  * readers would answer from two snapshots, and the tab that lost the race would
  * compare against an iteration the other one has already moved past.
  */
+
+import type { PluginUiPageNavigationItemV1 } from '@happier-dev/plugin-sdk/ui';
 
 export type AzureDetailTabIdV1 =
   | 'overview'
@@ -39,13 +42,14 @@ export type AzureDetailTabDeclarationV1 = Readonly<{
   id: AzureDetailTabIdV1;
   title: string;
   titleKey: string;
+  glyph: NonNullable<PluginUiPageNavigationItemV1['glyph']>;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
   retainedState: string;
   readPlane: AzureDetailTabReadPlaneV1;
   /** The single component that owns this panel's vertical scrolling. */
-  scrollOwner: 'scrollArea' | 'list';
+  scrollOwner: TriageDetailPanelScrollOwnerV1;
 }>;
 
 export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Object.freeze([
@@ -53,6 +57,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     id: 'overview' as const,
     title: 'Overview',
     titleKey: 'plugins.azureDevops.ui.tab.overview',
+    glyph: 'info' as const,
     retention: 'retain' as const,
     retainedState: 'its one reader scroll anchor only; it holds no provider read to keep',
     readPlane: 'observation' as const,
@@ -62,6 +67,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     id: 'activity' as const,
     title: 'Activity',
     titleKey: 'plugins.azureDevops.ui.tab.activity',
+    glyph: 'conversations' as const,
     retention: 'discard' as const,
     retainedState: 'nothing: commit pages, the provider continuation token, the thread'
       + ' response, the 18-thread and 2-reply windows, scroll, expansions and any reply draft'
@@ -73,6 +79,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     id: 'files' as const,
     title: 'Files',
     titleKey: 'plugins.azureDevops.ui.tab.files',
+    glyph: 'file' as const,
     retention: 'retain' as const,
     retainedState: 'the parsed changed-file page model, provider-issued skip/top and its one'
       + ' visible-file scroll anchor; pending reads, file selection/copy/Action state and any'
@@ -84,6 +91,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
     id: 'policies' as const,
     title: 'Policies',
     titleKey: 'plugins.azureDevops.ui.tab.policies',
+    glyph: 'check' as const,
     retention: 'discard' as const,
     retainedState: 'nothing: statuses, policy and build projections, scroll and expansion'
       + ' remount from defaults',
@@ -104,3 +112,8 @@ export const AZURE_DEFAULT_DETAIL_TAB_V1: AzureDetailTabIdV1 = 'overview';
  */
 export const AZURE_THREAD_WINDOW_V1 = 18;
 export const AZURE_THREAD_REPLY_WINDOW_V1 = 2;
+
+/** Read the one source declaration for this panel. */
+export function azureDetailTabDeclaration(id: AzureDetailTabIdV1): AzureDetailTabDeclarationV1 {
+  return AZURE_DETAIL_TABS_V1.find((tab) => tab.id === id)!;
+}

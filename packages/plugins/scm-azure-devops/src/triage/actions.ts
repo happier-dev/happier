@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
@@ -39,7 +40,7 @@ export const AZURE_DEVOPS_TRIAGE_ACTION_IDS = Object.freeze({
   verifyReviewWorkspace: 'triage-verify-review-workspace',
 });
 
-function toReadServices(context: PluginInvocationContext): AzureTriageReadServices {
+function toReadServices(context: Readonly<{ signal: PluginAccountActionContext['signal']; services: Pick<PluginAccountActionContext['services'], 'connectedAccounts' | 'http'> }>): AzureTriageReadServices {
   return {
     connectedAccounts: context.services.connectedAccounts,
     transport: toAzureTransport(context.services.http, context.signal),
@@ -67,7 +68,7 @@ function invalidInput(detail: string) {
  */
 export async function listAzureDevOpsInstancesAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageListInstancesResultV1> {
   if (!TriageListInstancesInputV1Schema.safeParse(input).success) {
     return {
@@ -83,7 +84,7 @@ export async function listAzureDevOpsInstancesAction(
 
 export async function scanAzureDevOpsSourceAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.safeParse(input);
   if (!parsed.success) {
@@ -101,7 +102,7 @@ export async function scanAzureDevOpsSourceAction(
 
 export async function getAzureDevOpsSourceEntryAction(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<TriageGetResultV1> {
   const parsed = TriageGetInputV1Schema.safeParse(input);
   if (!parsed.success) {

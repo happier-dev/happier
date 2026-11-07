@@ -2,6 +2,7 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it } from 'vitest';
 
 import { activate } from './activate.js';
+import { activate as activateAccount } from './accountRuntime.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function sortRegistrations(
@@ -13,16 +14,15 @@ function sortRegistrations(
 }
 
 describe('Azure DevOps plugin activation', () => {
-  it('registers every declared daemon Action, runtime descriptor, and targeted role', async () => {
-    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  it('registers every declared Account and daemon Action, runtime descriptor, and targeted role', async () => {
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
 
     try {
       const expectedRegistrations = [
         ...PLUGIN_MANIFEST.contributes.actions
-          .filter(({ execution }) => execution.target === 'daemon')
           .map(({ id }) => ({ family: 'actions' as const, localId: id })),
         ...PLUGIN_MANIFEST.contributes.connectedAccountDescriptors
-          .map(({ id }) => ({ family: 'connectedAccountDescriptors' as const, localId: id })),
+          .flatMap(({ id }) => Array.from({ length: 2 }, () => ({ family: 'connectedAccountDescriptors' as const, localId: id }))),
         ...PLUGIN_MANIFEST.contributes.scmHostingProviders
           .map(({ id }) => ({ family: 'scmHostingProviders' as const, localId: id })),
       ];
@@ -45,8 +45,7 @@ describe('Azure DevOps plugin activation', () => {
       );
       for (const contribution of PLUGIN_MANIFEST.contributes.targetedPluginContributions) {
         for (const [role, actionId] of Object.entries(contribution.operations ?? {})) {
-          // Targeted source roles are executable daemon Actions; a role that points to a client
-          // Action or to an unregistered handler is silently undispatchable at the target plugin.
+          // Targeted roles must resolve through their admitted Account or daemon activation.
           expect(registeredActionIds, `${contribution.id}.${role}`).toContain(actionId);
           expect(testkit.registration('actions', actionId)).toEqual(expect.any(Function));
         }

@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
@@ -136,7 +136,7 @@ export async function admitAzureMutation(
     localRef: TriageSourceEntryLocalRefV1;
     routingToken: string;
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<
   | Readonly<{ ok: true; mutation: AzureMutationContext; dispose(): void }>
   | Readonly<{ ok: false; result: AzureMutationResultV1 }>
@@ -289,7 +289,7 @@ function boundedDetail(value: string | null): string | undefined {
  */
 export async function completeAzureDevOpsPullRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureMutationResultV1> {
   const parsed = AzureCompleteInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -447,7 +447,7 @@ function completionOptionsHeld(
  */
 export async function abandonAzureDevOpsPullRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureMutationResultV1> {
   const parsed = AzureAbandonInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -523,7 +523,7 @@ export async function abandonAzureDevOpsPullRequest(
  */
 export async function reactivateAzureDevOpsPullRequest(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureMutationResultV1> {
   const parsed = AzureReactivateInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -601,7 +601,7 @@ export async function reactivateAzureDevOpsPullRequest(
  */
 export async function requestAzureDevOpsPullRequestReview(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureMutationResultV1> {
   const parsed = AzureRequestReviewInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -732,7 +732,7 @@ function threadUnavailable(failure: TriageSourceFailureV1): AzureThreadStatusRes
  */
 export async function setAzureDevOpsPullRequestThreadStatus(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureThreadStatusResultV1> {
   const parsed = AzureThreadStatusInputV1Schema.safeParse(input);
   if (!parsed.success) return threadUnavailable(invalidInput());

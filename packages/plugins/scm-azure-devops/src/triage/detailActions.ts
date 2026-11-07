@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import {
   fitActionResultPageV1,
   fitActionResultSequenceV1,
@@ -165,7 +165,7 @@ async function admitAzureDetailInvocation(
     localRef: TriageSourceEntryLocalRefV1;
     routingToken: string;
   }>,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AdmittedInvocation> {
   const origin = resolveAzureConfiguredOrigin(request.instance.configuration);
   if (origin === null) return { ok: false, failure: undecodableConfiguration() };
@@ -246,7 +246,7 @@ async function admitAzureDetailInvocation(
  */
 export async function readAzureDevOpsIterations(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureIterationsResultV1> {
   const parsed = AzureIterationsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -282,7 +282,7 @@ export async function readAzureDevOpsIterations(
 /** One page of the pull request's commits, positioned only by Azure's own token. */
 export async function listAzureDevOpsCommits(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureCommitsResultV1> {
   const parsed = AzureCommitsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -336,7 +336,7 @@ export async function listAzureDevOpsCommits(
  */
 export async function listAzureDevOpsIterationChanges(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureIterationChangesResultV1> {
   const parsed = AzureIterationChangesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -383,7 +383,7 @@ export async function listAzureDevOpsIterationChanges(
  */
 export async function readAzureDevOpsPolicies(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzurePoliciesResultV1> {
   const parsed = AzurePoliciesInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
@@ -437,7 +437,7 @@ export async function readAzureDevOpsPolicies(
  */
 export async function readAzureDevOpsThreads(
   input: unknown,
-  context: PluginInvocationContext,
+  context: PluginAccountActionContext,
 ): Promise<AzureThreadsResultV1> {
   const parsed = AzureThreadsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());

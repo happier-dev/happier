@@ -1,3 +1,4 @@
+import { azureDetailTabDeclaration } from '../ui/detail/tabDeclarations.js';
 import type { TriageSourceDescriptorV1 } from '@happier-dev/triage-protocol/v1';
 
 /**
@@ -84,10 +85,10 @@ export const AZURE_DEVOPS_TRIAGE_DESCRIPTOR = {
     // r0.42: the Triage detail frame draws these tabs and asks this source for
     // each as a panel; the writes render as the header `actions` panel.
     detailTabs: [
-      { kind: 'shared', id: 'overview' },
-      { kind: 'shared', id: 'activity' },
-      { kind: 'shared', id: 'files' },
-      { kind: 'shared', id: 'checks' },
+      { kind: 'shared', id: 'overview', scrollOwner: azureDetailTabDeclaration('overview').scrollOwner },
+      { kind: 'shared', id: 'activity', scrollOwner: azureDetailTabDeclaration('activity').scrollOwner },
+      { kind: 'shared', id: 'files', scrollOwner: azureDetailTabDeclaration('files').scrollOwner },
+      { kind: 'shared', id: 'checks', scrollOwner: azureDetailTabDeclaration('policies').scrollOwner },
     ],
     detailActions: true,
   }],

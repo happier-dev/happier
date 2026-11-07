@@ -251,6 +251,9 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances))
       .not.toHaveProperty('connectedAccountPurposeBindings');
+    // The person's own press is consent for the checkout they asked for; agents keep Ask.
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace)?.confirmationWhen)
+      .toEqual({ presentUserUi: false });
   });
 
   it('binds the scan account leaf under a declaration that can actually fail', () => {
