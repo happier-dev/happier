@@ -5,6 +5,7 @@ import type { RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.
 export function resolveRegistryFetchPlanV1(input: Readonly<{ host: 'web' | 'native' | 'node';
   adapter: RegistryFormatAdapterV1; source: RegistrySourceDescriptorV1; op?: 'list' | 'read' | 'files' }>): readonly ('direct' | 'daemon')[] {
   if (input.host === 'node') return ['direct'];
+  if ('packageContent' in input.source) return ['daemon'];
   if (input.source.token) return ['daemon'];
   // IR-99: platform HTTP cannot read non-GitHub repositories, including
   // retained 0.2 SSH/git/local sources. Their SCM reader lives on the daemon.

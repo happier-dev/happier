@@ -1,14 +1,3 @@
-import { selectRegistryBotTemplateUpdatePointerV1 } from './registryBotTemplateUpdatePointerV1.js';
-import type { ResolvedBotTemplateReleaseV1 } from '../bots/templates/botTemplateV1.js';
-import type { PluginBotTemplateContributionV1 } from '../plugins/contributions/botTemplates.js';
-export type RegistryBotTemplateReaderV1 = (input: Readonly<{
-  item: RegistryItemV1; source: RegistrySourceDescriptorV1; context: RegistryFetchContextV1;
-  contributionId: string;
-}>) => Promise<ResolvedBotTemplateReleaseV1>;
-export type RegistryAvailableBotTemplateReaderV1 = (input: Readonly<{
-  pointer: RegistryItemPointerV1; source: RegistrySourceDescriptorV1; contributionId: string;
-  signal?: AbortSignal; item?: RegistryItemV1;
-}>) => Promise<ResolvedBotTemplateReleaseV1 | null>;
 import { decodeBase64,encodeBase64 } from '../crypto/base64.js';
 import { REGISTRY_ACTION_INPUT_SCHEMAS_V1,REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,type RegistryActionIdV1 } from './registryActionsV1.js';
 import { REGISTRY_FORMAT_ADAPTERS_V1 } from './formats/index.js';
@@ -19,7 +8,9 @@ import { composeCatalogRegistryAdapterV1 } from './formats/composeCatalog.js';
 import type { RegistryDetectedSourceV1,RegistryFetchContextV1,RegistryHttpV1,RegistryFormatAdapterV1 } from './formats/registryFormatAdapterV1.js';
 import { HAPPIER_PICKS_SOURCE_ID,deriveRegistrySourceIdV1,normalizeRegistrySourceUrlV1,resolveLegacyRegistrySourceRefV1,readBuiltInRegistryAppTemplateHintsV1,type RegistrySourceV1,type RegistrySourceDescriptorV1,type RegistryRemoteSourceDescriptorV1 } from './registrySourcesV1.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-import { RegistryFetchErrorV1 } from './registryListV1.js';
+import { readRegistryPackageAppCatalogV1 } from './registryPackageContentV1.js';
+import { listHappierAppCatalogV1, readHappierAppCatalogItemV1 } from './formats/happierAppCatalog.js';
+import { RegistryFetchErrorV1, type RegistryListPageV1 } from './registryListV1.js';
 import { RegistryItemV1Schema,type RegistryItemPointerV1,type RegistrySkillSourceV1,type RegistryItemV1,type RegistrySkillItemV1,type RegistrySkillContentRefV1 } from './registryItemsV1.js';
 import { deriveMarketplaceSourceId, normalizeMarketplaceSourceUrlV1 } from '../marketplace/marketplaceSourceRegistryV1.js';
 import { resolveRegistryFetchPlanV1 } from './registryFetchPlanV1.js';
@@ -27,17 +18,25 @@ import { fetchRegistrySkillFilesV1,type RegistrySkillFileBytesV1 } from './regis
 import { RegistryFetchRequestV1Schema,RegistryFetchResponseV1Schema,type RegistryFetchRequestV1,type RegistryFetchResponseV1 } from './registryRpcV1.js';
 import type { RegistrySourcesMutationV1,RegistrySourcesMutationResultV1 } from './registrySourcesMutationV1.js';
 import type { RegistryUpdateCheckResultV1 } from './registryUpdatesV1.js';
+import { selectRegistryBotTemplateUpdatePointerV1 } from './registryBotTemplateUpdatePointerV1.js';
+import type { ResolvedBotTemplateReleaseV1 } from '../bots/templates/botTemplateV1.js';
+import type { PluginBotTemplateContributionV1 } from '../plugins/contributions/botTemplates.js';
+export type RegistryBotTemplateReaderV1 = (input: Readonly<{
+  item: RegistryItemV1; source: RegistrySourceDescriptorV1; context: RegistryFetchContextV1;
+  contributionId: string;
+}>) => Promise<ResolvedBotTemplateReleaseV1>;
+type RegistrySourceFetchRequestV1<T = RegistryFetchRequestV1> = T extends { sourceId: string } ? Omit<T, 'sourceId'> : never;
 export type RegistryHostDepsV1=Readonly<{
-  admitSource?:(source:RegistrySourceDescriptorV1)=>Promise<RegistryFetchContextV1>;
   host:'web'|'native'|'node';http:RegistryHttpV1;signal?:AbortSignal;git?:RegistryFetchContextV1['git'];
+  packageContent?:RegistryFetchContextV1['packageContent'];
   withAppCatalog?:RegistryFetchContextV1['withAppCatalog'];
   readSources:()=>Promise<readonly RegistrySourceDescriptorV1[]>;
+  /** Bind transport credentials once to the selected source for this finite fetch. */
+  admitSource?:(source:RegistrySourceDescriptorV1)=>Promise<RegistryFetchContextV1>;
   updates?:(filter?:import('zod/mini').infer<typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.updates.check']>)=>Promise<RegistryUpdateCheckResultV1>;
   mutateSources?:(mutation:RegistrySourcesMutationV1)=>Promise<RegistrySourcesMutationResultV1>;
   daemonFetch?:(request:RegistryFetchRequestV1)=>Promise<RegistryFetchResponseV1>;
   readPluginBotTemplates?: RegistryBotTemplateReaderV1;
-  /** Existing verified installed bytes may satisfy the exact pointer without an acquisition. */
-  readAvailableBotTemplate?: RegistryAvailableBotTemplateReaderV1;
   /** Uses the existing Account-scoped template.preview Action carrier. */
   readBotTemplateOnDaemon?:(pointer:RegistryItemPointerV1,contributionId:string)=>Promise<ResolvedBotTemplateReleaseV1>;
   /** Delegates the same approved create Action; never sends credential material to the client. */
@@ -49,10 +48,14 @@ class RegistryTransportFailureV1 extends Error {
     super('Registry transport unavailable');
   }
 }
-function adapterFor(source:RegistrySourceV1):RegistryFormatAdapterV1 {
+function adapterFor(source:Pick<RegistrySourceV1,'format'>):RegistryFormatAdapterV1 {
   const adapter=(REGISTRY_FORMAT_ADAPTERS_V1 as Partial<Record<RegistrySourceV1['format'],RegistryFormatAdapterV1>>)[source.format];
   if(!adapter) throw new RegistryFetchErrorV1({state:'newer_format',found:source.format});
   return adapter;
+}
+/** An optional picks kind disappears only after a successful empty answer, never an outage. */
+function isConfirmedEmptyPicksPage(page: RegistryListPageV1): boolean {
+  return page.sourceId === HAPPIER_PICKS_SOURCE_ID && page.status.state === 'ok' && page.items.length === 0;
 }
 function applyRegistryAppTemplateHintsV1(item: RegistryItemV1, hints: ReturnType<typeof readBuiltInRegistryAppTemplateHintsV1>): RegistryItemV1 {
   if (item.payload.kind !== 'app' || item.payload.state !== 'ready') return item;
@@ -117,7 +120,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     getBytes: (...args) => transport(() => source.getBytes(...args)),
   });
   const http = wrapHttp(deps.http);
-  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, withAppCatalog: deps.withAppCatalog };
+  const ctx: RegistryFetchContextV1 = { http, signal: deps.signal, git: deps.git, packageContent: deps.packageContent, withAppCatalog: deps.withAppCatalog };
   const viaDaemon = async (request: RegistryFetchRequestV1): Promise<RegistryFetchResponseV1> => {
     const fetch = deps.daemonFetch;
     return fetch
@@ -137,8 +140,17 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     return { ...admitted, http: wrapHttp(admitted.http) };
   };
   const direct=async(request:Extract<RegistryFetchRequestV1,{sourceId:string}>,source:RegistrySourceDescriptorV1, operationCtx: RegistryFetchContextV1):Promise<RegistryFetchResponseV1>=>{
+    if ('packageContent' in source) {
+      if (request.op === 'files') throw new RegistryFetchErrorV1({state:'invalid_source'});
+      if (request.kind !== 'app') throw new RegistryFetchErrorV1({state:'invalid_source'});
+      const {catalog,fetchedAt}=await readRegistryPackageAppCatalogV1(operationCtx,source);
+      if(request.op==='list') return {op:'list',page:listHappierAppCatalogV1({sourceId:source.id,catalog,fetchedAt,query:request.query})};
+      return {op:'read',item:readHappierAppCatalogItemV1({sourceId:source.id,catalog,fetchedAt,
+        itemId:request.itemId,version:request.version,packageContent:source.packageContent})};
+    }
     const adapter=adapterFor(source);
     if(!source.kinds.includes(request.kind)) throw new RegistryFetchErrorV1({state:'invalid_source'});
+    if(request.op==='list') return {op:'list',page:await adapter.list(operationCtx,{...request,source})};
     const formatCtx: RegistryFetchContextV1 = { ...operationCtx, readTargetItem: async target => {
       const descriptor: RegistrySourceDescriptorV1 = { ...target.source, origin: { kind: 'built_in' }, removable: false };
       const appTemplateHints = readBuiltInRegistryAppTemplateHintsV1(descriptor, target.itemId);
@@ -148,9 +160,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         try {
           if (placement === 'direct') return applyRegistryAppTemplateHintsV1(
             RegistryItemV1Schema.parse(await targetAdapter.read({ ...operationCtx, appTemplateHints }, target)), appTemplateHints);
-          // Browsing a curated pointer never requires a Machine. Its details
-          // read fills the reviewed version through the existing daemon owner.
-          if (request.op === 'list') return null;
+          // Only the selected catalog pointer reaches its target's transport.
           const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
             kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }) }));
           if (response.op !== 'read') throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
@@ -167,7 +177,6 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       throw new RegistryFetchErrorV1({ state: 'unreachable' });
     } };
-    if(request.op==='list') return {op:'list',page:await adapter.list(formatCtx,{...request,source})};
     const item=RegistryItemV1Schema.parse(await adapter.read(formatCtx,{...request,source}));
     if(request.op==='read') return {op:'read',item};
     if(item.payload.kind!=='skill') throw new RegistryFetchErrorV1({state:'invalid_source'});
@@ -184,7 +193,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     const files=await fetchFiles(item.payload.skill,source,operationCtx);
     return {op:'files',files:files.map(file=>({path:file.path,unixMode:file.unixMode,contentBase64:encodeBase64(file.bytes)}))};
   };
-  const fetchFiles=async(skill:RegistrySkillSourceV1,source:RegistrySourceDescriptorV1, operationCtx = ctx):Promise<readonly RegistrySkillFileBytesV1[]>=>{
+  const fetchFiles=async(skill:RegistrySkillSourceV1,source:RegistryRemoteSourceDescriptorV1, operationCtx = ctx):Promise<readonly RegistrySkillFileBytesV1[]>=>{
     if (skill.ref.kind !== 'gitTree') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     if(!readGitHubRepositoryV1(skill.ref.repo) && operationCtx.git) {
       return operationCtx.git.files(skill,source);
@@ -209,6 +218,10 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       if (!('sourceId' in request)) return await fetchLinkRequest(request, operationCtx);
       // A list already admitted this exact descriptor from its one Account inventory.
       const source = admittedSource ?? await sourceById(request.sourceId);
+      if (request.op === 'list' && request.contributionFamily !== undefined
+        && (request.kind !== 'plugin' || 'packageContent' in source || !adapterFor(source).supportsContributionFamily)) {
+        throw new RegistryFetchErrorV1({ state: 'newer_format', found: `${source.format}:contributionFamily` });
+      }
       const admittedCtx = await admitSource(source, operationCtx);
       const appTemplateHints = request.op === 'read' && request.kind === 'app' && !('packageContent' in source)
         ? readBuiltInRegistryAppTemplateHintsV1(source, request.itemId) : undefined;
@@ -263,7 +276,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     const result = await deps.mutateSources(mutation);
     if (result.status !== 'updated') throw new Error(result.status === 'conflict' ? 'registry_revision_conflict' : result.reason);
   };
-  const linkSource = async (url: string): Promise<RegistrySourceDescriptorV1> => {
+  const linkSource = async (url: string): Promise<RegistryRemoteSourceDescriptorV1> => {
     const normalized = normalizeRegistrySourceUrlV1(url);
     const detected = await detectRegistrySourceV1(ctx, normalized, 'skill');
     if ('unsupported' in detected) throw new RegistryFetchErrorV1({ state: detected.unsupported === 'needs_token'
@@ -312,7 +325,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
         })) });
       }
     }
-    let detectedSource: RegistrySourceDescriptorV1;
+    let detectedSource: RegistryRemoteSourceDescriptorV1;
     try {
       detectedSource = await linkSource(normalized);
     } catch (error) {
@@ -424,10 +437,10 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     switch (actionId) {
       case 'registries.sources.list': {
         const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
-        const sources = (await deps.readSources()).filter(source => !args.kind || source.kinds.includes(args.kind));
-        const picks = args.kind && args.kind !== 'plugin' && sources.find(source => source.id === HAPPIER_PICKS_SOURCE_ID);
-        const page = picks && await fetchRequest({ op: 'list', sourceId: picks.id, kind: args.kind! }, picks);
-        output = { sources: page && (page.op !== 'list' || page.page.items.length === 0)
+        const sources = (await deps.readSources()).filter(source => !args.kind || source.kinds.some(kind => kind === args.kind));
+        const picks = args.kind && args.kind !== 'plugin' ? sources.find(source => source.id === HAPPIER_PICKS_SOURCE_ID) : undefined;
+        const page = picks ? await fetchRequest({ op: 'list', sourceId: picks.id, kind: args.kind! }, picks) : undefined;
+        output = { sources: page?.op === 'list' && isConfirmedEmptyPicksPage(page.page)
           ? sources.filter(source => source.id !== HAPPIER_PICKS_SOURCE_ID) : sources };
         break;
       }
@@ -444,8 +457,8 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       case 'registries.sources.create': {
         const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
         const url = normalizeRegistrySourceUrlV1(args.url);
-        const existing = (await deps.readSources()).find(source => source.url === url
-          || source.format === 'happier-catalog' && normalizeRegistrySourceUrlV1(source.url) === url);
+        const existing = (await deps.readSources()).find(source => !('packageContent' in source) && (source.url === url
+          || source.format === 'happier-catalog' && normalizeRegistrySourceUrlV1(source.url) === url));
         if (existing) {
           output = { source: existing, existing: true };
           break;
@@ -502,7 +515,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       case 'registries.sources.token.set': {
         const args=REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
         const source=await sourceById(args.sourceId);
-        if(source.origin.kind!=='user')throw new Error('not_editable');
+        if('packageContent' in source || source.origin.kind!=='user')throw new Error('not_editable');
         if(args.npmRegistryProfileId && source.format!=='happier-catalog')throw new Error('invalid_source_profile');
         if(args.token===undefined && args.npmRegistryProfileId===undefined)throw new Error('invalid_request');
         await mutate({kind:'setToken',...args,sourceId:source.id});
@@ -524,16 +537,16 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       case 'registries.items.list': {
         const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
-        const sources = (await deps.readSources()).filter(source => source.enabled && source.kinds.includes(args.kind)
+        const sources = (await deps.readSources()).filter(source => source.enabled && source.kinds.some(kind => kind === args.kind)
           && (!args.sourceIds || args.sourceIds.includes(source.id)));
-        const pages = await Promise.all(sources.map(async source => {
-          const response = await fetchRequest({ op: 'list', sourceId: source.id, kind: args.kind, query: args.query, cursor: args.cursor }, source);
+        const pages = await Promise.all(sources.map(async (source): Promise<RegistryListPageV1> => {
+          const response = await fetchRequest({ op: 'list', sourceId: source.id, kind: args.kind, contributionFamily: args.contributionFamily, query: args.query, cursor: args.cursor }, source);
           return response.op === 'list' ? response.page : {
             sourceId: source.id, status: response.op === 'error' ? response.status : { state: 'invalid_source' },
             items: [], nextCursor: null,
           };
         }));
-        output = { pages: args.kind === 'plugin' ? pages : pages.filter(page => page.sourceId !== HAPPIER_PICKS_SOURCE_ID || page.items.length > 0) };
+        output = { pages: args.kind === 'plugin' ? pages : pages.filter(page => !isConfirmedEmptyPicksPage(page)) };
         break;
       }
       case 'registries.items.read': {
@@ -575,8 +588,6 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       if (!deps.readPluginBotTemplates) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
       const source = await sourceById(pointer.sourceId);
       const context = await admitSource(source, ctx);
-      const available = await deps.readAvailableBotTemplate?.({ pointer, source, contributionId, signal: context.signal });
-      if (available) return available;
       const response = await direct({ op: 'read', kind: 'plugin', ...pointer }, source, context).catch(error => {
         if (error instanceof RegistryTransportFailureV1) throw new RegistryFetchErrorV1({ state: 'unreachable' });
         throw error;
@@ -600,6 +611,14 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       const listing = response.item.payload.listing;
       const selected = selectRegistryBotTemplateUpdatePointerV1(pointer, listing);
       return host.readBotTemplate(selected, contributionId);
+    },
+    /** One host-local operation consumes its admitted source across discovery and exact reads. */
+    withSource: async <T>(sourceId: string, operation: (
+      source: RegistrySourceDescriptorV1,
+      fetch: (request: RegistrySourceFetchRequestV1) => Promise<RegistryFetchResponseV1>,
+    ) => Promise<T>): Promise<T> => {
+      const source = await sourceById(sourceId);
+      return operation(source, request => fetchRequest({ ...request, sourceId: source.id }, source));
     },
     fetchRegistrySkillFiles: filesForPointer, filesForPointer, readLinkSkills, fetchLinkSkillFiles,
   };

@@ -6,12 +6,68 @@ import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHo
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { useMachineField } from './hooks';
+import { useMachineField, useMachineListForServerSelection } from './hooks';
 
 describe('useMachineField exact demand', () => {
     let previousState: ReturnType<typeof storage.getState>;
     beforeEach(async () => { await selectActiveTestHomeForTests(); previousState = storage.getState(); });
     afterEach(() => { standardCleanup(); vi.restoreAllMocks(); storage.setState(previousState, true); });
+
+    it('does no Software fleet traversal for resource arrivals while setup, availability and membership remain current', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const rows = Array.from({ length: 120 }, (_, index) => createMachineFixture({ id: `software-${index}` }));
+        storage.getState().applyMachines(rows, true, { sourceServerId: serverId });
+        storage.getState().markMachineListSettled(serverId);
+        let visits = 0;
+        const select = (machines: readonly typeof rows[number][]) => machines.map(machine => {
+            visits += 1;
+            return { id: machine.id, desired: machine.metadata?.setup?.revision,
+                observed: machine.daemonState?.setup?.desiredRevision, available: machine.availability?.kind,
+                access: machine.access?.accessState };
+        });
+        const hook = await renderHook((machineIds: readonly string[]) => {
+            const demand = React.useMemo(() => ({ machineIds,
+                fields: [{ section: 'metadata', field: 'setup' }, { section: 'daemonState', field: 'setup' }] as const,
+            }), [machineIds]);
+            return useMachineListForServerSelection(serverId, select, demand);
+        }, { initialProps: rows.map(row => row.id) });
+        expect(hook.getCurrent()).toHaveLength(120);
+        visits = 0;
+        for (const row of rows) {
+            await act(async () => storage.getState().applyMachines([{ ...row, daemonStateVersion: 2,
+                daemonState: { ...row.daemonState, resources: { v: 1, attention: { level: 'calm', reasons: [] },
+                    vitals: { state: 'unavailable', since: 1, reason: 'reader_failed' } } },
+            }], false, { sourceServerId: serverId }));
+        }
+        expect(visits).toBe(0);
+        await hook.rerender();
+        expect(visits).toBe(0);
+        const current = storage.getState().machines[rows[0]!.id]!;
+        await act(async () => storage.getState().applyMachines([{ ...current, metadataVersion: 2,
+            metadata: { ...current.metadata!, setup: { version: 1, revision: 2, exclusions: [], sources: [] } },
+        }], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()[0]?.desired).toBe(2);
+        expect(visits).toBe(120);
+        visits = 0;
+        const desired = storage.getState().machines[current.id]!;
+        await act(async () => storage.getState().applyMachines([{ ...desired, daemonStateVersion: 3,
+            daemonState: { ...desired.daemonState, setup: { version: 1, desiredRevision: 2, status: 'satisfied', recipes: [] } },
+        }], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()[0]?.observed).toBe(2);
+        expect(visits).toBe(120);
+        await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[current.id]!,
+            availability: { kind: 'locked', reason: 'content_unreadable' },
+        }], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()[0]?.available).toBe('locked');
+        await act(async () => storage.getState().applyMachines([{ ...storage.getState().machines[current.id]!,
+            availability: { kind: 'available' }, access: { custodian: { accountId: 'alice', displayName: 'Alice' },
+                role: 'manage', resourceMode: 'plain', accessState: 'refused', reason: 'access_denied' },
+        }], false, { sourceServerId: serverId }));
+        expect(hook.getCurrent()[0]?.access).toBe('refused');
+        await act(async () => storage.getState().applyMachines([], true, { sourceServerId: serverId }));
+        await hook.rerender([]);
+        expect(hook.getCurrent()).toEqual([]);
+    });
 
     it('does zero snapshot work for unrelated Machine arrivals and reads the selected field when it changes', async () => {
         const serverId = getActiveServerSnapshot().serverId;

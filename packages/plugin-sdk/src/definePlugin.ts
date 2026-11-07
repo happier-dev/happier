@@ -1,7 +1,13 @@
-import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import { COMPOSER_ATTACHMENT_RUNTIME_REGISTRATION_FIELDS_V1 } from '@happier-dev/protocol/plugins/contributions/composer-attachments';
 import { declaresHostSynthesizedAgentResumeOnlyExternalSources, findAgentResumeOnlyExternalSourceContractIssue } from '@happier-dev/protocol/plugins/contributions/agent-resume-only-sources';
 import { isNormalizedPluginJsonSchema, isOwnedProtocolComposableSchema, normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import {
+    normalizeDaemonDatabaseDefinition as normalizeSharedDaemonDatabaseDefinition,
+    normalizePluginAccountCollectionMigrationRuntimeProjection as normalizeSharedAccountCollectionMigrationRuntimeProjection,
+    normalizePluginDaemonDatabaseRuntimeProjection as normalizeSharedDaemonDatabaseRuntimeProjection,
+    readAccountCollectionDefinitions,
+    readDaemonDatabaseDefinitions,
+} from '@happier-dev/cli-common/plugins/registration/authoringProjections';
 import type { PluginDefaultPlacement } from './ui/publicContract.js';
 
 import type { ActionContract, ActionHandler, PluginAccountActionHandler } from './actions/contracts.js';
@@ -55,6 +61,7 @@ import type { PluginSecretSourceDefinitionV1 } from './secretSources.js';
 import type { PluginProjectNativeAdapterDefinitionV1 } from './projectNativeAdapters.js';
 import type { MachineProvisionerAuthorDefinitionV1 } from './machineProvisioners.js';
 import type { AccessProviderAuthorDefinitionV1 } from './accessProviders.js';
+import type { MachineRecipeV1, MachineSetupPresetContributionV1 } from './machineSetup.js';
 import type { EventContribution } from './events.js';
 import type { HookContribution } from './hooks.js';
 import type {
@@ -67,6 +74,7 @@ import type { InputPredicate } from './actions/inputHints.js';
 import type {
     ManagedProviderRuntime,
     ProviderCatalogParser,
+    ProviderRequestCostParser,
     ProviderUsageParser,
 } from './managed-services/contract.js';
 import type { ProviderContribution } from './providers/projections.js';
@@ -108,15 +116,15 @@ import {
     type PluginLocalizedStringV2,
     type PluginLanguageServerContributionV1,
     type PluginSkillContributionV1,
-
-    type PluginBotTemplateContributionV1,} from './manifest.js';
+    type PluginBotTemplateContributionV1,
+} from './manifest.js';
 import {
     projectUiSurfaceDefinitions,
     type UiAuthoringInput,
-    type UiSurface,
 } from './ui/surface.js';
 import type { ComposerOperationV1 } from './ui/hostApi.js';
 import type { PluginUiIconTokenV1 } from './ui/publicContract.js';
+import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
 
 /**
  * One author entry in the discriminated `resources` family. A packaged entry is
@@ -137,6 +145,7 @@ export type PluginResourceDefinition =
         contentType: string;
         scope: 'global' | 'session' | 'surface';
         execution?: Exclude<PluginActionExecutionV2, { target: 'client' }>;
+        sessionInbox?: import('./resources/sessionInbox.js').PluginSessionInboxResourceBindingV1;
         hostAccess?: readonly string[];
         maxBytes?: number;
         metadata?: Readonly<Record<string, JsonValue>>;
@@ -158,6 +167,10 @@ type ContributionRow<TFamily extends keyof PluginManifestContributes> =
 type PluginActionSchema = PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
 type PluginActionInputHints = NonNullable<PublicActionContribution['inputHints']>;
 type PluginActionAvailability = NonNullable<PublicActionContribution['availability']>;
+/** Const author data stays readonly; the canonical contribution owns its field grammar. */
+export type PluginActionAuthorConfirmation = Readonly<Omit<NonNullable<PublicActionContribution['confirmation']>, 'inputFields'> & {
+    inputFields?: readonly Readonly<NonNullable<NonNullable<PublicActionContribution['confirmation']>['inputFields']>[number]>[];
+}>;
 
 /**
  * SDK-owned spelling of the parser-owned Action placement vocabulary. Keeping
@@ -204,7 +217,11 @@ export type ActionOperationDeclarationV1 = Readonly<{
     }>;
 }>;
 
-export type ActionConfirmationWhen = InputPredicate | Readonly<{ presentUserUi: boolean | InputPredicate }>;
+export type ActionConfirmationWhen = InputPredicate | Readonly<{
+    presentUserUi: boolean | InputPredicate;
+    cli?: boolean | InputPredicate;
+    default?: InputPredicate;
+}>;
 
 /**
  * SDK-owned author projection of one Action declaration. Protocol remains the
@@ -237,14 +254,11 @@ type ActionContribution = Readonly<{
     placementBindings?: readonly PluginActionPlacement[];
     slash?: Readonly<{ tokens: readonly string[] }>;
     tool?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['tool']>>;
-cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
-toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
-inputSchema?: PluginJsonSchema;
+    cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
+    toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
+    inputSchema?: PluginJsonSchema;
     inputHints?: PluginActionInputHints;
-    connectedAccountPurposeBindings?: readonly Readonly<{
-        path: string;
-        purpose: string;
-    }>[];
+    connectedAccountPurposeBindings?: readonly Readonly<NonNullable<PublicActionContribution['connectedAccountPurposeBindings']>[number]>[];
     resultSchema?: PluginJsonSchema;
     availability?: PluginActionAvailability;
     hostAccess?: readonly string[];
@@ -254,12 +268,7 @@ inputSchema?: PluginJsonSchema;
     readOnly?: boolean | InputPredicate;
     /** Conditional default over normalized input, optionally scoped to present-user UI. */
     confirmationWhen?: ActionConfirmationWhen;
-    confirmation?: Readonly<{
-        title: PluginLocalizedStringV2;
-        body?: PluginLocalizedStringV2;
-        confirmLabel?: PluginLocalizedStringV2;
-    }>;
-    metadata?: Readonly<Record<string, JsonValue>>;
+    confirmation?: PluginActionAuthorConfirmation;
 }>;
 
 export type PluginActionAuthorDefaults = Readonly<{
@@ -286,23 +295,20 @@ export type PluginActionAuthorDefaults = Readonly<{
  * accepted and redundant); a client Action names its exact client artifact.
  */
 export type PluginActionDeclaration = Readonly<{
-    approvalScope?: PublicActionContribution['approvalScope'];
     title: PluginLocalizedStringV2;
     confirmVerb?: PluginLocalizedStringV2;
     irreversible?: true;
+    approvalScope?: PublicActionContribution['approvalScope'];
     description?: PluginLocalizedStringV2;
     icon?: string;
     slash?: Readonly<{ tokens: readonly string[] }>;
     tool?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['tool']>>;
-cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
-toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
-inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
+    cli?: ReadonlyAuthorDeclaration<NonNullable<PublicActionContribution['cli']>>;
+    toolExposure?: NonNullable<PublicActionContribution['toolExposure']>;
+    inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
     inputHints?: NonNullable<PublicActionContribution['inputHints']>;
     sessionTarget?: NonNullable<PublicActionContribution['sessionTarget']>;
-    connectedAccountPurposeBindings?: readonly Readonly<{
-        path: string;
-        purpose: string;
-    }>[];
+    connectedAccountPurposeBindings?: readonly Readonly<NonNullable<PublicActionContribution['connectedAccountPurposeBindings']>[number]>[];
     resultSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
     availability?: NonNullable<PublicActionContribution['availability']>;
     hostAccess?: readonly string[];
@@ -310,12 +316,7 @@ inputSchema?: PluginJsonSchema | ProtocolComposableSchema<unknown, JsonValue>;
     readOnly?: boolean | InputPredicate;
     /** Explicit user approval settings take precedence over this conditional default. */
     confirmationWhen?: ActionConfirmationWhen;
-    confirmation?: Readonly<{
-        title: PluginLocalizedStringV2;
-        body?: PluginLocalizedStringV2;
-        confirmLabel?: PluginLocalizedStringV2;
-    }>;
-    metadata?: Readonly<Record<string, JsonValue>>;
+    confirmation?: PluginActionAuthorConfirmation;
 } & PluginActionAuthorDefaults> & (
     | Readonly<{
         execution?: Extract<PluginActionExecutionV2, Readonly<{ target: 'daemon' }>>;
@@ -490,13 +491,14 @@ type PluginDescriptorOnlyProviderDefinition = Readonly<{
     runtime?: never;
     catalogParsers?: PluginProviderCatalogParsers;
     usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
+    requestCostParser?: ProviderRequestCostParser;
 }>;
 export type PluginProviderDefinition = RuntimeContributionDefinition<
     'providers',
     ManagedProviderRuntime,
     'runtime',
     PluginManagedProviderDeclaration
-> & Readonly<{ catalogParsers?: PluginProviderCatalogParsers; usageParsers?: Readonly<Record<string, ProviderUsageParser>> }>;
+> & Readonly<{ catalogParsers?: PluginProviderCatalogParsers; usageParsers?: Readonly<Record<string, ProviderUsageParser>>; requestCostParser?: ProviderRequestCostParser }>;
 type PluginProviderAuthorDefinition =
     | PluginProviderDefinition
     | PluginDescriptorOnlyProviderDefinition;
@@ -514,13 +516,7 @@ export type PluginScmBackendDefinition = RuntimeContributionDefinition<
     'scmBackends',
     BackendRuntime
 >;
-// Author declarations may be shared immutable data. This projection does not
-// change the canonical parsed Protocol descriptor or its validation rules.
-export type ReadonlyAuthorDeclaration<T> = T extends readonly (infer TItem)[]
-    ? readonly ReadonlyAuthorDeclaration<TItem>[]
-    : T extends object
-        ? { readonly [TKey in keyof T]: ReadonlyAuthorDeclaration<T[TKey]> }
-        : T;
+export type { ReadonlyAuthorDeclaration };
 export type PluginConnectedAccountDefinition = RuntimeContributionDefinition<
     'connectedAccountDescriptors',
     ConnectedAccountRuntime,
@@ -658,7 +654,9 @@ export interface PluginComposerControlDefinition {
     }>;
 }
 export type PluginComposerRegionDefinition = Readonly<{
-    placement: 'beforeComposer' | 'afterComposer';
+    placement: 'beforeComposer' | 'afterComposer' | 'statusStrip';
+    /** Match the statusStrip item's ComposerStatusBadge emphasis (default prominent). */
+    emphasis?: 'quiet' | 'prominent';
     renderer: ComposerRendererChainAuthorInput;
     scopes?: readonly ProtocolComposerRefV1['kind'][];
     order?: number;
@@ -804,9 +802,7 @@ type PluginStructuredContributionDefinitions<
     hooks?: Readonly<Record<PluginContributionLocalId, PluginHookDefinition>>;
     events?: Readonly<Record<PluginContributionLocalId, PluginEventDefinition>>;
     mcp?: PluginMcpDefinition;
-    ui?: NonNullable<NonNullable<PluginManifest['contributes']>['ui']> & Readonly<{
-        surfaces?: readonly UiSurface[];
-    }>;
+    ui?: UiAuthoringInput;
     providers?: Readonly<Record<PluginContributionLocalId, PluginProviderAuthorDefinition>>;
     voiceProviders?: Readonly<Record<PluginContributionLocalId, PluginVoiceProviderDefinition>>;
     notificationChannels?: Readonly<Record<PluginContributionLocalId, PluginNotificationChannelDefinition>>;
@@ -856,8 +852,6 @@ export type DefinePluginInput<
     & Readonly<{
         id: TPluginId;
         contributes?: never;
-
-
         resources?: Readonly<Record<PluginContributionLocalId, PluginResourceDefinition>>;
         transcriptActivities?: Readonly<Record<
             PluginContributionLocalId,
@@ -918,10 +912,12 @@ export type DefinePluginInput<
         >>;
         registrySources?: Readonly<Record<
             PluginContributionLocalId,
-            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>[number], 'id'>
+            NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>[number] extends infer TSource
+                ? TSource extends unknown ? Omit<TSource, 'id'> : never
+                : never
         >>;
+        skills?: Readonly<Record<PluginContributionLocalId, Omit<PluginSkillContributionV1, 'id'>>>;
         botTemplates?: Readonly<Record<PluginContributionLocalId, Omit<PluginBotTemplateContributionV1, 'id'>>>;
-skills?: Readonly<Record<PluginContributionLocalId, Omit<PluginSkillContributionV1, 'id'>>>;
         dragSources?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dragSources']>[number], 'id'>>>;
         workItems?: Readonly<{ 'work-items'?: Omit<NonNullable<NonNullable<PluginManifest['contributes']>['workItems']>[number], 'id'> }>;
         dropTargets?: Readonly<Record<PluginContributionLocalId, Omit<NonNullable<NonNullable<PluginManifest['contributes']>['dropTargets']>[number], 'id'>>>;
@@ -940,7 +936,7 @@ skills?: Readonly<Record<PluginContributionLocalId, Omit<PluginSkillContribution
         machineProvisioners?: Readonly<Record<PluginContributionLocalId, MachineProvisionerAuthorDefinitionV1>>;
         accessProviders?: Readonly<Record<PluginContributionLocalId, AccessProviderAuthorDefinitionV1>>;
         backupDestinations?: Readonly<Record<PluginContributionLocalId, Omit<import('./backupDestinations.js').BackupDestinationContributionV1, 'id'>>>;
-deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
+        deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploymentTargets.js').DeploymentTargetAuthorDefinitionV1>>;
         healthCheckKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./healthCheckKinds.js').HealthCheckKindContributionV1, 'id'>>>;
         storeKinds?: Readonly<Record<PluginContributionLocalId, Omit<import('./storeKinds.js').StoreKindContributionV1, 'id'>>>;
         machineRecipes?: Readonly<Record<PluginContributionLocalId, ReadonlyAuthorDeclaration<Omit<MachineRecipeV1, 'id'>>>>;
@@ -1087,9 +1083,7 @@ deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploym
                 discover: PluginMcpDiscoveryHandler;
             }>>>;
         }>;
-        ui?: NonNullable<NonNullable<PluginManifest['contributes']>['ui']> & Readonly<{
-            surfaces?: readonly UiSurface[];
-        }>;
+        ui?: UiAuthoringInput;
         providers?: Readonly<Record<PluginContributionLocalId,
             | Readonly<{
                 declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'> & Readonly<{
@@ -1098,6 +1092,7 @@ deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploym
                 runtime: ManagedProviderRuntime;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
                 usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
+                requestCostParser?: ProviderRequestCostParser;
             }>
             | Readonly<{
                 declaration: Omit<ProviderContribution, 'id' | 'managedRuntime'> & Readonly<{
@@ -1106,6 +1101,7 @@ deploymentTargets?: Readonly<Record<PluginContributionLocalId, import('./deploym
                 runtime?: never;
                 catalogParsers?: Readonly<Record<string, ProviderCatalogParser>>;
                 usageParsers?: Readonly<Record<string, ProviderUsageParser>>;
+                requestCostParser?: ProviderRequestCostParser;
             }>
         >>;
         voiceProviders?: Readonly<Record<PluginContributionLocalId, PluginVoiceProviderDefinition>>;
@@ -1603,118 +1599,14 @@ function assertAgentRunnerDefinitions(
     }
 }
 
-type NormalizedPluginDaemonDatabaseDefinition = Readonly<{
-    migrations: readonly DaemonDatabaseMigration[];
-    incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
-}>;
-
-function readDaemonDatabaseDefinitionRecord(
-    value: unknown,
-    description: string,
-): Readonly<Record<string, unknown>> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new TypeError(`${description} must be an object keyed by local database id`);
-    }
-    return value as Readonly<Record<string, unknown>>;
-}
-
-function assertDaemonDatabaseDefinitionKeys(
-    value: Readonly<Record<string, unknown>>,
-    localId: string,
-): void {
-    const unknownKeys = Object.keys(value).filter((key) => (
-        key !== 'migrations' && key !== 'incumbentQueryFixture'
-    ));
-    if (unknownKeys.length > 0) {
-        throw new TypeError(
-            `Daemon database '${localId}' has unknown callback field(s): ${unknownKeys.join(', ')}`,
-        );
-    }
-}
-
-function normalizeDaemonDatabaseDefinition(
-    value: unknown,
-    localId: string,
-): NormalizedPluginDaemonDatabaseDefinition {
-    const definition = readDaemonDatabaseDefinitionRecord(value, `Daemon database '${localId}'`);
-    assertDaemonDatabaseDefinitionKeys(definition, localId);
-    const rawMigrations = definition.migrations ?? [];
-    if (!Array.isArray(rawMigrations)) {
-        throw new TypeError(`Daemon database '${localId}' migrations must be an array`);
-    }
-    const migrations = rawMigrations.map((rawMigration, index) => {
-        const migration = readDaemonDatabaseDefinitionRecord(
-            rawMigration,
-            `Daemon database '${localId}' migration ${index}`,
-        );
-        const unknownKeys = Object.keys(migration).filter((key) => (
-            key !== 'version' && key !== 'id' && key !== 'up'
-        ));
-        if (unknownKeys.length > 0) {
-            throw new TypeError(
-                `Daemon database '${localId}' migration ${index} has unknown field(s): ${unknownKeys.join(', ')}`,
-            );
-        }
-        if (typeof migration.id !== 'string') {
-            throw new TypeError(`Daemon database '${localId}' migration ${index} must have a string id`);
-        }
-        if (typeof migration.version !== 'number'
-            || !Number.isSafeInteger(migration.version)
-            || migration.version < 1) {
-            throw new TypeError(
-                `Daemon database '${localId}' migration ${index} must have a positive integer version`,
-            );
-        }
-        if (typeof migration.up !== 'function') {
-            throw new TypeError(`Daemon database '${localId}' migration ${index} must provide an up callback`);
-        }
-        return Object.freeze({
-            id: migration.id,
-            version: migration.version,
-            up: migration.up as DaemonDatabaseMigration['up'],
-        });
-    });
-    const fixture = readDaemonDatabaseDefinitionRecord(
-        definition.incumbentQueryFixture,
-        `Daemon database '${localId}' incumbent query fixture`,
-    );
-    const unknownFixtureKeys = Object.keys(fixture).filter((key) => key !== 'id' && key !== 'run');
-    if (unknownFixtureKeys.length > 0) {
-        throw new TypeError(
-            `Daemon database '${localId}' incumbent query fixture has unknown field(s): ${unknownFixtureKeys.join(', ')}`,
-        );
-    }
-    if (typeof fixture.id !== 'string') {
-        throw new TypeError(`Daemon database '${localId}' incumbent query fixture must have a string id`);
-    }
-    if (typeof fixture.run !== 'function') {
-        throw new TypeError(`Daemon database '${localId}' incumbent query fixture must provide a run callback`);
-    }
-    return Object.freeze({
-        migrations: Object.freeze(migrations),
-        incumbentQueryFixture: Object.freeze({
-            id: fixture.id,
-            run: fixture.run as DaemonDatabaseIncumbentQueryFixture['run'],
-        }),
-    });
-}
-
-function readDaemonDatabaseDefinitions(
-    value: unknown,
-): Readonly<Record<string, unknown>> {
-    if (value === undefined) return Object.freeze({});
-    return readDaemonDatabaseDefinitionRecord(value, 'Daemon databases');
-}
-
-function readAccountCollectionDefinitions(
-    value: unknown,
-): Readonly<Record<string, unknown>> {
-    if (value === undefined) return Object.freeze({});
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new TypeError('Account Collections must be an object keyed by local collection id');
-    }
-    return value as Readonly<Record<string, unknown>>;
-}
+const normalizeDaemonDatabaseDefinition:
+    (value: unknown, localId: string) => Readonly<{
+        migrations: readonly DaemonDatabaseMigration[];
+        incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+    }> = normalizeSharedDaemonDatabaseDefinition<
+        DaemonDatabaseMigration['up'],
+        DaemonDatabaseIncumbentQueryFixture['run']
+    >;
 
 function projectPluginAccountCollectionMigrationRuntimeProjection(
     value: unknown,
@@ -1728,138 +1620,28 @@ function projectPluginAccountCollectionMigrationRuntimeProjection(
     })));
 }
 
-function normalizePluginAccountCollectionMigrationProjection(
-    value: unknown,
-    localId: string,
-): readonly PluginAccountCollectionMigration[] {
-    if (!Array.isArray(value)) {
-        throw new TypeError(`Account Collection '${localId}' migration projection must be an array`);
-    }
-    return Object.freeze(value.map((rawMigration, index) => {
-        if (!rawMigration || typeof rawMigration !== 'object' || Array.isArray(rawMigration)) {
-            throw new TypeError(`Account Collection '${localId}' migration ${index} must be an object`);
-        }
-        const migration = rawMigration as Readonly<Record<string, unknown>>;
-        if (typeof migration.migrate !== 'function') {
-            throw new TypeError(`Account Collection '${localId}' migration ${index} must provide a migrate callback`);
-        }
-        return Object.freeze({
-            id: migration.id,
-            fromSchemaVersion: migration.fromSchemaVersion,
-            toSchemaVersion: migration.toSchemaVersion,
-            migrate: migration.migrate,
-        }) as PluginAccountCollectionMigration;
-    }));
-}
-
 /**
- * Candidate-local projection for Collection callbacks. Parsed manifest
- * identities remain the authority; every callback must match them in order
- * before a preparation host receives the projection.
+ * Canonical callback normalization is private host machinery shared with author
+ * composition; these internal aliases preserve the SDK's exact author types.
  */
-export function normalizePluginAccountCollectionMigrationRuntimeProjection(
-    value: unknown,
-    declarations: readonly PluginAccountCollectionDeclaration[],
-): PluginAccountCollectionMigrationRuntimeProjection {
-    const projection = readAccountCollectionDefinitions(value);
-    const declarationIds = declarations.map((declaration) => declaration.id);
-    const unknownIds = Object.keys(projection).filter((localId) => !declarationIds.includes(localId));
-    const missingIds = declarationIds.filter((localId) => !Object.prototype.hasOwnProperty.call(projection, localId));
-    if (unknownIds.length > 0 || missingIds.length > 0) {
-        throw new TypeError([
-            'Account Collection migration callbacks must match the manifest declarations exactly',
-            ...(unknownIds.length > 0 ? [`unknown collection ids: ${unknownIds.join(', ')}`] : []),
-            ...(missingIds.length > 0 ? [`missing collection ids: ${missingIds.join(', ')}`] : []),
-        ].join('; '));
-    }
-    const normalized = declarations.map((declaration) => {
-        const declaredMigrations = declaration.migrations ?? [];
-        if (!Array.isArray(declaredMigrations)) {
-            throw new TypeError(
-                `Account Collection '${declaration.id}' manifest declaration is missing static migrations`,
-            );
-        }
-        const migrations = normalizePluginAccountCollectionMigrationProjection(
-            projection[declaration.id],
-            declaration.id,
-        );
-        if (migrations.length !== declaredMigrations.length) {
-            throw new TypeError(
-                `Account Collection '${declaration.id}' migrations do not match the manifest declaration`,
-            );
-        }
-        declaredMigrations.forEach((rawDeclaredMigration: unknown, index: number) => {
-            if (!rawDeclaredMigration || typeof rawDeclaredMigration !== 'object' || Array.isArray(rawDeclaredMigration)) {
-                throw new TypeError(
-                    `Account Collection '${declaration.id}' manifest declaration has an invalid migration ${index}`,
-                );
-            }
-            const declaredMigration = rawDeclaredMigration as Readonly<Record<string, unknown>>;
-            const runtimeMigration = migrations[index];
-            if (!runtimeMigration
-                || runtimeMigration.id !== declaredMigration.id
-                || runtimeMigration.fromSchemaVersion !== declaredMigration.fromSchemaVersion
-                || runtimeMigration.toSchemaVersion !== declaredMigration.toSchemaVersion) {
-                throw new TypeError(
-                    `Account Collection '${declaration.id}' migration ${index} does not match the manifest declaration`,
-                );
-            }
-        });
-        return [declaration.id, migrations] as const;
-    });
-    return Object.freeze(Object.fromEntries(normalized));
-}
+export const normalizePluginAccountCollectionMigrationRuntimeProjection:
+    (value: unknown, declarations: readonly PluginAccountCollectionDeclaration[]) =>
+        PluginAccountCollectionMigrationRuntimeProjection =
+            normalizeSharedAccountCollectionMigrationRuntimeProjection<PluginAccountCollectionMigration['migrate']>;
 
-/**
- * Normalizes candidate callbacks only after proving one-to-one correspondence
- * with the already parsed static manifest. The returned map retains callback
- * identity but exposes no registration API or host lifecycle authority.
- */
-export function normalizePluginDaemonDatabaseRuntimeProjection(
-    value: unknown,
-    declarations: readonly Readonly<{
-        id: PluginDaemonDatabaseDeclaration['id'];
-        migrations: readonly Readonly<PluginDaemonDatabaseDeclaration['migrations'][number]>[];
-        incumbentQueryFixtureId: PluginDaemonDatabaseDeclaration['incumbentQueryFixtureId'];
-    }>[],
-): PluginDaemonDatabaseRuntimeProjection {
-    const definitions = readDaemonDatabaseDefinitions(value);
-    const declarationIds = declarations.map((declaration) => declaration.id);
-    const unknownIds = Object.keys(definitions).filter((localId) => !declarationIds.includes(localId));
-    const missingIds = declarationIds.filter((localId) => !Object.prototype.hasOwnProperty.call(definitions, localId));
-    if (unknownIds.length > 0 || missingIds.length > 0) {
-        throw new TypeError([
-            'Daemon database callbacks must match the manifest declarations exactly',
-            ...(unknownIds.length > 0 ? [`unknown database ids: ${unknownIds.join(', ')}`] : []),
-            ...(missingIds.length > 0 ? [`missing database ids: ${missingIds.join(', ')}`] : []),
-        ].join('; '));
-    }
-    const normalized = declarations.map((declaration) => {
-        const definition = normalizeDaemonDatabaseDefinition(definitions[declaration.id], declaration.id);
-        if (definition.incumbentQueryFixture.id !== declaration.incumbentQueryFixtureId) {
-            throw new TypeError(
-                `Daemon database '${declaration.id}' incumbent query fixture does not match the manifest declaration`,
-            );
-        }
-        if (definition.migrations.length !== declaration.migrations.length) {
-            throw new TypeError(
-                `Daemon database '${declaration.id}' migrations do not match the manifest declaration`,
-            );
-        }
-        declaration.migrations.forEach((declaredMigration, index) => {
-            const runtimeMigration = definition.migrations[index];
-            if (!runtimeMigration
-                || runtimeMigration.id !== declaredMigration.id
-                || runtimeMigration.version !== declaredMigration.version) {
-                throw new TypeError(
-                    `Daemon database '${declaration.id}' migration ${index} does not match the manifest declaration`,
-                );
-            }
-        });
-        return [declaration.id, definition] as const;
-    });
-    return Object.freeze(Object.fromEntries(normalized));
-}
+export const normalizePluginDaemonDatabaseRuntimeProjection:
+    (
+        value: unknown,
+        declarations: readonly Readonly<{
+            id: PluginDaemonDatabaseDeclaration['id'];
+            migrations: readonly Readonly<PluginDaemonDatabaseDeclaration['migrations'][number]>[];
+            incumbentQueryFixtureId: PluginDaemonDatabaseDeclaration['incumbentQueryFixtureId'];
+        }>[],
+    ) => PluginDaemonDatabaseRuntimeProjection =
+        normalizeSharedDaemonDatabaseRuntimeProjection<
+            DaemonDatabaseMigration['up'],
+            DaemonDatabaseIncumbentQueryFixture['run']
+        >;
 
 function projectDaemonDatabaseDeclarations(
     input: Readonly<Record<string, unknown>>,
@@ -2284,6 +2066,9 @@ const PROVIDERS_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
             Record<PluginContributionLocalId, PluginProviderAuthorDefinition>
         > | undefined;
         for (const [localId, definition] of Object.entries(definitions ?? {})) {
+            if (definition.requestCostParser !== undefined) {
+                api.providers.registerRequestCostParser(localId, definition.requestCostParser);
+            }
             if ('runtime' in definition && definition.runtime !== undefined) {
                 api.providers.register(localId, definition.runtime);
             }
@@ -2491,8 +2276,6 @@ const COMPOSER_ADAPTER: DefinePluginFamilyAdapter = Object.freeze({
     },
 });
 
-
-
 const TRANSCRIPT_ACTIVITIES_ADAPTER = descriptorFamilyAdapter('transcriptActivities');
 const SESSION_INFO_SECTIONS_ADAPTER = descriptorFamilyAdapter('sessionInfoSections');
 const SESSION_HEADER_ACTIONS_ADAPTER = descriptorFamilyAdapter('sessionHeaderActions');
@@ -2507,15 +2290,13 @@ const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
 const BACKUP_DESTINATIONS_ADAPTER = descriptorFamilyAdapter('backupDestinations');
-
 const DEPLOYMENT_TARGETS_ADAPTER = descriptorFamilyAdapter('deploymentTargets');
 const HEALTH_CHECK_KINDS_ADAPTER = descriptorFamilyAdapter('healthCheckKinds');
 const STORE_KINDS_ADAPTER = descriptorFamilyAdapter('storeKinds');
 const MACHINE_RECIPES_ADAPTER = descriptorFamilyAdapter('machineRecipes');
 const MACHINE_SETUP_PRESETS_ADAPTER = descriptorFamilyAdapter('machineSetupPresets');
-const BOT_TEMPLATES_ADAPTER = descriptorFamilyAdapter('botTemplates');
-
 const SKILLS_ADAPTER = descriptorFamilyAdapter('skills');
+const BOT_TEMPLATES_ADAPTER = descriptorFamilyAdapter('botTemplates');
 const DRAG_SOURCES_ADAPTER = descriptorFamilyAdapter('dragSources');
 const WORK_ITEMS_ADAPTER = descriptorFamilyAdapter('workItems');
 const DROP_TARGETS_ADAPTER = descriptorFamilyAdapter('dropTargets');
@@ -2690,6 +2471,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     'ui.renderers': { classification: 'adapter', authorKey: 'ui', inputShape: 'structured', adapter: UI_ADAPTER },
     'ui.settingsGroups': { classification: 'adapter', authorKey: 'ui', inputShape: 'structured', adapter: UI_ADAPTER },
     'ui.settingsPages': { classification: 'adapter', authorKey: 'ui', inputShape: 'structured', adapter: UI_ADAPTER },
+    'ui.listExtensions': { classification: 'adapter', authorKey: 'ui', inputShape: 'structured', adapter: UI_ADAPTER },
     'ui.translations': { classification: 'adapter', authorKey: 'ui', inputShape: 'structured', adapter: UI_ADAPTER },
     notificationChannels: { classification: 'adapter', authorKey: 'notificationChannels', inputShape: 'structured', adapter: NOTIFICATION_CHANNELS_ADAPTER },
     scmHostingProviders: { classification: 'adapter', authorKey: 'scmHostingProviders', inputShape: 'structured', adapter: SCM_HOSTING_PROVIDERS_ADAPTER },
@@ -2703,8 +2485,6 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     composerAttachments: { classification: 'adapter', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
     composerControls: { classification: 'descriptor-only', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
     composerRegions: { classification: 'descriptor-only', authorKey: 'composer', inputShape: 'structured', adapter: COMPOSER_ADAPTER },
-
-
     resources: { classification: 'adapter', authorKey: 'resources', inputShape: 'descriptor', adapter: RESOURCES_ADAPTER },
     transcriptActivities: { classification: 'descriptor-only', authorKey: 'transcriptActivities', inputShape: 'descriptor', adapter: TRANSCRIPT_ACTIVITIES_ADAPTER },
     sessionInfoSections: { classification: 'descriptor-only', authorKey: 'sessionInfoSections', inputShape: 'descriptor', adapter: SESSION_INFO_SECTIONS_ADAPTER },
@@ -2725,8 +2505,8 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     storeKinds: { classification: 'descriptor-only', authorKey: 'storeKinds', inputShape: 'descriptor', adapter: STORE_KINDS_ADAPTER },
     machineRecipes: { classification: 'descriptor-only', authorKey: 'machineRecipes', inputShape: 'descriptor', adapter: MACHINE_RECIPES_ADAPTER },
     machineSetupPresets: { classification: 'descriptor-only', authorKey: 'machineSetupPresets', inputShape: 'descriptor', adapter: MACHINE_SETUP_PRESETS_ADAPTER },
-    botTemplates: { classification: 'descriptor-only', authorKey: 'botTemplates', inputShape: 'descriptor', adapter: BOT_TEMPLATES_ADAPTER },
     skills: { classification: 'descriptor-only', authorKey: 'skills', inputShape: 'descriptor', adapter: SKILLS_ADAPTER },
+    botTemplates: { classification: 'descriptor-only', authorKey: 'botTemplates', inputShape: 'descriptor', adapter: BOT_TEMPLATES_ADAPTER },
     dragSources: { classification: 'adapter', authorKey: 'dragSources', inputShape: 'descriptor', adapter: DRAG_SOURCES_ADAPTER },
     workItems: { classification: 'adapter', authorKey: 'workItems', inputShape: 'descriptor', adapter: WORK_ITEMS_ADAPTER },
     dropTargets: { classification: 'adapter', authorKey: 'dropTargets', inputShape: 'descriptor', adapter: DROP_TARGETS_ADAPTER },

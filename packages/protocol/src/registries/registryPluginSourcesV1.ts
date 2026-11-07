@@ -17,11 +17,22 @@ export function projectPluginRegistrySourceDeclarationV1(input: Readonly<{
 /** Projection adapter for the one source list; installation suppliers are host facts. */
 export function createPluginRegistrySourceDescriptorV1(input: Readonly<{
   pluginId: string;
+  pluginVersion?: string;
+  occurrenceId?: string;
   definition: PluginRegistrySourceContributionV1;
   suppliers: readonly string[];
 }>): RegistrySourceDescriptorV1 {
   const { id: localId, ...definition } = input.definition;
+  if ('packageContent' in definition) {
+    if (!input.pluginVersion || !input.occurrenceId) throw new Error('Packaged registry source requires a current plugin version and occurrence');
+    return { ...definition, kinds: ['app'], id: buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId: input.pluginId, localId })),
+      packageContent: { ...definition.packageContent, pluginId: input.pluginId, pluginVersion: input.pluginVersion, occurrenceId: input.occurrenceId },
+      enabled: true, addedAt: 0, removable: false,
+      origin: { kind: 'plugin', pluginId: input.pluginId, localId, suppliers: [...new Set(input.suppliers)] } };
+  }
   return { ...definition, id: buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId: input.pluginId, localId })),
     enabled: true, addedAt: 0, removable: false,
-    origin: { kind: 'plugin', pluginId: input.pluginId, localId, suppliers: [...new Set(input.suppliers)] } };
+    origin: { kind: 'plugin', pluginId: input.pluginId, localId, suppliers: [...new Set(input.suppliers)],
+      ...(definition.kinds.some(kind => kind === 'app') && input.pluginVersion && input.occurrenceId
+        ? { contributor: { pluginVersion: input.pluginVersion, occurrenceId: input.occurrenceId } } : {}) } };
 }

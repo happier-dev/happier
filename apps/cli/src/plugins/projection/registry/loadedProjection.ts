@@ -1,12 +1,12 @@
 import { loadInstalledPlugins } from '../../discovery/load/installed';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import type { PluginContributionRegistry } from './normalize/registry';
-import type { AdmittedPluginContributionGraph } from './normalize/admission';
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 import { loadCurrentBundledPluginLocatorResult } from './builtIn/locators';
 import { collectNormalizedRegistryIntrospectionCandidates } from '@/plugins/projection/introspection/normalizedRegistry';
 import { resolveContributedAgentRoutingId } from './agentRoutingIdentity';
 import { projectManifestAgentContribution } from './projectManifestAgentContribution';
+import { admitPluginContributionGraph, type AdmittedPluginContributionGraph } from './normalize/admission';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type {
     ResolvedActionContribution,
@@ -52,6 +52,7 @@ import type {
     ResolvedUiRendererV2Contribution,
     ResolvedUiSettingsGroupV2Contribution,
     ResolvedUiSettingsPageV2Contribution,
+    ResolvedUiListExtensionV1Contribution,
     ResolvedUiTranslationBundleV2Contribution,
     ResolvedUiViewV2Contribution,
     ResolvedComposerAttachmentContribution,
@@ -87,8 +88,6 @@ type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
     manifestPath: string;
     daemonEntryPath: string | null;
 }>;
-
-
 
 type PluginResolvedResourceContribution = ResolvedResourceContribution & Readonly<{
     provenance: ResolvedContributionProvenance;
@@ -257,6 +256,7 @@ export function projectLoadedPluginRegistry(
     const openableContentViewerCandidates: ResolvedOpenableContentViewerContribution[] = [];
     const uiSettingsGroupV2Candidates: ResolvedUiSettingsGroupV2Contribution[] = [];
     const uiSettingsPageV2Candidates: ResolvedUiSettingsPageV2Contribution[] = [];
+    const uiListExtensionV1Candidates: ResolvedUiListExtensionV1Contribution[] = [];
     const uiRendererV2Candidates: ResolvedUiRendererV2Contribution[] = [];
     const uiTranslationV2Candidates: ResolvedUiTranslationBundleV2Contribution[] = [];
     const composerReferenceCandidates: ResolvedComposerReferenceContribution[] = [];
@@ -294,9 +294,15 @@ export function projectLoadedPluginRegistry(
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
     const atmospherePictureCandidates: ResolvedAtmospherePictureContribution[] = [];
     const registrySourceCandidates: ResolvedRegistrySourceContribution[] = [];
+    const backupDestinationCandidates: import('./types').ResolvedBackupDestinationContribution[] = [];
+    const deploymentTargetCandidates: import('./types').ResolvedDeploymentTargetContribution[] = [];
+    const healthCheckKindCandidates: import('./types').ResolvedHealthCheckKindContribution[] = [];
     const storeKindCandidates: import('./types').ResolvedStoreKindContribution[] = [];
+    const machineRecipeCandidates: import('./types').ResolvedMachineRecipeContribution[] = [];
+    const machineSetupPresetCandidates: import('./types').ResolvedMachineSetupPresetContribution[] = [];
     const languageServerCandidates: ResolvedLanguageServerContribution[] = [];
     const skillCandidates: ResolvedSkillContribution[] = [];
+    const accessProviderCandidates: import('./types').ResolvedAccessProviderContribution[] = [];
     const machineProvisionerCandidates: ResolvedMachineProvisionerContribution[] = [];
     const dragSourceCandidates: ResolvedDragSourceContribution[] = [];
     const workItemCandidates: ResolvedWorkItemsContribution[] = [];
@@ -348,6 +354,13 @@ export function projectLoadedPluginRegistry(
             identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
             definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.uiListExtensionsV1) {
+        uiListExtensionV1Candidates.push({
+            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!, manifestPath: contribution.manifestPath, definition: contribution.definition,
         });
     }
     for (const contribution of pluginRegistry.uiRenderersV2) {
@@ -470,12 +483,16 @@ export function projectLoadedPluginRegistry(
     for (const [pluginId, diagnostics] of Object.entries(loadResult.diagnosticsByPluginId)) {
         diagnosticsByPluginId[pluginId] = [...diagnostics];
     }
-
     for (const [pluginId, diagnostics] of Object.entries(pluginRegistry.admittedGraph.diagnosticsByPluginId)) {
         diagnosticsByPluginId[pluginId] = [...(diagnosticsByPluginId[pluginId] ?? []), ...diagnostics];
     }
 
     for (const plugin of loadResult.loadedPlugins) {
+        if (plugin.admissionDiagnostics?.length) {
+            diagnosticsByPluginId[plugin.pluginId] = [...new Set([
+                ...(diagnosticsByPluginId[plugin.pluginId] ?? []), ...plugin.admissionDiagnostics,
+            ])];
+        }
         if (!plugin.daemonEntryPath && !plugin.devDaemonEntryPath) {
             continue;
         }
@@ -558,13 +575,13 @@ export function projectLoadedPluginRegistry(
         });
     }
 
-
-
     for (const contribution of pluginRegistry.resources) {
         resourceCandidates.push({
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}),
             pluginRootPath: contribution.pluginRootPath,
             manifestPath: contribution.manifestPath,
             daemonEntryPath: contribution.daemonEntryPath,
@@ -670,6 +687,7 @@ export function projectLoadedPluginRegistry(
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
             manifestPath: contribution.manifestPath,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
@@ -777,6 +795,9 @@ export function projectLoadedPluginRegistry(
             provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            pluginRootPath: contribution.pluginRootPath,
+            ...(contribution.generatedUiArtifactsManifest ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest } : {}),
             manifestPath: contribution.manifestPath,
             daemonEntryPath: contribution.daemonEntryPath,
             devDaemonEntryPath: contribution.devDaemonEntryPath,
@@ -859,15 +880,40 @@ export function projectLoadedPluginRegistry(
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
+    for (const contribution of pluginRegistry.machineRecipes) {
+        machineRecipeCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+    for (const contribution of pluginRegistry.machineSetupPresets) {
+        machineSetupPresetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+    for (const contribution of pluginRegistry.deploymentTargets) {
+        deploymentTargetCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+    for (const contribution of pluginRegistry.healthCheckKinds) {
+        healthCheckKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
     for (const contribution of pluginRegistry.storeKinds) {
         storeKindCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+    for (const contribution of pluginRegistry.backupDestinations) {
+        backupDestinationCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.registrySources) {
         registrySourceCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
-            manifestPath: contribution.manifestPath, definition: contribution.definition });
+            pluginRootPath: contribution.pluginRootPath, manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
     for (const contribution of pluginRegistry.languageServers) {
         languageServerCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
@@ -885,6 +931,15 @@ export function projectLoadedPluginRegistry(
         atmospherePictureCandidates.push({ provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
+
+    for (const contribution of pluginRegistry.accessProviders) {
+        accessProviderCandidates.push({
+            provenance: params.provenance, source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!, manifestPath: contribution.manifestPath,
+            definition: contribution.definition,
+        });
     }
 
     for (const contribution of pluginRegistry.machineProvisioners) {
@@ -980,6 +1035,7 @@ export function projectLoadedPluginRegistry(
         openableContentViewers: Object.freeze(openableContentViewerCandidates),
         uiSettingsGroupsV2: Object.freeze(uiSettingsGroupV2Candidates),
         uiSettingsPagesV2: Object.freeze(uiSettingsPageV2Candidates),
+        uiListExtensionsV1: Object.freeze(uiListExtensionV1Candidates),
         uiRenderersV2: Object.freeze(uiRendererV2Candidates),
         uiTranslationsV2: Object.freeze(uiTranslationV2Candidates),
         composerReferences: Object.freeze(composerReferenceCandidates),
@@ -1017,9 +1073,15 @@ export function projectLoadedPluginRegistry(
         inputTypes: Object.freeze(inputTypeCandidates),
         atmospherePictures: Object.freeze(atmospherePictureCandidates),
         registrySources: Object.freeze(registrySourceCandidates),
+        backupDestinations: Object.freeze(backupDestinationCandidates),
+        deploymentTargets: Object.freeze(deploymentTargetCandidates),
+        healthCheckKinds: Object.freeze(healthCheckKindCandidates),
         storeKinds: Object.freeze(storeKindCandidates),
+        machineRecipes: Object.freeze(machineRecipeCandidates),
+        machineSetupPresets: Object.freeze(machineSetupPresetCandidates),
         languageServers: Object.freeze(languageServerCandidates),
         skills: Object.freeze(skillCandidates),
+        accessProviders: Object.freeze(accessProviderCandidates),
         machineProvisioners: Object.freeze(machineProvisionerCandidates),
         dragSources: Object.freeze(dragSourceCandidates),
         workItems: Object.freeze(workItemCandidates),

@@ -1,6 +1,6 @@
-import { compareSkillUpdateFilesV1, resolveSkillUpdateFilesV1 } from './skillUpdateFilesV1.js';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 import type { ActionExecuteResult } from '../../../actions/actionExecutionResult.js';
+import type { ActionExecutorContext } from '../../../actions/executor/types.js';
 import { resolveArtifactOrganizationHeaderV1 } from '../../../artifacts/artifactOrganizationV1.js';
 import { readArtifactFolderCatalogV1 } from '../promptFolderActionsV1.js';
 import { readPromptLibraryCatalogRecordV1 } from '../promptLibraryCatalogV1.js';
@@ -11,10 +11,10 @@ import { mutateSkillRulesV1, removeSkillRulesV1, type SkillRulesActionPortV1 } f
 import { isMigratedReachRuleIdV1, reachRulesToDraftsV1, resolveCreateReachV1 } from '../../../reach/reachRulesChangeV1.js';
 import type { ReachRuleV1 } from '../../../reach/reachRuleV1.js';
 import type { RegistryItemPointerV1, RegistryItemV1, RegistrySkillContentRefV1 } from '../../../registries/registryItemsV1.js';
-import type { RegistrySourceDescriptorV1 } from '../../../registries/registrySourcesV1.js';
+import type { RegistryFormatV1, RegistrySourceDescriptorV1 } from '../../../registries/registrySourcesV1.js';
 import { RegistryUpstreamV1Schema, registryUpstreamEqualV1, type RegistryUpstreamV1 } from '../../../registries/registryUpstreamV1.js';
 import type { RegistryProvenanceV1 } from '../../../registries/registryItemsV1.js';
-import { encodeSkillRevisionV1, findHeldSkillV1, readSkillLockV1, readSkillUploadRootsV1, isSkillModifiedV1, readSkillFrontmatterV1, writeSkillFrontmatterV1, SKILL_NAME_PATTERN_V1, isPluginSkillIdV1, SkillSourceFolderNameV1Schema,
+import { encodeSkillRevisionV1, findHeldSkillV1, readSkillLockV1, readSkillUploadRootsV1, isSkillModifiedV1, readSkillFrontmatterV1, writeSkillFrontmatterV1, isPluginSkillIdV1, SkillSourceFolderNameV1Schema,
   type SkillListItemV1, type SkillUnavailableItemV1, type SkillLockV1, type SkillProvenanceV1 } from './skillLibraryItemV1.js';
 import { deriveSkillTrustV1 } from './skillTrustV1.js';
 import { estimateSkillCostV1 } from './skillCostV1.js';
@@ -26,17 +26,22 @@ import { FoundSkillBundleV1Schema, type FoundSkillBundleV1 } from './foundSkillT
 import { FIRST_PARTY_SKILLS_V1, type ReadOnlySkillV1 } from './firstPartySkillsV1.js';
 import { readAvailablePluginSkillItemsV1 } from './readSkillLibraryCatalog.js';
 import { buildSkillListSummaryV1, readSkillListSummaryV1, type SkillListSummaryV1 } from './skillListSummaryV1.js';
+import { compareSkillUpdateFilesV1, resolveSkillUpdateFilesV1 } from './skillUpdateFilesV1.js';
 import type { ArtifactSavedByV1 } from '../../../artifacts/artifactBinaryV1.js';
+import type { SessionCapabilitiesSetOutputV1 } from '../../../actions/specs/sessionCapabilities.js';
 import { SKILL_ACTION_INPUT_SCHEMAS_V1 as inputs, SKILL_ACTION_OUTPUT_SCHEMAS_V1 as outputs, SkillInstallAcknowledgedEffectsV1Schema,
-  type SkillLibraryActionIdV1, type SkillLibraryActionInputByIdV1, type SkillLibraryActionResultByIdV1, type SkillFileInputV1, type SkillInstallAcknowledgedEffectsV1 } from './skillActionSchemasV1.js';
+  type SkillLibraryActionIdV1, type SkillLibraryActionInputByIdV1, type SkillLibraryActionResultByIdV1, type SkillFileInputV1, type SkillInstallPreviewV1, type SkillInstallAcknowledgedEffectsV1 } from './skillActionSchemasV1.js';
 
-export type SkillActionCallerV1 = Parameters<typeof resolveCreateReachV1>[0]['caller'];
+export type SkillActionCallerV1 = Parameters<typeof resolveCreateReachV1>[0]['caller'] & Pick<ActionExecutorContext, 'invocationServices'>;
+function isSkillRegistryFormatV1(format: RegistryFormatV1): format is 'skills-sh' | 'git' | 'claude-marketplace' | 'happier-catalog' {
+  return format === 'skills-sh' || format === 'git' || format === 'claude-marketplace' || format === 'happier-catalog';
+}
 export { SkillInstallAcknowledgedEffectsV1Schema, type SkillInstallAcknowledgedEffectsV1 } from './skillActionSchemasV1.js';
 export type SkillActionPortV1 = Readonly<{
   store: PromptLibraryArtifactStore; skillRules: SkillRulesActionPortV1;
   savedBy?: ArtifactSavedByV1;
   readPluginSkills?(signal?: AbortSignal, skillIds?: readonly string[]): Promise<readonly ReadOnlySkillV1[]>;
-  includeInSession(sessionId: string, skillId: string, signal?: AbortSignal): Promise<Readonly<{ ok: boolean }>>;
+  includeInSession(sessionId: string, skillId: string, signal?: AbortSignal): Promise<SessionCapabilitiesSetOutputV1>;
   readRegistryItem?(pointer: RegistryItemPointerV1): Promise<RegistryItemV1>;
   readRegistrySource?(sourceId: string): Promise<RegistrySourceDescriptorV1>;
   /** Existing private-source transport; reach and Session acknowledgements stay in this owner. */
@@ -111,7 +116,6 @@ function withSiblingSkills<T extends Readonly<{ path: string; outsideReferences?
   });
 }
 function renameMarkdown(files: readonly SkillFileInputV1[], name?: string, description?: string): SkillFileInputV1[] {
-  if (name !== undefined && !SKILL_NAME_PATTERN_V1.test(name)) fail('invalid_skill_name');
   if (name === undefined && description === undefined) return [...files];
   return files.map(file => {
     if (file.path !== 'SKILL.md') return file;
@@ -180,11 +184,11 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
     } while (cursor);
   }
   /** Upstream checks need provenance, not the library's reach/usage/folder display projection. */
-  async function listRegistryTrackedSkills(signal?: AbortSignal): Promise<readonly Pick<SkillListItemV1,
+  async function listRegistryTrackedSkills(signal?: AbortSignal, skillIds?: readonly string[]): Promise<readonly Pick<SkillListItemV1,
     'skillId' | 'name' | 'createdAt' | 'provenance' | 'upstream'>[]> {
     signal?.throwIfAborted(); port.skillRules.assertCurrent();
     const items: Pick<SkillListItemV1, 'skillId' | 'name' | 'createdAt' | 'provenance' | 'upstream'>[] = [];
-    for await (const headers of skillHeaderPages(signal)) {
+    for await (const headers of skillHeaderPages(signal, skillIds)) {
       const opened = await Promise.all(headers.map(async header => {
         try {
           const { provenance } = readSkillLockV1(header.header);
@@ -228,7 +232,10 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
   }
   async function create(files: readonly SkillFileInputV1[], provenance: SkillProvenanceV1,
     caller: SkillActionCallerV1, where: SkillLibraryActionInputByIdV1['skills.create']['where'], signal?: AbortSignal, sourceFolderName?: string) {
-    const reach = resolveCreateReachV1({ kind: 'skill', caller, requested: where, ctx: { nowMs: nowMs(), newId: port.randomId } });
+    const templateSessionId = caller.invocationServices?.templateSkillSessionId;
+    const reach = templateSessionId === undefined
+      ? resolveCreateReachV1({ kind: 'skill', caller, requested: where, ctx: { nowMs: nowMs(), newId: port.randomId } })
+      : { ok: true as const, rules: [], includeInSessionId: templateSessionId };
     if (!reach.ok) return reach;
     validateFiles(files, nowMs());
     if (sourceFolderName !== undefined && !SkillSourceFolderNameV1Schema.safeParse(sourceFolderName).success) return fail('invalid_path');
@@ -261,9 +268,12 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
   }
   async function includeSkill<T extends Readonly<{ skillId: string; includedInSessionId: string | null }>>(base: T, sessionId: string | null, signal?: AbortSignal) {
     if (sessionId) {
-      try { if (!(await port.includeInSession(sessionId, base.skillId, signal)).ok) return { ...base, incomplete: 'session_include' as const }; }
+      try {
+        const result = await port.includeInSession(sessionId, base.skillId, signal);
+        if (!result.ok) return { ...base, inclusion: result, incomplete: 'session_include' as const };
+        return { ...base, inclusion: result, includedInSessionId: sessionId };
+      }
       catch { return { ...base, incomplete: 'session_include' as const }; }
-      return { ...base, includedInSessionId: sessionId };
     }
     return base;
   }
@@ -343,11 +353,14 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
   async function heldSkills(withContent: boolean, signal?: AbortSignal) {
     const held: { skillId: string; provenance: SkillProvenanceV1; name?: string; digest?: string }[] = [];
     for await (const headers of skillHeaderPages(signal)) {
-      const page = await Promise.all(headers.map(async header => {
+      const batch = withContent && headers.length && port.store.readMany
+        ? await port.store.readMany(headers.map(header => header.id), { signal }) : null;
+      if (batch && batch.length !== headers.length) return fail('library_unavailable');
+      const page = await Promise.all(headers.map(async (header, index) => {
         try {
           const provenance = readSkillLockV1(header.header).provenance;
           if (!withContent) return { skillId: header.id, provenance };
-          const opened = await read(header.id, signal, []);
+          const opened = await read(header.id, signal, [], batch?.[index]);
           return { skillId: header.id, provenance, name: opened.content.frontmatter.name, digest: opened.content.digest };
         } catch (error) {
           signal?.throwIfAborted();
@@ -415,12 +428,16 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
     }
     if (!latest || latest.kind !== 'gitTree') return fail('update_unavailable');
     let item: RegistryItemV1;
-    if (provenance.kind === 'registry' && port.readRegistryItem) item = await port.readRegistryItem({ sourceId: provenance.registry.sourceId, itemId: provenance.registry.itemId, version: latest.commit });
+    const registry = provenance.kind === 'registry' ? provenance.registry : null;
+    if (registry && !isSkillRegistryFormatV1(registry.format)) return fail('invalid_source');
+    if (registry && port.readRegistryItem) item = await port.readRegistryItem({ sourceId: registry.sourceId, itemId: registry.itemId, version: latest.commit });
     else if (provenance.kind === 'link' && port.readLinkSkills) {
       const candidates = await port.readLinkSkills(provenance.url, latest);
       item = candidates.find(candidate => candidate.payload.kind === 'skill' && candidate.payload.skill.ref.kind === 'gitTree' && candidate.payload.skill.ref.path === latest.path) ?? fail('update_unavailable');
     } else return fail('update_unavailable');
-    const nextProvenance: SkillProvenanceV1 = provenance.kind === 'registry' ? { ...provenance, registry: { ...provenance.registry, ref: latest } } : { kind: 'link', url: provenance.kind === 'link' ? provenance.url : '', ref: latest };
+    const nextProvenance: SkillProvenanceV1 = registry ? { kind: 'registry', registry: {
+      ...registry, format: registry.format, sourceUrl: registry.sourceUrl ?? fail('unsupported_source'), ref: latest,
+    } } : { kind: 'link', url: provenance.kind === 'link' ? provenance.url : '', ref: latest };
     const next = await preview(item, nextProvenance, provenance.kind === 'registry'
       ? { sourceId: provenance.registry.sourceId, itemId: provenance.registry.itemId, version: latest.commit }
       : provenance.kind === 'link' ? provenance.url : fail('update_unavailable'));
@@ -486,7 +503,7 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
             if (result.kind === 'unavailable') { unavailableItems.push(result.item); continue; }
             const { header } = result;
             const folder = folderCatalog?.status === 'ready' ? resolveArtifactOrganizationHeaderV1({ header: header.header,
-              artifactHeadersById: folderCatalog.value.artifactHeadersById, artifactId: header.id, owned: header.owned === true }).folderId ?? null : null;
+              organization: folderCatalog.value, artifactId: header.id, owned: header.owned === true }).folderId ?? null : null;
             const item = projectSummary(header.id, result.revision, result.summary, result.lock, result.creator, rules.rules, folder);
             items.push(usage && Object.hasOwn(usage.row.lastUsedAt, item.skillId)
               ? { ...item, lastUsedAt: usage.row.lastUsedAt[item.skillId] } : item);
@@ -539,7 +556,10 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
           catch { result = { deleted: true, rulesLeft: true }; } break; }
         case 'skills.install': { const input = inputs[actionId].parse(raw);
           const reach = resolveCreateReachV1({ kind: 'skill', caller, requested: input.where, ctx: { nowMs: nowMs(), newId: port.randomId } }); if (!reach.ok) return reach;
-          if (input.source.kind === 'registry' && port.executeRegistryInstall && (await port.readRegistrySource?.(input.source.sourceId))?.token) {
+          const registrySource = input.source.kind === 'registry' ? await port.readRegistrySource?.(input.source.sourceId) : undefined;
+          if (registrySource && (!isSkillRegistryFormatV1(registrySource.format)
+            || !registrySource.kinds.some(kind => kind === 'skill'))) return fail('invalid_source');
+          if (input.source.kind === 'registry' && port.executeRegistryInstall && registrySource && !('packageContent' in registrySource) && registrySource.token) {
             // Existing where operands carry the resolved rule intent across the
             // transport; no caller provenance or authority is added to the wire.
             const delegated = await port.executeRegistryInstall({ ...input, source: input.source,
@@ -572,6 +592,7 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
             if (item.payload.kind !== 'skill') return fail('unsupported_source');
             if ((item.payload.skill.ref.kind === 'gitTree' ? item.payload.skill.ref.commit : item.payload.skill.ref.digest) !== pointer.version) return fail('registry_version_mismatch');
             const source = await port.readRegistrySource(pointer.sourceId);
+            if ('packageContent' in source) return fail('unsupported_source');
             const primary = await preview(item, { kind: 'registry', registry: { sourceId: pointer.sourceId, itemId: pointer.itemId,
               sourceUrl: source.url, format: source.format, ref: item.payload.skill.ref, importedAt: nowMs() } },
               { sourceId: pointer.sourceId, itemId: pointer.itemId, version: pointer.version });
@@ -593,9 +614,11 @@ export function createSkillActionExecuteV1(port: SkillActionPortV1) {
               return preview(item, item.payload.skill.ref.kind === 'wellKnown' ? item.payload.skill.ref : { kind: 'link', url, ref: item.payload.skill.ref }, url);
             })), input.selectPaths, signal); }
           const held = await heldSkills(input.source.kind === 'upload', signal);
-          const selected = withSiblingSkills(previews.filter(item => !input.selectPaths || input.selectPaths.includes(item.path))).map(item => {
+          const heldNames = new Set(held.map(item => item.name));
+          const selected = withSiblingSkills(previews.filter(item => !input.selectPaths || input.selectPaths.includes(item.path))).map((item): SkillInstallPreviewV1 => {
             const existing = findHeldSkillV1(held, { ...item, digest: computePromptBundleDigestV1({ v: 1, entries: item.files, createdAtMs: 0, updatedAtMs: 0 }) });
-            return { ...item, ...(existing ? { inLibrary: existing.skillId } : {}) };
+            return { ...item, ...(existing ? { inLibrary: existing.skillId }
+              : heldNames.has(item.name) ? { sameNameInLibrary: true as const } : {}) };
           });
           if (input.dryRun) {
             const heldPaths = new Set(selected.filter(item => item.inLibrary).map(item => item.path));
