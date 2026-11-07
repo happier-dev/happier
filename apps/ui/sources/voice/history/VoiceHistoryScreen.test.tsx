@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto';
 import { waitForTestEvent } from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -10,6 +11,7 @@ vi.mock('socket.io-client', async original =>
 import {
   createDeferred,
   createSessionFixture,
+  renderHook,
   renderScreen as renderHistoryScreen,
   standardCleanup,
 } from '@/dev/testkit';
@@ -17,7 +19,7 @@ import type { Message } from "@happier-dev/session-core/messages";
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { resolveVoiceHistoryProviderLabel } from './defaultVoiceHistoryConsumer';
-import { tLoose } from '@/text';
+import { t, tLoose } from '@/text';
 
 import {
   createVoiceHistoryConsumer,
@@ -81,6 +83,15 @@ async function renderScreen(...args: Parameters<typeof renderHistoryScreen>) {
     ...args[1],
     wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider>,
   });
+}
+
+// These cases exercise an explicitly requested transcript read. Arrival-only
+// behavior uses renderScreen directly and never starts a global transcript read.
+async function renderRequestedHistory(element: React.ReactElement<{
+  consumer: ReturnType<typeof createVoiceHistoryConsumer>;
+}>) {
+  void element.props.consumer.search().catch(() => {});
+  return await renderScreen(element);
 }
 
 async function answerClearDialog(screen: Awaited<ReturnType<typeof renderScreen>>, confirm = true) {
@@ -177,6 +188,95 @@ describe('VoiceHistoryScreen', () => {
     dom?.window.close();
   });
 
+  it('reads no transcript bodies on list arrival and reads the opened transcript only once', async () => {
+    const { createDefaultVoiceHistoryConsumer } = await import('./defaultVoiceHistoryConsumer');
+    const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+    const { createVoiceHistoryListRowFixture } = await import('./voiceConversationHistory.testkit');
+    const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const { buildRealtimeConversationRawRecord } = await import('@/voice/transcript/VoiceTranscriptProjector');
+    const { buildSessionTurnsProjectionV1 } = await import('@happier-dev/protocol/sessions/turns/sessionTurnV1');
+    const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
+    const { useHydrateSessionForRoute } = await import('@/hooks/session/useHydrateSessionForRoute');
+    const { useSessionSurfaceActivation } = await import('@/components/sessions/shell/view/useSessionSurfaceActivation');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { installDisconnectedServerSocketBoundary, configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { createVoiceSettingsAccountTestHarness } = await import('@/voice/settings/panels/voiceSettingsAccountTestHarness');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    await account.dispose();
+    installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+    account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { features: createRootLayoutFeaturesResponse({
+      features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+    }) });
+    await getServerFeaturesSnapshot({ serverId: account.scope.serverId, force: true });
+    await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+    await sync.refreshSessions();
+    const session = createSessionFixture({ id: 'lazy-history-body', serverId: account.scope.serverId,
+      seq: 1, metadata: { ...createSessionFixture().metadata!, name: 'Saved caption',
+        ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } });
+    const row = await createVoiceHistoryListRowFixture(session, { credentials: account.credentials, mode: 'plain' });
+    const unopened = createSessionFixture({ ...session, id: 'leave-history-unopened' });
+    const unopenedRow = await createVoiceHistoryListRowFixture(unopened, { credentials: account.credentials, mode: 'plain' });
+    const request = account.request.getMockImplementation()!;
+    const bodyReads: string[] = [];
+    account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v2/sessions/query') {
+        const query = JSON.parse(String(init?.body)) as { storage: string };
+        return Response.json({ sessions: query.storage === 'archived' ? [] : [row, unopenedRow],
+          hasNext: false, nextCursor: null, attentionNextCursor: null, attentionHasNext: false });
+      }
+      if (path === '/v2/sessions') return Response.json({ sessions: [row, unopenedRow], hasNext: false, nextCursor: null });
+      if (path === '/v2/sessions/archived') return Response.json({ sessions: [], hasNext: false, nextCursor: null });
+      if (path === `/v2/sessions/${session.id}`) return Response.json(createPlainSessionByIdResponseFixture(session));
+      if (path === `/v2/sessions/${unopened.id}`) return Response.json(createPlainSessionByIdResponseFixture(unopened));
+      if (path === `/v1/sessions/${session.id}/turns`) return Response.json(buildSessionTurnsProjectionV1({
+        sessionId: session.id, latestTurnId: null, updatedAt: 1, turns: [] }));
+      if (path.endsWith('/messages')) {
+        bodyReads.push(path);
+        return Response.json({ messages: [{ id: 'lazy-turn', localId: null, seq: 1, createdAt: 1, messageRole: 'agent',
+          content: { t: 'plain', v: buildRealtimeConversationRawRecord({ id: 'lazy-turn', role: 'assistant', text: 'Opened history' }) } }],
+        hasMore: false, nextBeforeSeq: null });
+      }
+      return request(input, init);
+    }));
+    const consumer = createDefaultVoiceHistoryConsumer();
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId(`voice-history-conversation-${session.id}`)).not.toBeNull());
+    expect(screen.getTextContent()).toContain('Saved caption');
+    await act(async () => { screen.changeTextByTestId('voice-history-search', 'Saved'); });
+    expect(bodyReads).toEqual([]);
+    const navigations: string[] = [];
+    const unregister = registerMountedWorkspaceAction(async navigation => {
+      const input = navigation.input as { href: string };
+      navigations.push(input.href);
+      return { ok: true };
+    });
+    try {
+      await screen.pressByTestIdAsync(`voice-history-conversation-${session.id}`);
+      await vi.waitFor(() => expect(navigations).toEqual([`/session/${session.id}?serverId=${account.scope.serverId}`]));
+      expect(bodyReads).toEqual([]);
+      // Navigation is the platform boundary. Mount the real Session route reader
+      // for its selected address; History never owns a second transcript loader.
+      const route = await renderHook(() => {
+        useHydrateSessionForRoute(session.id, 'History.open', { serverId: account.scope.serverId });
+        useSessionSurfaceActivation({ sessionId: session.id, serverId: account.scope.serverId,
+          surfaceFocused: true, surfaceVisible: true, routeAnchor: true,
+          onSessionVisible: sync.onSessionVisible });
+      });
+      try {
+        await vi.waitFor(() => expect(bodyReads).toEqual([`/v1/sessions/${session.id}/messages`]));
+        await route.rerender();
+        expect(bodyReads).toEqual([`/v1/sessions/${session.id}/messages`]);
+      } finally { await route.unmount(); }
+    } finally { unregister(); installDisconnectedServerSocketBoundary(); }
+  });
+
   it('honors the History clear Action policy after the person confirms the destructive dialog', async () => {
     const { settingsParse } = await import('@/sync/domains/settings/settings');
     account.replaceSettings(settingsParse({ actionsSettingsV1: { v: 1,
@@ -184,17 +284,32 @@ describe('VoiceHistoryScreen', () => {
       const deleteSession = vi.fn(async () => ({ success: true as const }));
       const consumer = createVoiceHistoryConsumer(createDeps([], { deleteSession }));
       const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-      const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+      const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
       await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-clear')).not.toBeNull());
       await answerClearDialog(screen);
       expect(deleteSession).not.toHaveBeenCalled();
       expect(consumer.read().sessionId).toBe('voice-history-session');
   });
 
+  it('keeps collection search and actions available while transcript discovery is pending, then settles the original read', async () => {
+    const discovery = createDeferred<string | null>();
+    const consumer = createVoiceHistoryConsumer(createDeps([
+      voiceMessage({ id: 'kept', role: 'user', text: 'Release planned', createdAt: 1, source: OPENAI_SOURCE }),
+    ], { discoverHistorySession: () => discovery.promise }));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+    expect(screen.findByTestId('voice-history-search')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-export')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-clear')).not.toBeNull();
+    await act(async () => { screen.findByTestId('voice-history-search')!.props.onChangeText('Release'); });
+    await act(async () => { discovery.resolve('voice-history-session'); await discovery.promise; });
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-row-kept')).not.toBeNull());
+  });
+
   it('routes and retains the discovered carrier only while History is mounted', async () => {
     const consumer = createVoiceHistoryConsumer(createDeps([]));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
 
@@ -228,7 +343,7 @@ describe('VoiceHistoryScreen', () => {
       voiceMessage({ id: 'question', role: 'user', text: 'My conversation', createdAt: 1, source: OPENAI_SOURCE }),
     ], { discoverHistorySession: async () => ['first-conversation', 'second-conversation'] }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+    const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
     await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-search')).not.toBeNull());
     expect(screen.findByTestId('voice-history-export')).not.toBeNull();
     expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual(['first-conversation', 'second-conversation']);
@@ -241,8 +356,10 @@ describe('VoiceHistoryScreen', () => {
       voiceMessage({ id: 'other', role: 'assistant', text: 'Another topic', createdAt: 2, source: OPENAI_SOURCE }),
     ]));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
-    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-row-other')).not.toBeNull());
+    const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-transcript')).not.toBeNull());
+    await screen.pressByTestIdAsync('voice-history-transcript');
+    expect(screen.findByTestId('voice-history-row-other')).not.toBeNull();
     account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: { v: 1,
       actions: { 'ui.voice_global.history.search': { disabledSurfaces: ['ui'] } } } }));
     await act(async () => { screen.findByTestId('voice-history-search')!.props.onChangeText('Release'); });
@@ -286,32 +403,40 @@ describe('VoiceHistoryScreen', () => {
       resolveProviderLabel,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
 
-    expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+    // Collection controls do not wait for the separate transcript read.
+    expect(screen.findByTestId('voice-history-search')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-empty')).toBeNull();
+    // The pending read says so in place, and the history actions are already there (held until it settles).
+    expect(screen.findByTestId('voice-history-transcripts-loading')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-export')?.props.disabled).toBe(true);
+    expect(screen.findByTestId('voice-history-clear')?.props.disabled).toBe(true);
 
     await act(async () => {
       discovery.resolve('voice-history-session');
       await discovery.promise;
     });
+    // The realtime transcript is one conversation row; its turns open under it.
+    await screen.pressByTestIdAsync('voice-history-transcript');
 
     const initialText = screen.getTextContent();
+    // The conversation row previews the latest line first; the turns below it read oldest first.
     expect(initialText.indexOf('A question about releases')).toBeLessThan(
-      initialText.indexOf('A newer response'),
+      initialText.lastIndexOf('A newer response'),
     );
     expect(initialText).toContain(readProviderLabel(OPENAI_SOURCE));
     expect(initialText).toContain(readProviderLabel(XAI_SOURCE));
-    const newerRow = screen.findByTestId('voice-history-row-newer');
-    expect(newerRow?.props.accessible).toBe(true);
+    // The turn's row element carries its spoken label (the rendered host may not).
+    const newerRow = screen.findAll((node) => node.props?.testID === 'voice-history-row-newer'
+      && typeof node.props?.accessibilityLabel === 'string')[0];
     expect(newerRow?.props.accessibilityRole).toBe('text');
     expect(newerRow?.props.accessibilityLabel).toContain(readProviderLabel(XAI_SOURCE));
     expect(newerRow?.props.accessibilityLabel).toContain('A newer response');
     expect(screen.findByTestId('voice-history-search')?.props.accessibilityLabel)
       .toBe('Search voice history');
-    expect(initialText).toContain('Read-only: decrypt the previous page of voice history on this device.');
-    expect(initialText).toContain('Loading older messages does not change or lock voice history on any device.');
 
     await act(async () => {
       screen.changeTextByTestId('voice-history-search', 'newer');
@@ -358,7 +483,7 @@ describe('VoiceHistoryScreen', () => {
       },
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
@@ -428,7 +553,7 @@ describe('VoiceHistoryScreen', () => {
       loadOlderMessages: async () => await page.promise,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
 
@@ -482,7 +607,7 @@ describe('VoiceHistoryScreen', () => {
       loadOlderMessages: async () => await page.promise,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={saveExportArtifact} />,
     );
 
@@ -531,9 +656,10 @@ describe('VoiceHistoryScreen', () => {
       { loadOlderMessages, deleteSession },
     ));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={saveExportArtifact} />,
     );
+    await screen.pressByTestIdAsync('voice-history-transcript');
 
     await act(async () => {
       screen.pressByTestId('voice-history-load-older');
@@ -603,7 +729,7 @@ describe('VoiceHistoryScreen', () => {
       retireLocalSession,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={saveExportArtifact} />,
     );
 
@@ -627,15 +753,16 @@ describe('VoiceHistoryScreen', () => {
       'voice-history-session',
       { key: 'server-a/account-a' },
     );
-    expect(screen.findByTestId('voice-history-empty')).not.toBeNull();
+    // A cleared carrier leaves no transcripts section, only the confirmation.
+    expect(screen.findByTestId('voice-history-search')).not.toBeNull();
     expect(screen.findByTestId('voice-history-action-message')?.props.children)
       .toBe('Voice history was cleared.');
     expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
       .toBe('Voice history was cleared.');
     expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
     expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
-    expect(screen.findByTestId('voice-history-export')).toBeNull();
-    expect(screen.findByTestId('voice-history-clear')).toBeNull();
+    expect(screen.findByTestId('voice-history-export')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-clear')).not.toBeNull();
   });
 
   it('keeps the current History view when a stale clear safely does nothing', async () => {
@@ -654,7 +781,7 @@ describe('VoiceHistoryScreen', () => {
       clear: vi.fn(async () => ({ cleared: false as const })),
     };
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
@@ -687,7 +814,7 @@ describe('VoiceHistoryScreen', () => {
       deleteSession,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
 
@@ -721,14 +848,14 @@ describe('VoiceHistoryScreen', () => {
         })),
       },
     ));
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
     const readStatus = () => screen
       .findByTestId('voice-history-operation-status')
       ?.props.children?.props.children;
 
-    expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-search')).not.toBeNull();
     expect(readStatus()).toBe('Loading voice history…');
 
     discovery.resolve('voice-history-session');
@@ -742,12 +869,13 @@ describe('VoiceHistoryScreen', () => {
 
     // ...and the already-mounted region is what carries the next message, so it
     // is a real announcer and not a permanently empty placeholder.
+    await screen.pressByTestIdAsync('voice-history-transcript');
     await screen.pressByTestIdAsync('voice-history-load-older');
 
     expect(readStatus()).toBe('Older voice history could not be loaded.');
     await screen.unmount();
 
-    const errorScreen = await renderScreen(
+    const errorScreen = await renderRequestedHistory(
       <VoiceHistoryScreen
         consumer={createVoiceHistoryConsumer(createDeps([], {
           captureScope: async () => {
@@ -767,7 +895,7 @@ describe('VoiceHistoryScreen', () => {
       );
     await errorScreen.unmount();
 
-    const supersededScreen = await renderScreen(
+    const supersededScreen = await renderRequestedHistory(
       <VoiceHistoryScreen
         consumer={createVoiceHistoryConsumer(createDeps([], {
           captureScope: async () => {
@@ -815,9 +943,10 @@ describe('VoiceHistoryScreen', () => {
       }),
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
     );
+    await screen.pressByTestIdAsync('voice-history-transcript');
 
     await screen.pressByTestIdAsync('voice-history-load-older');
 
@@ -839,19 +968,33 @@ describe('VoiceHistoryScreen', () => {
     const emptyConsumer = createVoiceHistoryConsumer(createDeps([], {
       discoverHistorySession: async () => null,
     }));
-    const emptyScreen = await renderScreen(
+    const emptyScreen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={emptyConsumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
-    expect(emptyScreen.findByTestId('voice-history-empty')).not.toBeNull();
+    // No realtime transcript carrier: that section is absent rather than an empty card, and the
+    // conversation list, whose first read has not settled, never claims to be empty.
+    expect(emptyScreen.findByTestId('voice-history-search')).not.toBeNull();
+    expect(emptyScreen.findByTestId('voice-history-empty')).toBeNull();
+    expect(emptyScreen.findByTestId('voice-history-conversations-empty')).toBeNull();
     await emptyScreen.unmount();
+
+    // An explicitly loaded empty binding leaves no aggregate transcript section.
+    const emptyCarrierConsumer = createVoiceHistoryConsumer(createDeps([]));
+    const emptyCarrierScreen = await renderRequestedHistory(
+      <VoiceHistoryScreen consumer={emptyCarrierConsumer} saveExportArtifact={vi.fn()} />,
+    );
+    await vi.waitFor(() => expect(emptyCarrierConsumer.getReadState()).toBe('ready'));
+    expect(emptyCarrierScreen.findByTestId('voice-history-search')).not.toBeNull();
+    expect(emptyCarrierScreen.getTextContent()).not.toContain(t('settingsVoice.history.transcriptsTitle'));
+    await emptyCarrierScreen.unmount();
 
     const errorConsumer = createVoiceHistoryConsumer(createDeps([], {
       captureScope: async () => {
         throw new Error('network unavailable');
       },
     }));
-    const errorScreen = await renderScreen(
+    const errorScreen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={errorConsumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
@@ -863,7 +1006,7 @@ describe('VoiceHistoryScreen', () => {
         throw new VoiceHistoryOperationSupersededError();
       },
     }));
-    const supersededScreen = await renderScreen(
+    const supersededScreen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={supersededConsumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
@@ -887,16 +1030,32 @@ describe('VoiceHistoryScreen', () => {
       return session;
     };
     const dropCarrier = async () => {
+      const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
       const { storage } = await import('@/sync/domains/state/storage');
-      await act(async () => storage.setState(state => {
-        const { [CARRIER_ID]: _removed, ...sessions } = state.sessions;
-        return { sessions };
-      }));
+      await act(async () => {
+        voiceSessionBindingStore.getState().unbind(CARRIER_ID);
+        storage.setState(state => {
+          const { [CARRIER_ID]: _removed, ...sessions } = state.sessions;
+          return { sessions };
+        });
+      });
     };
     afterEach(dropCarrier);
 
+    const bindRetainedCarrier = async () => {
+      const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+      await act(async () => voiceSessionBindingStore.getState().bind({
+        adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        conversationSessionId: CARRIER_ID,
+        conversationSessionAddress: { serverId: account.scope.serverId, sessionId: CARRIER_ID },
+        targetSessionAddress: null, transcriptMode: 'synthetic', updatedAt: 1,
+      }));
+    };
+
     it('flags retained input above the transcript tools and opens the carrier through the mounted workspace', async () => {
       await seedCarrier();
+      await bindRetainedCarrier();
       const { registerMountedWorkspaceAction } = await import('@/components/appShell/workspace/workspaceActionRuntime');
       const open = vi.fn(async () => ({ ok: true as const }));
       const unregister = registerMountedWorkspaceAction(open as never);
@@ -904,7 +1063,7 @@ describe('VoiceHistoryScreen', () => {
         const consumer = createVoiceHistoryConsumer(createDeps([voiceMessage({
           id: 'm1', role: 'user', text: 'Check the deploy', createdAt: 1, source: OPENAI_SOURCE })]));
         const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-        const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+        const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
         await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-recovery')).not.toBeNull());
         // A search that matches nothing hides every transcript row, never the recovery entry.
         await act(async () => { screen.findByTestId('voice-history-search')!.props.onChangeText('zzz-no-match'); });
@@ -921,11 +1080,12 @@ describe('VoiceHistoryScreen', () => {
 
     it('stays visible on an empty History, and leaves when the block is cleared', async () => {
       const session = await seedCarrier();
+      await bindRetainedCarrier();
       const consumer = createVoiceHistoryConsumer(createDeps([], { discoverHistorySession: async () => null }));
       const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-      const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
-      await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-empty')).not.toBeNull());
-      expect(screen.findByTestId('voice-history-recovery')).not.toBeNull();
+      const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+      await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-recovery')).not.toBeNull());
+      expect(screen.findByTestId('voice-history-search')).not.toBeNull();
       const { storage } = await import('@/sync/domains/state/storage');
       await act(async () => storage.setState(state => ({ sessions: { ...state.sessions,
         [session.id]: { ...session, pendingCount: 0, pendingBlockedCount: 0 } } })));
@@ -936,7 +1096,7 @@ describe('VoiceHistoryScreen', () => {
       await seedCarrier({ pendingCount: 0, pendingBlockedCount: 0 });
       const consumer = createVoiceHistoryConsumer(createDeps([]));
       const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
-      const screen = await renderScreen(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
+      const screen = await renderRequestedHistory(<VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />);
       await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('voice-history-export')).not.toBeNull());
       expect(screen.findByTestId('voice-history-recovery')).toBeNull();
     });
@@ -950,7 +1110,7 @@ describe('VoiceHistoryScreen', () => {
       },
     }));
 
-    const screen = await renderScreen(
+    const screen = await renderRequestedHistory(
       <VoiceHistoryScreen consumer={upgradeConsumer} saveExportArtifact={vi.fn()} />,
     );
     await flushAsyncState();
@@ -998,11 +1158,12 @@ describe('VoiceHistoryScreen', () => {
     let accountB: typeof account | undefined;
 
     try {
-      const screen = await renderScreen(
+      const screen = await renderRequestedHistory(
         <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
       );
       await flushAsyncState();
       expect(screen.getTextContent()).toContain('Account A private answer');
+      await screen.pressByTestIdAsync('voice-history-transcript');
       expect(screen.findByTestId('voice-history-row-account-a')).not.toBeNull();
       expect(readMountedSessionRealtimeTranscriptConsumerSessionIds())
         .toEqual(['voice-history-session-a']);
@@ -1018,9 +1179,12 @@ describe('VoiceHistoryScreen', () => {
 
       expect(screen.findByTestId('voice-history-row-account-a')).toBeNull();
       expect(screen.getTextContent()).not.toContain('Account A private answer');
-      expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+      expect(screen.findByTestId('voice-history-search')).not.toBeNull();
       expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
       expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
+      // Arrival in the new Account does not start an unopened transcript read.
+      expect(discoveries).toBe(1);
+      await act(async () => { void consumer.search('', true); });
       await accountBDiscoveryStarted.promise;
       expect(discoveries).toBe(2);
 
@@ -1029,7 +1193,9 @@ describe('VoiceHistoryScreen', () => {
         await accountBDiscovery.promise;
       });
       await flushAsyncState();
-      expect(screen.findByTestId('voice-history-empty')).not.toBeNull();
+      // Account B has no realtime transcript carrier: the section stays absent, never Account A's rows.
+      expect(screen.findByTestId('voice-history-search')).not.toBeNull();
+      expect(screen.findByTestId('voice-history-row-account-a')).toBeNull();
       expect(screen.getTextContent()).not.toContain('Account A private answer');
     } finally {
       accountBDiscovery.resolve(null);

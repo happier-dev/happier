@@ -14,6 +14,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 const http = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(http);
@@ -105,24 +106,17 @@ describe('direct-media provider-state carrier discovery', () => {
 
   it('recognizes the carrier from the canonical owner metadata view in layout v1', async () => {
     const carrier = carrierSession({ id: 'history' });
-    const boundary = await installCandidates([carrier]);
-    storage.getState().applySessions([carrier]);
-    const url = 'https://history-discovery.test/v2/sessions/history';
-    http.answer(homeId, 'PATCH /v2/sessions/history', { select: async input => {
-      const response = boundary.handle(url, { method: 'PATCH', body: JSON.stringify(input) });
-      if (!response) throw new Error('Missing canonical tuple mutation response');
-      return { status: response.status, body: await response.json() };
-    } });
-    const { sync } = await import('@/sync/sync');
-    await sync.patchSessionMetadataWithRetry('history', metadata => ({ ...metadata, name: 'Migrated History carrier' }));
-    http.answer(homeId, '/v2/sessions/history', { select: async () => {
-      const response = boundary.handle(url);
-      if (!response) throw new Error('Missing migrated Session detail');
-      return { status: response.status, body: await response.json() };
-    } });
+    const detail = createPlainSessionByIdResponseFixture(carrier);
+    const record = SessionCurrentProjectionRecordV1Schema.parse(detail.session);
+    http.answer(homeId, '/v2/sessions/lookup-by-tags', {
+      body: SessionLookupByTagsResponseV2Schema.parse({ sessions: [record] }),
+    });
+    http.answer(homeId, '/v2/sessions/history', { body: detail });
+    http.answer(homeId, '/v1/sessions/history/messages', { body: { messages: [], hasMore: false } });
     const discovered = await discover();
-    expect(storage.getState().sessions.history).toMatchObject({ metadataLayoutVersion: 1,
+    expect(storage.getState().sessions.history).toMatchObject({ active: false, metadataLayoutVersion: 1,
       ownerMetadataView: { systemSessionV1: { key: 'voice_transcript_history', hidden: true } } });
+    expect(storage.getState().sessions.history?.metadata).not.toHaveProperty('systemSessionV1');
     expect(discovered).toBe('history');
   });
 

@@ -13,7 +13,7 @@ import { t } from '@/text';
  * live attempt in that state would give them. Handlers are inert.
  */
 export type VoicePresenceFixtureState =
-    | 'rest' | 'connecting' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
+    | 'rest' | 'connecting' | 'live' | 'listening' | 'transcribing' | 'thinking' | 'speaking'
     | 'interrupted' | 'muted' | 'blocked' | 'reconnecting' | 'failed' | 'stop_failed' | 'ended' | 'working' | 'needs_you';
 
 export function isVoicePresenceFixtureState(value: unknown): value is VoicePresenceFixtureState {
@@ -21,7 +21,7 @@ export function isVoicePresenceFixtureState(value: unknown): value is VoicePrese
 }
 
 export const VOICE_PRESENCE_FIXTURE_STATES: readonly VoicePresenceFixtureState[] = [
-    'rest', 'connecting', 'listening', 'transcribing', 'thinking', 'speaking', 'working',
+    'rest', 'connecting', 'live', 'listening', 'transcribing', 'thinking', 'speaking', 'working',
     'needs_you', 'interrupted', 'muted', 'blocked', 'reconnecting', 'failed', 'ended',
 ];
 
@@ -31,6 +31,7 @@ const SPECIMEN_STARTED_AT = Date.now() - 134_000;
 const SURFACE_STATE: Readonly<Record<VoicePresenceFixtureState, VoiceSurfaceState>> = {
     rest: 'idle',
     connecting: 'connecting',
+    live: 'live',
     listening: 'listening',
     transcribing: 'transcribing',
     thinking: 'thinking',
@@ -83,7 +84,7 @@ export function buildVoicePresenceFixture(state: VoicePresenceFixtureState): Voi
     // The projection's own failure captions: how to unblock, or the runtime's reason (a lost transport).
     const captionLabel = state === 'blocked'
         ? t('voicePresence.captions.blocked')
-        : state === 'failed' ? t(resolveVoiceMachineErrorTranslationKey('transport_disconnect')) : state === 'stop_failed' ? t(STOP_FAILED_COPY_KEY) : '';
+        : state === 'failed' ? t(resolveVoiceMachineErrorTranslationKey('transport_disconnect')) : state === 'stop_failed' ? t(STOP_FAILED_COPY_KEY) : state === 'live' ? t('voiceSurface.a11y.microphoneInactive') : '';
     return {
         ...control,
         statusCell: state === 'working' || state === 'needs_you' ? state : control.statusCell,

@@ -93,6 +93,7 @@ describe('canonical History Account boundary', () => {
       const consumer = createDefaultVoiceHistoryConsumer();
       await consumer.open();
       expect(consumer.read().rows.map(row => row.text)).toEqual(['Voice 20']);
+      expect(historyHttp.requests.filter(request => request.path.startsWith(`/v1/sessions/${sessionId}/messages`))).toHaveLength(1);
       await consumer.loadOlder();
       expect(consumer.read().rows.map(row => row.text)).toEqual(['Voice 10', 'Voice 20']);
       await consumer.clear();

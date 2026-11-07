@@ -92,6 +92,12 @@ describe('VoiceEnergyAppProvider state bridge', () => {
             expected: { luminosity: 0.18, energized: false, direction: 'none' },
         },
         {
+            name: 'connected without a reported phase',
+            surfaceState: 'live',
+            snapshot: base,
+            expected: { luminosity: 0.18, energized: false, direction: 'none' },
+        },
+        {
             name: 'connecting',
             surfaceState: 'connecting',
             snapshot: { ...base, status: 'connecting', mode: 'idle' },

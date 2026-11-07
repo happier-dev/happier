@@ -1,6 +1,6 @@
 import {
     PluginUiMarkdown, PluginUiPrivateDiffViewer, CodeBlockView, ProseDiffViewer, QRCode,
-    PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport,
+    PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript,
     PluginDictationButton, VoiceMarkArt, VoiceStatusCell, SceneArt,
     ExecutableParticipantPickerPresentation,
 } from './pluginUiPrivateContent';
@@ -8,7 +8,7 @@ import type { PluginMarkdownWorkspace } from './PluginUiMarkdown';
 import { usePluginVoiceAttempt } from './PluginVoicePresence';
 import { useCollectionRowNeedsYouHostFacts } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
 import * as React from 'react';
-import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';
+import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '@happier-dev/plugin-ui';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { COMPANION_WEB_POINTER_BINDING } from '@/components/companion/interaction/useCompanionPointerDragSession';
 import { NativeFloatingFrame } from '@/components/companion/interaction/NativeFloatingFrame';
@@ -343,6 +343,7 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     renderVoiceMark: (input: VoiceMarkProps) => <PluginVoiceMark {...input} />,
     renderVoiceStatusLine: (input: VoiceStatusLineProps) => <PluginVoiceStatusLine {...input} />,
     renderVoiceTransport: (input: VoiceTransportProps) => <PluginVoiceTransport {...input} />,
+    renderVoiceCompactTranscript: (input: VoiceCompactTranscriptProps) => <PluginVoiceCompactTranscript {...input} />,
     renderScene(input: HappierSceneRenderRequest) {
         return <SceneArt {...input} />;
     },

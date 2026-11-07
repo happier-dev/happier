@@ -581,7 +581,7 @@ describe('realtime_codex normal web composed gate', () => {
     // Codex declares outputLevelMeter: 'unavailable' and has no native audio
     // phase edge. The announcer shares this canonical connected/live fallback;
     // neither an open microphone nor transcript text proves Listening/Speaking.
-    expect(readPhaseLabel()).toBe('voiceAssistant.label');
+    expect(readPhaseLabel()).toBe('voiceAssistant.connected');
     expect(browser.peer.setRemoteDescription).toHaveBeenCalledWith({
       type: 'answer',
       sdp: 'v=0\r\na=test-answer\r\n',
@@ -654,7 +654,7 @@ describe('realtime_codex normal web composed gate', () => {
     );
     expect(runtime.adapter.getSnapshot().status).toBe('connected');
     expect(runtime.adapter.getSnapshot().mode).toBe('idle');
-    expect(readPhaseLabel()).toBe('voiceAssistant.label');
+    expect(readPhaseLabel()).toBe('voiceAssistant.connected');
     expect(readCanonicalVoiceTranscriptSnapshot('codex-direct-session')).toEqual([]);
 
     await installTranscriptPersistenceBoundary();
@@ -694,7 +694,7 @@ describe('realtime_codex normal web composed gate', () => {
     ]));
     expect(transcriptPostCount()).toBe(1);
     expect(runtime.adapter.getSnapshot().mode).toBe('idle');
-    expect(readPhaseLabel()).toBe('voiceAssistant.label');
+    expect(readPhaseLabel()).toBe('voiceAssistant.connected');
     persistenceCleanup?.();
     const secondBrowser = installVoiceWebRtcBrowserBoundary();
     browser.peer.channel.close();

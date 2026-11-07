@@ -201,6 +201,10 @@ async function restoreAttemptAccount() {
     getStorage().setState({ isDataReady: true, profileScope: scope, settingsScope: scope,
         settings: settingsParse({ experiments: true, featureToggles: { voice: true, 'execution.runs': true, 'voice.agent': true } }),
         machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] } });
+    // Account restoration hydrates settings asynchronously. Seed scenario
+    // settings only after that authoritative first page has settled.
+    await waitForTestEvent(getStorage().subscribe, getStorage().getState,
+        (state) => state.settingsVersion !== null);
     initialStorageState = getStorage().getState();
     const { createBuiltinVoiceAdapterAssembly } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
     providerAssembly = (await createBuiltinVoiceAdapterAssembly());
@@ -666,7 +670,7 @@ describe('useVoiceAttemptControl availability ladder', () => {
 
     it('hides the setup-pose mic once the person dismissed "Set up voice", until Voice is set up', async () => {
         const { VOICE_SETUP_STEP_ID } = await import('@/voice/settings/setup/useVoiceSetupItem');
-        const { HOME_HUB_DEFAULT_LAYOUT, setHomeSetupStepHidden } = await import('@happier-dev/protocol/home');
+        const { normalizeHomeHubLayoutV1, setHomeSetupStepHidden } = await import('@happier-dev/protocol/home');
         const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
         const { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
         const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
@@ -674,7 +678,7 @@ describe('useVoiceAttemptControl availability ladder', () => {
         installDisconnectedServerSocketBoundary();
         await import('@/sync/syncEngine');
         const artifact = createHomeHubArtifactHttpBoundary('voice-dismissal-account');
-        artifact.seed(setHomeSetupStepHidden(HOME_HUB_DEFAULT_LAYOUT, VOICE_SETUP_STEP_ID, true));
+        artifact.seed(setHomeSetupStepHidden(normalizeHomeHubLayoutV1(undefined), VOICE_SETUP_STEP_ID, true));
         const webLocks = installWebLockManagerMock();
         const connection = await restoreServerAccountForTest({
             serverUrl: 'https://voice-setup-dismissal.test', accountId: 'voice-dismissal-account', activation: 'switch', request: artifact.request,
@@ -1049,6 +1053,54 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
         );
     }
 
+  it('keeps a connected call with no reported phase live and clocks its original attempt start', async () => {
+    const { getVoiceSessionAttemptStartedAt, setVoiceSessionSnapshot } =
+      await import('@/voice/session/voiceSessionStore');
+    const { readVoiceElapsedStartedAt } =
+      await import('@/components/voice/presence/VoiceStatusLine');
+    const { resolveVoicePresenceCaption } =
+      await import('@/components/voice/presence/resolveVoicePresenceCaption');
+    const hook = await renderControl({
+      adapterId: 'local_conversation',
+      sessionId: 'connected-without-phase',
+      status: 'connected',
+      mode: 'idle',
+      canStop: true,
+    });
+    try {
+      const startedAt = getVoiceSessionAttemptStartedAt();
+      expect(startedAt).toEqual(expect.any(Number));
+      expect(hook.getCurrent()).toMatchObject({
+        live: true,
+        surfaceState: 'live',
+        statusWord: 'Connected',
+        statusLabel: 'Connected',
+        primaryAction: 'end',
+        capturing: false,
+        elapsedStartedAt: startedAt,
+      });
+      expect(readVoiceElapsedStartedAt(hook.getCurrent())).toBe(startedAt);
+      const { VoiceAttemptPresentationSchema } =
+        await import('@happier-dev/protocol/voice/attemptPresentation');
+      expect(VoiceAttemptPresentationSchema.parse(hook.getCurrent().publicPresentation))
+        .toMatchObject({ surfaceState: 'live', live: true });
+      expect(resolveVoicePresenceCaption(hook.getCurrent())).toBe(
+        t('voiceSurface.a11y.microphoneInactive'),
+      );
+      await act(async () => setVoiceSessionSnapshot({
+        adapterId: 'local_conversation',
+        sessionId: 'connected-without-phase',
+        status: 'connected',
+        mode: 'listening',
+        canStop: true,
+      }));
+      expect(hook.getCurrent().statusWord).toBe(t('voiceAssistant.listening'));
+      expect(readVoiceElapsedStartedAt(hook.getCurrent())).toBe(startedAt);
+    } finally {
+      await hook.unmount();
+    }
+  });
+
     it('keeps the live call phase for blocked-only hidden input and a real request retains Needs you', async () => {
         const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
         const session = createSessionFixture({ id: 'blocked-carrier', serverId: recoveryRuntime.serverId,
@@ -1275,17 +1327,19 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
         expect(hook.getCurrent().captionLabel).toBe(t('voice.readiness.settings_missing_required_setting', { service: hook.getCurrent().serviceTitle ?? t('voicePresence.title') }));
         expect(hook.getCurrent().recoveryLabel).toBe(t('voicePresence.recovery.setUp'));
         expect(hook.getCurrent().recoveryIcon).toBe('gear');
-        const { VoicePresence, VoiceMark, VoiceStatusLine, VoiceTransport, useVoiceAttempt } = await import('@happier-dev/plugin-ui');
+        const { VoicePresence, VoiceMark, VoiceStatusLine, VoiceTransport, VoiceCompactTranscript, useVoiceAttempt } = await import('@happier-dev/plugin-ui');
         const { PluginUiPresentationHostProviderInternal } = await import('../../../../../../packages/plugin-ui/src/presentationHost/context');
         const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
         const { VoiceMark: HostMark } = await import('@/components/voice/presence/VoiceMark');
         const { VoiceStatusLine: HostStatusLine } = await import('@/components/voice/presence/VoiceStatusLine');
         const { VoiceTransport: HostTransport } = await import('@/components/voice/presence/VoiceTransport');
+        const { VoiceCompactTranscript: HostCompactTranscript } = await import('@/components/voice/presence/VoiceCompactTranscript');
+        expect(VoiceCompactTranscript).toBeTypeOf('function');
         let publicAttempt: ReturnType<typeof useVoiceAttempt> = null;
         function ReadAttempt() { publicAttempt = useVoiceAttempt(); return null; }
         const publicScreen = await renderScreen(<PluginUiPresentationHostProviderInternal host={createPluginUiPrivatePresentationHost(undefined)}>
             <VoicePresence target={{ kind: 'global' }}>
-                <VoiceMark size={24} /><VoiceStatusLine size="pill" /><VoiceTransport size="pill" /><ReadAttempt />
+                <VoiceMark size={24} /><VoiceStatusLine size="pill" /><VoiceTransport size="pill" /><VoiceCompactTranscript testID="plugin-voice-caption" /><ReadAttempt />
             </VoicePresence>
         </PluginUiPresentationHostProviderInternal>);
         expect(publicAttempt).toMatchObject({ surfaceState: 'error', failureKind: 'provider_setup_required',
@@ -1295,6 +1349,9 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
             .toBe(publicScreen.findByType(HostStatusLine).props.voice);
         expect(publicScreen.findByType(HostTransport).props.voice)
             .toBe(publicScreen.findByType(HostStatusLine).props.voice);
+        expect(publicScreen.findByType(HostCompactTranscript).props.voice)
+            .toBe(publicScreen.findByType(HostStatusLine).props.voice);
+        expect(publicScreen.findHostByTestId('plugin-voice-caption')?.props.children).toBe(hook.getCurrent().captionLabel);
         expect(publicAttempt).not.toHaveProperty('onRecover');
         expect(publicAttempt).not.toHaveProperty('errorMessage');
         expect(JSON.stringify(publicAttempt)).not.toContain('/private/provider/detail');
@@ -1774,6 +1831,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
             expect(hook.getCurrent().pendingRequestSessionAddress).toEqual(address);
             expect(hook.getCurrent().openConversationSessionAddress).toEqual(address);
             expect(voiceSessionBindingStore.getState().getByControlSessionId(address.sessionId)).toEqual(binding);
+            await flushHookEffects();
             const baseline = renders;
             await act(async () => getStorage().setState(state => ({ sessions: { ...state.sessions,
                 unrelated: createSessionFixture({ id: 'unrelated', serverId: address.serverId }) } })));
@@ -1966,31 +2024,28 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
         await hook.unmount();
     });
 
-    it('still sends an unannounced start rejection to fire-and-forget diagnostics', async () => {
-        await installElevenLabsLifecycle();
-        // A retained registry reference can outlive its public runtime lease.
-        // The real adapter rejects before publishing any machine error.
-        await providerAssembly?.dispose();
-        const diagnostic = createDeferred<void>();
-        const consoleInfo = vi.spyOn(console, 'info').mockImplementation((message) => {
-            if (message === '[fireAndForget] VoiceAttemptControl.toggle') diagnostic.resolve();
-        });
-        const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
-        const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+  it('refuses a retained Start after its admitted runtime has retired', async () => {
+    await installElevenLabsLifecycle();
+    const consoleInfo = vi
+      .spyOn(console, 'info')
+      .mockImplementation(() => {});
+    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+    const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+    expect(hook.getCurrent().canStart).toBe(true);
+    const start = hook.getCurrent().onToggle;
+    // The retained control cannot resurrect a retired runtime generation.
+    await act(async () => { await providerAssembly?.dispose(); });
 
-        await act(async () => {
-            hook.getCurrent().onToggle();
-            await Promise.resolve();
-        });
-
-        await diagnostic.promise;
-        expect(consoleInfo).toHaveBeenCalledWith(
-            '[fireAndForget] VoiceAttemptControl.toggle',
-            expect.objectContaining({ code: 'action_failed', message: 'voice_runtime_generation_revoked' }),
-        );
-
-        await hook.unmount();
+    await act(async () => {
+      expect(await start()).toBe(false);
     });
+
+    expect(sdk.startSession).not.toHaveBeenCalled();
+    expect(consoleInfo.mock.calls.some(([message]) =>
+      message === '[fireAndForget] VoiceAttemptControl.toggle')).toBe(false);
+
+    await hook.unmount();
+  });
 
     it('still sends a mismatched rejection to diagnostics after the retry recovery is rendered', async () => {
         sdk.startSession.mockRejectedValue(Object.assign(new Error('voice_connection_failed'), { code: 'voice_connection_failed' }));
@@ -2012,7 +2067,8 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
         await diagnostic.promise;
         expect(consoleInfo).toHaveBeenCalledWith(
             '[fireAndForget] VoiceAttemptControl.recover',
-            expect.objectContaining({ code: 'action_failed', message: 'voice_runtime_generation_revoked' }),
+            expect.objectContaining({ code: 'voice_runtime_generation_revoked', message: 'voice_runtime_generation_revoked',
+                failureCause: expect.objectContaining({ errorCode: 'voice_runtime_generation_revoked', phase: 'dispatch' }) }),
         );
         expect(hook.getCurrent().primaryAction).toBe('recover');
         await hook.unmount();
@@ -2037,9 +2093,9 @@ describe('Voice setup dismissal through the current Home Artifact owner', () => 
             const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
             const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
             const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
-            const { HOME_HUB_DEFAULT_LAYOUT, listHiddenHomeSetupSteps } = await import('@happier-dev/protocol/home');
+            const { normalizeHomeHubLayoutV1, listHiddenHomeSetupSteps } = await import('@happier-dev/protocol/home');
             const artifact = createHomeHubArtifactHttpBoundary('voice-dismiss-account');
-            artifact.seed(HOME_HUB_DEFAULT_LAYOUT);
+            artifact.seed(normalizeHomeHubLayoutV1(undefined));
             const features = createRootLayoutFeaturesResponse();
             if (!tryWriteServerEnabledBitInPlace(features, 'voice', true)) throw new Error('Voice feature fixture unavailable');
             connection = await restoreServerAccountForTest({

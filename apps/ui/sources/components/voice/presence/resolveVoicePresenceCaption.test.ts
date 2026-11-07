@@ -14,6 +14,12 @@ const { resolveVoiceCompactLine, resolveVoicePresenceCaption } =
 const base = { live: true, muted: false, captionLabel: '' } as const;
 
 describe('Voice presence captions for a bound Session target', () => {
+  it('keeps a connected call phase-neutral and captions the actual microphone state', () => {
+    const voice = { ...base, surfaceState: 'live', captionLabel: t('voiceSurface.a11y.microphoneInactive') } as const;
+    expect(resolveVoicePresenceCaption(voice)).toBe(voice.captionLabel);
+    expect(resolveVoicePresenceCaption({ ...voice, muted: true })).toBe(t('voicePresence.captions.muted'));
+  });
+
   it.each(['error', 'permission_required'] as const)('keeps %s recovery ahead of the saved mute preference', (surfaceState) => {
     const voice = { ...base, muted: true, surfaceState, captionLabel: 'Playback failed. Try again.' };
     expect(resolveVoicePresenceCaption(voice)).toBe(voice.captionLabel);

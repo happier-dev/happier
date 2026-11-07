@@ -22,7 +22,7 @@ const METRICS: Readonly<Record<VoiceStatusLineSize, Readonly<{ fontSize: number;
 
 /** Conversation states in which a call is underway; reconnecting keeps the call it is restoring. */
 const CLOCKED_STATES: ReadonlySet<VoiceSurfaceState> = new Set<VoiceSurfaceState>([
-    'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'reconnecting',
+    'live', 'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'reconnecting',
 ]);
 
 /** A running-call clock is the same fact in a compact status and a glance header. */

@@ -153,12 +153,13 @@ In 0.3 development source, same-realm surfaces can compose the host's live
 presentation without choosing its lifecycle or recovery:
 
 ```tsx
-import { VoicePresence, VoiceMark, VoiceStatusLine, VoiceTransport } from '@happier-dev/plugin-ui/components';
+import { VoicePresence, VoiceMark, VoiceStatusLine, VoiceTransport, VoiceCompactTranscript } from '@happier-dev/plugin-ui/components';
 
 export function CurrentConversation() {
   return <VoicePresence target={{ kind: 'global' }}>
     <VoiceMark size={24} />
     <VoiceStatusLine size="pill" />
+    <VoiceCompactTranscript />
     <VoiceTransport size="pill" />
   </VoicePresence>;
 }
@@ -168,6 +169,11 @@ The binding adds no layout and starts no microphone. The mark is visual; Start
 still uses the ordinary conversation Action described below. Mute, End, recovery
 and dismissal use the current host attempt and normal approval policy. `target`
 chooses only an idle Start intent; it cannot retarget an active call.
+
+`VoiceCompactTranscript` displays the host's compact caption or latest conversation
+words, following the person's transcript setting. It shares the binding's attempt
+and the same renderer as the app's compact Voice surfaces; authors supply only an
+optional `testID` and `fallback`.
 
 Inside the binding, `useVoiceAttempt()` returns read-only presentation facts,
 including the host's failure sentence, recovery label/icon and exact Agent/Home/

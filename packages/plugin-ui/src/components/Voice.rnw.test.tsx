@@ -113,6 +113,16 @@ describe('public Voice author composition', () => {
     view.unmount();
   });
 
+  it('keeps the author fallback when an older host has no compact transcript binding', () => {
+    const { VoiceCompactTranscript } = VoiceComponents;
+    expect(VoiceCompactTranscript).toBeTypeOf('function');
+    const view = mountThroughReactNativeWeb(<PluginUiPresentationHostProviderInternal host={{}}>
+      <VoiceCompactTranscript fallback={<span>Conversation preview unavailable</span>} />
+    </PluginUiPresentationHostProviderInternal>);
+    expect(view.container.textContent).toBe('Conversation preview unavailable');
+    view.unmount();
+  });
+
   it('uses host presentation bindings and prevents hidden parents from reactivating Dictation', async () => {
     const context = createSurfaceContext();
     const onTranscription = vi.fn();

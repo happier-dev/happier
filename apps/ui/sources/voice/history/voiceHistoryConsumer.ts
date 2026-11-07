@@ -28,6 +28,17 @@ export type VoiceHistorySnapshot = Readonly<{
   hasMore: boolean | null;
 }>;
 
+export type VoiceHistoryReadState = 'idle' | 'loading' | 'ready' | 'error' | 'superseded';
+
+export const VOICE_HISTORY_LOADING_CODE = 'voice_history_loading';
+export const VOICE_HISTORY_LOAD_FAILED_CODE = 'voice_history_load_failed';
+
+/** The read owner still supplies the pending/failed state through its subscription. */
+export function isVoiceHistoryReadStateError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && (error.code === VOICE_HISTORY_LOADING_CODE || error.code === VOICE_HISTORY_LOAD_FAILED_CODE);
+}
+
 export type VoiceHistoryExportArtifact = Readonly<{
   fileName: string;
   mimeType: 'application/json';
@@ -182,15 +193,16 @@ function* serializeVoiceHistoryExport(input: Readonly<{
 
 export type VoiceHistoryConsumer = Readonly<{
   open(query?: string): Promise<VoiceHistorySnapshot>;
-  /** Discover on first use; warm search only filters already-loaded rows. */
+  /** Start discovery on first use; search filters loaded rows while the read progresses. */
   search(query?: string, refresh?: boolean): Promise<VoiceHistorySnapshot>;
+  getReadState(): VoiceHistoryReadState;
   read(query?: string): VoiceHistorySnapshot;
   loadOlder(query?: string): Promise<VoiceHistorySnapshot>;
   exportHistory(input: Readonly<{ range: 'loaded' | 'all'; query?: string }>): Promise<VoiceHistoryExportArtifact>;
   clear(): Promise<Readonly<{ cleared: boolean }>>;
   /**
-   * External-store pair for the rendered History snapshot. `getRevision`
-   * changes exactly when a further `read()` could answer differently — the
+   * External-store pair for the rendered History snapshot and read lifecycle.
+   * `getRevision` changes when `read()` or `getReadState()` could answer differently — the
    * bound session, its message revision, provider projections, the pagination
    * ceiling, or the active scope — so an open screen re-reads on a live write
    * and ignores every unrelated one.
@@ -209,6 +221,8 @@ export function createVoiceHistoryConsumer<
   let capturedScope: TScope | null = null;
   let hasMore: boolean | null = null;
   let operationEpoch = 0;
+  let readState: VoiceHistoryReadState = 'idle';
+  let pendingOpen: Promise<VoiceHistorySnapshot> | null = null;
   let deferredExportProjectionEpoch: number | null = null;
   let projectedSessionId: string | null = null;
   let projectedMessagesRevision: string | number | null = null;
@@ -256,6 +270,8 @@ export function createVoiceHistoryConsumer<
     scopeKey = null;
     capturedScope = null;
     hasMore = null;
+    pendingOpen = null;
+    readState = 'idle';
     updateSourceDemand();
     resetProjection();
   };
@@ -389,7 +405,7 @@ export function createVoiceHistoryConsumer<
     return { loaded, hasMore, status: hasMore ? 'loaded' : 'no_more' };
   };
 
-  const open = async (query = ''): Promise<VoiceHistorySnapshot> => {
+  const load = async (query: string): Promise<VoiceHistorySnapshot> => {
     const epoch = beginOperation();
     const discoveredSessionId = await discover(epoch);
     if (!discoveredSessionId || !capturedScope) return empty();
@@ -402,6 +418,24 @@ export function createVoiceHistoryConsumer<
     if (!isScopeCurrent()) return empty();
     resetProjection();
     return read(query);
+  };
+
+  const open = (query = ''): Promise<VoiceHistorySnapshot> => {
+    const reading = load(query);
+    const epoch = operationEpoch;
+    pendingOpen = reading;
+    readState = 'loading';
+    emit();
+    const settled = (state: VoiceHistoryReadState) => {
+      if (pendingOpen === reading) pendingOpen = null;
+      if (epoch !== operationEpoch) return;
+      readState = state;
+      emit();
+    };
+    void reading.then(() => settled('ready'), error => settled(
+      isVoiceHistoryOperationSupersededError(error) ? 'superseded' : 'error',
+    ));
+    return reading;
   };
 
   return Object.freeze({
@@ -427,14 +461,28 @@ export function createVoiceHistoryConsumer<
         ...sessionIds.map(id => `${id}:${deps.readMessagesRevision(id)}`),
         deps.readProjectionRevision?.() ?? 0,
         hasMore === null ? '' : String(hasMore),
+        readState,
       ].join('\u0001');
     },
     open,
+    getReadState() {
+      return scopeKey && deps.readScopeKey() !== scopeKey ? 'superseded' : readState;
+    },
     async search(query = '', refresh = false) {
-      return !refresh && isScopeCurrent() ? read(query) : await open(query);
+      if (refresh) return await open(query);
+      const current = isScopeCurrent();
+      // Search answers from the current projection. The read publishes its own
+      // pending/failure state; only an explicit refresh retries a failed read.
+      if (!current && !pendingOpen && readState === 'idle') void open(query);
+      return read(query);
     },
     read,
     async loadOlder(query = '') {
+      if (pendingOpen) {
+        const readEpoch = operationEpoch;
+        await pendingOpen;
+        assertOperationCurrent(readEpoch);
+      }
       const epoch = beginOperation();
       const expectedSessionId = sessionId;
       if (!expectedSessionId || !isScopeCurrent()) return read(query);
@@ -443,6 +491,11 @@ export function createVoiceHistoryConsumer<
       return read(query);
     },
     async exportHistory(input) {
+      if (pendingOpen) {
+        const readEpoch = operationEpoch;
+        await pendingOpen;
+        assertOperationCurrent(readEpoch);
+      }
       const epoch = beginOperation();
       const expectedSessionId = sessionId;
       if (input.range === 'all' && expectedSessionId && isScopeCurrent()) {
@@ -520,7 +573,10 @@ export function createVoiceHistoryConsumer<
     },
     async clear() {
       const epoch = beginOperation();
-      return await deps.runCarrierOperation(async () => {
+      pendingOpen = null;
+      readState = 'ready';
+      emit();
+      const result = await deps.runCarrierOperation(async () => {
         if (!sessionId) {
           await discover(epoch);
         }
@@ -576,6 +632,11 @@ export function createVoiceHistoryConsumer<
         }
         return { cleared: true };
       });
+      if (epoch === operationEpoch) {
+        readState = 'ready';
+        emit();
+      }
+      return result;
     },
   });
 }

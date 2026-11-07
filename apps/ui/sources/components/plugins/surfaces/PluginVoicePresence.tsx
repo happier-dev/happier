@@ -1,9 +1,10 @@
 import * as React from 'react';
-import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '@happier-dev/plugin-ui';
+import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '@happier-dev/plugin-ui';
 import { useVoiceAttemptControl, type VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { VoiceMark } from '@/components/voice/presence/VoiceMark';
 import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
 import { VoiceTransport } from '@/components/voice/presence/VoiceTransport';
+import { VoiceCompactTranscript } from '@/components/voice/presence/VoiceCompactTranscript';
 
 const VoiceContext = React.createContext<VoiceAttemptControlProjection | null>(null);
 
@@ -24,6 +25,10 @@ export function PluginVoiceMark(props: VoiceMarkProps): React.ReactElement | nul
 export function PluginVoiceStatusLine(props: VoiceStatusLineProps): React.ReactElement | null {
     const voice = React.useContext(VoiceContext);
     return voice ? <VoiceStatusLine voice={voice} size={props.size} testID={props.testID} /> : null;
+}
+export function PluginVoiceCompactTranscript(props: VoiceCompactTranscriptProps): React.ReactElement | null {
+    const voice = React.useContext(VoiceContext);
+    return voice ? <VoiceCompactTranscript voice={voice} testID={props.testID} /> : null;
 }
 export function PluginVoiceTransport(props: VoiceTransportProps): React.ReactElement | null {
     const voice = React.useContext(VoiceContext);

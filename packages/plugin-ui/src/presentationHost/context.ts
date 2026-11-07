@@ -24,7 +24,7 @@ import type { DragSourceProps, DropTargetProps } from '../components/EntityDragD
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
-import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps } from '../components/Voice.js';
+import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps } from '../components/Voice.js';
 import type { VoiceAttemptPresentation } from '@happier-dev/plugin-sdk/voice';
 import type { PluginUiScrollActivityTracker } from './scrollActivity.js';
 import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSurfaceRegistration.js';
@@ -210,6 +210,7 @@ export type PluginUiPresentationHost = Readonly<{
   renderVoiceMark?(input: Omit<VoiceMarkProps, 'fallback'>): ReactNode;
   renderVoiceStatusLine?(input: Omit<VoiceStatusLineProps, 'fallback'>): ReactNode;
   renderVoiceTransport?(input: Omit<VoiceTransportProps, 'fallback'>): ReactNode;
+  renderVoiceCompactTranscript?(input: Omit<VoiceCompactTranscriptProps, 'fallback'>): ReactNode;
   /**
    * Draw one Daybreak empty-state scene through the host's scene renderer, which owns the ink, line
    * widths, the planet, motion and theme. Absent, a state keeps its glyph.

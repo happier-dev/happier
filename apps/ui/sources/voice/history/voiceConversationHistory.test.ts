@@ -3,8 +3,20 @@ import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/con
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { readVoiceConversationHistory } from './voiceConversationHistory';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 describe('Voice conversation History projection', () => {
+    it('omits recording-private conversations from compact and opened history sources', () => {
+        const serverId = 'voice-history-home';
+        const session = createSessionFixture({ id: 'private-voice', serverId,
+            metadata: { ...createSessionFixture().metadata!, name: 'Confidential conversation',
+                ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } });
+        const isSessionVisible = createSessionRecordingVisibility(true, { [serverId]: ['private'] }, () => ['private']);
+        for (const state of [{ sessions: { [session.id]: session }, sessionListRowsByServerId: {} },
+            { sessions: {}, sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } } }]) {
+            expect(readVoiceConversationHistory(state, { serverId, isSessionVisible }).conversations).toEqual([]);
+        }
+    });
     it('keeps a newer compact title and blocked-input fact ahead of an older opened Session', () => {
         const serverId = 'voice-history-home';
         const previous = createSessionFixture({ id: 'retained-voice', serverId, metadataVersion: 1,

@@ -13,6 +13,7 @@ export type VoiceSurfaceStatusPresentation = Readonly<{
   wordKey?: 'voiceAssistant.microphoneBlocked';
   labelKey:
     | 'voiceAssistant.label'
+    | 'voiceAssistant.connected'
     | 'voiceAssistant.connecting'
     | 'voiceAssistant.reconnecting'
     | 'voiceAssistant.listening'
@@ -35,6 +36,8 @@ export function resolveVoiceSurfaceStatusPresentation(
   switch (state) {
     case 'idle':
       return { tone: 'neutral', labelKey: 'voiceAssistant.label' };
+    case 'live':
+      return { tone: 'active', labelKey: 'voiceAssistant.connected' };
     case 'connecting':
       return { tone: 'pending', labelKey: 'voiceAssistant.connecting' };
     case 'reconnecting':

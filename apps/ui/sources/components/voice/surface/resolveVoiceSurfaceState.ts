@@ -1,23 +1,14 @@
 import type {
   VoiceMachineErrorPresentation,
 } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
+import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 import type {
   VoiceSessionMode,
   VoiceSessionPresentationState,
   VoiceSessionStatus,
 } from '@/voice/session/types';
 
-export type VoiceSurfaceState =
-  | 'idle'
-  | 'connecting'
-  | 'listening'
-  | 'transcribing'
-  | 'thinking'
-  | 'speaking'
-  | 'reconnecting'
-  | 'permission_required'
-  | 'error'
-  | 'interrupted';
+export type VoiceSurfaceState = VoiceAttemptPresentation['surfaceState'];
 
 export function resolveVoiceSurfaceState(input: Readonly<{
   status: VoiceSessionStatus;
@@ -42,5 +33,5 @@ export function resolveVoiceSurfaceState(input: Readonly<{
   if (input.mode === 'transcribing') return 'transcribing';
   if (input.mode === 'thinking') return 'thinking';
   if (input.mode === 'listening') return 'listening';
-  return 'idle';
+  return 'live';
 }

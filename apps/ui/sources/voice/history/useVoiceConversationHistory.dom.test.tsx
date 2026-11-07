@@ -1,0 +1,148 @@
+/** @vitest-environment jsdom */
+import 'fake-indexeddb/auto';
+import * as React from 'react';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { storage } from '@/sync/domains/state/storageStore';
+import { useVoiceConversationHistory } from './useVoiceConversationHistory';
+import { createVoiceHistoryListRowFixture } from './voiceConversationHistory.testkit';
+import { createVoiceSettingsAccountTestHarness, type VoiceSettingsAccountTestHarness } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+
+describe('Voice conversation History discovery', () => {
+    let account: VoiceSettingsAccountTestHarness;
+    beforeEach(async () => {
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { features: createRootLayoutFeaturesResponse({
+            features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+        }) });
+        await getServerFeaturesSnapshot({ serverId: account.scope.serverId, force: true });
+        const { sync } = await import('@/sync/sync');
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        await sync.refreshSessions();
+    });
+    afterEach(async () => { setScreenSharingPrivacyActive(false); await account?.dispose(); installDisconnectedServerSocketBoundary(); });
+    it('pages active and archived custody on demand without transcript reads or unrelated arrival work', async () => {
+        const serverId = account.scope.serverId;
+        const requests: string[] = [];
+        let bodyReads = 0;
+        const wire = async (id: string, voice: boolean, retired = false) => {
+            const session = createSessionFixture({ id, archivedAt: retired ? 10 : null,
+                metadata: { ...createSessionFixture().metadata!, name: id,
+                    ...(voice ? buildSystemSessionMetadataV1({ key: retired ? 'voice_conversation_retired' : 'voice_conversation', hidden: true }) : {}) } });
+            return createVoiceHistoryListRowFixture(session, { credentials: account.credentials });
+        };
+        const [ordinary, older, retired] = await Promise.all([
+            wire('ordinary', false), wire('older-voice', true), wire('retired-voice', true, true),
+        ]);
+        const request = account.request.getMockImplementation()!;
+        account.request.mockImplementation(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v2/sessions/query') {
+                const query = SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)));
+                requests.push(`${query.storage}:${query.cursor ?? 'first'}`);
+                const archived = query.storage === 'archived';
+                return Response.json({ sessions: [archived ? retired : query.cursor ? older : ordinary],
+                    nextCursor: archived || query.cursor ? null : encodeV2SessionListCursorV1('ordinary'),
+                    hasNext: !archived && !query.cursor, attentionNextCursor: null, attentionHasNext: false });
+            }
+            if (/\/sessions\/[^/]+(?:\/messages)?$/u.test(path) || path.endsWith('/sessions/read-batch')) bodyReads += 1;
+            return request(input, init);
+        });
+        const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+        const previousAct = environment.IS_REACT_ACT_ENVIRONMENT;
+        environment.IS_REACT_ACT_ENVIRONMENT = true;
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        let renders = 0;
+        let query = '';
+        type History = ReturnType<typeof useVoiceConversationHistory> & Readonly<{
+            coverageComplete?: boolean; loadNext?: () => Promise<void>;
+        }>;
+        const state: { current: History | null } = { current: null };
+        function Host() { renders += 1; state.current = useVoiceConversationHistory(query); return null; }
+        try {
+            await act(async () => root.render(<Host />));
+            expect(state.current?.coverageComplete).toBe(false);
+            await waitForHomeGovernance(async () => {
+                await act(async () => {});
+                expect(requests).toEqual(expect.arrayContaining(['active:first', 'archived:first']));
+                expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('retired-voice');
+            });
+            await act(async () => { await state.current?.loadNext?.(); });
+            await waitForHomeGovernance(async () => { await act(async () => {});
+                expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('older-voice'); });
+            await waitForHomeGovernance(async () => {
+                await act(async () => {});
+                expect(state.current?.states.active?.phase).toBe('ready');
+                expect(state.current?.states.archived?.phase).toBe('ready');
+                expect(state.current?.coverageComplete).toBe(true);
+            });
+            const beforeSearchRequests = requests.length;
+            query = 'OLDER';
+            await act(async () => root.render(<Host />));
+            expect(state.current?.conversations.map(row => row.address.sessionId)).toEqual(['older-voice']);
+            expect(requests.length).toBe(beforeSearchRequests);
+            await act(async () => storage.getState().applySessions([createSessionFixture({ id: 'older-voice', serverId,
+                metadata: { ...createSessionFixture().metadata!, name: 'older-voice',
+                    ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } })]));
+            await act(async () => storage.setState(state => ({ sessionMessages: { ...state.sessionMessages,
+                'older-voice': createSessionMessagesFixture({ isLoaded: true, messagesVersion: 1,
+                    messageIdsOldestFirst: ['spoken-answer'], messagesById: {
+                        'spoken-answer': { id: 'spoken-answer', kind: 'agent-text', localId: null,
+                            text: 'The release is ready', createdAt: 1 },
+                    } }),
+            } })));
+            query = 'release';
+            await act(async () => root.render(<Host />));
+            expect(state.current?.conversations).toMatchObject([{ title: 'The release is ready', loadedMessageCount: 1 }]);
+            expect(requests.length).toBe(beforeSearchRequests);
+            expect(bodyReads).toBe(0);
+            query = '';
+            await act(async () => root.render(<Host />));
+            const settledRenders = renders;
+            const settledRequests = requests.length;
+            for (let index = 0; index < 60; index++) await act(async () => storage.setState(state => ({
+                sessionMessages: { ...state.sessionMessages, unrelated: createSessionMessagesFixture({ messagesVersion: index + 1 }) },
+            })));
+            expect(renders - settledRenders).toBe(0);
+            expect(requests.length - settledRequests).toBe(0);
+            expect(bodyReads).toBe(0);
+            await act(async () => storage.setState({ settings: { ...storage.getState().settings,
+                sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } },
+                sessionOrganizationTagAssignmentsBySessionKey: {
+                    [buildSessionOrganizationSessionKey(serverId, 'older-voice')]: { sessionId: 'older-voice', tagIds: ['private'] },
+                } }));
+            await act(async () => setScreenSharingPrivacyActive(true));
+            expect(state.current?.conversations.map(row => row.address.sessionId)).not.toContain('older-voice');
+            expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('retired-voice');
+            expect(requests.length).toBe(settledRequests);
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('older-voice');
+            await act(async () => storage.getState().applyServerScopedSessionListRowPatches(serverId, [{ sessionId: 'older-voice',
+                patch: { pendingCount: 1, pendingBlockedCount: 1 } }]));
+            expect(state.current?.conversations.find(row => row.address.sessionId === 'older-voice')?.hasBlockedInputs).toBe(true);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+            environment.IS_REACT_ACT_ENVIRONMENT = previousAct;
+            account.request.mockImplementation(request);
+        }
+    });
+});

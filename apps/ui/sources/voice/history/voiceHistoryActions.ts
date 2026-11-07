@@ -1,6 +1,6 @@
 import type { VoiceHistoryActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import { isVoiceHistoryOperationSupersededError, VoiceHistoryOperationSupersededError, type VoiceHistoryConsumer, type VoiceHistoryExportArtifact } from './voiceHistoryConsumer';
+import { isVoiceHistoryOperationSupersededError, VoiceHistoryOperationSupersededError, VOICE_HISTORY_LOADING_CODE, VOICE_HISTORY_LOAD_FAILED_CODE, type VoiceHistoryConsumer, type VoiceHistoryExportArtifact } from './voiceHistoryConsumer';
 import { VoiceConversationActionInputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
@@ -79,6 +79,12 @@ export async function executeVoiceHistoryAction(request: VoiceHistoryActionReque
         const value = request.input;
         const result = await ports.consumer.search(value.query, value.refresh);
         assertCurrent();
+        const readState = ports.consumer.getReadState();
+        if (readState === 'loading' || readState === 'error') {
+          const errorCode = readState === 'loading' ? VOICE_HISTORY_LOADING_CODE : VOICE_HISTORY_LOAD_FAILED_CODE;
+          return { ok: false as const, errorCode, error: errorCode };
+        }
+        if (readState === 'superseded') throw new VoiceHistoryOperationSupersededError();
         return result;
       }
       case 'ui.voice_global.history.load_older': {

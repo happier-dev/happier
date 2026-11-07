@@ -43,6 +43,12 @@ export function VoiceTransport({ fallback, ...input }: VoiceTransportProps): Rea
   return <>{useOptionalPluginUiPresentationHost()?.renderVoiceTransport?.(input) ?? fallback}</>;
 }
 
+export type VoiceCompactTranscriptProps = Readonly<{ testID?: string; fallback?: ReactNode }>;
+/** The host's compact caption and latest words from the nearest VoicePresence. */
+export function VoiceCompactTranscript({ fallback, ...input }: VoiceCompactTranscriptProps): ReactElement {
+  return <>{useOptionalPluginUiPresentationHost()?.renderVoiceCompactTranscript?.(input) ?? fallback}</>;
+}
+
 export type VoiceMarkArtProps = Readonly<{
   pose: 'mic' | 'ready' | 'shadow' | 'eclipse' | 'shade';
   size: number;

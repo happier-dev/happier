@@ -22,7 +22,7 @@ const IdSchema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 /** Read-only presentation. No provider error prose, prompt, transcript or credential state. */
 export const VoiceAttemptPresentationSchema = lazyZodSchema(() => z.strictObject({
   attemptId: z.nullable(IdSchema),
-  surfaceState: z.enum(['idle', 'connecting', 'listening', 'transcribing', 'thinking', 'speaking',
+  surfaceState: z.enum(['idle', 'live', 'connecting', 'listening', 'transcribing', 'thinking', 'speaking',
     'reconnecting', 'permission_required', 'error', 'interrupted']),
   live: z.boolean(), muted: z.boolean(),
   canStart: z.boolean(), canStop: z.boolean(), canMute: z.boolean(), canCommitInput: z.boolean(),

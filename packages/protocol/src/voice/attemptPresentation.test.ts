@@ -31,6 +31,10 @@ describe('Voice attempt public presentation', () => {
     };
     expect(VoiceConversationStatusSchema.safeParse(status).success).toBe(true);
     expect(VoiceConversationStatusSchema.parse({ ...status, presentation: input })).toMatchObject({ presentation: input });
+    expect(VoiceConversationStatusSchema.parse({
+      ...status, status: 'connected', mode: 'idle',
+      presentation: { ...input, surfaceState: 'live', failureKind: null, failureMessage: null, recovery: null },
+    })).toMatchObject({ status: 'connected', mode: 'idle', presentation: { surfaceState: 'live' } });
     expect(VoiceConversationStatusSchema.safeParse({ ...status, presentation: { ...input, errorMessage: 'private' } }).success).toBe(false);
   });
 });

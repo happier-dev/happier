@@ -39,7 +39,7 @@ describe('Voice conversation transcript projection', () => {
       retireLocalSession: id => { messages.delete(id); },
       runCarrierOperation: operation => operation(), now: () => new Date(0),
     });
-    expect((await consumer.search()).rows.map(row => row.id)).toEqual(['archived', 'recent']);
+    expect((await consumer.open()).rows.map(row => row.id)).toEqual(['archived', 'recent']);
     const artifact = await consumer.exportHistory({ range: 'all' });
     expect(artifact.rowCount).toBe(4);
     expect(JSON.parse([...artifact.chunks()].join('')).entries.map((row: { id: string }) => row.id))

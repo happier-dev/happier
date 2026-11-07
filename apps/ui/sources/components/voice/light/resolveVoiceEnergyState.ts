@@ -13,6 +13,8 @@ import type { VoiceEnergyState } from './useVoiceEnergy';
  */
 const ENERGY_BY_STATE: Readonly<Record<VoiceSurfaceState, VoiceEnergyState>> = Object.freeze({
     idle: Object.freeze({ luminosity: 0.18, energized: false, direction: 'none' }),
+    // Connected without a provider phase claims no listening or output activity.
+    live: Object.freeze({ luminosity: 0.18, energized: false, direction: 'none' }),
     connecting: Object.freeze({ luminosity: 0.4, energized: false, direction: 'orbit' }),
     listening: Object.freeze({ luminosity: 0.55, energized: true, direction: 'inward' }),
     transcribing: Object.freeze({ luminosity: 0.5, energized: false, direction: 'inward' }),

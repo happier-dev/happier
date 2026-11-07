@@ -94,6 +94,7 @@ export type VoiceAttemptIdleTarget = VoiceStartIntent;
 
 /** The app-level target: no surface session, started through the canonical hidden owner. */
 const VOICE_CONVERSING_SURFACE_STATES: ReadonlySet<VoiceSurfaceState> = new Set<VoiceSurfaceState>([
+    'live',
     'listening',
     'transcribing',
     'thinking',

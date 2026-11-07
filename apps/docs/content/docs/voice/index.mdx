@@ -323,25 +323,28 @@ turns into the target session's own transcript when there is one. A voice surfac
 inside a session targets that session, so there is no separate hidden conversation to go
 and find: reread it where you would reread anything else in that session.
 
-### Voice History, the standalone carrier
+### Voice History (0.3 development)
+
+**Settings → Voice → Privacy & data → Voice history** lists your owned Voice
+conversations, including archived conversations. Opening the list reads their
+titles and other metadata. A conversation's messages load when you open that
+conversation as a session. Search uses titles and messages already loaded on
+this device; it does not fetch unopened conversations' messages.
+
+Export reads the owned conversations' history and saves JSON. Clearing History
+permanently deletes the discovered owned Voice conversations through ordinary
+session deletion, including their messages. Transcripts written into unrelated
+target sessions are unaffected.
+
+### Targetless realtime transcripts
 
 The same providers, running with no target session, write into one account-wide hidden
 session instead: the Voice History carrier. It is shared rather than per-provider, so
 moving between realtime providers between conversations keeps adding to the same
 history.
 
-Read it at **Settings → Voice → Privacy & data → Voice history**. Search runs over the
-messages already decrypted on this device. Loading older pages is a read-only fetch and
-decrypt operation: it does not change the carrier or lock History on another device. You
-can export the loaded history as JSON or clear it.
-
-Clearing permanently deletes that one carrier session for the account, including the
-messages already synchronized at the deletion boundary, and leaves transcripts written
-into real sessions untouched. It is blocked only when this client has an active targetless
-Voice attempt bound to that exact carrier. There is no cross-device Voice lock: clearing
-does not end an attempt on another device, and deletion wins over stale carrier snapshots.
-A later authoritative final from an attempt that continues elsewhere may create a fresh
-carrier under the same History identity.
+In 0.3 development, this older shared carrier is no longer a Voice History
+search or export source. Clearing Voice History does not delete it.
 
 ### An agent-backed conversation
 
@@ -355,8 +358,8 @@ an existing one only while it is still usable.
 carries the conversation, at voice home or at the session's project root depending on
 where you started it and on **Stay in voice home**.
 
-Neither of these is the Voice History carrier, so neither shows up in Voice History and
-neither is removed by clearing it. Delete the underlying session instead.
+Owned Voice conversations appear in Voice History and are included when you
+clear it. Their underlying session remains the place to open the full transcript.
 
 ### Local voice, direct to session
 

@@ -47,7 +47,7 @@ vi.mock('react-native', async () => {
  * Voice section rather than ending the call. Facts come from the real `resolveVoiceAttemptControl`.
  */
 
-type Phase = 'idle' | 'connecting' | 'listening' | 'reconnecting' | 'failed';
+type Phase = 'idle' | 'live' | 'connecting' | 'listening' | 'reconnecting' | 'failed';
 
 function projection(phase: Phase, overrides: Partial<{ muted: boolean }> = {}): VoiceAttemptControlProjection {
     const surfaceState: VoiceSurfaceState = phase === 'idle' ? 'idle' : phase === 'failed' ? 'error' : phase;
@@ -273,7 +273,7 @@ describe('VoiceStatusLine', () => {
     it('runs the clock only while a conversation is underway, never while opening, blocked or failed', async () => {
         const startedAt = Date.now() - 134_000;
         const clocked = () => /\d:\d\d/.test(screen?.getTextContent() ?? '');
-        for (const [phase, expected] of [['listening', true], ['reconnecting', true], ['connecting', false], ['failed', false]] as const) {
+        for (const [phase, expected] of [['live', true], ['listening', true], ['reconnecting', true], ['connecting', false], ['failed', false]] as const) {
             screen = await renderScreen(<VoiceStatusLine voice={{ ...projection(phase), elapsedStartedAt: startedAt }} size="island" />);
             expect([phase, clocked()]).toEqual([phase, expected]);
             await screen.unmount();

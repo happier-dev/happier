@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Message } from '@happier-dev/session-core/messages';
-import { standardCleanup } from '@/dev/testkit';
+import { createDeferred, standardCleanup } from '@/dev/testkit';
 import { createVoiceHistoryConsumer, VoiceHistoryOperationSupersededError, type VoiceHistoryExportArtifact } from './voiceHistoryConsumer';
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
@@ -20,6 +20,42 @@ function message(id: string, text: string, createdAt: number): Message {
 }
 
 describe('History through the default Action composition', () => {
+  it('settles the initial search while its owner read is pending and publishes a failed read', async () => {
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
+    onTestFinished(account.dispose);
+    const discovery = createDeferred<string | null>();
+    const started = createDeferred<void>();
+    const consumer = createVoiceHistoryConsumer({
+      readScopeKey: () => 'held-history', captureScope: async () => ({ key: 'held-history' }),
+      discoverHistorySession: async () => { started.resolve(); return await discovery.promise; },
+      refreshSessionMessages: async () => {},
+      loadOlderMessages: async () => ({ loaded: 0, hasMore: false, status: 'no_more' }),
+      readMessages: () => [], readMessagesRevision: () => 0,
+      subscribeHistorySources: () => () => {}, resolveProviderLabel: () => '',
+      deleteSession: async () => ({ success: true }), retireLocalSession: () => {},
+      runCarrierOperation: async operation => await operation(), now: () => new Date(0),
+    });
+    const executor = createDefaultActionExecutor({ voiceHistory: { consumer, saveExportArtifact: async () => {} } });
+    let settled = false;
+    const searching = executor.execute('ui.voice_global.history.search', {}, {
+      surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+      expectedAccountId: account.scope.accountId,
+    }).then(result => { settled = true; return result; });
+    await started.promise;
+    try {
+      await vi.waitFor(() => expect(settled).toBe(true));
+      expect.soft(await searching).toMatchObject({ ok: false, errorCode: 'voice_history_loading' });
+      expect(consumer.getReadState()).toBe('loading');
+    } finally {
+      discovery.reject(new Error('History read unavailable'));
+      await searching.catch(() => {});
+    }
+    await vi.waitFor(() => expect(consumer.getReadState()).toBe('error'));
+    expect(await executor.execute('ui.voice_global.history.search', {}, {
+      surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+      expectedAccountId: account.scope.accountId,
+    })).toMatchObject({ ok: false, errorCode: 'voice_history_load_failed' });
+  });
   it('searches without rereading history, pages and streams a filtered complete export, then clears only its carrier', async () => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));
     onTestFinished(account.dispose);
@@ -61,7 +97,7 @@ describe('History through the default Action composition', () => {
       saveExportArtifact: async artifact => { exported = artifact; } } });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
-    const search = await executor.execute('ui.voice_global.history.search', { query: 'release' }, context);
+    const search = await executor.execute('ui.voice_global.history.search', { query: 'release', refresh: true }, context);
     expect(search).toMatchObject({ ok: true, result: { sessionId: 'history', rows: [{ id: 'latest' }], hasMore: null } });
     if (search.ok) expect(VoiceConversationActionOutputSchemas['ui.voice_global.history.search'].safeParse(search.result).success).toBe(true);
     const warmReads = historyReads;

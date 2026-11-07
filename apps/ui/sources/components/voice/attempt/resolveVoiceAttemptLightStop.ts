@@ -14,6 +14,7 @@ import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceS
 export function resolveVoiceAttemptLightStop(state: VoiceSurfaceState): VoiceLightStop {
     switch (state) {
         case 'idle':
+        case 'live':
         case 'connecting':
         case 'listening':
             return 'cool';

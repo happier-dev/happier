@@ -16,7 +16,7 @@ export const ProseDiffViewer = lazyPresenter(async () => ({ default: (await impo
 
 export { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 export { QRCode } from '@/components/qr/QRCode';
-export { PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport } from './PluginVoicePresence';
+export { PluginVoicePresence, PluginVoiceMark, PluginVoiceStatusLine, PluginVoiceTransport, PluginVoiceCompactTranscript } from './PluginVoicePresence';
 export { PluginDictationButton } from './PluginDictationButton';
 export { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 export { VoiceStatusCell } from '@/components/voice/presence/VoiceStatusCell';

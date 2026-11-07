@@ -55,6 +55,11 @@ describe('ordinary Voice conversations through History Actions', () => {
       saveExportArtifact: async value => { artifact = value; } } });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
+    // Cold search settles promptly while the same consumer read progresses.
+    // Its warm answer and export retain the ordinary-conversation contract.
+    expect(await executor.execute('ui.voice_global.history.search', { query: 'RUN62D exact tag' }, context))
+      .toMatchObject({ ok: false, errorCode: 'voice_history_loading' });
+    await vi.waitFor(() => expect(consumer.getReadState()).toBe('ready'));
     expect(await executor.execute('ui.voice_global.history.search', { query: 'RUN62D exact tag' }, context))
       .toMatchObject({ ok: true, result: { loadedRowCount: 2, rows: [
         { role: 'user', text: 'RUN62D exact tag question' }, { role: 'assistant', text: 'RUN62D exact tag answer' },

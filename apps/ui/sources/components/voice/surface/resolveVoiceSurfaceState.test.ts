@@ -9,7 +9,7 @@ describe('resolveVoiceSurfaceState', () => {
     [{ status: 'connected', mode: 'transcribing' }, 'transcribing'],
     [{ status: 'connected', mode: 'thinking' }, 'thinking'],
     [{ status: 'connected', mode: 'speaking' }, 'speaking'],
-    [{ status: 'connected', mode: 'idle' }, 'idle'],
+    [{ status: 'connected', mode: 'idle' }, 'live'],
   ] as const)('projects %o to %s', (snapshot, expected) => {
     expect(resolveVoiceSurfaceState(snapshot)).toBe(expected);
   });

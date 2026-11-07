@@ -7,6 +7,7 @@ import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { resolveVoiceHistoryProviderLabel } from './defaultVoiceHistoryConsumer';
 import { tLoose } from '@/text';
 import { storage } from '@/sync/domains/state/storageStore';
+import { createDeferred } from '@/dev/testkit';
 
 import {
   createVoiceHistoryConsumer,
@@ -105,6 +106,75 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
 }
 
 describe('projectVoiceHistoryRows', () => {
+  it('settles warm search from loaded rows without waiting for cold transcript discovery', async () => {
+    const discovery = createDeferred<string | null>();
+    let discoveries = 0;
+    const consumer = createVoiceHistoryConsumer(createDeps({ discoverHistorySession: () => {
+      discoveries += 1;
+      return discovery.promise;
+    } }));
+    const initial = consumer.search('', true);
+    let searched = false;
+    const search = consumer.search('release').then(result => { searched = true; return result; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(searched).toBe(true);
+    expect(discoveries).toBe(1);
+    discovery.resolve(null);
+    await Promise.all([initial, search]);
+  });
+  it('keeps an all-history export waiting for the read that search no longer blocks on', async () => {
+    const refreshed = createDeferred<void>();
+    const started = createDeferred<void>();
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      refreshSessionMessages: async () => { started.resolve(); await refreshed.promise; },
+      readMessages: () => [agentMessage('answer', 'Release ready', 1)],
+    }));
+    const initial = consumer.search('', true);
+    await started.promise;
+    let exported = false;
+    const exporting = consumer.exportHistory({ range: 'all' }).then(result => { exported = true; return result; });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(exported).toBe(false);
+    refreshed.resolve();
+    await initial;
+    expect(await exporting).toMatchObject({ rowCount: 1 });
+  });
+  it('retires the pending read when an independent clear fails', async () => {
+    const refreshed = createDeferred<void>();
+    const started = createDeferred<void>();
+    const consumer = createVoiceHistoryConsumer(createDeps({
+      refreshSessionMessages: async () => { started.resolve(); await refreshed.promise; },
+      deleteSession: async () => ({ success: false, code: 'session_delete_conflict', message: 'Unavailable' }),
+    }));
+    const opening = consumer.open();
+    await started.promise;
+    try {
+      await expect(consumer.clear()).rejects.toThrow('Unavailable');
+      expect(consumer.getReadState()).toBe('ready');
+    } finally {
+      refreshed.resolve();
+      await opening.catch(() => {});
+    }
+  });
+  it('keeps a failed discovery failed across search until an explicit refresh retries', async () => {
+    let reads = 0;
+    const consumer = createVoiceHistoryConsumer(createDeps({ discoverHistorySession: async () => {
+      reads += 1;
+      if (reads === 1) throw new Error('Unavailable');
+      return null;
+    } }));
+    await expect(consumer.open()).rejects.toThrow('Unavailable');
+    expect(consumer.getReadState()).toBe('error');
+    await consumer.search('release');
+    await consumer.search('another query');
+    expect(reads).toBe(1);
+    expect(consumer.getReadState()).toBe('error');
+    await consumer.search('', true);
+    expect(reads).toBe(2);
+    expect(consumer.getReadState()).toBe('ready');
+  });
   it('subscribes only to the discovered carrier and releases its message demand on clear', async () => {
     const messages = storage.getState().sessionMessages;
     const consumer = createVoiceHistoryConsumer(createDeps({
@@ -203,7 +273,7 @@ describe('createVoiceHistoryConsumer', () => {
       voiceMessage({ id: 'other', role: 'user', text: 'Another question', createdAt: 2, source: OPENAI_SOURCE }),
     ] });
     const consumer = createVoiceHistoryConsumer(deps);
-    expect((await consumer.search('release')).rows.map(row => row.id)).toEqual(['release']);
+    expect((await consumer.search('release', true)).rows.map(row => row.id)).toEqual(['release']);
     expect((await consumer.search('question')).rows.map(row => row.id)).toEqual(['other']);
     expect(deps.discoverHistorySession).toHaveBeenCalledOnce();
     expect(deps.refreshSessionMessages).toHaveBeenCalledOnce();

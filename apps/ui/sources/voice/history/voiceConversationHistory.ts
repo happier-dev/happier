@@ -6,15 +6,16 @@ import { isVoiceConversationCustodySessionMetadata, isVoiceConversationSystemSes
     shouldRetireLegacyVoiceConversationSession } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { readVoiceHistoryPendingRecovery } from './useVoiceHistoryPendingRecovery';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/control/contract';
 import { isSessionAccessOwner } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { deriveSessionListMeaningfulActivityAt } from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { isSessionListRenderableNewerThanSession } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 /** A demand-only projection of the existing Session list; never loads bodies or invents complete coverage. */
 export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions' | 'sessionListRowsByServerId'> & Partial<Pick<StorageState, 'sessionPending'>>,
-    options?: Readonly<{ serverId: string; coverageComplete?: boolean }>) {
+    options?: Readonly<{ serverId: string; coverageComplete?: boolean; isSessionVisible?: SessionRecordingVisibility }>) {
     let readableDisplays = true;
     const conversations = new Map<string, Readonly<{
         address: Readonly<{ serverId: string; sessionId: string }>;
@@ -32,6 +33,7 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
             if (!isVoiceConversationCustodySessionMetadata(row.metadata)) continue;
             const address = normalizeSessionAddress(options?.serverId ?? serverId, row.id);
             if (!address) continue;
+            if (options?.isSessionVisible && !options.isSessionVisible(address)) continue;
             conversations.set(sessionAddressKey(address), { address, title: getSessionName(row, serverId, { snapshotOnly: true }),
                 lastActivityAt: deriveSessionListMeaningfulActivityAt({ sessionMeaningfulActivityAt: row.meaningfulActivityAt,
                     sessionCreatedAt: row.createdAt, latestCommittedMessageCreatedAt: null, latestPendingMessageCreatedAt: null }) ?? row.createdAt,
@@ -44,6 +46,7 @@ export function readVoiceConversationHistory(state: Pick<StorageState, 'sessions
         if (options && !areServerProfileIdentifiersEquivalent(session.serverId, options.serverId)) continue;
         const address = normalizeSessionAddress(options?.serverId ?? session.serverId, session.id);
         if (!address) continue;
+        if (options?.isSessionVisible && !options.isSessionVisible(address)) continue;
         const row = readSessionListRowForServerId(state.sessionListRowsByServerId, address.serverId, address.sessionId);
         // The Session-list owner may have a newer display than the last opened body.
         if (row && isSessionListRenderableNewerThanSession(row, session)) continue;

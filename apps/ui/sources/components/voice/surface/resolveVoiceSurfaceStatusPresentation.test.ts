@@ -10,6 +10,7 @@ import type { VoiceSurfaceState } from './resolveVoiceSurfaceState';
 // type-checking, so a new state can never reach a presentation by falling through a default branch.
 const expectedByState = {
   idle: { tone: 'neutral', labelKey: 'voiceAssistant.label' },
+  live: { tone: 'active', labelKey: 'voiceAssistant.connected' },
   connecting: { tone: 'pending', labelKey: 'voiceAssistant.connecting' },
   reconnecting: { tone: 'pending', labelKey: 'voiceAssistant.reconnecting' },
   listening: { tone: 'active', labelKey: 'voiceAssistant.listening' },

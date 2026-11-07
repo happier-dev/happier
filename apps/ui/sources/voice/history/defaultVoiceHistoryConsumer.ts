@@ -22,6 +22,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 
 import {
   createVoiceHistoryConsumer,
+  VOICE_HISTORY_LOAD_FAILED_CODE,
   type VoiceHistoryCapturedScope,
   type VoiceHistoryPageResult,
   type VoiceHistoryProviderSource,
@@ -36,7 +37,7 @@ type VoiceHistoryLoadStage =
   | 'refresh';
 
 class VoiceHistoryLoadError extends Error {
-  readonly code = 'voice_history_load_failed';
+  readonly code = VOICE_HISTORY_LOAD_FAILED_CODE;
 
   constructor(
     readonly stage: VoiceHistoryLoadStage,
@@ -265,6 +266,7 @@ export function createDefaultVoiceHistoryConsumer() {
     hydrateSession: (sessionId, authority) =>
       sync.ensureSessionVisibleForMessageRoute(sessionId, {
         forceRefresh: true,
+        hydrateMessages: false,
         authority,
       }),
     refreshSessionMessages: (sessionId, authority) =>

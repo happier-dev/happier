@@ -1467,6 +1467,8 @@ Declaration: `dist/index.d.ts`
 - type `UseListMultiSelectionControllerInput` from `dist/index.d.ts`
 - value `ValidationMessage` from `dist/index.d.ts`
 - type `ValidationMessageProps` from `dist/index.d.ts`
+- value `VoiceCompactTranscript` from `dist/index.d.ts`
+- type `VoiceCompactTranscriptProps` from `dist/index.d.ts`
 - value `VoiceMark` from `dist/index.d.ts`
 - value `VoiceMarkArt` from `dist/index.d.ts`
 - type `VoiceMarkArtProps` from `dist/index.d.ts`
@@ -3252,6 +3254,8 @@ Declaration: `dist/components/index.d.ts`
 - type `UseListMultiSelectionControllerInput` from `dist/components/index.d.ts`
 - value `ValidationMessage` from `dist/components/index.d.ts`
 - type `ValidationMessageProps` from `dist/components/index.d.ts`
+- value `VoiceCompactTranscript` from `dist/components/index.d.ts`
+- type `VoiceCompactTranscriptProps` from `dist/components/index.d.ts`
 - value `VoiceMark` from `dist/components/index.d.ts`
 - value `VoiceMarkArt` from `dist/components/index.d.ts`
 - type `VoiceMarkArtProps` from `dist/components/index.d.ts`
