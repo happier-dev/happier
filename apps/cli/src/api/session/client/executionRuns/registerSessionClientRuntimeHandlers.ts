@@ -81,7 +81,7 @@ import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 import type {
     BrowserRecordingComposerAttachInput,
     BrowserRecordingComposerAttachResult,
-} from '@/daemon/browser/recording/attachToComposer';
+} from '../../../../daemon/recording/attachToComposer';
 import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
@@ -1387,6 +1387,7 @@ export function registerSessionClientRuntimeHandlers(
     };
     let disposePromise: Promise<void> | null = null;
     return { refreshDemandedMcpCatalog: ownerAccountSnapshots.refreshDemandedMcpCatalog,
+        readSessionAttachmentRequester: sessionHandlersRegistration.readSessionAttachmentRequester,
         resolveSessionAttachment: sessionHandlersRegistration.resolveSessionAttachment,
         disposeExecutionRuns,
         dispose: () => {

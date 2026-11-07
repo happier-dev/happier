@@ -81,9 +81,11 @@ signed effect identity. Security and Sharing keep Review available after a
 successor publishes unavailable isolation; Preview supplies the actual native
 prerequisite and remedy.
 The shared authority presenter exposes separate-user availability as available,
-can-turn-on, or unavailable with a reason. Security and Sharing consume that same
-decision; a pending or unavailable native setup observation is not a platform
-availability decision.
+can-turn-on, repairable, or unavailable with a reason. Configured member placement
+whose reported readiness is neither effective nor applying is repairable through
+the existing Preview → Set flow. Security and Sharing consume that decision;
+an unavailable native setup observation does not make a supported platform
+unsupported.
 
 An isolation conflict after installation does not undo the installed CLI or
 stop the enrolled daemon. The bootstrap operation remains failed and retains
@@ -2262,6 +2264,14 @@ binding, including the Machine owner, before the folder worker starts.
 Background folder and isolation-status reads omit this intent and consume only
 an existing binding; they never provision a member.
 
+The daemon's Session spawn path also prepares the requesting person's native
+identity before creating a checkout or checking the Session folder. It passes
+that held identity into the existing native filesystem worker, which runs the
+directory and admitted SCM owners under the selected identity. Connected-service
+preparation consumes the same held identity rather than selecting another one.
+Ordinary daemon placement and managed-directory allocation retain their existing
+owners.
+
 ### Sessionless Project Services (0.3 development)
 
 `daemon/local/services/launch/projectDeclarations.ts` owns reviewed declaration
@@ -3642,6 +3652,24 @@ resize; recipients receive shared capacity/Happier totals and only Session folde
 whose Account custody is proven by the incumbent requester owner. Inventory and
 scan paths remain in Machine RPC payloads, not Machine metadata or broadcast Sync;
 the user's protected-folder policy is the exception described below.
+
+Explicit Manage summary and refresh Actions also return optional `docker` facts
+from `storage/dockerStorage.ts`; constructing the owner, Use reads and parked
+watches perform no Docker work. Watches retain the last explicit observation.
+The finite Engine `/system/df` read uses the existing `system dial-stdio`
+transport, including Docker contexts, TLS and Windows named pipes. Image totals
+use native layer occupancy; volume and build-cache usage remain separate from
+filesystem totals because their storage can overlap. Unknown native sizes stay
+unreported. Candidate reclaim bytes include only measured exclusive layers.
+
+Deployment retention supplies expired owned aliases and retained previous-release
+counts per Environment. `dockerImageCustody.ts` is the shared read/prune decision:
+running, retained, foreign-aliased and unproven identities cannot be candidates.
+The inventory binds an exact receipt through its config id or single-manifest
+descriptor without saving image archives. Prune still verifies native custody at
+effect time. Volumes are always kept; unproven build cache reports zero reclaim.
+Unavailable native inventory or deployment custody is typed and an explicit retry
+can recover it; native sizes remain visible when only custody is unavailable.
 
 Storage summary and category discovery skip paths denied by native `EACCES` or
 `EPERM` while retaining readable items and totals. Their optional `incomplete`

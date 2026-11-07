@@ -7022,6 +7022,14 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Storage summaries add optional `docker` presentation facts on the
+existing summary and refresh Actions. The summary remains additive-open/drop:
+older readers drop the leaf and new readers accept its absence. Native candidate
+identities reuse the closed Docker prune selectors as expectations, with custody
+decided by the daemon at effect time. This changes no request, Action, persisted
+format or wire epoch. The inspected `../0.2` frontier at `f760eedfec` has no
+`packages/protocol/src/storage/storageV1.ts` path.
+
 Unreleased 0.3 backup restore accepts optional `backupOperationId` to select an
 exact retained scheduled run alongside its snapshot `restoreBackupId`. Omitting
 it preserves pre-migration receipt selection. Backup run results optionally retain

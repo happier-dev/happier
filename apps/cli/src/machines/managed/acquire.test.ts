@@ -208,7 +208,7 @@ describe('creation environment stage', () => {
                     requestId: 'fresh-retry', target: { kind: 'machine' as const, machineId: 'guest' },
                     authentication: { kind: 'account' as const, tokenEpoch: 1 } };
                 expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request.envelope, binding, material })?.input)
-                    .toEqual({ serverId: 'srv_bootstrap', machineId: 'guest', enabled: true });
+                    .toEqual({ serverId: 'srv_bootstrap', machineId: 'guest', enabled: true, memberProvisioning: 'linuxUsersV1' });
                 previews++;
                 return { status: 200, data: prepareExternalActionResponseV2({ binding, request: request.envelope, material,
                     randomBytes: tweetnacl.randomBytes, executedMachineId: 'guest', execution: { ok: true, result: {
@@ -347,8 +347,8 @@ describe('creation environment stage', () => {
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
         expect(isolationWritten).toBe(outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
         for (const requestedPolicy of isolationInputs) {
-            expect(requestedPolicy).toMatchObject({ enabled: true });
-            expect(requestedPolicy).not.toHaveProperty('memberProvisioning');
+            // OWNER-RULINGS 2026-11-07: creation children carry the dedicated member default.
+            expect(requestedPolicy).toMatchObject({ enabled: true, memberProvisioning: 'linuxUsersV1' });
         }
         expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
     });

@@ -29,9 +29,33 @@ availability claim.
 
 Machine sharing is separate, incomplete 0.3 development work and has not shipped.
 A Session share does not grant general access to its computer, and Machine access
-alone does not share somebody else's Sessions or credentials. Removing Machine access
-must not be taken as confirmation that running processes have stopped; that cleanup
-journey is still under development.
+alone does not share somebody else's Sessions or credentials.
+
+In unreleased 0.3 development, a Machine **Can use** grant also lets you run
+Workflows and schedules there. Before starting or saving the schedule, review
+the full-sign-in disclosure: the Machine receives your Account-wide Happier
+sign-in, and a schedule keeps it there while its trigger exists. Disabling or
+deleting the trigger retires that sign-in after its admitted Runs finish.
+Use your own Connected Account credentials for the Agent. Selecting the Machine
+owner's profile or native login is refused with a typed message; select a profile
+in your own Account and update the Workflow's Connected Account selection.
+
+Machine access grants neither person access to the other's private Runs through
+the server: the Machine owner cannot read your private Runs, and you cannot read
+theirs. The administrator's access to material delivered to the Machine still
+applies. Revoking **Can use** refuses the next Run, including the next scheduled
+occurrence, while admitted Runs can finish. If the Machine loses your saved
+sign-in context, a typed refusal asks you to re-save the schedule on that Machine
+or start a direct Run again.
+
+In 0.3 development source, removing Machine access refuses the next request or
+reconnect. Finite work already admitted can finish unless the person stops it;
+open-ended interactive access, such as a live terminal, closes. A requester
+Session finishes its admitted turn, then a refused reconnect ends its runner.
+Clean final exit retires that requester's local credential; a crash preserves
+recovery until a definite authorization refusal. A temporary network failure
+does not retire it. The full loaded two-Account cleanup journey still needs
+verification; removing access is not proof that every running process stopped.
 
 Requester-owned launches on another person's Machine are also under development.
 The current preparation uses the requester's ordinary sign-in, not a
@@ -58,8 +82,10 @@ already admitted can finish. Private Run history is a separate permission.
 Guest execution placement is **unreleased 0.3 development behavior**. On Linux,
 when separate users are explicitly enabled, each requester gets their own
 operating-system user, private home and checkout. Enabling Agent isolation
-alone does not enable separate users. Personal and adopted Machines default
-to provisioning off; Happier-created dedicated servers opt in during setup.
+alone does not enable separate users. New dedicated managed Machines (cloud,
+Lima and Lume) default to separate users during enrollment. Existing Machines
+keep their saved policy; personal and adopted Machines default to provisioning
+off. This is a per-Machine policy, independent of Account preferences.
 
 When separate users are off or unavailable, including on macOS and Windows,
 a guest uses the same execution placement as the owner's Agents: the shared
@@ -118,7 +144,8 @@ owner can assign **Admin**. The roster can be read without permission to edit it
 | Saved Secret | **Can use**: use the referenced secret in supported launches | No edit level in the audience sheet | No Admin level in the audience sheet |
 | Project Source | **Can use**: read repository metadata | No edit level in the audience sheet | Creator or current Team administration manages the Source separately |
 
-A workflow shared personally can be run on the recipient's machines. Its runs
+A workflow shared personally can be run on the recipient's machines or, in
+unreleased 0.3 development, a Machine they have **Can use** access to. Its runs
 and triggers stay with the person who starts them; sharing the definition does
 not share one of those runs. A Team-shared workflow run is visible to its selected
 Team, subject to current membership and the surviving workflow grant. When the
@@ -140,6 +167,12 @@ its admitted audience, including for E2EE Accounts. Each person opens the
 repository with their own Git credential and separately admitted Machine access.
 Source audience grants only **Can use**; it does not make a viewer a Source editor.
 
+In the development Sources detail, an attached dashboard shows its readable name
+and owner, plus the audience and access levels when its grant roster is
+available. If that optional roster cannot be read, the row keeps the owner and
+your access level where available. An unreadable dashboard stays unavailable;
+Source visibility does not reveal its private title.
+
 Attaching a context document or dashboard stores a reference, not a copy or a
 grant. Sharing that document with a person or Team is a separate, explicit
 Artifact operation. A person can therefore see the Source while an attached
@@ -149,10 +182,29 @@ their last Source grant stops new Source reads without revoking independent
 document access.
 
 Detaching one document leaves other attachments, document contents and grants
-intact. Deleting a Source removes its metadata for its audience but leaves
-checkout files and attached documents alone. Source and document sharing can
+intact. In 0.3 development, deleting a Source hides it from lists and pickers.
+Environments already created from that Source keep deploying with their existing
+permissions. New Environment creation, template instantiations, Publish operations
+and deploys pinned to the deleted Source are refused. Existing deployment history
+keeps its Source identity and name. Checkout files and attached documents stay
+intact, and a new Source may reuse the name or repository. Source and document sharing can
 succeed or fail independently; an attachment is not evidence that an audience
 grant succeeded. See [Artifacts](/organize/artifacts) for document access.
+
+### Dashboard widget names (0.3 development)
+
+Sharing a dashboard also shares the names of its widgets with everyone who can
+open that dashboard. Widgets already on it, and widgets added after sharing,
+carry their names in the shared layout. Renaming a widget there updates the name
+recipients see. Choose names you are comfortable sharing.
+
+The widget's private definition stays private. A recipient can see its name
+while the widget explains that only its maker can see how it is built. Sharing
+the layout grants no access to that definition, its data or your connections.
+Names use the dashboard's existing storage protection: encrypted with its layout
+for E2EE Accounts, or stored with the layout for Plain Accounts. Older dashboards
+without a saved widget name can still show **Widget** until an owner shares or
+edits the layout with a current client.
 
 ### Launch Profiles and Saved Secret references
 
@@ -420,6 +472,10 @@ The option is off by default and applies live. A public-sharing feature switch
 or the hostname option alone does not supply the limiter. Self-hosters should follow
 the
 [public-link prerequisites](/self-hosting/local-service-previews#stored-content-public-links-in-03-development).
+For a development Home using Tailscale Serve HTTPS, set its actual Serve address
+as `HAPPIER_PUBLIC_SERVER_URL`, configure the fixed-window limiter, and enable
+**Allow public links on this hostname**. The linked self-hosting guide gives an
+example; recipients still need network access to that Home.
 If this Home cannot provide them, creating a link is refused and the link stays
 Off. Ask the Home owner to configure an isolated share domain or allow links on
 this hostname, and to configure public-link rate limiting.

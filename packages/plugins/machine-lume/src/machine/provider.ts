@@ -9,7 +9,6 @@ import type { LumeCacheState, LumeNativeClient, LumeNativeInspection } from './n
 import { LumeLaunchV1Schema, LumeResourceV1Schema, LumeNativeOperationV1Schema, LumeOptionsInputV1Schema, resolveLumeOptionsImageCandidate, type LumeResourceV1, type LumeLaunchV1, type LumeNativeOperationV1 } from './schemas.js';
 import { LUME_PLUGIN_ID, LUME_PROVISIONER_ID, LUME_BILLING } from './definition.js';
 import { lumeConfigurationLabel } from '../ui/translations.js';
-import { isLumeMacos } from './capacity.js';
 const contributionRef = { pluginId: LUME_PLUGIN_ID, localId: LUME_PROVISIONER_ID };
 const nativeCauseOf = (value: Readonly<{ kind: string; nativeCause?: MachineProvisionerNativeCauseV1 }>) => value.nativeCause;
 const failureCause = (value: Readonly<{ kind: string; nativeCause?: MachineProvisionerNativeCauseV1 }>) => value.nativeCause ? { nativeCause: value.nativeCause } : {};
@@ -215,14 +214,6 @@ export function createLumeProvider({ native, observedAt, signal, warn }: Readonl
         { kind: 'absent', storage: 'lost', billing: LUME_BILLING });
       if (observed.kind === 'unknown') return observeMachineProvisionerNativeRead(observedAt,
         { kind: 'unknown', reason: observed.reason, billing: LUME_BILLING, ...failureCause(observed) });
-      if (observed.vendorStatus === 'stopped' && isLumeMacos(observed.os)) {
-        const inventory = await native.inventory(signal);
-        if (inventory.kind === 'inventory' && inventory.macosStartRefusal) {
-          const refusal = inventory.macosStartRefusal;
-          return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', storage: 'retained',
-            reason: refusal.code, nativeCause: refusal.nativeCause, billing: LUME_BILLING });
-        }
-      }
       // CD1 makes name-keyed native status exact for Happier-owned resources.
       // Native initialized() permits an incomplete provisioning marker without
       // a disk. Only settled running/stopped details prove the retained files.

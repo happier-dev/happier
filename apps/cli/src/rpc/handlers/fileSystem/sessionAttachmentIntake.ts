@@ -3,6 +3,7 @@ import type { FilesystemEffectChannel } from './filesystemEffectChannel';
 import type { FilesystemEffectConfiguration } from './filesystemEffectOperation';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { TransferSessionStore } from '@happier-dev/transfers/node';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 /** Closed Session host composition, never supplied by an RPC caller. */
 export type SessionAttachmentRequester = Readonly<{
@@ -25,23 +26,25 @@ export function createSessionAttachmentNativeRegistrar(input: Readonly<{
     configuration: Pick<FilesystemEffectConfiguration, 'sessionAttachment' | 'sessionRpcTransferMaxBytes'>;
     store: TransferSessionStore;
 }>) {
-    let channel: Promise<FilesystemEffectChannel> | undefined;
+    let channel: Readonly<{ requester: SessionAttachmentRequester; opened: Promise<FilesystemEffectChannel> }> | undefined;
     const registrar: RpcHandlerRegistrar = {
         registerHandler(method, localHandler) {
             input.delegate.registerHandler(method, async (request, context) => {
                 const runtime = input.readRuntime?.();
                 if (!channel && !runtime) return await localHandler(request, context);
                 context?.signal.throwIfAborted();
-                if (!channel && runtime) channel = runtime.prepareFilesystemEffect({ ...input.configuration,
-                    workingDirectory: runtime.workingDirectory,
-                    accessPolicy: { kind: 'restrictedRoots', roots: [runtime.workingDirectory] },
-                }).catch(error => {
-                    channel = undefined;
-                    throw error;
-                });
+                if (!channel && runtime) channel = { requester: runtime.requester,
+                    opened: runtime.prepareFilesystemEffect({ ...input.configuration,
+                        workingDirectory: runtime.workingDirectory,
+                        accessPolicy: { kind: 'restrictedRoots', roots: [runtime.workingDirectory] },
+                    }).catch(error => {
+                        channel = undefined;
+                        throw error;
+                    }),
+                };
                 // The closed host-selected worker emits this private projection.
                 // It is not caller input and grants no path-based read authority.
-                const result = await (await channel!).request({ kind: 'rpc', method, input: request }) as Readonly<{
+                const result = await (await channel!.opened).request({ kind: 'rpc', method, input: request }) as Readonly<{
                     response: Awaited<ReturnType<typeof localHandler>>;
                     issuedAttachment?: NonNullable<ReturnType<TransferSessionStore['getIssuedAttachment']>>;
                 }>;
@@ -51,8 +54,14 @@ export function createSessionAttachmentNativeRegistrar(input: Readonly<{
             });
         },
     };
-    return { registrar, async dispose() {
+    return { registrar, readRequester(method: string): SessionAttachmentRequester | null | undefined {
+        const runtime = input.readRuntime?.();
+        // New uploads need a bound runtime. Continuations and issued-handle
+        // reads keep the exact requester of the surviving native worker.
+        if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT && channel && !runtime) return null;
+        return channel?.requester ?? runtime?.requester;
+    }, async dispose() {
         // A failed open already refused its RPC and has no retained channel.
-        await channel?.then(opened => opened.dispose(), () => undefined);
+        await channel?.opened.then(opened => opened.dispose(), () => undefined);
     } };
 }

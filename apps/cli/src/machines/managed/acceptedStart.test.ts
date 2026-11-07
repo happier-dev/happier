@@ -208,31 +208,30 @@ else process.exit(9);
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('accepted native start at the real acquisition boundary', () => {
-    it.skipIf(process.platform === 'win32').each(['before-start', 'after-acceptance'] as const)(
-        'settles macOS capacity refusal without readiness retry (%s)', async scenario => {
+    it.skipIf(process.platform === 'win32')(
+        'settles macOS capacity refusal before Start without readiness retry', async () => {
             await withTempDir('managed-lume-capacity-', async root => {
                 const fixture = await setup(root);
-                fixture.native.otherMacosGuests = scenario === 'before-start' ? 2 : 0;
-                fixture.native.fillMacosCapacityAfterRun = scenario === 'after-acceptance';
+                fixture.native.otherMacosGuests = 2;
                 try {
                     await expect(fixture.execute()).rejects.toMatchObject({
-                        code: scenario === 'before-start' ? 'native_acquisition_unconfirmed' : 'native_resource_unavailable',
+                        code: 'native_acquisition_unconfirmed',
                         details: { kind: 'managedNative', nativeCause: { localCause: 'native_macos_vm_limit_reached' } },
                     });
                     expect(fixture.native.readinessWaits).toBe(0);
-                    expect(fixture.native.runCount).toBe(scenario === 'before-start' ? 0 : 1);
-                    expect(fixture.row()).toMatchObject(scenario === 'before-start'
-                        ? { allocation: 'may-exist', nativeOperationRef: { value: { vmName: `happier-${managedId}`, storage: 'home' } } }
-                        : { allocation: 'bound', resource: { value: { vmName: `happier-${managedId}`, storage: 'home' } } });
+                    expect(fixture.native.runCount).toBe(0);
+                    expect(fixture.row()).toMatchObject({ allocation: 'may-exist',
+                        nativeOperationRef: { value: { vmName: `happier-${managedId}`, storage: 'home' } } });
                     expect(fixture.entries.filter(entry => entry.role === 'bootstrap')).toEqual([]);
                 } finally { fixture.abort.abort(); }
             });
         });
 
-    it.skipIf(process.platform === 'win32').each(['connect', 'cancel', 'absent', 'unavailable', 'stopped-after-running'] as const)(
+    it.skipIf(process.platform === 'win32').each(['connect', 'cancel', 'capacity-after-acceptance', 'absent', 'unavailable', 'stopped-after-running'] as const)(
         'retains only the current accepted start (%s)', async scenario => {
             await withTempDir('managed-accepted-start-', async root => {
                 const fixture = await setup(root);
+                fixture.native.fillMacosCapacityAfterRun = scenario === 'capacity-after-acceptance';
                 const work = fixture.execute();
                 const settled = work.then(() => ({ code: 'unexpected_success' }), error => ({ code: error.code }));
                 const finishRole = async (role: string, count: number) => {
@@ -248,7 +247,7 @@ describe('accepted native start at the real acquisition boundary', () => {
                     ])).toBe('waiting');
                     expect(fixture.entries.filter(entry => entry.role === 'bootstrap')).toEqual([]);
                     expect(fixture.native.runCount).toBe(1);
-                    if (scenario === 'cancel') {
+                    if (scenario === 'cancel' || scenario === 'capacity-after-acceptance') {
                         fixture.abort.abort();
                         expect(await settled).toMatchObject({ code: 'cancelled' });
                     } else if (scenario === 'absent' || scenario === 'unavailable') {

@@ -53,10 +53,16 @@ describe('Lume host macOS capacity', () => {
     expect(requests.filter(request => request.startsWith('POST'))).toEqual([]);
   });
 
-  it('settles stopped readiness with the capacity cause instead of claiming startup is still pending', async () => {
-    const { provider } = setup();
+  it('keeps stopped observation exact at capacity so a retained Stop can settle and Start keeps its native refusal', async () => {
+    const { provider, requests } = setup();
     expect(MachineProvisionerObservationV1Schema.parse(await provider.inspect(resource)))
-      .toMatchObject({ availability: 'unavailable', storage: 'retained', reason: 'native_macos_vm_limit_reached', nativeCause });
+      .toMatchObject({ availability: 'present', power: 'stopped', storage: 'retained' });
+    expect(requests.filter(request => request === 'GET /lume/vms')).toHaveLength(0);
+    expect(MachineProvisionerPowerResultV1Schema.parse(await provider.power(resource, 'start')))
+      .toMatchObject({ kind: 'refused', code: 'native_macos_vm_limit_reached', nativeCause });
+    expect(MachineProvisionerObservationV1Schema.parse(await provider.inspect(resource)))
+      .toMatchObject({ availability: 'present', power: 'stopped', storage: 'retained' });
+    expect(requests.filter(request => request.endsWith('/run'))).toEqual([]);
   });
 
   it('discloses the native capacity refusal before Create through the existing option presentation', async () => {

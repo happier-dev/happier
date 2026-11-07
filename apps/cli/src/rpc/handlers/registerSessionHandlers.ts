@@ -40,7 +40,7 @@ import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from './fileSystem/accessPolicy/filesystemEffectAdmission';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { createSessionAttachmentNativeRegistrar, type SessionAttachmentNativeRuntime } from './fileSystem/sessionAttachmentIntake';
+import { createSessionAttachmentNativeRegistrar, type SessionAttachmentNativeRuntime, type SessionAttachmentRequester } from './fileSystem/sessionAttachmentIntake';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -188,6 +188,7 @@ export function registerSessionHandlers(
     }>,
 ): Readonly<{
     dispose: () => Promise<void>;
+    readSessionAttachmentRequester: (method: string) => SessionAttachmentRequester | null | undefined;
     resolveSessionAttachment: (handle: import('@happier-dev/protocol').SessionAttachmentHandleV1) => ReturnType<TransferSessionStore['getIssuedAttachment']>;
 }> {
     const accessPolicy = opts?.accessPolicy ?? { kind: 'osUser' };
@@ -210,18 +211,17 @@ export function registerSessionHandlers(
     const sessionAttachmentStore = opts?.sessionId
         ? new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs, expiryTrigger: 'self' })
         : null;
-    let disposeNativeAttachments: (() => Promise<void>) | undefined;
+    let nativeAttachments: ReturnType<typeof createSessionAttachmentNativeRegistrar> | undefined;
     if (sessionAttachmentStore && opts?.sessionId) {
         const sessionId = opts.sessionId;
         const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
         const sessionRpcTransferMaxBytes = resolveServerRoutedTransferMaxBytes();
-        const nativeAttachments = createSessionAttachmentNativeRegistrar({
+        nativeAttachments = createSessionAttachmentNativeRegistrar({
             delegate: authorizedSessionRpcHandlerManager,
             readRuntime: opts.readSessionAttachmentNativeRuntime,
             store: sessionAttachmentStore,
             configuration: { sessionAttachment: { sessionId }, sessionRpcTransferMaxBytes },
         });
-        disposeNativeAttachments = nativeAttachments.dispose;
         const attachmentRpcHandlerManager = createFilesystemEffectRpcRegistrar(nativeAttachments.registrar, filesystemEffectAdmission);
         registerTransferUploadRpcHandlers(attachmentRpcHandlerManager, {
             workingDirectory,
@@ -326,11 +326,12 @@ export function registerSessionHandlers(
         }),
     });
     return {
+        readSessionAttachmentRequester: method => nativeAttachments?.readRequester(method),
         resolveSessionAttachment: handle => handle.sessionId === opts?.sessionId
             ? sessionAttachmentStore?.getIssuedAttachment(handle) ?? null
             : null,
         dispose: async () => {
-            try { await disposeNativeAttachments?.(); }
+            try { await nativeAttachments?.dispose(); }
             finally { await sessionAttachmentStore?.dispose(); }
         },
     };

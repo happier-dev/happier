@@ -38,8 +38,8 @@ export function createSessionRpcAuthorization(input: Readonly<{
     isClosed(): boolean;
     readHomeServerIdentityId(): string | null | undefined;
     readOwnerCredentials(): Promise<StoredCredentials | null>;
-    /** Captured by the Session runtime only while its native attachment port is ready. */
-    readSessionAttachmentRequester?(): SessionAttachmentRequester | null | undefined;
+    /** Native attachment custody survives release of the launching runtime. */
+    readSessionAttachmentRequester?(method: string): SessionAttachmentRequester | null | undefined;
 }>): NonNullable<RpcHandlerConfig['authorizeRequest']> {
     return async (request, source) => {
         const { callerInputAuthorization: authorization, signal } = request;
@@ -84,7 +84,10 @@ export function createSessionRpcAuthorization(input: Readonly<{
                 };
                 const attachmentRequester = source === 'authenticated_home_socket' && request.method.startsWith(prefix)
                     && SessionTransferRpcMethodV1Schema.safeParse(method).success
-                    ? input.readSessionAttachmentRequester?.() : null;
+                    ? input.readSessionAttachmentRequester?.(method) : undefined;
+                // Explicitly withheld native custody cannot fall back to raw
+                // owner authority to begin a new upload after runtime release.
+                if (attachmentRequester === null) return executionUnavailable('unrestricted_owner_required');
                 if (attachmentRequester) {
                     if (!currentBinding()) return executionUnavailable(currentnessRefusal);
                     const installation = readInstallationIdentityIfExistsSync();

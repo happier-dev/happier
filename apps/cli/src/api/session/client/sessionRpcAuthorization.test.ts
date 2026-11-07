@@ -12,6 +12,12 @@ import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
 import { readdir } from 'node:fs/promises';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
+import { PassThrough } from 'node:stream';
+import { createEncryptedTransferChunkEnvelope, createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
+import { runFilesystemEffectInternal } from '@/rpc/handlers/fileSystem/filesystemEffectInternal';
+import { createFilesystemEffectChannel, initializeFilesystemEffectChannel } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
+import type { SessionAttachmentNativeRuntime } from '@/rpc/handlers/fileSystem/sessionAttachmentIntake';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 
 describe('installed Session API-root authorization diagnostics', () => {
     let home: string;
@@ -181,6 +187,106 @@ describe('installed Session API-root authorization diagnostics', () => {
             encryptionMode: 'plain' as const };
         return { state, requester, authorize, rpc, admission, post, fetch };
     }
+
+    it('keeps ordinary owner uploads available when no native worker was bound', async () => {
+        const { state, post } = setup();
+        post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
+        await withTempDir('session-owner-upload-', async directory => {
+            let registration: ReturnType<typeof registerSessionHandlers>;
+            const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
+                serverUrl: 'https://session-diagnostic.test', isClosed: () => false,
+                readHomeServerIdentityId: () => state.homeId,
+                readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }),
+                readSessionAttachmentRequester: method => registration?.readSessionAttachmentRequester(method) });
+            const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
+                encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
+            registration = registerSessionHandlers(rpc, directory, {
+                sessionId: 'session', readSessionAttachmentNativeRuntime: () => null,
+                // This fixture's Home is supplied directly rather than persisted as a saved server profile.
+                filesystemEffectAdmission: createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => state.homeId }),
+            });
+            try {
+                expect(await rpc.handleRequest({ method: `session:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`,
+                    callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'never-log-owner', custodianAccountId: 'never-log-owner',
+                        machineId: state.machineId, installationId: installation.installationId, role: 'use', encryptionMode: 'plain' },
+                    params: { t: 'session_attachment_upload_v1', sessionId: 'session', messageLocalId: 'message',
+                        fileName: 'notes.txt', sizeBytes: 1, uploadLocation: 'workspace', workspaceRelativeDir: '.happier/attachments',
+                        vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false },
+                }, undefined, 'authenticated_home_socket')).toMatchObject({ success: true });
+                expect(post).toHaveBeenCalledTimes(1);
+            } finally { await registration.dispose(); }
+        });
+    });
+
+    it.each(['owner', 'grantee'] as const)('authorizes retained native %s attachment custody after runtime release without admitting fresh uploads or another member', async actor => {
+        const { state, requester, admission, post, fetch } = setupAttachmentRequester();
+        post.mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
+        if (actor === 'owner') {
+            admission.actorAccountId = admission.custodianAccountId;
+            requester.identity.requester.accountId = admission.actorAccountId;
+            requester.identity.separationRequired = false;
+        }
+        await withTempDir('session-attachment-release-', async directory => {
+            let runtime: SessionAttachmentNativeRuntime | null = {
+                requester, workingDirectory: directory,
+                async prepareFilesystemEffect(configuration) {
+                    const input = new PassThrough();
+                    const output = new PassThrough();
+                    const running = runFilesystemEffectInternal(input, output);
+                    const channel = createFilesystemEffectChannel({ input, output, dispose: async () => { await running; } });
+                    await initializeFilesystemEffectChannel(channel, configuration);
+                    return channel;
+                },
+            };
+            let registration: ReturnType<typeof registerSessionHandlers>;
+            const authorize = createSessionRpcAuthorization({ sessionId: 'session', localMachineId: state.machineId,
+                serverUrl: 'https://session-diagnostic.test', isClosed: () => state.closed,
+                readHomeServerIdentityId: () => state.homeId,
+                readOwnerCredentials: async () => ({ token: 'never-log-owner-token', encryption: null }),
+                readSessionAttachmentRequester: method => registration?.readSessionAttachmentRequester(method) });
+            const rpc = new RpcHandlerManager({ scopePrefix: 'session', scopeKind: 'session', localMachineId: state.machineId,
+                encryptionMode: 'plain', authorizeRequest: authorize, logger: () => {} });
+            registration = registerSessionHandlers(rpc, directory, { sessionId: 'session', readSessionAttachmentNativeRuntime: () => runtime });
+            const invoke = async (method: string, params: unknown, actor = admission.actorAccountId) => rpc.handleRequest({
+                method: `session:${method}`, params, callerAuthority: 'present_user', machineAdmission: { ...admission, actorAccountId: actor },
+            }, undefined, 'authenticated_home_socket');
+            try {
+                const bytes = Buffer.from('member attachment');
+                const request = { t: 'session_attachment_upload_v1', sessionId: 'session', messageLocalId: 'message',
+                    fileName: 'notes.txt', sizeBytes: bytes.length, uploadLocation: 'workspace',
+                    workspaceRelativeDir: '.happier/attachments', vcsIgnoreStrategy: 'none', vcsIgnoreWritesEnabled: false };
+                const init = await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, request);
+                const abortable = await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, request);
+                expect(init).toMatchObject({ success: true });
+                const boundRuntime = runtime;
+                runtime = null;
+                const chunk = createEncryptedTransferChunkEnvelope({ transferId: init.uploadId, sequence: 0,
+                    payload: bytes, recipientPublicKeyBase64: init.recipientPublicKeyBase64 });
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, { uploadId: init.uploadId, index: 0, ...chunk }, 'other-member'))
+                    .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, { uploadId: init.uploadId, index: 0, ...chunk }))
+                    .toMatchObject({ success: true });
+                runtime = { ...boundRuntime!, requester: { ...requester, identity: { ...requester.identity,
+                    requester: { ...requester.identity.requester, accountId: 'other-member' } } } };
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: init.uploadId }, 'other-member'))
+                    .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+                const finalized = await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: init.uploadId });
+                expect(finalized).toMatchObject({ success: true });
+                runtime = null;
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, { uploadId: abortable.uploadId })).toMatchObject({ success: true });
+                const recipient = createTransferRecipientKeyPair();
+                const download = await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT, { t: 'session_attachment_download_v1',
+                    attachmentHandle: finalized.attachmentHandle, recipientPublicKeyBase64: recipient.recipientPublicKeyBase64 });
+                expect(download).toMatchObject({ success: true, sizeBytes: bytes.length });
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, { downloadId: download.downloadId, index: 0 })).toMatchObject({ success: true });
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, { downloadId: download.downloadId })).toMatchObject({ success: true });
+                expect(await invoke(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, request))
+                    .toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
+                expect(post).not.toHaveBeenCalled();
+                expect(fetch).not.toHaveBeenCalled();
+            } finally { await registration.dispose(); }
+        });
+    });
 
     it.each(['owner', 'grantee'] as const)('admits every exact %s Session attachment phase without repeating Home permission reads', async actor => {
         const { rpc, requester, admission, post, fetch } = setupAttachmentRequester();

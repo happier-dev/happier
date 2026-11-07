@@ -105,7 +105,7 @@ import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
 import type {
     BrowserRecordingComposerAttachInput,
     BrowserRecordingComposerAttachResult,
-} from '@/daemon/browser/recording/attachToComposer';
+} from '../../daemon/recording/attachToComposer';
 import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
@@ -508,6 +508,7 @@ export type ApiSessionClientOptions = Readonly<{
     actionsSettingsProvider?: import('@/settings/actionsSettingsProvider').RuntimeActionSettingsProvider;
     transport: SessionClientTransport;
     getAccountEncryptionCurrentness?: () => Promise<AccountEncryptionCurrentnessResponse>;
+    getAccountEncryptionMode?: () => Promise<'plain' | 'e2ee' | 'unknown'>;
     getBrowserDaemonControlRoutes?: (() => BrowserDaemonControlRoutes | null) | null;
     getBrowserDaemonContextRoutes?: (() => BrowserContextRoutes | null) | null;
     getBrowserDaemonAutomationRoutes?: (() => BrowserAutomationRoutes | null) | null;
@@ -1325,6 +1326,7 @@ export class ApiSessionClient extends EventEmitter {
             serverUrl: this.transport.serverUrl,
             token: this.token,
             sessionId: this.sessionId,
+            getAccountEncryptionMode: options.getAccountEncryptionMode,
             initialRegisteredSessionStateFieldMutations: this.initialRegisteredSessionStateFieldMutations,
             flushOnReady: false,
             initiallyActive: options.durableMutationDeliveryInitiallyActive,
@@ -1696,7 +1698,7 @@ export class ApiSessionClient extends EventEmitter {
             authorizeRequest: createSessionRpcAuthorization({ sessionId: this.sessionId, localMachineId: options.localMachineId,
                 serverUrl: this.serverBinding.serverUrl, isClosed: () => this.closed,
                 readHomeServerIdentityId: () => this.getServerIdentityId(),
-                readSessionAttachmentRequester: () => this.sessionAttachmentNativeRuntime?.requester,
+                readSessionAttachmentRequester: method => this.sessionHandlersRegistration?.readSessionAttachmentRequester(method),
                 readOwnerCredentials: () => this.readCurrentOwnerCredentials() }),
             prepareRequesterAccountContext: async ({ authorization, purpose, signal }) => {
                 if (this.closed || !options.localMachineId || !purpose) return null;

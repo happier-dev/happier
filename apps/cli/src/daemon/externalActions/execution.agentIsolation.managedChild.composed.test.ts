@@ -82,10 +82,11 @@ it.each([true, false])('preserves Home Manage and retained enrollment policy for
     const admission = await resolveMachineAdmissionInTx(facts.db, { actorAccountId: 'requester', machineId: 'machine', actionId });
     if (admission.kind !== 'admitted') throw new Error(`Home refused owner: ${admission.code}`);
     const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await manager.invokeLocal('machines.agentIsolation.preview', {
-        serverId: homeId, machineId: 'machine', enabled: true,
+        // OWNER-RULINGS 2026-11-07: the dedicated creation child reviews separate users.
+        serverId: homeId, machineId: 'machine', enabled: true, memberProvisioning: 'linuxUsersV1',
     }, { rpcContext: { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true } }));
     if (preview.kind !== 'ready') throw new Error(`Expected fresh native plan: ${JSON.stringify(preview)}`);
-    const childInput = { serverId: homeId, machineId: 'machine', enabled,
+    const childInput = { serverId: homeId, machineId: 'machine', enabled, memberProvisioning: 'linuxUsersV1' as const,
         expectedMetadataVersion: preview.metadataVersion, expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest };
     const input = ManagedAcquireInputV1Schema.parse({
         enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
@@ -171,7 +172,7 @@ it.each([true, false])('preserves Home Manage and retained enrollment policy for
     }
     expect(childResult, JSON.stringify(childResult)).toMatchObject({ ok: true, result: { kind: 'accepted' } });
     expect(h.machine.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: {
-        agentIsolation: { enabled: true },
+        agentIsolation: { enabled: true, memberProvisioning: 'linuxUsersV1' },
     } });
     expect(native.mutations.length).toBeGreaterThan(0);
 }, 120_000);
