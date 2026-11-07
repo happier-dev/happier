@@ -125,7 +125,7 @@ describe('file editor entry and persisted restoration', () => {
                 selector: { kind: 'workingTree' }, comparison: null, changed: true, expectedHash: 'a'.repeat(64),
                 messages: { moved_on: '', update_required: '', unsupported: '', unavailable: '', unknown: '', discarded: '',
                     restored: '', kept_edited: '', undone: '', undo_conflict: '', undo: '', note_failed: '', undo_unavailable: '' },
-                readCurrentText: async () => 'saved edit', refresh: async () => {},
+                refresh: async () => {},
                 hasUnsavedEdits: () => editor.readSnapshot().dirty, onReplacedUnsavedEdits: editor.cancelEditingFile,
                 confirmUnsaved: { title: 'Replace edits' },
             });

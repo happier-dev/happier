@@ -58,7 +58,7 @@ export function useFileChangesActions(input: Omit<DiscardChangeParams, 'entry'> 
         // Captured entries are repository-relative, even when the Session started below that root.
         const target = { ...selected.target, rootPath: fileBaseOfReviewSource(selected.comparison, selected.target.rootPath) };
         const outcome = await discardChange({ target, entry, messages: selected.messages,
-            readCurrentText: selected.readCurrentText, refresh: selected.refresh, options: selected.options, sessionTarget: selected.sessionTarget });
+            refresh: selected.refresh, options: selected.options, sessionTarget: selected.sessionTarget });
         setResult(outcome);
         if (outcome.ok) {
             if (dirty && outcome.fileReplaced) selected.onReplacedUnsavedEdits();

@@ -22,7 +22,7 @@ vi.mock('@/utils/system/runtimeFetch', async importOriginal => {
   return { ...actual, runtimeFetch: (...args: Parameters<typeof fetch>) => String(args[0]).includes('/machine-transfers/direct/')
     ? transfer.fetch(...args) : actual.runtimeFetch(...args) };
 });
-// Keep Action approval, output validation, inverse application and notices real.
+// Keep Action approval, output validation, restore dispatch and notices real.
 // The remote Machine RPC is the genuine network boundary.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: async (request: unknown) => {
@@ -59,7 +59,7 @@ describe('comparison Discard and guarded Undo', () => {
     const sessions = V2SessionListResponseSchema.parse({ sessions: [], hasNext: false, nextCursor: null });
     homes.answer(serverId, '/v2/sessions', { body: sessions });
     homes.answer(serverId, '/v2/sessions/active', { body: sessions });
-    for (const actionId of ['daemon.filesystem.writeFile', 'daemon.filesystem.readFile'] as const) {
+    for (const actionId of ['daemon.filesystem.writeFile', 'daemon.filesystem.readFile', 'workspace.files.replace'] as const) {
       const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://discard-review.test',
         serverIdentityId: 'srv_discard_review', accountId: 'review-account', machineId: 'm1',
         actionId, tokenEpoch: 0,
@@ -91,7 +91,7 @@ describe('comparison Discard and guarded Undo', () => {
   });
   const input = () => ({ target: { machineId: 'm1', rootPath: '/repo', serverId },
     entry: { kind: 'comparison' as const, path: 'a.txt', against: { source: { kind: 'workingTree' as const } }, changeKeys: ['key'], expectedHash: beforeHash },
-    messages, readCurrentText: async () => '\ufeffold\r\n', refresh: async () => {} });
+    messages, refresh: async () => {} });
 
   it('addresses a machine-routed Discard to the same session as its Undo note', async () => {
     rpc.responses.push({ success: true, noteDelivery: { status: 'queued' }, entries: [{
@@ -146,7 +146,7 @@ describe('comparison Discard and guarded Undo', () => {
     }) })]));
   });
 
-  it('reads and undoes a captured selected hunk at the repository root from a nested Session cwd', async () => {
+  it('undoes a captured selected hunk through restore at the repository root from a nested Session cwd', async () => {
     const { ScmComparisonSchema } = await import('@happier-dev/protocol/scm');
     const { buildReviewUnits } = await import('@happier-dev/protocol/scm/comparisonOccurrences');
     const comparison = ScmComparisonSchema.parse({ id: 'c'.repeat(64),
@@ -157,31 +157,47 @@ describe('comparison Discard and guarded Undo', () => {
       sessionId: null, machineName: 'Machine', unreachable: false, refresh: () => {} }));
     rpc.responses.push({ success: true, entries: [{ path: 'nested/a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
       inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
-      { success: true, content: '77u/b2xkDQo=' }, { success: true, hash: beforeHash });
+      { ok: true, results: [{ path: 'nested/a.txt', status: 'restored', hash: beforeHash }] });
     await act(async () => { await hook.getCurrent().discard({ path: 'nested/a.txt', changeKey: unit.key,
       source: { kind: 'captured', comparison }, unit }); });
     const undo = readPresentationNotice()?.undo;
     if (!undo) throw new Error('Selected Discard must retain Undo');
     expect(await undo.run()).toEqual({ success: true });
-    const fileRequests = rpc.requests.filter((request): request is { payload: { path: string; content?: string; expectedHash?: string } } =>
-      Boolean(request && typeof request === 'object' && 'payload' in request && request.payload
-        && typeof request.payload === 'object' && 'path' in request.payload));
-    expect(fileRequests.map(request => request.payload.path)).toEqual(['/repo/nested/a.txt', '/repo/nested/a.txt']);
-    expect(fileRequests[1]?.payload).toMatchObject({ expectedHash: afterHash, content: '77u/bmV3DQo=' });
+    expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
+      rootPath: '/repo', operation: { kind: 'restore', files: [{ path: 'nested/a.txt', expectedHash: afterHash,
+        edits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
+    }) })]));
+    expect(rpc.responses).toHaveLength(0);
   });
 
-  it('publishes sticky Undo and restores exact inverse bytes guarded by the post-discard hash', async () => {
+  it('publishes sticky Undo through the agent restore operation guarded by the post-discard hash', async () => {
     rpc.responses.push({ success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
-      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] }, { success: true, hash: beforeHash });
+      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
+      { ok: true, results: [{ path: 'a.txt', status: 'restored', hash: beforeHash }] });
     const result = await discardChange(input());
     expect(result.ok).toBe(true);
     expect(readPresentationNotice()).toMatchObject({ sticky: true, message: 'discarded', undo: { label: 'undo' } });
     if (!result.ok || !result.undo) throw new Error('Undo must be available');
     expect(await Promise.all([result.undo(), result.undo()])).toEqual([{ success: true }, { success: true }]);
     expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
-      content: '77u/bmV3DQo=', expectedHash: afterHash,
+      rootPath: '/repo', operation: { kind: 'restore', files: [{ path: 'a.txt', expectedHash: afterHash,
+        edits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
     }) })]));
     expect(readPresentationNotice()).toMatchObject({ message: 'undone' });
+    expect(rpc.responses).toHaveLength(0);
+  });
+
+  it('refuses selected-hunk Undo after a later write through the restore owner', async () => {
+    rpc.responses.push({ success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
+      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
+      { ok: true, results: [{ path: 'a.txt', status: 'changed' }] });
+    const result = await discardChange(input());
+    if (!result.ok || !result.undo) throw new Error('Undo must be available');
+    expect(await result.undo()).toEqual({ success: false });
+    expect(readPresentationNotice()).toMatchObject({ message: messages.undo_conflict });
+    expect(rpc.requests).toEqual(expect.arrayContaining([expect.objectContaining({ payload: expect.objectContaining({
+      operation: { kind: 'restore', files: [expect.objectContaining({ path: 'a.txt', expectedHash: afterHash })] },
+    }) })]));
     expect(rpc.responses).toHaveLength(0);
   });
 
@@ -342,7 +358,8 @@ describe('comparison Discard and guarded Undo', () => {
 
   it('reports Undo note failure separately from the successful one-shot file write', async () => {
     rpc.responses.push({ success: true, entries: [{ path: 'a.txt', status: 'reverted', hashBefore: beforeHash, hashAfter: afterHash,
-      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] }, { success: true, hash: beforeHash });
+      inverseEdits: [{ startUtf16: 1, deleteLength: 3, insertText: 'old', originalText: 'new' }] }] },
+      { ok: true, results: [{ path: 'a.txt', status: 'restored', hash: beforeHash }] });
     // The canonical sender refuses an unavailable Session; it must not turn an
     // already completed file write into a retryable mutation failure.
     const result = await discardChange({ ...input(), sessionTarget: { serverId, sessionId: 'unavailable-session' } });

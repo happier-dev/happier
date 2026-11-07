@@ -1,8 +1,8 @@
 import type { ScmComparisonDiscardEntry, ScmChangeDiscardResultEntry } from '@happier-dev/protocol/scm';
-import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
 import { decodeBase64 } from '@/encryption/base64';
 import { machineScmChangeDiscard, type MachineScmCallOptions } from '@/sync/ops/scm/machineScm';
 import { workspaceWriteFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
+import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
 import type { WorkspaceFileSystemTarget } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices,
@@ -19,8 +19,6 @@ export type DiscardChangeParams = Readonly<{
   target: WorkspaceFileSystemTarget;
   entry: Omit<ScmComparisonDiscardEntry, 'includeUndo'>;
   messages: DiscardChangeMessages;
-  /** Current File-page text, loaded only when an inverse is invoked. */
-  readCurrentText: () => Promise<string>;
   refresh: () => Promise<void>;
   options?: MachineScmCallOptions;
   sessionTarget?: Readonly<{ sessionId: string; serverId?: string | null }>;
@@ -49,7 +47,7 @@ function failureReason(errorCode?: string): FailureReason {
   return 'unknown';
 }
 
-/** One present-user facade over scm.change.discard; Undo uses the same guarded byte writer as Save. */
+/** One present-user facade over scm.change.discard; selected-hunk Undo uses the restore Action. */
 export async function discardChange(params: DiscardChangeParams): Promise<DiscardChangeResult> {
   const key = `file-review:${params.target.serverId ?? ''}:${params.target.machineId}:${params.target.rootPath}:${params.entry.path}`;
   let previousBytes: Uint8Array | undefined;
@@ -104,26 +102,30 @@ export async function discardChange(params: DiscardChangeParams): Promise<Discar
       if (retired) return { success: false };
       const retainedPrevious = previousBytes;
       retire();
-      let bytes: Uint8Array;
       try {
         if (entry.inverseEdits) {
-          const result = applyInverseEdits(await params.readCurrentText(), entry.inverseEdits);
-          if (!result.ok) { notice(params.messages.undo_conflict, 'error'); await refresh(); return { success: false }; }
-          bytes = new TextEncoder().encode(result.text);
+          if (entry.hashAfter === null) { notice(params.messages.undo_unavailable, 'error'); return { success: false }; }
+          const result = await machineWorkspaceFileReplaceApply(params.target.machineId, {
+            rootPath: params.target.rootPath,
+            operation: { kind: 'restore', files: [{ path: params.entry.path, expectedHash: entry.hashAfter, edits: entry.inverseEdits }] },
+          }, { serverId: params.target.serverId });
+          const restored = result.ok ? result.results.find(file => file.path === params.entry.path) : undefined;
+          if (restored?.status !== 'restored') {
+            notice(restored?.status === 'changed' ? params.messages.undo_conflict : params.messages.unknown, 'error');
+            await refresh();
+            return { success: false };
+          }
         } else {
           if (!retainedPrevious) { notice(params.messages.undo_unavailable, 'error'); return { success: false }; }
-          bytes = retainedPrevious;
+          const result = await workspaceWriteFile(params.target, params.entry.path, retainedPrevious, entry.hashAfter);
+          if (!result.success) {
+            notice(['hash_mismatch', 'expected_file_absent', 'expected_file_missing'].includes(result.errorCode ?? '')
+              ? params.messages.undo_conflict : params.messages.unknown, 'error');
+            await refresh();
+            return { success: false };
+          }
         }
-      } catch { notice(params.messages.unknown, 'error'); return { success: false }; }
-      let result: Awaited<ReturnType<typeof workspaceWriteFile>>;
-      try { result = await workspaceWriteFile(params.target, params.entry.path, bytes, entry.hashAfter); }
-      catch { notice(params.messages.unknown, 'error'); await refresh(); return { success: false }; }
-      if (!result.success) {
-        notice(['hash_mismatch', 'expected_file_absent', 'expected_file_missing'].includes(result.errorCode ?? '')
-          ? params.messages.undo_conflict : params.messages.unknown, 'error');
-        await refresh();
-        return { success: false };
-      }
+      } catch { notice(params.messages.unknown, 'error'); await refresh(); return { success: false }; }
       notice(params.messages.undone);
       await refresh();
       if (params.sessionTarget) {

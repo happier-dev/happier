@@ -168,7 +168,6 @@ export function useHunkDiscard(
           ...messagesFor(hunkTarget.path),
           discarded: t('hunkReview.noticeDiscardedAt', { range }),
         },
-        readCurrentText: readCurrentTextFor(hunkTarget.path, fileTarget),
         refresh,
         sessionTarget,
       });
@@ -178,7 +177,6 @@ export function useHunkDiscard(
       target,
       sessionId,
       messagesFor,
-      readCurrentTextFor,
       refresh,
       sessionTarget,
       remember,

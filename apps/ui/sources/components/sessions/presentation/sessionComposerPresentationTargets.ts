@@ -1190,7 +1190,7 @@ type PreparedComposerPresentationTransactionApply = Readonly<{
 }>;
 
 function readReviewCommentWorkspace(target: ComposerPresentationTarget, ref: ComposerRefV1): WorkspaceScopeBase | null {
-    // The mounted document names the Account and the Session owns placement.
+    // The document names the Account and the Session owns placement.
     // An author cannot redirect a review chip to an arbitrary workspace.
     if (ref.kind !== 'session') return null;
     const scope = target.readScope?.();
@@ -1217,6 +1217,7 @@ function prepareComposerPresentationTransactionApply(input: Readonly<{
      * registered-only refusal.
      */
     target?: ComposerPresentationTarget | null;
+    reviewDraftOnly?: boolean;
 }>):
     | Readonly<{ ok: true; prepared: PreparedComposerPresentationTransactionApply }>
     | Readonly<{ ok: false; result: ComposerTransactionResultV1 }> {
@@ -1230,6 +1231,10 @@ function prepareComposerPresentationTransactionApply(input: Readonly<{
     const transaction = ComposerTransactionV1Schema.safeParse(request.transaction);
     if (!transaction.success) {
         return { ok: false, result: invalidOperation(0, 'invalid_transaction') };
+    }
+    if (input.reviewDraftOnly && (transaction.data.operations.length === 0
+        || transaction.data.operations.some(operation => operation.kind !== 'reviewComment.add'))) {
+        return { ok: false, result: { status: 'composerUnavailable' } };
     }
     const snapshot = target.readSnapshot();
     if (snapshot.revision !== transaction.data.expectedRevision) {
@@ -1409,6 +1414,7 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
     admittedContributor: ComposerPresentationAdmittedContributor | null;
     executionTarget?: SessionExecutionTargetV1;
     target?: ComposerPresentationTarget | null;
+    reviewDraftOnly?: boolean;
     isTargetCurrent?: (target: ComposerPresentationTarget) => boolean;
     discussionSource?: ComposerPresentationDocumentMutation['sessionDiscussionSelectionSourceV1'];
 }>): ComposerTransactionResultV1 {
@@ -1707,13 +1713,14 @@ export function readMountedComposerAttachmentComposition(request: Readonly<{
     catch { return null; }
 }
 
-/** Agent/UI parity uses the same transaction core, with actual mounted placement required. */
+/** Placement needs a mounted composer; review drafts also use the retained Session document. */
 export function applyMountedComposerPresentationTransaction(request: ComposerPresentationTransactionRequest & Readonly<{
     scope: ServerAccountScope;
     signal?: AbortSignal;
     attachmentContributor?: PluginContributionIdentityV1;
 }>): ComposerTransactionResultV1 {
-    const target = readScopedMountedComposerTarget(request.ref, request.scope);
+    const mounted = readScopedMountedComposerTarget(request.ref, request.scope);
+    const target = mounted ?? (request.ref.kind === 'session' ? readTarget(request.ref, request.scope) : null);
     if (!target || request.signal?.aborted) return { status: 'composerUnavailable' };
     const composition = readMountedComposerAttachmentComposition(request);
     const selected = request.attachmentContributor;
@@ -1725,9 +1732,10 @@ export function applyMountedComposerPresentationTransaction(request: ComposerPre
     const attachmentAuthorityResolver = admitted && composition && entry
         ? createAttachmentAuthorityResolver({ ...composition, composerAttachmentsById: { [entry.id]: entry } }) : null;
     return applyComposerPresentationTransactionAtOwner({
-        request, target, attachmentAuthorityResolver, admittedContributor: admitted,
-        isTargetCurrent: candidate => !request.signal?.aborted
-            && readScopedMountedComposerTarget(request.ref, request.scope) === candidate,
+        request, target, attachmentAuthorityResolver, admittedContributor: admitted, reviewDraftOnly: !mounted,
+        isTargetCurrent: candidate => !request.signal?.aborted && (mounted
+            ? readScopedMountedComposerTarget(request.ref, request.scope) === candidate
+            : isComposerPresentationTargetCurrent(candidate)),
     });
 }
 

@@ -2472,6 +2472,44 @@ describe('persistent Session composer fallback', () => {
         resetSessionDraftValueCachesForTests();
     });
 
+    it('retains an agent Ask before composer mount through the same workspace draft writer as UI Ask', async () => {
+        const sessionId = 'session-unmounted-review-ask';
+        const ref = { kind: 'session', sessionId } as const;
+        activatePersistentSessionDraft(sessionId, 'Unsent question');
+        const previousMachines = storage.getState().machineListByServerId;
+        const previousDrafts = storage.getState().reviewCommentsDraftsByWorkspaceCacheKey;
+        storage.setState({ sessions: { ...storage.getState().sessions,
+            [sessionId]: createSessionFixture({ id: sessionId, serverId: persistentSessionScope.serverId }) },
+            machineListByServerId: { ...previousMachines, [persistentSessionScope.serverId]: [createMachineFixture()] },
+            reviewCommentsDraftsByWorkspaceCacheKey: {} });
+        try {
+            const workspaceScope = { serverId: persistentSessionScope.serverId, machineId: 'machine-1', rootPath: '/Users/tester/project' };
+            const key = buildWorkspaceCacheKey(workspaceScope);
+            const ask = await askAboutRanges({ workspaceScope, sessionTarget: { sessionId }, filePath: 'src/a.ts',
+                savedText: 'first\nsecond\nlast', ranges: [{ startLine: 2, endLine: 2, text: 'second', body: 'Explain this' }] });
+            const comment = ask.drafts[0];
+            if (!comment) throw new Error('Expected an anchored Ask');
+            storage.setState({ reviewCommentsDraftsByWorkspaceCacheKey: {} });
+            const initial = readPersistentSessionSnapshot(sessionId);
+            const executor = createActionExecutor({ composerIngress: executeComposerIngressAction } as unknown as ActionExecutorDeps);
+            const execution = await executor.execute('composer.transaction.apply', { scope: persistentSessionScope, ref, transaction: {
+                expectedRevision: initial.revision, operations: [{ kind: 'reviewComment.add', comment }],
+            } }, { surface: 'agent', authority: 'account_automation', serverId: persistentSessionScope.serverId,
+                runtimeAccountId: persistentSessionScope.accountId });
+            expect(execution).toEqual({ ok: true, result: { status: 'applied', revision: expect.any(Number) } });
+            const document = createDocumentTarget(readPersistentSessionSnapshot(sessionId));
+            const unregister = registerSessionComposerPresentationTarget({ serverId: persistentSessionScope.serverId, sessionId },
+                { ...document, readScope: () => persistentSessionScope });
+            try {
+                expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[key]).toEqual([comment]);
+                expect(readPersistentSessionText(sessionId)).toBe('Unsent question');
+                expect(document.readCurrent().text).toBe('Unsent question');
+            } finally { unregister(); }
+        } finally {
+            storage.setState({ machineListByServerId: previousMachines, reviewCommentsDraftsByWorkspaceCacheKey: previousDrafts });
+        }
+    });
+
     it('reads, observes, and atomically applies an exact unmounted Session draft', () => {
         const sessionId = 'session-persistent-1';
         const ref = { kind: 'session', sessionId } as const;

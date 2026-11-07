@@ -156,8 +156,6 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   });
   const { target, refresh, sessionTarget, remember, retireUndo, undo, undoAvailable, discardDisabledReason } = hunkDiscard;
   const messages = React.useMemo(() => hunkDiscard.messagesFor(filePath), [hunkDiscard.messagesFor, filePath]);
-  const readCurrentText = React.useMemo(() => hunkDiscard.readCurrentTextFor(reviewPath, { ...target, rootPath: reviewScope.rootPath }),
-    [hunkDiscard.readCurrentTextFor, reviewPath, target, reviewScope.rootPath]);
   React.useEffect(() => retireUndo, [retireUndo, target, filePath]);
   const onDiscard = hunkDiscard.discard;
 
@@ -222,7 +220,6 @@ export function useFileChangesReview(params: FileChangesReviewParams) {
   const restore = useFileChangesActions({
     target,
     messages,
-    readCurrentText,
     refresh,
     sessionTarget,
     filePath: reviewPath,
