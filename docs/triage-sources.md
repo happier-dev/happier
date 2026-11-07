@@ -1389,6 +1389,14 @@ rows and explicit disabled choices. Deleting a built-in stores that row with
 therefore means no custom actions. The catalog Actions and direct UI transport
 use this same reader and writer.
 
+Built-in action IDs reference their current fallback prompts. Writes omit an
+unchanged seeded prompt body, and reads resolve it from the canonical seed before
+checking action coherence. The two shipped Investigate seed copies observed in
+the deployment journeys also resolve to the current fallback without a write or
+migration job. A different stored prompt, a custom action, or a Prompt Library
+reference remains the person's configuration. This is an unreleased 0.3 change;
+matching catalog readers must reload together.
+
 The existing `actions/administer-v1` Action also accepts `kind: 'reset'` with
 the catalog's `expectedRevision`. It removes the stored catalog through Account
 KV's conditional delete, so subsequent reads report `availability: 'absent'`
