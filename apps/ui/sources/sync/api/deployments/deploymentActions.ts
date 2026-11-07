@@ -66,7 +66,9 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             if ('ok' in preview) return preview;
             if (preview.kind === 'partial') return failure(preview.errorCode);
             if (preview.kind !== 'preview') return failure('invalid_action_output');
-            return { input, preview: projectNativeJsonValueForTransport(preview.review) };
+            return { input: input.environment.kind === 'create' && input.deploy === undefined && preview.review.deploy
+                ? { ...input, deploy: preview.review.deploy } : input,
+                preview: projectNativeJsonValueForTransport(preview.review) };
         },
         prepareDeploymentEnvironmentCreate: async ({ input, context }) => {
             account.assertCurrent();
