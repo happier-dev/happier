@@ -4,6 +4,7 @@ import type { ResourceAccessLevelV1, ResourceCallerAccessV1, ResourceRecipientKe
     ResourceRecipientKeyEnvelopeCommitResponseV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { isTeamPrincipalRoleV1, TEAM_PRINCIPAL_ROLES_V1, type TeamRoleV1 } from '@happier-dev/protocol/teams';
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness,
     type AccountRecipientEnvelopeReadinessRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { projectRecipientContentKey, RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
@@ -21,7 +22,7 @@ export interface ResourceGrantAccessFacts {
     ownerAccountId: string;
     encryptionMode: 'plain' | 'e2ee' | null;
     accountGrants: readonly Readonly<{ accountId: string; accessLevel: ResourceAccessLevelV1; account: Readonly<{ status: AccountStatus }> }>[];
-    teamGrants: readonly Readonly<{ teamId?: string; accessLevel: ResourceAccessLevelV1; team: Readonly<{ archivedAt: Date | null; memberships: readonly Member[] }> }>[];
+    teamGrants: readonly Readonly<{ teamId?: string; accessLevel: ResourceAccessLevelV1; team: Readonly<{ archivedAt: Date | null; memberships: readonly (Member & { role: TeamRoleV1 })[] }> }>[];
     groupGrants: readonly Readonly<{ accessLevel: ResourceAccessLevelV1; teamGroup: Readonly<{
         archivedAt: Date | null; team: Readonly<{ archivedAt: Date | null }>;
         memberships: readonly Readonly<{ teamMembership: Member }>[];
@@ -44,7 +45,7 @@ export function resourceGrantRelationsSelect(actorAccountId?: string) {
     return {
         accountGrants: { where: accountFilter, select: { accountId: true, accessLevel: true, account: { select: { status: true } } } },
         teamGrants: { select: { accessLevel: true, team: { select: {
-            archivedAt: true, memberships: { where: accountFilter, select: { accountId: true, status: true, account: { select: { status: true } } } },
+            archivedAt: true, memberships: { where: accountFilter, select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
         } } } },
         groupGrants: { select: { accessLevel: true, teamGroup: { select: {
             archivedAt: true, team: { select: { archivedAt: true } },
@@ -58,7 +59,7 @@ export function resourceGrantRelationsSelect(actorAccountId?: string) {
 const accessRank = { view: 1, edit: 2, admin: 3, owner: 4 } as const;
 
 function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
-    return grant.team.memberships.some(member => member.accountId === actorAccountId && isEffectiveTeamMembership({
+    return grant.team.memberships.some(member => member.accountId === actorAccountId && isTeamPrincipalRoleV1(member.role) && isEffectiveTeamMembership({
         accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
     }));
 }
@@ -76,7 +77,7 @@ export function resourceGrantArmWheres(actorAccountId: string) {
     const member = { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, accountId: actorAccountId };
     return {
         account: { accountId: actorAccountId, account: { status: 'active' as const } },
-        team: { team: { memberships: { some: member } } },
+        team: { team: { memberships: { some: { ...member, role: { in: [...TEAM_PRINCIPAL_ROLES_V1] } } } } },
         group: { teamGroup: { memberships: { some: { ...EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, teamMembership: member } } } },
     };
 }
@@ -128,6 +129,9 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
         AND ${column('m', 'status')} = ${activeMember}
         AND ${column('c', 'status')} = ${activeAccount}
         AND ${column('t', 'archivedAt')} IS NULL`;
+    const teamRoles = prismaRuntime.join(TEAM_PRINCIPAL_ROLES_V1.map(role =>
+        provider === 'postgres' || provider === 'pglite' ? sql`CAST(${role} AS ${identifier('TeamRole')})` : sql`${role}`));
+    const teamMemberMatches = sql`${memberMatches} AND ${column('m', 'role')} IN (${teamRoles})`;
     return sql`(${column('a', 'accountId')} = ${actor}
         OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}AccountGrant`)} g
             JOIN ${account} c ON ${column('c', 'id')} = ${column('g', 'accountId')}
@@ -137,7 +141,7 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
             JOIN ${membership} m ON ${column('m', 'teamId')} = ${column('g', 'teamId')}
             JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
             JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
-            WHERE ${column('g', input.resourceIdColumn)} = ${resourceId} AND ${memberMatches})
+            WHERE ${column('g', input.resourceIdColumn)} = ${resourceId} AND ${teamMemberMatches})
         OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}GroupGrant`)} g
             JOIN ${identifier('TeamGroup')} r ON ${column('r', 'id')} = ${column('g', 'teamGroupId')}
             JOIN ${identifier('TeamGroupMembership')} gm ON ${column('gm', 'teamGroupId')} = ${column('r', 'id')}

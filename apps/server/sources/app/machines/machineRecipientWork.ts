@@ -2,6 +2,7 @@ import { encodeBase64 } from 'privacy-kit';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from '@happier-dev/protocol/changes';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { MachineAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { isTeamPrincipalRoleV1, type TeamRoleV1 } from '@happier-dev/protocol/teams';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -18,6 +19,7 @@ type AudienceRow = Readonly<{
     machineId: string; custodianAccountId: string;
     source: 'account' | 'team' | 'group' | null;
     membershipStatus: TeamMembershipStatus | null;
+    membershipRole: TeamRoleV1 | null;
     teamArchivedAt: Date | number | bigint | null; groupArchivedAt: Date | number | bigint | null;
     id: string | null; status: AccountStatus | null;
 }>;
@@ -40,15 +42,15 @@ function machineAudienceQuery(ids: readonly string[], provider: ReturnType<typeo
     const sql = `WITH selected AS (
         ${selection}
     ), audience AS (
-        SELECT g."machineId", g."accountId", 'account' AS "source", NULL AS "membershipStatus",
+        SELECT g."machineId", g."accountId", 'account' AS "source", NULL AS "membershipStatus", NULL AS "membershipRole",
             ${absentArchive} AS "teamArchivedAt", ${absentArchive} AS "groupArchivedAt"
         FROM "MachineAccountGrant" g JOIN selected s ON s."id" = g."machineId"
         UNION ALL
-        SELECT g."machineId", tm."accountId", 'team', tm."status", t."archivedAt", ${absentArchive}
+        SELECT g."machineId", tm."accountId", 'team', tm."status", tm."role", t."archivedAt", ${absentArchive}
         FROM "MachineTeamGrant" g JOIN selected s ON s."id" = g."machineId"
         JOIN "Team" t ON t."id" = g."teamId" JOIN "TeamMembership" tm ON tm."teamId" = t."id"
         UNION ALL
-        SELECT g."machineId", tm."accountId", 'group', tm."status", t."archivedAt", tg."archivedAt"
+        SELECT g."machineId", tm."accountId", 'group', tm."status", tm."role", t."archivedAt", tg."archivedAt"
         FROM "MachineGroupGrant" g JOIN selected s ON s."id" = g."machineId"
         JOIN "TeamGroup" tg ON tg."id" = g."teamGroupId" JOIN "Team" t ON t."id" = tg."teamId"
         JOIN "TeamGroupMembership" gm ON gm."teamGroupId" = tg."id"
@@ -61,7 +63,7 @@ function isEffectiveAudienceRecipient<T extends AudienceRow>(row: T): row is T &
     if (!row.id || row.id === row.custodianAccountId || row.status !== 'active') return false;
     const lifetime = { accountStatus: row.status, membershipStatus: row.membershipStatus ?? 'active',
         teamArchivedAt: row.teamArchivedAt === null ? null : new Date(Number(row.teamArchivedAt)) };
-    if (row.source === 'team') return isEffectiveTeamMembership(lifetime);
+    if (row.source === 'team') return row.membershipRole !== null && isTeamPrincipalRoleV1(row.membershipRole) && isEffectiveTeamMembership(lifetime);
     if (row.source === 'group') return isEffectiveTeamGroupMembership({ ...lifetime,
         groupArchivedAt: row.groupArchivedAt === null ? null : new Date(Number(row.groupArchivedAt)) });
     return true;
@@ -74,7 +76,7 @@ export async function readMachineAudienceAccountIdsInTx(tx: Tx, machineId: strin
     // Acquire only current membership; do not read that Machine a second time.
     const { sql: membership } = machineAudienceQuery([machineId], provider, custodianAccountId);
     const sql = `${membership} SELECT s."id" AS "machineId", s."accountId" AS "custodianAccountId",
-        r."source", r."membershipStatus", r."teamArchivedAt", r."groupArchivedAt", a."id", a."status"
+        r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt", a."id", a."status"
         FROM selected s LEFT JOIN audience r ON r."machineId" = s."id"
         LEFT JOIN "Account" a ON a."id" = r."accountId"`;
     const rows = await tx.$queryRawUnsafe<AudienceRow[]>(provider === 'mysql' ? sql.replaceAll('"', '`') : sql,
@@ -128,7 +130,7 @@ export async function readMachineRecipientWorkInTx(tx: Tx, input: Readonly<{
     for (const ids of portableQueryChunks({ values: [...input.ownerFingerprints.keys()], bindingsPerValue: 1, fixedBindings: 2 })) {
         const { sql: membership, bind } = machineAudienceQuery(ids, provider);
         const sql = `${membership} SELECT s."id" AS "machineId", s."accountId" AS "custodianAccountId", c."cursor",
-            r."source", r."membershipStatus", r."teamArchivedAt", r."groupArchivedAt",
+            r."source", r."membershipStatus", r."membershipRole", r."teamArchivedAt", r."groupArchivedAt",
             a."id", a."status", a."publicKey", a."encryptionMode", a."contentPublicKey", a."contentPublicKeySig",
             e."encryptedDataKey", e."machineOwnerEnvelopeFingerprint", e."recipientContentPublicKeyFingerprint"
         FROM selected s LEFT JOIN audience r ON r."machineId" = s."id"

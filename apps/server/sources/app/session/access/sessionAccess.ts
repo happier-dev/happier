@@ -16,6 +16,7 @@ import {
 
 import { SESSION_CAPABILITY_RULES, SESSION_ACCESS_LEVEL_ORDER, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
+import { TEAM_PRINCIPAL_ROLES_V1, isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { EffectiveSessionAccessLevelV1, SessionCapabilityV1, SessionAccessSourceV1, SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { evaluateApiTokenGrantV1, resolveApiTokenSessionCapabilityCeilingV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -62,7 +63,7 @@ export function isGrantAfterMembershipHorizon(effectiveAt: Date, startsAt: Date 
 export function buildCurrentSessionAccessMembershipWhere(includeGuests: boolean): Prisma.TeamMembershipWhereInput {
     return {
         status: "active", account: { status: "active" },
-        ...(includeGuests ? {} : { role: { not: "guest" as const } }),
+        ...(includeGuests ? {} : { role: { in: [...TEAM_PRINCIPAL_ROLES_V1] } }),
     };
 }
 
@@ -89,7 +90,7 @@ export function buildSessionAccessProjectionSelectForAccounts(accountIds: readon
     const groupMembership = { teamMembership: { ...buildSessionAccessMembershipWhere(accountIds, true), ...membershipIdentity } };
     const collectiveEnabled = context.mode !== "legacy_owner_or_direct" && isSessionCollaborationEnabled();
     const teamIds = !collectiveEnabled ? [] : snapshot
-        ? [...new Set(snapshot.memberships.filter(membership => membership.role !== "guest").map(membership => membership.teamId))]
+        ? [...new Set(snapshot.memberships.filter(membership => isTeamPrincipalRoleV1(membership.role)).map(membership => membership.teamId))]
         : undefined;
     const groupIds = !collectiveEnabled ? [] : snapshot
         ? [...new Set(snapshot.memberships.flatMap(membership => membership.groupMemberships.map(group => group.teamGroupId)))]
@@ -466,9 +467,11 @@ export async function readCurrentSessionAccessForOperation(
 }
 
 /** Evidence-independent entitlement projection for internal census/preparation only. */
-export async function resolveStructuralSessionAccess(reader: SessionAccessReader, input: { accountId: string; sessionId: string }): Promise<EffectiveSessionAccess | null> {
-    const row = await reader.session.findUnique({ where: { id: input.sessionId }, select: buildSessionAccessProjectionSelect(input.accountId) });
-    return row ? projectEffectiveSessionAccess(row, input.accountId, {
+export async function resolveStructuralSessionAccess(reader: SessionAccessReader, input: {
+    accountId: string; sessionId: string; row?: SessionAccessProjectionRow;
+}): Promise<EffectiveSessionAccess | null> {
+    const row = input.row ?? await reader.session.findUnique({ where: { id: input.sessionId }, select: buildSessionAccessProjectionSelect(input.accountId) });
+    return row && (input.row === undefined || row.id === input.sessionId) ? projectEffectiveSessionAccess(row, input.accountId, {
         includeCredentialRestrictedTeamEntitlements: true,
     }) : null;
 }
@@ -499,22 +502,35 @@ export async function resolveSessionAccessForRowsInTx(reader: Tx, input: Omit<Pa
     return result;
 }
 
-/** Batch row loading for one actor; every decision remains the exact operation resolver. */
-export async function resolveEffectiveSessionAccessForSessionsInTx(reader: Tx, input: Readonly<{
-    accountId: string; sessionIds: readonly string[]; authentication: SessionAccessAuthentication;
-}>): Promise<ReadonlyMap<string, EffectiveSessionAccess>> {
-    const result = new Map<string, EffectiveSessionAccess>();
-    const sessionIds = [...new Set(input.sessionIds)];
+/**
+ * Batch row loading for one actor; every decision remains the exact operation
+ * resolver. A requested Session without a row is absent from the result, which
+ * callers read as the single resolver's `unavailable`.
+ */
+export async function resolveSessionAccessDecisionsForSessionsInTx(
+    reader: Tx,
+    input: Omit<Parameters<typeof resolveSessionAccessForOperation>[1], 'sessionId' | 'row'> & Readonly<{ sessionIds: readonly string[] }>,
+): Promise<ReadonlyMap<string, SessionAccessOperationDecision>> {
+    const { sessionIds: requestedSessionIds, ...operation } = input;
+    const result = new Map<string, SessionAccessOperationDecision>();
+    const sessionIds = [...new Set(requestedSessionIds)];
     // This chunks database parameters, never the authorized result set.
     for (let offset = 0; offset < sessionIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const rows = await reader.session.findMany({
             where: { id: { in: sessionIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-            select: buildSessionAccessProjectionSelect(input.accountId),
+            select: buildSessionAccessProjectionSelect(operation.accountId),
         });
-        for (const row of rows) {
-            const decision = await resolveSessionAccessForOperation(reader, { ...input, sessionId: row.id, row });
-            if (decision.status === "allowed") result.set(row.id, decision.access);
-        }
+        for (const [id, decision] of await resolveSessionAccessForRowsInTx(reader, operation, rows)) result.set(id, decision);
+    }
+    return result;
+}
+
+export async function resolveEffectiveSessionAccessForSessionsInTx(reader: Tx, input: Readonly<{
+    accountId: string; sessionIds: readonly string[]; authentication: SessionAccessAuthentication;
+}>): Promise<ReadonlyMap<string, EffectiveSessionAccess>> {
+    const result = new Map<string, EffectiveSessionAccess>();
+    for (const [id, decision] of await resolveSessionAccessDecisionsForSessionsInTx(reader, input)) {
+        if (decision.status === "allowed") result.set(id, decision.access);
     }
     return result;
 }

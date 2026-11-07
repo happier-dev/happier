@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
+import { TEAM_PRINCIPAL_ROLES_V1, isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { type SessionAudienceSelectionV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { resolveTeamMembershipContextInTx } from "@/app/teams/memberships/effectiveMembership";
@@ -46,16 +47,46 @@ export type SessionCollectiveAccessSnapshot = Readonly<{
     accountActive?: boolean;
     memberships: readonly SessionCollectiveAccessMembership[];
     qualifiedTeamIds: ReadonlySet<string>;
+    /** The Account's direct shares, read once by `sharedWithUserId` in this snapshot. */
+    directShares?: readonly SessionDirectShareFact[];
 }>;
 
-function grantCapabilityWhere(capability: SessionCapability) {
+type SessionDirectShareFact = Readonly<{ sessionId: string; accessLevel: string; canApprovePermissions: boolean }>;
+
+function grantCapabilityLevels(capability: SessionCapability) {
     const rule = SESSION_CAPABILITY_RULES[capability];
     const levels = (["view", "edit", "admin"] as const).filter(level =>
         SESSION_ACCESS_LEVEL_ORDER.indexOf(level) >= SESSION_ACCESS_LEVEL_ORDER.indexOf(rule.level));
-    return { accessLevel: { in: levels }, ...(rule.delegation ? { canApprovePermissions: true } : {}) };
+    return { levels, delegation: rule.delegation === true };
 }
 
-function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false): Prisma.SessionWhereInput {
+function grantCapabilityWhere(capability: SessionCapability) {
+    const { levels, delegation } = grantCapabilityLevels(capability);
+    return { accessLevel: { in: levels }, ...(delegation ? { canApprovePermissions: true } : {}) };
+}
+
+/** The same capability rule as `grantCapabilityWhere`, applied to captured share facts. */
+function directShareSessionIdsFor(capability: SessionCapability, shares: readonly SessionDirectShareFact[]): string[] {
+    const { levels, delegation } = grantCapabilityLevels(capability);
+    return shares.flatMap(share => (levels as readonly string[]).includes(share.accessLevel)
+        && (!delegation || share.canApprovePermissions) ? [share.sessionId] : []);
+}
+
+function directShareWhere(input: AccessWhereInput, activeAccountResolved: boolean) {
+    return { sharedWithUserId: input.accountId,
+        ...(activeAccountResolved ? {} : { sharedWithUser: { status: "active" as const } }),
+        ...grantCapabilityWhere(input.capability) } satisfies Prisma.SessionShareWhereInput;
+}
+
+/**
+ * `directShareSessionIds` is the same direct-share arm already read through its
+ * viewer-keyed index in the consuming snapshot. An ordered page cannot use any
+ * Session index for a correlated EXISTS inside this OR, so it scanned every
+ * Account's Sessions; exact ids let PostgreSQL combine the owner index with the
+ * primary key. Row-bounded callers keep the EXISTS form.
+ */
+function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false,
+    directShareSessionIds?: readonly string[]): Prisma.SessionWhereInput {
     const rule = SESSION_CAPABILITY_RULES[input.capability];
     const owner: Prisma.SessionWhereInput = { accountId: input.accountId,
         ...(activeAccountResolved ? {} : { account: { status: "active" as const } }) };
@@ -63,12 +94,30 @@ function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionW
     return { OR: [
         owner,
         { AND: [createSessionTranscriptShareableWhere(), { OR: [
-            { shares: { some: { sharedWithUserId: input.accountId,
-                ...(activeAccountResolved ? {} : { sharedWithUser: { status: "active" as const } }),
-                ...grantCapabilityWhere(input.capability) } } },
+            directShareSessionIds
+                ? { id: { in: [...new Set(directShareSessionIds)] } }
+                : { shares: { some: directShareWhere(input, activeAccountResolved) } },
             ...collective,
         ] }] },
     ] };
+}
+
+/**
+ * Legacy owner/direct visibility for an ordered Session page, compiled in the
+ * page's own snapshot: the caller's Account status and direct shares are read
+ * once through their keys, so the page is served by Session indexes.
+ */
+async function readDirectShareFactsInTx(tx: Tx, accountIds: readonly string[]) {
+    return tx.sessionShare.findMany({ where: { sharedWithUserId: { in: [...accountIds] } },
+        select: { sessionId: true, sharedWithUserId: true, accessLevel: true, canApprovePermissions: true } });
+}
+
+export async function resolveLegacySessionPageAccessWhereInTx(tx: Tx, input: AccessWhereInput): Promise<Prisma.SessionWhereInput> {
+    const account = await tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } });
+    if (account?.status !== "active") return { id: { in: [] } };
+    if (SESSION_CAPABILITY_RULES[input.capability].level === "owner") return composeAccessWhere(input, [], true);
+    const shares = await readDirectShareFactsInTx(tx, [input.accountId]);
+    return composeAccessWhere(input, [], true, directShareSessionIdsFor(input.capability, shares));
 }
 
 /** Compose with domain filters through AND so a caller cannot overwrite access. */
@@ -140,8 +189,10 @@ export async function resolveEffectiveSessionAccessWhere(
         { ...input, collectiveAccessSnapshot },
         {},
     );
+    const directShares = collectiveAccessSnapshot.directShares;
     return {
-        where: composeAccessWhere(input, collective, true),
+        where: composeAccessWhere(input, collective, true,
+            directShares && directShareSessionIdsFor(input.capability, directShares)),
         qualifiedTeamIds: collectiveAccessSnapshot.qualifiedTeamIds,
         collectiveAccessSnapshot,
     };
@@ -207,11 +258,17 @@ export async function resolveSessionCollectiveAccessSnapshotsInTx(
     const snapshots = new Map<string, SessionCollectiveAccessSnapshot>();
     // A Session runtime principal carries no collective membership view — the
     // forward predicate answers it from the principal alone — so it reads none.
-    if (input.authentication.sessionRuntimePrincipal
-        || !isSessionCollaborationEnabled()
-        || accountIds.length === 0) {
+    if (input.authentication.sessionRuntimePrincipal || accountIds.length === 0) {
         for (const accountId of accountIds) {
             snapshots.set(accountId, { accountId, memberships: [], qualifiedTeamIds: new Set() });
+        }
+        return snapshots;
+    }
+    const shares = await readDirectShareFactsInTx(tx, accountIds);
+    const sharesOf = (accountId: string) => shares.filter(share => share.sharedWithUserId === accountId);
+    if (!isSessionCollaborationEnabled()) {
+        for (const accountId of accountIds) {
+            snapshots.set(accountId, { accountId, memberships: [], qualifiedTeamIds: new Set(), directShares: sharesOf(accountId) });
         }
         return snapshots;
     }
@@ -234,6 +291,7 @@ export async function resolveSessionCollectiveAccessSnapshotsInTx(
         const own = memberships.filter((membership) => membership.accountId === accountId);
         snapshots.set(accountId, {
             accountId,
+            directShares: sharesOf(accountId),
             memberships: own,
             // An Account's qualified Teams stay its own memberships' Teams; the
             // batch only shares how the qualification was read.
@@ -290,7 +348,7 @@ async function buildCollectiveAccessBranches(
             }
         }
         const audienceIncludesTeam = !scope.audience || scope.audience.teamIds.has(membership.teamId);
-        if (!scope.groupId && audienceIncludesTeam && membership.role !== "guest") {
+        if (!scope.groupId && audienceIncludesTeam && isTeamPrincipalRoleV1(membership.role)) {
             const bucket = collectiveGrantBucket(teamGrantBuckets, membership.sessionAccessStartsAt);
             bucket.audienceIds.add(membership.teamId);
             bucket.membershipIds.add(membership.id);
@@ -313,7 +371,7 @@ async function buildCollectiveAccessBranches(
         team: { archivedAt: null, memberships: { some: {
             ...currentMembership,
             id: { in: [...bucket.membershipIds] },
-            role: { not: "guest" },
+            role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
             sessionAccessStartsAt: bucket.sessionAccessStartsAt,
         } } },
     }));
@@ -432,7 +490,7 @@ export async function buildMembershipHistorySessionAccessWhereInTx(tx: Tx, input
     let scope: CollectiveScope;
     if (subject.kind === "team") {
         const resolved = await resolveTeamMembershipContextInTx(tx, subject);
-        if (!resolved.ok || !resolved.membership.effective || resolved.membership.role === "guest") return { ok: false, error: "unavailable" };
+        if (!resolved.ok || !resolved.membership.effective || !isTeamPrincipalRoleV1(resolved.membership.role)) return { ok: false, error: "unavailable" };
         recipientAccountId = resolved.membership.accountId;
         scope = { teamId: subject.teamId, membershipId: resolved.membership.teamMembershipId, teamOnly: true };
     } else {
@@ -486,7 +544,7 @@ export async function buildSessionReadableAccountWhereInTx(input: {
         if (isSessionCollaborationEnabled()) {
             for (const grant of session.teamGrants) {
                 sources.push({ teamMemberships: { some: {
-                    teamId: grant.teamId, status: "active", role: { not: "guest" },
+                    teamId: grant.teamId, status: "active", role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
                     ...membershipHorizonWhere(grant.effectiveAt), team: { archivedAt: null },
                 } } });
             }

@@ -5,7 +5,7 @@ import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { readTeamCredentialResourceCandidatesInTx, teamCredentialAudienceDeliveryWhere } from './resourceCandidateRead';
 import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from './resourceDeliveryRead';
 import { readManagedNativeCredentialTargetInTx } from '@/app/machines/managed/credentialDeliveryAdmission';
-import { TeamCredentialSourceResourceAdministrationV1Schema, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
+import { TeamCredentialSourceResourceAdministrationV1Schema, isTeamPrincipalRoleV1, teamCredentialSourceLocatorKeyV1, teamCredentialSourceLocatorV1, type TeamCredentialSourceLocatorV1 } from '@happier-dev/protocol/teams';
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import type { Tx } from "@/storage/inTx";
@@ -1046,7 +1046,7 @@ async function readAdmittedTeamCredentialCatalogInTx(tx: Tx, input: Omit<Credent
                 groupMemberships: actorGroups,
             });
             const audienceMatch = actorMembership?.effective === true && (
-                (row.allMembersDeliveryMode !== null && actorMembership.role !== 'guest')
+                (row.allMembersDeliveryMode !== null && isTeamPrincipalRoleV1(actorMembership.role))
                 || audience.memberGrants.some(grant => grant.teamMembershipId === actorMembership.teamMembershipId)
                 || audience.groupGrants.some(grant => actorGroups.some(group => group.effective && group.teamGroupId === grant.teamGroupId))
             );

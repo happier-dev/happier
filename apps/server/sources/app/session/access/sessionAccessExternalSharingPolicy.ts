@@ -1,12 +1,13 @@
 import { isSessionAccessGrantIncreaseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import type { Tx } from "@/storage/inTx";
-import { AccountStatus, TeamExternalSharingPolicy, TeamMembershipStatus, TeamRole } from "@/storage/prisma";
+import { AccountStatus, TeamExternalSharingPolicy, TeamMembershipStatus } from "@/storage/prisma";
+import { TEAM_PRINCIPAL_ROLES_V1, isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { resolveTeamActorContextInTx } from "@/app/teams/actorContext";
 import { isEffectiveTeamMembership } from "@/app/teams/memberships/effectiveMembership";
 import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublication";
 
-import type { SessionAccessGrantSubject } from "./sessionAccessGrantEligibility";
+import type { ShareSubject } from "@/app/teams/shareEligibility";
 import { resolveSessionGrantedAccountIdsInTx } from "./sessionRecipients";
 import {
     qualifySessionTeamAuthenticationInTx,
@@ -66,7 +67,7 @@ export function isSessionPublicLinkExternalSharingIncrease(input: Readonly<{
 /** External to the primary Team: another Team or Group, or an Account without effective non-guest membership. */
 export async function isSubjectExternalToTeamInTx(
     tx: Tx,
-    input: Readonly<{ primaryTeamId: string; subject: SessionAccessGrantSubject }>,
+    input: Readonly<{ primaryTeamId: string; subject: ShareSubject }>,
 ): Promise<boolean> {
     return (await classifySubjectsExternalToTeamInTx(tx, { primaryTeamId: input.primaryTeamId, subjects: [input.subject] }))[0]!;
 }
@@ -74,7 +75,7 @@ export async function isSubjectExternalToTeamInTx(
 /** The same externality decision, batched for a directory page rather than one read per Account. */
 export async function classifySubjectsExternalToTeamInTx(
     tx: Tx,
-    input: Readonly<{ primaryTeamId: string; subjects: readonly SessionAccessGrantSubject[] }>,
+    input: Readonly<{ primaryTeamId: string; subjects: readonly ShareSubject[] }>,
 ): Promise<readonly boolean[]> {
     const accountIds = input.subjects.flatMap((subject) => subject.kind === 'account' ? [subject.accountId] : []);
     const memberships = (await Promise.all(portableQueryChunks({ values: accountIds, bindingsPerValue: 1, fixedBindings: 2 }).map(ids => tx.teamMembership.findMany({
@@ -90,7 +91,7 @@ export async function classifySubjectsExternalToTeamInTx(
             team: { select: { archivedAt: true } },
         },
     })))).flat();
-    const internalAccountIds = new Set(memberships.filter((membership) => membership.role !== TeamRole.guest
+    const internalAccountIds = new Set(memberships.filter((membership) => isTeamPrincipalRoleV1(membership.role)
         && isEffectiveTeamMembership({ accountStatus: membership.account.status,
             membershipStatus: membership.status, teamArchivedAt: membership.team.archivedAt }))
         .map((membership) => membership.accountId));
@@ -146,7 +147,7 @@ export async function enforceSessionGrantExternalSharingPolicyInTx(
     input: Readonly<{
         actorAccountId: string;
         primaryTeamId: string | null;
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         previous: StoredGrantValue | null;
         next: GrantValue;
         authentication: SessionAccessAuthentication;
@@ -236,7 +237,7 @@ export async function enforceSessionContextExternalSharingPolicyInTx(
                 teamId: primaryTeamId,
                 accountId: { in: audienceAccountIds },
                 status: TeamMembershipStatus.active,
-                role: { not: TeamRole.guest },
+                role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
                 account: { status: AccountStatus.active },
                 team: { archivedAt: null },
             },

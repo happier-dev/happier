@@ -1,5 +1,6 @@
 import type { Tx } from "@/storage/inTx";
-import { AccountStatus, TeamMembershipStatus, TeamRole } from "@/storage/prisma";
+import { AccountStatus, TeamMembershipStatus } from "@/storage/prisma";
+import { TEAM_PRINCIPAL_ROLES_V1 } from '@happier-dev/protocol/teams';
 
 export type SessionCollectiveGrantSubject =
     | Readonly<{ kind: "team"; teamId: string }>
@@ -15,7 +16,7 @@ export async function resolveSubjectMemberAccountIdsInTx(
             where: {
                 teamId: subject.teamId,
                 status: TeamMembershipStatus.active,
-                role: { not: TeamRole.guest },
+                role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
                 account: { status: AccountStatus.active },
             },
             select: { accountId: true },

@@ -1,5 +1,6 @@
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { TEAM_PRINCIPAL_ROLES_V1 } from '@happier-dev/protocol/teams';
 import {
   buildCurrentSessionAccessMembershipWhere,
   isGrantAfterMembershipHorizon,
@@ -125,8 +126,9 @@ async function resolveCurrentSessionRecipientsInTx(
   // The same Team/Group can grant many Sessions. Fetch its current membership
   // once across all Session chunks, then apply each grant's individual horizon.
   const teamMemberships = new Map<string, Array<{ accountId: string; sessionAccessStartsAt: Date | null }>>();
+  // Membership status, Account status and Prisma OFFSET accompany the role bindings.
   for (const teamIds of portableQueryChunks({ values: [...new Set(teamGrants.map(grant => grant.teamId))],
-    bindingsPerValue: 1, fixedBindings: 4 })) {
+    bindingsPerValue: 1, fixedBindings: 3 + TEAM_PRINCIPAL_ROLES_V1.length })) {
     const memberships = await tx.teamMembership.findMany({
       where: { teamId: { in: [...teamIds] }, ...membershipWhere(false) },
       select: { teamId: true, accountId: true, sessionAccessStartsAt: true },

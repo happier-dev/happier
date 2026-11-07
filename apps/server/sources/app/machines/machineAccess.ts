@@ -9,6 +9,7 @@ import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { MachineRecipientKeyEnvelopePageQueryV1Schema, type AccessibleMachineAccessV1, type MachineAdmission, type MachineAccessRoleV1, type MachineAccessRefusalV1, type MachineAccessRefusalCode, type MachineAccessGrantRowV1, type MachineAccessGrantsListResultV1, type MachineAccessMutationResultV1, type MachineAccessRecipientCensusResponseV1, type MachineRecipientKeyEnvelopeCommitInputV1, type MachineRecipientKeyEnvelopeCommitResponseV1, type MachineRecipientKeyEnvelopePageQueryV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -63,7 +64,7 @@ const MACHINE_ACCESS_FACTS_SELECT = {
         ...MACHINE_RESOURCE_FACTS_SELECT,
         accountGrants: { select: { accountId: true, accessLevel: true, account: { select: { status: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } } } },
         teamGrants: { select: { teamId: true, accessLevel: true, team: { select: { name: true, archivedAt: true,
-            memberships: { select: { accountId: true, status: true, account: { select: { status: true } } } },
+            memberships: { select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
         } } } },
         groupGrants: { select: { teamGroupId: true, accessLevel: true, teamGroup: { select: {
             name: true, teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
@@ -104,7 +105,7 @@ const MACHINE_PERMISSION_FACTS_SELECT = {
     account: { select: { status: true } },
     accountGrants: { select: { accountId: true, accessLevel: true, account: { select: { status: true } } } },
     teamGrants: { select: { teamId: true, accessLevel: true, team: { select: { archivedAt: true,
-        memberships: { select: { accountId: true, status: true, account: { select: { status: true } } } },
+        memberships: { select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
     } } } },
     groupGrants: { select: { teamGroupId: true, accessLevel: true, teamGroup: { select: {
         teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
@@ -142,7 +143,7 @@ function contributions(row: MachineFacts | MachinePermissionFacts): Contribution
         ...row.accountGrants.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId }, level: grant.accessLevel,
             displayName: resolveAccountDisplayLabelV1('name' in grant.account ? grant.account : {}), accountIds: grant.account.status === 'active' ? [grant.accountId] : [] })),
         ...row.teamGrants.map(grant => ({ principal: { kind: 'team' as const, teamId: grant.teamId }, level: grant.accessLevel,
-            displayName: 'name' in grant.team ? grant.team.name : null, accountIds: grant.team.memberships.filter(member => isEffectiveTeamMembership({
+            displayName: 'name' in grant.team ? grant.team.name : null, accountIds: grant.team.memberships.filter(member => isTeamPrincipalRoleV1(member.role) && isEffectiveTeamMembership({
                 accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
             })).map(member => member.accountId) })),
         ...row.groupGrants.map(grant => ({ principal: { kind: 'group' as const, teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, level: grant.accessLevel,

@@ -10,7 +10,12 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/pr
 import { ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { applyPostgresMigrations } from '../../../scripts/prismaMigrations';
 import { openPgliteMigrationSession, type PgliteMigrationSession } from '../../../scripts/pgliteMigrationSession';
-import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { db, initDbPostgres, shutdownDbClient, prismaRuntime } from '@/storage/db';
+import { resourceGrantAccessSqlPredicate, resourceGrantArmWheres } from '@/app/teams/resourceGrantAccess';
+import { readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from '@/app/machines/machineRecipientWork';
+import { createSavedSecretResourceInTx, listSavedSecretResourceMaterialsForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { inTx } from '@/storage/inTx';
+import { readArtifactCandidateWhereInTx } from './artifactAccessService';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
@@ -41,6 +46,150 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
             restoreEnv(originalEnv);
             if (root) await rm(root, { recursive: true, force: true });
         }
+    });
+
+    it('excludes Team guests from resource SQL and grant queries while admitting explicit Group and Account guests', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Resource guest audience' } });
+        const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Explicit guests', nameKey: randomUUID() } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+            teamMembershipId: guestMembership.id, nativeContribution: true } });
+        const [teamArtifact, groupArtifact, directArtifact] = await Promise.all(['team', 'group', 'direct'].map(() => db.artifact.create({ data: {
+            id: randomUUID(), accountId: owner.id,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'document' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'fixture' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1,
+        } })));
+        await db.artifactTeamGrant.create({ data: { artifactId: teamArtifact.id, teamId: team.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGroupGrant.create({ data: { artifactId: groupArtifact.id, teamGroupId: group.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactAccountGrant.create({ data: { artifactId: directArtifact.id, accountId: guest.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const artifactIds = [teamArtifact.id, groupArtifact.id, directArtifact.id];
+        for (const [accountId, expectedIds] of [[guest.id, [groupArtifact.id, directArtifact.id]], [member.id, [teamArtifact.id]]] as const) {
+            const sqlRows = await db.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
+                SELECT a.id FROM "Artifact" a WHERE a.id IN (${prismaRuntime.join(artifactIds)})
+                AND ${resourceGrantAccessSqlPredicate({ actorAccountId: accountId,
+                    resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' })}`);
+            expect.soft(new Set(sqlRows.map(row => row.id)), `SQL audience for ${accountId}`).toEqual(new Set(expectedIds));
+            const arms = resourceGrantArmWheres(accountId);
+            const [accountRows, teamRows, groupRows] = await Promise.all([
+                db.artifactAccountGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.account }, select: { artifactId: true } }),
+                db.artifactTeamGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.team }, select: { artifactId: true } }),
+                db.artifactGroupGrant.findMany({ where: { artifactId: { in: artifactIds }, ...arms.group }, select: { artifactId: true } }),
+            ]);
+            expect.soft(new Set([...accountRows, ...teamRows, ...groupRows].map(row => row.artifactId)),
+                `Prisma grant audience for ${accountId}`).toEqual(new Set(expectedIds));
+        }
+    });
+
+    it('excludes Team guests from Machine audience and recipient work while admitting explicit Group and Account guests', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Machine guest audience' } });
+        const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Machine explicit guests', nameKey: randomUUID() } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+            teamMembershipId: guestMembership.id, nativeContribution: true } });
+        const [teamMachine, groupMachine, directMachine] = await Promise.all(['team', 'group', 'direct'].map(() => db.machine.create({
+            data: { id: randomUUID(), accountId: owner.id, metadata: 'fixture' },
+        })));
+        await db.machineTeamGrant.create({ data: { machineId: teamMachine.id, teamId: team.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGroupGrant.create({ data: { machineId: groupMachine.id, teamGroupId: group.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineAccountGrant.create({ data: { machineId: directMachine.id, accountId: guest.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const machines = [teamMachine, groupMachine, directMachine];
+        const work = await readMachineRecipientWorkInTx(db, { actorAccountId: owner.id,
+            ownerFingerprints: new Map(machines.map(machine => [machine.id, null])) });
+        for (const [machine, expectedRecipients] of [[teamMachine, [member.id]], [groupMachine, [guest.id]], [directMachine, [guest.id]]] as const) {
+            expect.soft(new Set(await readMachineAudienceAccountIdsInTx(db, machine.id)), `Machine audience for ${machine.id}`)
+                .toEqual(new Set([owner.id, ...expectedRecipients]));
+            expect.soft(new Set(work.get(machine.id)?.recipients.map(recipient => recipient.recipientAccountId)),
+                `Machine recipient work for ${machine.id}`).toEqual(new Set(expectedRecipients));
+        }
+    });
+
+    it('admits Saved Secret Group guests and Team members while denying Team guests', async () => {
+        const testEnv = snapshotEnv();
+        applyEnvValues({ HAPPIER_FEATURE_TEAMS__ENABLED: '1', HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none' });
+        try {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const team = await db.team.create({ data: { name: 'Saved Secret guest audience' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+            const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Secret explicit guests', nameKey: randomUUID() } });
+            await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+                teamMembershipId: guestMembership.id, nativeContribution: true } });
+            const groupResourceId = randomUUID();
+            const teamResourceId = randomUUID();
+            for (const [resourceId, audience] of [[groupResourceId, { groupGrants: [group.id] }], [teamResourceId, { teamGrants: [team.id] }]] as const) {
+                expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+                    accountId: owner.id, resourceId, displayName: 'Shared token', kind: 'token', encryptionMode: 'plain',
+                    storedContent: { t: 'plain', v: { v: 1, name: 'Shared token', kind: 'token', value: 'fixture' } },
+                    ...audience,
+                }))).toMatchObject({ ok: true });
+            }
+            for (const [accountId, expectedIds] of [[guest.id, [groupResourceId]], [member.id, [teamResourceId]]] as const) {
+                const listed = await inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, accountId));
+                expect.soft(new Set(listed.map(row => {
+                    if (!('resourceId' in row)) expect.fail('Expected healthy Saved Secret material');
+                    return row.resourceId;
+                })), `Saved Secret list for ${accountId}`).toEqual(new Set(expectedIds));
+                const exact = await inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, accountId, undefined, [groupResourceId, teamResourceId]));
+                expect.soft(new Set(exact.map(row => {
+                    if (!('resourceId' in row)) expect.fail('Expected healthy Saved Secret material');
+                    return row.resourceId;
+                })), `Saved Secret exact materials for ${accountId}`).toEqual(new Set(expectedIds));
+            }
+            const publishedRecipients = await db.accountChange.findMany({ where: { entityId: groupResourceId, kind: 'savedSecretResource' }, select: { accountId: true } });
+            expect.soft(new Set(publishedRecipients.map(row => row.accountId)), 'Saved Secret Group publication audience')
+                .toEqual(new Set([owner.id, guest.id]));
+        } finally { restoreEnv(testEnv); }
+    });
+
+    it('returns only the browser policy complement before paging thousands of private records', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const data = { accountId: owner.id,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'approval_request.v1' })),
+            body: new Uint8Array([0xff]), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
+            headerVersion: 1, bodyVersion: 1 };
+        const template = await db.artifact.create({ data: { ...data, id: randomUUID(), kind: 'v1:other:approval_request.v1' } });
+        await db.$executeRawUnsafe(`INSERT INTO "Artifact" ("id", "accountId", "kind", "header", "headerVersion", "body", "bodyVersion",
+            "dataEncryptionKey", "seq", "createdAt", "updatedAt")
+            SELECT $1 || n::text, "accountId", "kind", "header", "headerVersion", "body", "bodyVersion",
+                "dataEncryptionKey", "seq", "createdAt", "updatedAt"
+            FROM generate_series(1, 2500) n CROSS JOIN "Artifact" WHERE "Artifact"."id" = $2`, `${randomUUID()}-`, template.id);
+        const documentIds: string[] = [];
+        for (const [kind, header] of [
+            ['v1:other:future.document.v3', { kind: 'future.document.v3' }], ['v1:other:', {}],
+            [null, { kind: 'document' }], ['other', { kind: 'document' }],
+        ] as const) {
+            documentIds.push((await db.artifact.create({ data: { ...data, id: randomUUID(), kind,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent(header)), updatedAt: new Date(0) } })).id);
+        }
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const headers = { 'x-test-user-id': owner.id,
+                'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+            const response = await app.inject({ method: 'GET', url: '/v1/artifacts?browserListed=true&limit=500', headers });
+            expect(response.statusCode, response.body).toBe(200);
+            const payload = response.json();
+            const physical = Array.isArray(payload) ? payload : payload.items;
+            expect(physical).toHaveLength(documentIds.length);
+            expect(new Set(physical.map((row: { id: string }) => row.id))).toEqual(new Set(documentIds));
+            expect(payload.coverage).toEqual({ status: 'partial', unclassifiedCount: 2, reason: 'unclassified_legacy_rows' });
+        });
     });
 
     it('selects exact kinds before paging and classifies only headers through PostgreSQL SQL', async () => {
@@ -236,6 +385,13 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
                 return items.slice(0, 3);
             };
             const read = async () => {
+                const candidates = await db.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`
+                    SELECT a.id FROM "Artifact" a WHERE a.id IN (${prismaRuntime.join(artifacts.map(row => row.id))})
+                    AND ${resourceGrantAccessSqlPredicate({ actorAccountId: reader.id,
+                        resourceTablePrefix: 'Artifact', resourceIdColumn: 'artifactId' })}`);
+                const admitted = await db.artifact.findMany({ where: { id: { in: artifacts.map(row => row.id) },
+                    ...await readArtifactCandidateWhereInTx(db, reader.id) }, select: { id: true } });
+                expect(new Set(candidates.map(row => row.id))).toEqual(new Set(admitted.map(row => row.id)));
                 const result = await app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill&limit=3', headers: {
                     'x-test-user-id': reader.id,
                     'x-happier-account-stored-content-protocol': String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION),
