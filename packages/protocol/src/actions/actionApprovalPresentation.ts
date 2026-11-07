@@ -1,11 +1,11 @@
-import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
 import { StructuredQuestionAnswersV1Schema } from '../tools/structuredQuestionAnswersV1.js';
-import { ApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, type ApprovalExecutionOriginV1, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
+import { readApprovalExecutionFailure } from '../approvals/approvalExecutionFailure.js';
+import { StoredApprovalRequestSchema, ApprovalRequestV1Schema, ApprovalRequestV2Schema, type StoredApprovalRequestV2, type ApprovalExecutionOriginV1, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from '../approvals/targetActionApprovalRequestV1.js';
 import { AgentRuntimeJsonValueV1Schema } from '../runtime/agentSessionV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
-import { getActionSpec } from './actionSpecs.js';
+import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from './actionSpecs.js';
 import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
@@ -13,14 +13,15 @@ import { VoiceConversationTargetSchema } from './voiceConversationActionFamily.j
 import type { ActionInputFieldHint, ActionInputOption } from './actionInputHintsRuntime.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
-import { SessionVisualReviewedAdmissionV1Schema } from '../sessions/board/actions.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
-import { resolveSessionVisualEffectiveCapabilitiesV1 } from '../sessions/board/visualPolicy.js';
 import { z } from 'zod/mini';
 import { readWidgetActionSurfaceV1 } from '../widgets/actionsV1.js';
 import { unwrapActionInputSchema } from './actionInputSchemaPath.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { readBuiltInSettingDeclarationV1 } from './settings/settingsDeclarations.js';
+import {
+  readApprovalConnectedAccountTarget, readApprovalDeclaredModelSelection, readApprovalModelReference, readApprovalPurposeBindings, readApprovalSavedSecretReference,
+} from './actionApprovalValueReferences.js';
 import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
@@ -35,7 +36,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Public reads never spend or transport the private Artifact's replay authority. */
-function projectPublicApprovalExecutionOrigin(origin: ApprovalExecutionOriginV1) {
+function projectPublicApprovalExecutionOrigin(origin: ApprovalExecutionOriginV1 | StoredApprovalRequestV2['executionOriginV1']) {
   const { externalActionExecutionAuthorization: _authorization, externalActionInputSignature: _signature,
     originalActionEnvelope: _envelope, ...metadata } = origin;
   return metadata;
@@ -52,7 +53,7 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
   const target = request.v === 1 ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
   const currentExecution = request.v === 2 ? request.execution : target?.success ? target.data.execution : undefined;
   const operationCredentialUses = currentExecution?.operationCredentialUses;
-  const failureDetails = request.v === 2 && !execution.ok ? readApprovalExecutionFailure(request)?.details : undefined;
+  const failure = request.v === 2 && !execution.ok ? readApprovalExecutionFailure(request) : null;
   return {
     executedAtMs: execution.executedAtMs, ok: execution.ok,
     ...(currentExecution?.effectAttempted !== undefined
@@ -60,7 +61,8 @@ export function projectApprovalExecutionForObservation(request: ApprovalRequest 
     ...(execution.ok && execution.result !== undefined ? { result: project ? project(execution.result) : execution.result } : {}),
     ...(execution.errorCode === undefined ? {} : { errorCode: execution.errorCode }),
     ...(execution.error === undefined ? {} : { error: execution.error }),
-    ...(failureDetails === undefined ? {} : { details: failureDetails }),
+    ...(failure?.details === undefined ? {} : { details: failure.details }),
+    ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
     ...(operationCredentialUses?.length ? { operationCredentialUses } : {}),
   };
 }
@@ -80,7 +82,7 @@ export function projectApprovalRequestForPublicRead(request: ApprovalRequest | T
     } } : {}),
     ...(target.data.execution ? { execution: projectApprovalExecutionForObservation(target.data) } : {}),
   };
-  const builtIn = ApprovalRequestSchema.parse(request);
+  const builtIn = StoredApprovalRequestSchema.parse(request);
   // Released V1 storage preserves unknown fields for forward readability. That
   // custody contract does not publish unknown authority or credential fields.
   const disclosed: Record<string, unknown> = Object.fromEntries(Object.keys(builtIn.v === 2 ? ApprovalRequestV2Schema.shape : ApprovalRequestV1Schema.shape)
@@ -170,7 +172,13 @@ export type ApprovalActionReference =
   /** An Agent's own model (no Provider connection): read by the Agent catalog's title for it. */
   | Readonly<{ kind: 'agentModel'; id: string; agentTargetKey: string }>
   /** The Connected Account (or pool) one connected service is bound to: read as "Service · account". */
-  | Readonly<{ kind: 'connectedAccount'; id: string; service: string; pool?: true }>
+  | Readonly<{
+      kind: 'connectedAccount'; id: string; service: string; pool?: true;
+      /** The Provider purpose slot this binding fills: its declared title names the row, not the humanized purpose id. */
+      purpose?: Readonly<{ id: string; contributionKey?: string; connectionId?: string }>;
+    }>
+  /** A Saved Secret, read by its name and never by its value; one that is gone reads as unavailable. */
+  | Readonly<{ kind: 'savedSecret'; id: string }>
   | Readonly<{ kind: 'managedMachine'; id: string; homeId: string }>
   | Readonly<{ kind: 'artifact' | 'skill' | 'mcpServer' | 'project' | 'agent' | 'registrySource'; id: string }>
   | Readonly<{ kind: 'machine'; id: string; workspaceRoot?: string }>
@@ -192,7 +200,7 @@ function describeApprovalKeyReference(key: string | undefined, value: unknown): 
   if (SESSION_REFERENCE_KEYS.has(key)) return { kind: 'session', id: value.trim() };
   if (key === 'serverId') return { kind: 'home', id: value.trim() };
   if (key === 'accountId') return { kind: 'account', id: value.trim() };
-  return undefined;
+  return readApprovalSavedSecretReference('', key, value);
 }
 
 /**
@@ -201,7 +209,8 @@ function describeApprovalKeyReference(key: string | undefined, value: unknown): 
  * reference moves its raw id.
  */
 function isTechnicalApprovalKey(key: string | undefined): boolean {
-  return key === 'v' || key === 'expectedRevision' || key === 'expectedIntentRevision'
+  // Every `expected…Revision` or `expectedUpdatedAt` operand is an optimistic-concurrency check (item, layout, metadata, intent…).
+  return key === 'v' || (key !== undefined && /^expected(?:[A-Z][A-Za-z]*)?(?:Revision|UpdatedAt)$/.test(key))
     // A retry key makes a request idempotent; it says nothing about what the request does.
     || key === 'creationKey' || key === 'idempotencyKey';
 }
@@ -223,17 +232,6 @@ function readApprovalAgentReference(value: unknown): ApprovalActionReference | u
   return undefined;
 }
 
-/** A model selection (`{ ref: { agentTargetKey, providerConnectionId, modelId } }`) read as the model it chose. */
-function readApprovalModelReference(value: unknown): ApprovalActionReference | undefined {
-  const ref = isRecord(value) && isRecord(value.ref) ? value.ref : null;
-  if (!ref || typeof ref.modelId !== 'string' || !ref.modelId.trim() || typeof ref.agentTargetKey !== 'string') return undefined;
-  if (typeof ref.providerConnectionId === 'string' && ref.providerConnectionId.trim()) {
-    return { kind: 'providerModel', id: ref.modelId, connectionId: ref.providerConnectionId, agentTargetKey: ref.agentTargetKey };
-  }
-  return ref.providerConnectionId === null || ref.providerConnectionId === undefined
-    ? { kind: 'agentModel', id: ref.modelId, agentTargetKey: ref.agentTargetKey } : undefined;
-}
-
 function describeApprovalReference(actionId: string, field: ActionInputFieldHint, values: readonly unknown[], input: unknown): ApprovalActionReference | undefined {
   if (values.length !== 1) return undefined;
   const value = values[0];
@@ -253,11 +251,16 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   // Declared target fields name an Agent and a model wherever an Action carries them.
   if (leaf === 'agentTarget') return readApprovalAgentReference(value);
   if (leaf === 'modelSelection') return readApprovalModelReference(value);
+  // A declared target binding or model selection reads as what it names wherever an Action carries it.
+  const declared = readApprovalDeclaredModelSelection(value) ?? readApprovalConnectedAccountTarget(value)?.reference;
+  if (declared) return declared;
   if (typeof value !== 'string' || !value.trim()) return undefined;
   if (actionId.startsWith('machines.managed.') && field.path === 'managedId'
       && isRecord(input) && typeof input.homeId === 'string' && input.homeId.trim()) {
     return { kind: 'managedMachine', id: value.trim(), homeId: input.homeId.trim() };
   }
+  const savedSecret = readApprovalSavedSecretReference(actionId, leaf, value);
+  if (savedSecret) return savedSecret;
   // A Home identity reads by the Home's name, like a `serverId` key.
   if (field.path === 'homeId') return { kind: 'home', id: value.trim() };
   if (actionId.startsWith('artifact.') && field.path === 'artifactId') return { kind: 'artifact', id: value };
@@ -286,7 +289,10 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
     const catalogSourceKey = isRecord(input) && typeof input.catalogSourceKey === 'string'
       ? { catalogSourceKey: input.catalogSourceKey } : {};
     if (field.path === 'connectionId') {
-      const name = isRecord(input) && typeof input.displayName === 'string' ? input.displayName.trim() : '';
+      // A connection being created has no row to read yet: it reads by the name it is created with.
+      const name = isRecord(input) && typeof input.displayName === 'string' ? input.displayName.trim()
+        : isRecord(input) && input.action === 'createCustom' && isRecord(input.template) && typeof input.template.name === 'string'
+          ? input.template.name.trim() : '';
       const agentTargetKey = isRecord(input) && typeof input.agentTargetKey === 'string' ? input.agentTargetKey : null;
       return { kind: 'providerConnection', id: value.trim(), ...catalogSourceKey, ...(name ? { displayName: name } : {}),
         ...(agentTargetKey ? { agentTargetKey } : {}) };
@@ -306,6 +312,13 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   return actionId === 'session.delete' && field.path === 'sessionId' && reference?.kind === 'session'
     ? { ...reference, presentation: 'destructive_target' }
     : reference;
+}
+
+/** A connection being created reads by the name it is created with: beside that name operand the connection row adds nothing, and its id stays in Technical details. */
+function isRedundantCreatedConnection(actionId: string, reference: ApprovalActionReference | undefined, input: unknown): boolean {
+  return actionId.startsWith('providers.connections.create') && reference?.kind === 'providerConnection'
+    && reference.displayName !== undefined && isRecord(input) && typeof input.displayName === 'string'
+    && input.displayName.trim() === reference.displayName;
 }
 
 function describeApprovalPlaceReference(value: unknown): ApprovalActionReference | undefined {
@@ -422,14 +435,16 @@ function describePluginInstallApprovalDisclosure(
       unrepresentable: unavailable,
     };
   }
+  // The whole evaluated envelope: whether this is a first install or an
+  // update asking for new scope (and which) is part of what the person decides.
   const entries: ApprovalStructuredValueEntry[] = [];
-  appendApprovalStructuredMembers(pendingReview.review, 0, entries);
+  appendApprovalStructuredMembers(pendingReview, 0, entries);
   return {
     rows: [{
       kind: 'value',
-      path: `${path}.review`,
+      path,
       title: 'Daemon-evaluated install and trust disclosure',
-      value: JSON.stringify(pendingReview.review),
+      value: JSON.stringify(pendingReview),
       entries,
     }],
     unrepresentable: null,
@@ -594,6 +609,12 @@ function appendApprovalStructuredEntries(
     });
     return;
   }
+  const account = !widgetStructure ? readApprovalConnectedAccountTarget(value) : undefined;
+  if (account) {
+    // A connected-service binding reads as the Account or pool it names; its plugin, local and group ids stay in Technical details.
+    output.push({ label, value: account.id, depth, reference: account.reference });
+    return;
+  }
   const stamped = !widgetStructure ? readApprovalStampedValue(value) : null;
   if (stamped) {
     appendApprovalStructuredEntries(key, label, stamped.value, depth, output, widgetStructure);
@@ -750,12 +771,21 @@ export function resolveApprovalPresentationInput(input: Readonly<{
   }
 }
 
+/** The producer and its continuation bind the same declared private review. */
+export function projectApprovalReviewInput(spec: ActionSpec, input: unknown): unknown {
+  const review = spec.approvalPresentation;
+  if (!review?.projectInput) return spec.projectObservationInput?.(input) ?? input;
+  const projected = review.projectInput(input);
+  return review.inputSchema ? review.inputSchema.parse(projected) : projected;
+}
+
 /** One Protocol-owned reading governs both rendered fields and approval admission. */
 export function describeApprovalActionFields(input: Readonly<{
   actionId: string;
   actionArgs: unknown;
   preview?: unknown;
   status?: ApprovalRequest['status'];
+  context?: ApprovalPresentationContext;
 }>): ApprovalActionFieldsPresentation {
   let spec;
   try {
@@ -764,7 +794,7 @@ export function describeApprovalActionFields(input: Readonly<{
     return { rows: [], unrepresentable: { path: '', reason: 'missing_required_context' } };
   }
   const review = spec.approvalPresentation;
-  const settled = input.status && ['executed', 'failed', 'rejected', 'canceled'].includes(input.status);
+  const settled = input.status && ['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'].includes(input.status);
   // Safe presentation data is not executable input. Only terminal history or a
   // live-only continuation can read its declared schema from stored review.
   const storedReview = review?.inputSchema && (settled || spec.approvalInputCustody === 'live_only')
@@ -778,7 +808,7 @@ export function describeApprovalActionFields(input: Readonly<{
   // Observation previews can intentionally omit private domain content. Only the domain's
   // explicit review projection may disclose that content; never fall back to raw secret input.
   const projectedInput = storedReview?.success ? storedReview.data : review?.projectInput
-    ? review.projectInput(input.actionArgs)
+    ? review.projectInput(input.actionArgs, input.context)
     : resolveApprovalPresentationInput(input);
   const parsedReview = review?.inputSchema?.safeParse(projectedInput);
   if (parsedReview && !parsedReview.success) {
@@ -855,11 +885,15 @@ export function describeApprovalActionFields(input: Readonly<{
     const choices = selectedOptions?.map(option => option.label).join(', ');
     const value = place?.success && place.data.t === 'allMachines' ? 'Everywhere'
       : choices || (option && typeof option.label === 'string' ? option.label : literal);
-    if (value === null) {
+    // Required context belongs to the captured invocation (or its explicit
+    // review schema), never to an intentionally reduced observation preview.
+    // These operands decide presence only; displayed values stay projected.
+    const contextValues = getApprovalFieldValues(review?.projectInput ? presentationInput : input.actionArgs, field.path);
+    if (formatApprovalFieldValues(contextValues, { preserveStructuredValues: field.widget === 'json' }) === null) {
       // A required field whose schema declares `null` and that carries exactly
       // that null is present context with nothing to display, not missing context.
-      const declaredNull = values.length > 0
-        && values.every((entry) => entry === null)
+      const declaredNull = contextValues.length > 0
+        && contextValues.every((entry) => entry === null)
         && actionInputFieldAcceptsNull(spec, field.path);
       // Live-only input deliberately leaves required private fields out of the
       // durable observation projection. Their presence is guaranteed by the
@@ -871,8 +905,8 @@ export function describeApprovalActionFields(input: Readonly<{
         unrepresentable ??= { path: field.path, reason };
         rows.push({ kind: 'unrepresentable', path: field.path, title: field.title, reason });
       }
-      continue;
     }
+    if (value === null) continue;
     const reference = reachPlace ? describeApprovalPlaceReference(values[0]) : describeApprovalReference(input.actionId, field, values, presentationInput);
     // A typed value that reads as one word or path ("Directory  /repo") needs no entries under it.
     const kindValue = field.widget === 'json' && !reference && !place?.success && values.length === 1
@@ -904,9 +938,19 @@ export function describeApprovalActionFields(input: Readonly<{
     if (field.path.split('.').at(-1) === 'connectedServices' && values.length === 1) {
       entries = describeApprovalConnectedServices(values[0]) ?? entries;
     }
+    if (field.path.split('.').at(-1) === 'purposeBindingDefaults' && values.length === 1 && isRecord(presentationInput)) {
+      // Each slot is read through the Provider's declared purpose title, so the connection and contribution name its owner.
+      const bindings = readApprovalPurposeBindings(values[0], {
+        ...(typeof presentationInput.contributionKey === 'string' ? { contributionKey: presentationInput.contributionKey } : {}),
+        ...(typeof presentationInput.connectionId === 'string' ? { connectionId: presentationInput.connectionId } : {}),
+      });
+      if (bindings) entries = bindings.map(({ purpose, id, reference }) => ({ label: humanizeApprovalKey(purpose), value: id, depth: 0, reference }));
+    }
     if (kindValue !== null) entries = undefined;
     const technical = technicalPaths.includes(field.path)
-      || !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
+      || isRedundantCreatedConnection(input.actionId, reference, presentationInput) || !reference && (isTechnicalApprovalKey(field.path.split('.').at(-1))
+      // An operand that carries nothing (`savedSecretId: null`) is no reading; its exact literal stays in Details.
+      || values.length > 0 && values.every(value => value === null)
       || values.length > 0 && values.every(isEmptyApprovalValue) && !(rulesAction && field.path === 'change.rules')
       // The visual summary already names this item. Preserve its exact identity
       // in Details, rather than adding an opaque id to that first reading.
@@ -1032,19 +1076,14 @@ export function resolveApprovalVisualPreview(input: Readonly<{
   return null;
 }
 
-/** What network an HTML visual gets once approved, using the host-captured admission facts. */
+/** What network an HTML visual gets once approved, captured in its exact input. */
 function describeApprovalVisualNetwork(actionId: string, input: unknown): ApprovalActionFieldRow | null {
   const source = readApprovalVisualItem(actionId, input)?.source;
   if (!source || source.kind !== 'hostedHtml') return null;
   // An invalid request is refused by admission; it has no network to state.
   const capabilities = normalizeUiSurfaceCapabilityRequestV1(source.requestedCapabilities);
   if (!capabilities) return null;
-  const reviewed = SessionVisualReviewedAdmissionV1Schema.safeParse(isRecord(input) ? input.reviewedVisual : undefined);
-  const policy = resolveSessionVisualEffectiveCapabilitiesV1(capabilities, {
-    isCreate: isRecord(input) && input.expectedItemRevision === null,
-    networkSetting: reviewed.success ? reviewed.data.networkSetting : null,
-  });
-  return { kind: 'value', path: 'item.source.requestedCapabilities', title: 'Network', value: describeApprovalNetworkValue(policy) };
+  return { kind: 'value', path: 'item.source.requestedCapabilities', title: 'Network', value: describeApprovalNetworkValue(capabilities) };
 }
 
 /** The network a placed widget gets from its own override, in the same words as a Session visual. */
@@ -1190,7 +1229,7 @@ export function describeApprovalRequestFields(
     : actionPresentation;
   // A consumed request is history, not another admission attempt. Missing historical
   // operands remain visibly unavailable; never offer rejection/re-submission as its next action.
-  if (request.status && ['executed', 'failed', 'rejected', 'canceled'].includes(request.status)) {
+  if (request.status && ['executed', 'failed', 'outcome_unknown', 'rejected', 'canceled'].includes(request.status)) {
     return { rows: presentation.rows.map(row => row.kind === 'unrepresentable'
       ? { kind: 'value' as const, path: row.path, title: row.title, value: '', valueFormat: 'unavailable' as const } : row),
       unrepresentable: null };
@@ -1234,7 +1273,7 @@ export function resolveApprovalRequestApproveAdmission(
     }
   }
   const presentation = describeApprovalRequestFields(request);
-  if (request.v === 1) {
+  if (request.v === 1 || !ActionIdSchema.safeParse(request.actionId).success) {
     return { status: 'unavailable', reason: 'legacy_request', presentation };
   }
   if (presentation.unrepresentable) {

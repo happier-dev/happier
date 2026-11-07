@@ -10,6 +10,24 @@ import { ProviderAccountUsageRecordIdSchema } from '../connect/providerAccountUs
 import { ConnectedAccountServiceIdentityV1Schema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import type { QualifiedConnectedAccountServiceRef } from '../connect/qualifiedConnectedAccountsV4.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
+import { decodeArtifactKindV1 } from '../artifacts/artifactKindV1.js';
+
+/** Complete content-free type routing; any unclassified member keeps recovery coarse. */
+export function readArtifactKindsV1(value: unknown): readonly string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const kinds = new Set<string>();
+  for (const candidate of value) {
+    const kind = decodeArtifactKindV1(candidate);
+    if (typeof candidate !== 'string' || !kind.classified) return null;
+    kinds.add(candidate);
+  }
+  return [...kinds];
+}
+
+export function readArtifactKindsChangeHintV1(hint: unknown): readonly string[] | null {
+  return hint !== null && typeof hint === 'object' && !Array.isArray(hint) && 'artifactKinds' in hint
+    ? readArtifactKindsV1(hint.artifactKinds) : null;
+}
 
 export {
   PluginDomainAvailabilityChangeHintSchema,
@@ -76,6 +94,44 @@ export const TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'teams' as const;
 /** Delivered/withdrawn credential material changes no Team or source authority.
  * A separate coalescing row preserves any pending Team-authority invalidation. */
 export const TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'team-credential-material' as const;
+/**
+ * Linked identity lifetime (link, unlink, relink, eligibility or provider projection) changes
+ * which authentication methods an Account can satisfy, including restricted Team admission.
+ * A separate coalescing row keeps this fact cursor-relative: a later or same-transaction
+ * `self` profile/settings/security write cannot replace it.
+ */
+export const ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'linked-identities' as const;
+
+export function buildAccountIdentitiesChangeV1() {
+  return { kind: 'account', entityId: ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: { linkedProviders: true } } as const;
+}
+
+/** Also reads content-free wakes and the coarse `self` flag from retained rows and 0.2 servers. */
+export function readAccountIdentitiesChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
+  if (change.kind !== 'account') return false;
+  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
+  const hint = change.hint;
+  return change.entityId === 'self' && hint !== null && typeof hint === 'object' && !Array.isArray(hint)
+    && 'linkedProviders' in hint && hint.linkedProviders === true;
+}
+
+/**
+ * Content-free wake/feed-id form of Account currentness, for readers that ignore hints:
+ * a `self` id or the linked-identities id can change Team/Home qualification.
+ */
+export function isAccountCurrentnessEntityIdV1(entityId: string): boolean {
+  return entityId === 'self' || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1;
+}
+
+/**
+ * Account/credential currentness consumed by Team admission and shared-material readers: every
+ * linked-identity change and every `self` change except an exact settings-version fact.
+ */
+export function isAccountCurrentnessChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
+  if (change.kind !== 'account') return false;
+  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
+  return change.entityId === 'self' && readAccountSettingsVersionChangeV1(change) === null;
+}
 /** Separate coalescing rows keep service invalidations relative to the reader's cursor. */
 const CONNECTED_SERVICE_ACCOUNT_CHANGE_PREFIX_V1 = 'connected-service:';
 const CONNECTED_SERVICES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'connected-services';
@@ -242,6 +298,26 @@ export function readSessionUsageAccountingChangedV1(
   change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
 ): boolean {
   const since = change.kind === 'session' ? readSessionUsageAccountingProjectionOnlySinceCursorV1(change.hint) : null;
+  return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
+}
+
+/** The Account cursor preceding coalesced writes proven not to change daemon Memory inputs. */
+export function readSessionMemoryInputsProjectionOnlySinceCursorV1(hint: unknown): number | null {
+  if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
+  const record = hint as Record<string, unknown>;
+  const cursor = record.memoryInputsUnchangedSinceCursor;
+  return record.memoryInputsChanged === false && typeof cursor === 'number'
+    && Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+}
+
+/**
+ * Memory eligibility reads the Session row (seq, archive, timestamps, owner locality). Activity,
+ * presence and ready-projection writes leave those inputs unchanged; any other write withdraws the proof.
+ */
+export function readSessionMemoryInputsChangedV1(
+  change: Readonly<{ kind: string; cursor: number; hint?: unknown }>, afterCursor: number,
+): boolean {
+  const since = change.kind === 'session' ? readSessionMemoryInputsProjectionOnlySinceCursorV1(change.hint) : null;
   return since === null || !Number.isSafeInteger(afterCursor) || afterCursor < since || since >= change.cursor;
 }
 
@@ -433,34 +509,3 @@ export const CursorGoneErrorSchema = lazyZodSchema(() => z.strictObject({
 }));
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
-
-export const ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'linked-identities' as const;
-export function buildAccountIdentitiesChangeV1() {
-  return { kind: 'account', entityId: ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: { linkedProviders: true } } as const;
-}
-
-export function readAccountIdentitiesChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
-  if (change.kind !== 'account') return false;
-  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
-  const hint = change.hint;
-  return change.entityId === 'self' && hint !== null && typeof hint === 'object' && !Array.isArray(hint)
-    && 'linkedProviders' in hint && hint.linkedProviders === true;
-}
-
-/**
- * Content-free wake/feed-id form of Account currentness, for readers that ignore hints:
- * a `self` id or the linked-identities id can change Team/Home qualification.
- */
-export function isAccountCurrentnessEntityIdV1(entityId: string): boolean {
-  return entityId === 'self' || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1;
-}
-
-/**
- * Account/credential currentness consumed by Team admission and shared-material readers: every
- * linked-identity change and every `self` change except an exact settings-version fact.
- */
-export function isAccountCurrentnessChangeV1(change: Readonly<{ kind: string; entityId: string; hint?: unknown }>): boolean {
-  if (change.kind !== 'account') return false;
-  if (change.entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1) return true;
-  return change.entityId === 'self' && readAccountSettingsVersionChangeV1(change) === null;
-}
