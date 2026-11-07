@@ -17,7 +17,7 @@ import type { DiscussionAccessGrantSetRequestV1, DiscussionAccessGrantRemoveRequ
     DiscussionAccessGrantsListResponseV1, DiscussionAccessGrantMutationResponseV1, DiscussionLeaveResponseV1,
     DiscussionAccessRecipientCensusResponseV1, DiscussionRecipientKeyEnvelopeCommitInputV1,
     DiscussionRecipientKeyEnvelopeCommitResponseV1 } from "@happier-dev/protocol/discussions/access";
-import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
+import { resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
@@ -27,8 +27,7 @@ import { applyResourceRecipientKeyEnvelopesInTx, mayManageResourceGrants, projec
     projectResourceRecipientEnvelope, validateResourceGrantPrincipalInTx, validateResourceRecipientEnvelopeCommit,
     type ResourceRecipientEnvelopeStorageAdapter } from "@/app/teams/resourceGrantAccess";
 import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
-import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { acquireDiscussionMutationAccountsInTx, discussionContextStorageAdapter, discussionGrantStorageAdapter, isDiscussionAccountCredentialAdmittedInTx, resolveDiscussionAudienceInTx,
     resolveDiscussionContextInTx, type DiscussionStorageMode } from "./access";
 import { discussionFailure, discussionSuccess, type DiscussionResult } from "./serviceTypes";
@@ -37,6 +36,8 @@ import { markDiscussionReadersChangedInTx, scheduleDiscussionBadgeRefreshInTx } 
 import { attachDiscussionFollowSourceInTx, detachDiscussionFollowSourceInTx } from "@/app/session/follow/sessionFollowEdgeService";
 import { withdrawDiscussionInputRepliesInTx } from "@/app/session/messages/sessionMessageReply";
 import { admitDiscussionSecondOpinionSourceInTx, admitDiscussionSecondOpinionGrantInTx } from './secondOpinion';
+import { loadDiscussionKnownAccountActorFactsInTx, projectDiscussionAccountActorsInTx,
+    type DiscussionAccountActorSubject } from './projection';
 
 interface DiscussionActorInput {
     actorAccountId: string;
@@ -55,6 +56,8 @@ export interface InitialDiscussionGrants {
 export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; authentication: SessionAccessAuthentication;
     request: Pick<DiscussionCreateRequestV1, "participants" | "dataEncryptionKey" | "expectedOwnerContentPublicKeyFingerprint" | "recipientKeyEnvelopes">;
+    /** The Doc's existing admitted audience, resolved once by creation admission. */
+    sourceAudienceAccountIds?: readonly string[];
 }>): Promise<DiscussionResult<InitialDiscussionGrants>> {
     if (!await isDiscussionAccountCredentialAdmittedInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) {
         return discussionFailure("discussion_not_found");
@@ -70,6 +73,11 @@ export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonl
             ownerAccountId: input.actorAccountId, principal: { kind: "account", accountId }, hasExistingGrant: false });
         if (error) return discussionFailure(`discussion_${error}`);
     }
+    // A passage thread reaches the people already entitled to its Doc, including
+    // Team/Group readers. Their source grants establish eligibility; they need
+    // no new friendship with the commenter. Source disclosure is admitted before insert.
+    const initialAccountIds = [...new Set([...participantAccountIds, ...(input.sourceAudienceAccountIds ?? [])])]
+        .filter(accountId => accountId !== input.actorAccountId);
     const envelopes = input.request.recipientKeyEnvelopes ?? [];
     if (new Set(envelopes.map(envelope => envelope.recipientAccountId)).size !== envelopes.length) {
         return discussionFailure("discussion_invalid_recipient_envelope");
@@ -79,7 +87,7 @@ export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonl
             return discussionFailure("discussion_encryption_mode_mismatch");
         }
         return discussionSuccess({ storageMode: "plain", dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
-            participantAccountIds, recipientKeyEnvelopes: [] });
+            participantAccountIds: initialAccountIds, recipientKeyEnvelopes: [] });
     }
     const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(owner);
     if (readiness.status !== "available" || !input.request.dataEncryptionKey
@@ -91,14 +99,14 @@ export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonl
         recipientContentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint })) {
         return discussionFailure("discussion_invalid_recipient_envelope");
     }
-    const recipients = await tx.account.findMany({ where: { id: { in: participantAccountIds } }, select: RECIPIENT_READINESS_SELECT });
+    const recipients = await tx.account.findMany({ where: { id: { in: initialAccountIds } }, select: RECIPIENT_READINESS_SELECT });
     const byId = new Map(recipients.map(account => [account.id, account]));
     for (const envelope of envelopes) {
         const recipient = byId.get(envelope.recipientAccountId);
         if (!recipient || !projectResourceRecipientEnvelope(recipient, { ...envelope,
             encryptedDataKey: privacyKit.decodeBase64(envelope.encryptedDataKey) })) return discussionFailure("discussion_invalid_recipient_envelope");
     }
-    return discussionSuccess({ storageMode: "e2ee", dataEncryptionKey: ownerKey, participantAccountIds, recipientKeyEnvelopes: envelopes });
+    return discussionSuccess({ storageMode: "e2ee", dataEncryptionKey: ownerKey, participantAccountIds: initialAccountIds, recipientKeyEnvelopes: envelopes });
 }
 
 /** The create writer consumes this in its existing transaction, then seeds initial private cursors at zero. */
@@ -116,17 +124,34 @@ export async function applyInitialDiscussionGrantsInTx(tx: Tx, input: Readonly<{
 
 /** Everyone entitled to the resource may inspect its explicit grant roster. */
 export async function listDiscussionGrantsInTx(tx: Tx, input: DiscussionActorInput): Promise<DiscussionResult<DiscussionAccessGrantsListResponseV1>> {
-    const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
+    const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
+        authentication: input.authentication, includeActorAudience: true });
     if (!context) return discussionFailure("discussion_not_found");
-    const [accounts, teams, groups] = await Promise.all([
-        tx.discussionAccountGrant.findMany({ where: { discussionId: input.discussionId }, include: { account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } } }),
+    const [accounts, teams, groups, knownActors] = await Promise.all([
+        tx.discussionAccountGrant.findMany({ where: { discussionId: input.discussionId } }),
         tx.discussionTeamGrant.findMany({ where: { discussionId: input.discussionId }, include: { team: { select: { name: true } } } }),
         tx.discussionGroupGrant.findMany({ where: { discussionId: input.discussionId }, include: { teamGroup: { select: { name: true, teamId: true } } } }),
+        loadDiscussionKnownAccountActorFactsInTx(tx, [input.discussionId]),
     ]);
+    const subjects: DiscussionAccountActorSubject[] = [
+        { discussionId: input.discussionId, accountId: context.ownerAccountId },
+        ...accounts.map(row => ({ discussionId: input.discussionId, accountId: row.accountId })),
+        ...(knownActors.subjectsByDiscussion.get(input.discussionId) ?? []),
+    ];
+    const projected = await projectDiscussionAccountActorsInTx(tx, [], subjects,
+        new Map([[input.discussionId, context.audienceAccountIds ?? []]]));
+    const actorsByAccountId = new Map(projected.participants.flatMap(actor => actor ? [[actor.accountId, actor] as const] : []));
+    const accountActors = [...actorsByAccountId.values()];
     return discussionSuccess({ discussionId: input.discussionId, ownerAccountId: context.ownerAccountId, access: context.access.level,
+        accountActors,
         grants: [
-            ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
-                createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
+            ...accounts.map(row => {
+                const profile = actorsByAccountId.get(row.accountId)?.profile ?? null;
+                return { principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
+                    createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: {
+                        name: profile ? resolveAccountDisplayLabelV1(profile) : null, username: profile?.username ?? null,
+                    } };
+            }),
             ...teams.map(row => ({ principal: { kind: "team" as const, teamId: row.teamId }, accessLevel: row.accessLevel,
                 createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: row.team.name } })),
             ...groups.map(row => ({ principal: { kind: "group" as const, groupId: row.teamGroupId, teamId: row.teamGroup.teamId }, accessLevel: row.accessLevel,
@@ -134,10 +159,9 @@ export async function listDiscussionGrantsInTx(tx: Tx, input: DiscussionActorInp
         ] });
 }
 
-/** Grant-entry and revocation share one retirement, baseline and AccountChange publication path. */
+/** Grant-entry and revocation share one private-state baseline and AccountChange publication path. */
 async function reconcileDiscussionGrantAudienceInTx(tx: Tx, discussionId: string, previousAudience: readonly string[]): Promise<void> {
     const audience = await resolveDiscussionAudienceInTx(tx, discussionId);
-    await tx.discussionKeyEnvelope.deleteMany({ where: { discussionId, recipientAccountId: { notIn: audience } } });
     await tx.discussionReadState.deleteMany({ where: { discussionId, accountId: { notIn: audience } } });
     await initializeDiscussionCursorsOnGrantEntryInTx(tx, { discussionId, accountIds: audience });
     const accountIds = [...new Set([...previousAudience, ...audience])];
@@ -196,7 +220,7 @@ async function deleteDiscussionGrantInTx(tx: Tx, discussionId: string, principal
     return deleted.count;
 }
 
-/** A revoked caller receives no roster; grants and private key/cursor retirement commit together. */
+/** A revoked caller receives no roster or key projection; grants and cursor retirement commit together. */
 export async function removeDiscussionGrantInTx(tx: Tx, input: DiscussionActorInput & Readonly<{ request: DiscussionAccessGrantRemoveRequestV1 }>): Promise<DiscussionResult<DiscussionAccessGrantMutationResponseV1>> {
     await acquireDiscussionMutationAccountsInTx(tx, { ...input,
         additionalAccountIds: input.request.principal.kind === 'account' ? [input.request.principal.accountId] : [] });
@@ -456,15 +480,6 @@ export async function bindDiscussionParticipantSessionInTx(tx: Tx, input: Discus
         await attachDiscussionFollowSourceInTx(tx, { discussionId: admitted.value.discussionId, destinationSessionId: input.sessionId });
         await markDiscussionReadersChangedInTx({ tx, discussionId: admitted.value.discussionId, accessChanged: true });
     }
-    beforeAccountChangePublication(tx, [input.accountId], async client => {
-        const current = await readDiscussionParticipantSessionAdmissionInTx(client, input);
-        // Team/Group withdrawal can commit without changing the locked parent.
-        // Replay admission on current facts; the next attempt returns the
-        // ordinary origin refusal and leaves the reserved slot recoverable.
-        if (!current.ok || current.value.sessionId !== input.sessionId) {
-            throw new TransactionReplayRequiredError("discussion-participant-birth-admission-changed");
-        }
-    });
     return discussionSuccess({ ...admitted.value, sessionId: input.sessionId });
 }
 
@@ -595,10 +610,10 @@ async function readDiscussionGrantAudienceRowsForTeamsInTx(tx: Tx, teamIds: read
     return await tx.discussion.findMany({ where: { OR: [
         { teamGrants: { some: { teamId: { in: [...teamIds] } } } },
         { groupGrants: { some: { teamGroup: { teamId: { in: [...teamIds] } } } } },
-    ] }, select: { id: true, readStates: { select: { accountId: true } }, keyEnvelopes: { select: { recipientAccountId: true } } } });
+    ] }, select: { id: true, readStates: { select: { accountId: true } } } });
 }
 
-/** Read the complete current and retained publication audience without mutating grants. */
+/** Read current entitlement plus retained private-reader state; inert key tuples never create publication demand. */
 export async function readDiscussionGrantAudienceForTeamsInTx(tx: Tx, input: Readonly<{
     teamIds: readonly string[]; additionalAccountIds?: readonly string[];
 }>): Promise<readonly string[]> {
@@ -607,7 +622,6 @@ export async function readDiscussionGrantAudienceForTeamsInTx(tx: Tx, input: Rea
     for (const row of rows) {
         for (const accountId of await resolveDiscussionAudienceInTx(tx, row.id)) accountIds.add(accountId);
         for (const state of row.readStates) accountIds.add(state.accountId);
-        for (const envelope of row.keyEnvelopes) accountIds.add(envelope.recipientAccountId);
         for (const accountId of input.additionalAccountIds ?? []) accountIds.add(accountId);
     }
     return [...accountIds].sort();
@@ -619,8 +633,7 @@ export async function reconcileDiscussionGrantAudienceForTeamsInTx(tx: Tx, input
 }>): Promise<void> {
     const rows = await readDiscussionGrantAudienceRowsForTeamsInTx(tx, input.teamIds);
     for (const row of rows) {
-        const previous = [...new Set([...row.readStates.map(state => state.accountId), ...row.keyEnvelopes.map(envelope => envelope.recipientAccountId),
-            ...input.additionalAccountIds ?? []])];
+        const previous = [...new Set([...row.readStates.map(state => state.accountId), ...input.additionalAccountIds ?? []])];
         await reconcileDiscussionGrantAudienceInTx(tx, row.id, previous);
     }
 }
@@ -654,10 +667,10 @@ export async function eraseDiscussionAccessGrantsForAccountInTx(tx: Tx, input: R
 }
 
 export function listDiscussionGrants(input: DiscussionActorInput) {
-    return readSnapshotWithCurrentAdmission(tx => listDiscussionGrantsInTx(tx, input), tx => listDiscussionGrantsInTx(tx, input));
+    return captureReadSnapshot(tx => listDiscussionGrantsInTx(tx, input));
 }
 export function listDiscussionParticipants(input: DiscussionActorInput) {
-    return readSnapshotWithCurrentAdmission(tx => listDiscussionParticipantsInTx(tx, input), tx => listDiscussionParticipantsInTx(tx, input));
+    return captureReadSnapshot(tx => listDiscussionParticipantsInTx(tx, input));
 }
 export function setDiscussionGrant(input: Parameters<typeof setDiscussionGrantInTx>[1]) { return inTx(tx => setDiscussionGrantInTx(tx, input)); }
 export function removeDiscussionGrant(input: Parameters<typeof removeDiscussionGrantInTx>[1]) { return inTx(tx => removeDiscussionGrantInTx(tx, input)); }
@@ -668,9 +681,5 @@ export function leaveDiscussion(input: DiscussionActorInput) { return inTx(tx =>
 export function transferDiscussionOwner(input: Parameters<typeof transferDiscussionOwnerInTx>[1]) { return inTx(tx => transferDiscussionOwnerInTx(tx, input)); }
 export function commitDiscussionRecipientKeyEnvelopes(input: Parameters<typeof commitDiscussionRecipientKeyEnvelopesInTx>[1]) { return inTx(tx => commitDiscussionRecipientKeyEnvelopesInTx(tx, input)); }
 export function readDiscussionRecipientCensus(input: DiscussionActorInput) {
-    return readSnapshotWithCurrentAdmission(tx => readDiscussionRecipientCensusInTx(tx, input), async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const current = await readDiscussionRecipientCensusInTx(tx, input);
-        return !current.ok || isDeepStrictEqual(current.value, captured.value) ? current : discussionFailure("discussion_content_unavailable");
-    });
+    return captureReadSnapshot(tx => readDiscussionRecipientCensusInTx(tx, input));
 }

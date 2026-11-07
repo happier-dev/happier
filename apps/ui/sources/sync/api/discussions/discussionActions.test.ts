@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionListResponseV1Schema, DiscussionPostRequestV1Schema, type DiscussionCreateRequestV1, type DiscussionCreateResponseV1, type DiscussionPostRequestV1 } from '@happier-dev/protocol/discussions/api';
+import { DiscussionAttentionQueryV1Schema, DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionListResponseV1Schema, DiscussionPostRequestV1Schema, type DiscussionCreateRequestV1, type DiscussionCreateResponseV1, type DiscussionPostRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionListResultV1Schema, DiscussionPostResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { CoordinationMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { createDiscussionActionAdapter, createDiscussionClient } from './discussionActions';
+import { createDiscussionActionAdapter, createDiscussionClient, readDiscussionAttentionPage } from './discussionActions';
 import { Encryption } from '@/sync/encryption/encryption';
+import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
 import { DiscussionAccessGrantsListResponseV1Schema, DiscussionRecipientKeyEnvelopeCommitInputV1Schema,
     type DiscussionRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/discussions/access';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
@@ -19,6 +20,10 @@ import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/session
 import { TriageEntryRefV1Schema } from '@happier-dev/protocol/tasks/entryRefV1';
 import { hashBinaryContent, createBinaryContentEncryption, openBinaryContent } from '@/sync/encryption/binaryContent';
 import { executeDocDiscussionWriteV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
+import { readBinaryUploadFrameV1, decodeDiscussionUploadMetadataV1 } from '@happier-dev/transfers';
+import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
+import { prepareAttachmentPayloads } from '@/sync/domains/attachments/prepareAttachmentPayloads';
+import { buildDiscussionContent } from '@/components/discussions/discussionComposerDocument';
 
 // Browser HTTP is this suite's platform boundary; native URI custody has its own real-sink tests.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -75,6 +80,11 @@ function http(mode: 'plain' | 'e2ee', loseCreate = false, losePost = false) {
             return json(stored);
         }
         if (url.pathname === '/v1/discussions/discussion-a' && stored) return json({ discussion: stored.discussion });
+        if (url.pathname === '/v1/discussions/discussion-a/data-key/recipients' && stored) {
+            return json({ discussionId: 'discussion-a', ownerAccountId: scope.accountId, access: 'owner', encryptionMode: mode,
+                dataEncryptionKey: stored.discussion.dataEncryptionKey, callerDataEncryptionKey: stored.discussion.dataEncryptionKey,
+                recipients: [] });
+        }
         if (url.pathname === '/v1/discussions/discussion-a/messages' && init?.method === 'POST' && stored) {
             const body = DiscussionPostRequestV1Schema.parse(JSON.parse(String(init.body)));
             posts.push(body);
@@ -105,7 +115,114 @@ async function adapter(mode: 'plain' | 'e2ee', transport: ReturnType<typeof http
 }
 const context = { surface: 'ui' as const, serverId: scope.serverId };
 
+describe('Discussion key-opening demand', () => {
+    it.each(['discussion.get', 'discussion.read', 'discussion.list'] as const)(
+        'routes %s keys by exact demand while preserving readable E2EE content', async actionId => {
+            const transport = http('e2ee');
+            const create = await adapter('e2ee', transport);
+            await create({ actionId: 'discussion.create', input, context });
+            const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+            const worker = createFakeCryptoWorker();
+            const openings: Array<{ workClass: string; count: number }> = [];
+            encryption.configureNativeCryptoWorker({ worker: { ...worker,
+                decryptDataKeyEnvelopeV1: async request => {
+                    openings.push({ workClass: request.workClass ?? 'bulk', count: request.items.length });
+                    return worker.decryptDataKeyEnvelopeV1(request);
+                },
+            }, routing: { mode: 'auto', minPayloadBytes: 0 } });
+            const run = createDiscussionActionAdapter({ scope, request: transport.request,
+                accountMode: 'e2ee', encryption, availability: 'available' });
+            const result = await run({ actionId, input: actionId === 'discussion.list' ? {} : { discussionId: 'discussion-a' }, context });
+            expect(result).toMatchObject(actionId === 'discussion.list'
+                ? { discussions: [{ title: input.title }] }
+                : actionId === 'discussion.get' ? { discussion: { title: input.title } }
+                    : { messages: [{ content }] });
+            expect(openings).toEqual([{ workClass: actionId === 'discussion.list' ? 'bulk' : 'interactive', count: 1 }]);
+        });
+});
+
+describe('Discussion attention transport', () => {
+    it('preserves exact Discussion selection and the loaded occurrence frontier through the strict server query', async () => {
+        const input = { discussionId: 'discussion / exact', afterCursor: 'lower+cursor=', cursor: 'upper+cursor=' };
+        let received: unknown;
+        const outcome = await readDiscussionAttentionPage({ scope, encryption: null, availability: 'available',
+            request: async path => {
+                const url = new URL(path, 'https://home.invalid');
+                expect(url.pathname).toBe('/v1/discussions/attention');
+                received = DiscussionAttentionQueryV1Schema.parse(Object.fromEntries(url.searchParams));
+                return json({ discussions: [], nextCursor: null, incomplete: false });
+            } }, input);
+        expect(received).toEqual(input);
+        expect(outcome).toEqual({ kind: 'succeeded', value: { v: 1, serverId: scope.serverId,
+            discussions: [], nextCursor: null, incomplete: false } });
+    });
+});
+
 describe('Discussion attachment byte transport', () => {
+    it.each(['plain', 'e2ee'] as const)('frames two unequal web files for an existing %s Discussion through the real consumer', async mode => {
+        const transport = http(mode);
+        const secret = new Uint8Array(32).fill(7);
+        const encryption = mode === 'e2ee' ? await Encryption.create(secret) : null;
+        const ownerContentPublicKeyFingerprint = mode === 'e2ee' ? createAccountScopedCryptoMaterialSnapshotV1({
+            accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint : undefined;
+        const bytes = [Uint8Array.from({ length: 8600 }, (_, index) => index % 251), new TextEncoder().encode('n'.repeat(191))];
+        const files = [new File([bytes[0]!], 'attachment-garden.png', { type: 'image/png' }),
+            new File([bytes[1]!], 'attachment-note.txt', { type: 'text/plain' })];
+        const prepared = await prepareAttachmentPayloads({ maxFileBytes: 25 * 1024 * 1024,
+            drafts: files.map((file, index) => ({ id: index === 0 ? 'e8eb80ae-7e18-4bbe-8c0e-c9d762787a86'
+                : '1aaa2291-6e0b-4547-95b6-5a1238440820', source: { kind: 'web' as const, file } })) });
+        const content = buildDiscussionContent('Review both selected files', [], undefined, prepared.attachments);
+        const uploads: Uint8Array[] = [];
+        const network = async (path: string, init?: RequestInit): Promise<Response> => {
+                if (path !== '/v1/discussions/upload') return transport.request(path, init);
+                expect(init?.body).toBeInstanceOf(Blob);
+                expect(new Headers(init?.headers).get('content-type')).toBe('application/vnd.happier.discussion-upload-v1');
+                const frame = new Uint8Array(await new Response(init?.body).arrayBuffer());
+                // A browser may coalesce metadata and both leaves into one HTTP chunk.
+                const metadata = await readBinaryUploadFrameV1((async function* () { yield frame; })(), {
+                    metadataMaxBytes: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
+                    decodeMetadata: decodeDiscussionUploadMetadataV1,
+                    onMetadata: async value => value.attachments,
+                    onSegment: async (_index, chunks) => {
+                        const parts: Uint8Array[] = [];
+                        for await (const chunk of chunks) parts.push(chunk);
+                        const opened = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+                        let offset = 0;
+                        for (const part of parts) { opened.set(part, offset); offset += part.length; }
+                        uploads.push(opened);
+                    },
+                });
+                expect(metadata.operation).toBe('post');
+                if (metadata.operation !== 'post') throw new Error('Expected an existing Discussion post');
+                expect(metadata.attachments.map(value => value.blobId)).toEqual(prepared.sources.map(value => value.reference.blobId));
+                expect(metadata.input.attachments).toEqual(prepared.sources.map(value => ({ blobId: value.reference.blobId,
+                    t: mode === 'plain' ? 'plain' : 'encrypted' })));
+                const { discussionId, ...body } = metadata.input;
+                return transport.request(`/v1/discussions/${discussionId}/messages`, { ...init, body: JSON.stringify(body) });
+        };
+        // Only global fetch is substituted: the production endpoint and runtime-fetch
+        // wrappers must preserve the vendor content type and actual Blob body.
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const { resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        resetRuntimeFetch();
+        const fetchBoundary = vi.spyOn(globalThis, 'fetch').mockImplementation((url, init) => network(new URL(String(url)).pathname, init));
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://upload.test', credentials: null });
+        const execute = createDiscussionActionAdapter({ scope, encryption, accountMode: mode, ownerContentPublicKeyFingerprint,
+            availability: 'available', attachmentSources: prepared.sources,
+            request: (path, init) => request(path, init, { retry: 'none' }) });
+        try {
+            await execute({ actionId: 'discussion.create', input, context });
+            const result = await execute({ actionId: 'discussion.post', input: { discussionId: 'discussion-a', localId: 'two-web-files', content }, context });
+            expect(result).toMatchObject({ message: { content } });
+            expect(uploads).toHaveLength(2);
+            const dataKey = mode === 'e2ee' ? await encryption!.decryptEncryptionKey(transport.readStored()!.discussion.dataEncryptionKey!, scope) : null;
+            for (const [index, selected] of prepared.sources.entries()) {
+                expect(await openBinaryContent({ reference: selected.reference, mode,
+                    encryption: dataKey ? createBinaryContentEncryption(dataKey) : null,
+                    content: mode === 'plain' ? { t: 'plain', v: encodeBase64(uploads[index]!) } : { t: 'encrypted', c: encodeBase64(uploads[index]!) } })).toEqual(bytes[index]);
+            }
+        } finally { fetchBoundary.mockRestore(); resetRuntimeFetch(); }
+    });
     it.each([false, true])('retains a committed effect as uncertain when its captured Account retires (byte frame: %s)', async binary => {
         const transport = http('plain');
         let current = true;
@@ -431,7 +548,7 @@ describe('Discussion UI Action adapter', () => {
         expect(transport.posts[0]?.mentionedSessionIds).toEqual(['invited-session']);
     });
 
-    it('delivers the independent Discussion key to initial and newly invited verified recipients through the fenced shared owner', async () => {
+    it.each(['selected invitees', 'Doc audience'] as const)('delivers the independent Discussion key to $0 and newly invited recipients through the fenced shared owner', async audience => {
         const transport = http('e2ee');
         const signingSecret = new Uint8Array(32).fill(11);
         const signingPublic = ed25519.getPublicKey(signingSecret);
@@ -474,10 +591,17 @@ describe('Discussion UI Action adapter', () => {
                 }
                 return transport.request(path, init);
             } });
-        const createInput = { ...input, participants: [{ kind: 'account' as const, accountId: 'account-b' }] };
+        const doc = { ref: { kind: 'doc' as const, artifactId: 'doc-a', serverId: scope.serverId },
+            revision: { headerVersion: 1, bodyVersion: 1 } };
+        const createInput = audience === 'selected invitees'
+            ? { ...input, participants: [{ kind: 'account' as const, accountId: 'account-b' }] }
+            : { ...input, anchor: { kind: 'doc' as const, doc }, firstMessage: { ...input.firstMessage,
+                content: { kind: 'doc_passage_comment' as const, passage: { ...doc, range: { start: 0, end: 1 }, quote: 'x' }, content },
+                replyTarget: { kind: 'doc_passage' as const, doc } } };
         expect(await execute({ actionId: 'discussion.create', input: createInput, context })).toMatchObject({ errorCode: 'outcome_unknown' });
         expect(await execute({ actionId: 'discussion.create', input: createInput, context })).toMatchObject({ discussion: { id: 'discussion-a' } });
-        expect(transport.creates[0]?.participants).toEqual([{ kind: 'account', accountId: 'account-b' }]);
+        expect(transport.creates[0]?.participants).toEqual(audience === 'selected invitees'
+            ? [{ kind: 'account', accountId: 'account-b' }] : undefined);
         expect(transport.creates[1]?.dataEncryptionKey).toBe(transport.creates[0]?.dataEncryptionKey);
         expect(transport.creates[1]?.creationEqualityEvidenceV1).toEqual(transport.creates[0]?.creationEqualityEvidenceV1);
         expect(transport.messages).toHaveLength(1);
@@ -494,6 +618,71 @@ describe('Discussion UI Action adapter', () => {
         expect(await execute({ actionId: 'discussion.access.grants.set', input: { discussionId: 'discussion-a',
             principal: { kind: 'account', accountId: 'account-d' }, accessLevel: 'view' }, context })).toMatchObject({ changed: true });
         expect(commits[2]?.recipientKeyEnvelopes.map(row => row.recipientAccountId)).toEqual(['account-d']);
+    });
+
+    it.each([
+        { state: 'missing tuple', storedEnvelope: false, storedFingerprint: null, expectedCensusReads: 1, expectedCommits: 1 },
+        { state: 'rotated binding', storedEnvelope: true, storedFingerprint: 'stale', expectedCensusReads: 1, expectedCommits: 1 },
+        { state: 'current tuple', storedEnvelope: true, storedFingerprint: 'current', expectedCensusReads: 0, expectedCommits: 0 },
+    ] as const)('repairs a $state only when a DEK holder opens the Discussion', async testCase => {
+        const transport = http('e2ee');
+        await (await adapter('e2ee', transport))({ actionId: 'discussion.create', input, context });
+        const signingSecret = new Uint8Array(32).fill(21);
+        const signingPublic = ed25519.getPublicKey(signingSecret);
+        const contentSecret = new Uint8Array(32).fill(22);
+        const contentPublic = x25519.getPublicKey(contentSecret);
+        const fingerprint = computeContentPublicKeyFingerprint(contentPublic);
+        const signature = signAccountContentKeyBindingV1({
+            accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic,
+        });
+        let recipientEnvelope: string | null = testCase.storedEnvelope ? transport.readStored()!.discussion.dataEncryptionKey : null;
+        let recipientFingerprint: string | null = testCase.storedFingerprint === 'current' ? fingerprint
+            : testCase.storedFingerprint === 'stale' ? computeContentPublicKeyFingerprint(x25519.getPublicKey(new Uint8Array(32).fill(23))) : null;
+        let censusReads = 0;
+        const commits: DiscussionRecipientKeyEnvelopeCommitInputV1[] = [];
+        const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const execute = createDiscussionActionAdapter({ scope, encryption, accountMode: 'e2ee', availability: 'available',
+            request: async (path, init) => {
+                if (path === '/v1/discussions/discussion-a') {
+                    const response = await transport.request(path, init);
+                    const payload = await response.json() as { discussion: Record<string, unknown> };
+                    return json({ discussion: { ...payload.discussion,
+                        recipientKeyPreparationRequired: recipientEnvelope === null || recipientFingerprint !== fingerprint } });
+                }
+                if (path.endsWith('/data-key/recipients')) {
+                    censusReads++;
+                    const ownerEnvelope = transport.readStored()!.discussion.dataEncryptionKey;
+                    return json({ discussionId: 'discussion-a', ownerAccountId: scope.accountId, access: 'owner', encryptionMode: 'e2ee',
+                        dataEncryptionKey: ownerEnvelope, callerDataEncryptionKey: ownerEnvelope, recipients: [{ recipientAccountId: 'account-b',
+                            contentKey: { status: 'available', accountSigningPublicKey: bytesToHex(signingPublic),
+                                contentPublicKey: encodeBase64(contentPublic), contentPublicKeySignature: encodeBase64(signature) },
+                            contentPublicKeyFingerprint: fingerprint, encryptedDataKey: recipientEnvelope,
+                            recipientContentPublicKeyFingerprint: recipientFingerprint }] });
+                }
+                if (path.endsWith('/data-key/envelopes')) {
+                    const commit = DiscussionRecipientKeyEnvelopeCommitInputV1Schema.parse(JSON.parse(String(init?.body)));
+                    commits.push(commit);
+                    recipientEnvelope = commit.recipientKeyEnvelopes[0]!.encryptedDataKey;
+                    recipientFingerprint = commit.recipientKeyEnvelopes[0]!.recipientContentPublicKeyFingerprint;
+                    return json({ appliedRecipientAccountIds: ['account-b'], skippedRecipientAccountIds: [] });
+                }
+                return transport.request(path, init);
+            } });
+
+        expect(await execute({ actionId: 'discussion.list', input: {}, context })).toMatchObject({ discussions: [{ title: input.title }] });
+        expect(censusReads).toBe(0);
+        expect(await execute({ actionId: 'discussion.get', input: { discussionId: 'discussion-a' }, context }))
+            .toMatchObject({ discussion: { title: input.title } });
+        expect(censusReads).toBe(testCase.expectedCensusReads);
+        expect(commits).toHaveLength(testCase.expectedCommits);
+        if (testCase.expectedCommits === 1) {
+            expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(recipientEnvelope!), recipientSecretKeyOrSeed: contentSecret }))
+                .toEqual(await encryption.decryptEncryptionKey(transport.readStored()!.discussion.dataEncryptionKey!, scope));
+        }
+        expect(await execute({ actionId: 'discussion.get', input: { discussionId: 'discussion-a' }, context }))
+            .toMatchObject({ discussion: { title: input.title } });
+        expect(censusReads).toBe(testCase.expectedCensusReads);
+        expect(commits).toHaveLength(testCase.expectedCommits);
     });
 
     it('keeps participant management key-free and rejects a roster disclosed after caller revocation', async () => {

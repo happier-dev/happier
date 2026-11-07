@@ -3563,7 +3563,12 @@ the server admits the actual Home-bound thread and Artifact, not label equality.
 
 The canonical Discussion writer checks Artifact read/key availability and the
 shared source-to-destination disclosure policy before saving or rejoining a
-Doc post. The initial roster is checked before atomic creation. Exact and paged
+Doc post. Before atomic creation, the initial-grant owner includes the Doc's
+current owner and accessible people, including Team and Group readers, from
+the source audience already resolved by creation admission. These existing
+readers need no new friendship with the commenter. The thread uses ordinary
+Discussion grants and read cursors; encrypted recipient preparation uses the
+Discussion's existing census and envelope owner. Exact and paged
 message reads recheck source access, including roots outside the requested
 page, so source revocation or unavailable material withholds the quoted
 content. List/get summaries use the same source admission and omit the latest

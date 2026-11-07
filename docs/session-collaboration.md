@@ -880,6 +880,14 @@ retains the same first occurrence and does not reset an acknowledged Follow fron
 This describes the development server seam; selection controls and the composed live
 New Discussion journey are not certified by the server tests.
 
+In unreleased 0.3 source, the shared composer reads `discussion.candidates.list`
+when a person opens mention selection, including before a passage thread exists.
+Selecting an own Session for the first comment carries it through the existing
+initial-participant admission; selecting one for a reply uses `discussion.invite`
+before posting. Raw server mentions still require membership. `doc.comment.reply`
+retains its own Action policy and accepts initial participants only for a new thread;
+that sharing operand requires present-user authority.
+
 This remains work in progress, not shipped availability or completed package/live validation.
 The current resource contract includes same-Discussion message replies and distinct Account
 and Session participant references. Mentions carry that typed identity; labels and ordinary

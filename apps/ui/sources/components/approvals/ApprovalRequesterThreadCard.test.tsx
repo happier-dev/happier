@@ -100,6 +100,22 @@ async function renderCard(
 }
 
 describe('ApprovalRequesterThreadCard operation actor', () => {
+  it('opens an own-agent Doc redo approval in place without presenting cross-person consent', async () => {
+    vi.spyOn(Modal, 'show').mockReturnValue('doc-redo-review');
+    const artifact = buildDiscussionRequesterApprovalArtifact({ requesterAccountId: 'alice', actionId: 'doc.edit.propose' });
+    const [approval] = listDiscussionRequesterApprovals([artifact], { serverId: 'server-1', discussionId: 'discussion-1' });
+    expect(approval).toBeDefined();
+    if (!approval) return;
+    await React.act(async () => getStorage().getState().applyArtifacts([artifact]));
+    const screen = await renderScreen(<ApprovalRequesterThreadCard approval={approval} serverId="server-1" />);
+    expect(screen.findByTestId('approval-requester-thread-waiting')).toBeNull();
+    expect(screen.getTextContent()).not.toContain(t('detailPages.approval.requester.thread.youConfirm'));
+    await screen.pressByTestIdAsync('session-discussion-waiting-approval-review');
+    expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ artifactId: artifact.id, serverId: 'server-1' }),
+    }));
+  });
+
   it('names only the approval execution Machine as offline and keeps its request controls', async () => {
     const [approval] = listDiscussionRequesterApprovals([
       buildDiscussionRequesterApprovalArtifact({ actionId: 'session.stop' }),

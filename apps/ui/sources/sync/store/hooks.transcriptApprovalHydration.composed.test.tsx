@@ -48,11 +48,16 @@ describe('transcript approval hydration', () => {
             return Response.json({ items: artifactIds.map(id => ({ artifactId: id, ok: true, recipientCensus: null,
                 artifact: projectArtifactBoundaryReadRow(inventory.find(row => row.id === id)!) })) });
         } });
-        const receipts = ['s1', 's2'].map((botSessionId, index) => buildDiscussionRequesterApprovalArtifact({
+        const ownRedo = buildDiscussionRequesterApprovalArtifact({
+            id: '11111111-1111-4111-8111-111111111902', botSessionId: 's1', actionId: 'doc.edit.propose',
+            requesterAccountId: 'session-account', executionAccountId: 'session-account',
+            serverId: home.serverId, serverIdentityId: 'srv_discussion_receipt',
+        });
+        const receipts = [ownRedo, ...['s1', 's2'].map((botSessionId, index) => buildDiscussionRequesterApprovalArtifact({
             id: `11111111-1111-4111-8111-11111111190${index + 3}`, botSessionId,
             serverId: home.serverId, serverIdentityId: 'srv_discussion_receipt', executionAccountId: 'session-account', settle: request => ({ ...request,
                 status: 'rejected', updatedAtMs: 20, decision: { kind: 'reject', decidedAtMs: 20,
-                    authority: 'present_user', decidingAccountId: 'bob' } }) }));
+                    authority: 'present_user', decidingAccountId: 'bob' } }) }))];
         const unrelated = Array.from({ length: 512 }, (_, index) => buildDiscussionRequesterApprovalArtifact({
             id: `11111111-1111-4111-8111-${String(index + 2000).padStart(12, '0')}`,
             botSessionId: `closed-session-${index}`, serverId: home.serverId,
@@ -80,8 +85,13 @@ describe('transcript approval hydration', () => {
             const hook = await renderHook(() => useDiscussionRequesterApprovals({ serverId: home.serverId,
                 discussionId: 'discussion-1' }, linked));
             try {
-                await waitForHomeGovernance(() => expect(hook.getCurrent()).toHaveLength(2));
-                expect(hook.getCurrent()[0]?.parsed.request.status).toBe('rejected');
+                await waitForHomeGovernance(() => expect(hook.getCurrent()).toHaveLength(3));
+                const redo = hook.getCurrent().find(entry => entry.artifact.id === ownRedo.id);
+                expect(redo).toMatchObject({ kind: 'request', subject: null, originMessageId: 'message-ask' });
+                const { placeDiscussionRequesterApprovals } = await import('@/components/discussions/discussionTimelineProjection');
+                expect(placeDiscussionRequesterApprovals([{ id: 'message-ask', producerV1: null }], hook.getCurrent())
+                    .get('message-ask')?.map(entry => entry.artifact.id)).toContain(ownRedo.id);
+                expect(hook.getCurrent().find(entry => entry.artifact.id !== ownRedo.id)?.parsed.request.status).toBe('rejected');
                 expect(hook.getCurrent()[0]?.originMessageId).toBe('message-ask');
                 expect(queries).toHaveLength(1);
                 expect(new URLSearchParams(queries[0]).get('approvalSessionIds')).toBe(JSON.stringify(['s1', 's2']));
@@ -102,6 +112,14 @@ describe('transcript approval hydration', () => {
                 expect(queries).toHaveLength(1);
                 expect(bodyReads).toHaveLength(1);
                 expect(retainedHeaderReads).toBe(0);
+                const settledRedo = ApprovalRequestV2Schema.parse({ ...JSON.parse(ownRedo.body!), status: 'rejected', updatedAtMs: 20,
+                    decision: { kind: 'reject', decidedAtMs: 20, authority: 'present_user', decidingAccountId: 'session-account' } });
+                await act(async () => storage.getState().applyArtifacts([{ ...ownRedo,
+                    header: buildApprovalRequestArtifactHeaderV1(settledRedo), body: JSON.stringify(settledRedo),
+                    bodyVersion: 2, updatedAt: 20,
+                }]));
+                expect(hook.getCurrent()).toHaveLength(2);
+                expect(hook.getCurrent().some(entry => entry.artifact.id === ownRedo.id)).toBe(false);
             } finally { await hook.unmount(); }
         } finally { await disconnect(); await home.dispose(); }
     });

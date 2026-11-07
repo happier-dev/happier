@@ -976,6 +976,17 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
         }
         return repeated;
     }, [messageTimelineItems]);
+    // A suggestion a later one in this thread replaced is history: it no longer asks its author to redo it.
+    const supersededProposals = React.useMemo(() => {
+        const superseded = new Set<string>();
+        let latest: string | null = null;
+        for (const item of messageTimelineItems) {
+            if (item.kind !== 'human_message' || !item.message.content || !isDiscussionDocEditProposalContentV1(item.message.content)) continue;
+            if (latest) superseded.add(latest);
+            latest = item.message.id;
+        }
+        return superseded;
+    }, [messageTimelineItems]);
     const openRun = React.useCallback((item: Extract<DiscussionTimelineItem, { kind: 'agent_activity_reference' }>) => {
         const runId = item.entry.runId ?? item.subagent.runRef?.runId;
         if (runId) props.source?.agentConversation.openAgentConversation(runId, resolveSessionAgentActivityPresentation({ entry: item.entry, subagent: item.subagent }).title);
@@ -1275,6 +1286,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             workflowRunNamed={workflowLabel !== null}
             startsGroup={messageGroupStarts.has(item.message.id)}
             repeatsPassage={repeatedPassages.has(item.message.id)}
+            supersededProposal={supersededProposals.has(item.message.id)}
             selectable={isCommittedDisplayMessage(item.message) && isSelectableDiscussionMessage(item.message) && item.message.id !== mutation?.localId}
             resolveAccountLabel={labels.account}
             resolveSessionLabel={labels.session}
@@ -1313,6 +1325,18 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             onLeft={closeSurface}
         />
     );
+    const headerActions = <View style={styles.headerActions} ref={railHosted && !phoneChrome ? patternCaptureAnchorRef : undefined} collapsable={false}>
+        {discussion.capabilities.manageAccess && discussion.archivedAt === null ? <DiscussionInviteButton
+            scope={props.scope}
+            accountLifetime={props.accountLifetime}
+            roster={roster}
+            management={participantManagement}
+            discussionId={props.target.discussionId}
+            discussionTitle={discussion.title ?? t('session.collaboration.discussion.encryptedTitle')}
+            onChanged={refreshRoster}
+        /> : null}
+        {railHosted ? null : participantsPopover}
+    </View>;
     const rosterLine = roster ? formatDiscussionRosterLine(summarizeDiscussionRoster(roster)) : null;
     // A phone folds the header into its one navigation band; the way back to the source moves into ⋯.
     const anchorOpen = anchorFact && anchorFact.kind !== 'diffStat' ? anchorFact.onPress : undefined;
@@ -1328,7 +1352,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
             .map((text, index) => ({ key: `fact:${index}`, text }))}
         navigation={{ onBack: closeSurface, includeTopInset: true }}
         actionsFit="compact"
-        actions={railHosted ? undefined : <View style={styles.headerActions}>{participantsPopover}</View>}
+        actions={headerActions}
         menu={phoneMenuActions.length > 0 ? <View ref={patternCaptureAnchorRef} collapsable={false}><PageHeaderMenu triggerTestID="session-discussion-actions-menu" actions={[...phoneMenuActions, ...lentMenuRows]} /></View> : undefined}
     /> : null;
     // Approval content shares the transcript scroll owner; it must not grow the composer band.
@@ -1365,17 +1389,7 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                     ];
                 })() : undefined}
                 // With the rail, Save as pattern (from Details) hangs from the header's actions instead of a ⋯ menu.
-                actions={<View style={styles.headerActions} ref={railHosted ? patternCaptureAnchorRef : undefined} collapsable={false}>
-                {discussion.capabilities.manageAccess && discussion.archivedAt === null ? <DiscussionInviteButton
-                    scope={props.scope}
-                    accountLifetime={props.accountLifetime}
-                    roster={roster}
-                    management={participantManagement}
-                    discussionId={props.target.discussionId}
-                    discussionTitle={discussion.title ?? t('session.collaboration.discussion.encryptedTitle')}
-                    onChanged={refreshRoster}
-                /> : null}
-                {railHosted ? null : participantsPopover}</View>}
+                actions={headerActions}
                 // Who is in it leads the line (lab T2-A); live presence follows the faces when someone is here.
                 metaLeadingKind="mark"
                 metaLeading={roster || presenceLabel ? <View style={styles.presenceRow}>
@@ -1595,6 +1609,8 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     onReply?: (messageId: string) => void;
     startsGroup: boolean;
     repeatsPassage: boolean;
+    /** A later suggestion in this thread replaced this one. */
+    supersededProposal: boolean;
     selectable: boolean;
     resolveAccountLabel: (accountId: string) => string | null;
     resolveSessionLabel: (sessionId: string) => string | null;
@@ -1754,7 +1770,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                     docRead={props.proposalDocRead}
                     proposalRef={message.messageRef ?? null} proposal={message.content.proposal}
                     disposition={message.docEditProposalDispositionV1} viewerAccountId={props.viewerAccountId}
-                    resolveAccountLabel={props.resolveAccountLabel}
+                    resolveAccountLabel={props.resolveAccountLabel} superseded={props.supersededProposal}
                     proposer={message.producerV1?.kind === 'agent' ? { label: speaker, mention: { sessionId: message.producerV1.sessionId } }
                         // A Run can't be asked to redo: Ask to redo addresses only a Session or a person.
                         : message.producerV1 === null && message.authorAccountId ? { label: speaker, mention: { accountId: message.authorAccountId } } : null} />

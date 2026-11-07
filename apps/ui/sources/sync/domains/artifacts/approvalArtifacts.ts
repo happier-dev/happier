@@ -156,10 +156,9 @@ export function listOpenPluginApprovalArtifactsForMachine(
 }
 
 /**
- * A shared Bot's outward request that waits for the person who asked, joined to the Discussion
- * message that asked it. The admitted cause (`executionOriginV1.actionRequestAttributionV1`) is the
- * only source of the link; nothing is inferred from the thread. Every status is kept, so the card
- * becomes the request's receipt in place once it is decided.
+ * A pending Agent request joined to the Discussion message that asked it. The admitted cause
+ * (`executionOriginV1.actionRequestAttributionV1`) is the only source of the link. Shared requester
+ * confirmations also retain their decided receipt; ordinary requests use the existing approval UI.
  */
 function readDiscussionRequesterApproval(
     artifact: DecryptedArtifact,
@@ -168,7 +167,7 @@ function readDiscussionRequesterApproval(
     const fact = readDiscussionRequesterApprovalFact(artifact);
     if (!fact || fact.discussion.discussionId !== discussion.discussionId
         || !areServerProfileIdentifiersEquivalent(fact.discussion.serverId, discussion.serverId)) return null;
-    return { artifact, parsed: fact.parsed, subject: fact.subject, requestRef: fact.requestRef, originMessageId: fact.originMessageId };
+    return fact;
 }
 
 export function listDiscussionRequesterApprovals(

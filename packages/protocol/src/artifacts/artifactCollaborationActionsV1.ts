@@ -15,6 +15,7 @@ import type { DiscussionOpenedMessageV1 } from '../discussions/actions.js';
 import { prepareDocEditBodyV1 } from './artifactPassageV1.js';
 import { artifactSupportsProseCollaborationV1 } from './artifactSharingV1.js';
 import { areServerProfileIdentifiersEquivalent } from '../features/payload/capabilities/serverIdentityCapabilities.js';
+import { DiscussionInitialParticipantsV1Schema } from '../discussions/participants.js';
 
 export const DocReadInputV1Schema = lazyZodSchema(() => z.strictObject({
   ref: PromptDocArtifactRefV1Schema,
@@ -33,6 +34,7 @@ export const DocCommentReplyInputV1Schema = lazyZodSchema(() => z.strictObject({
   parentMessageRef: z.optional(DiscussionMessageRefV1Schema),
   localId: DiscussionLocalIdSchema,
   content: DiscussionTextMessageContentV1Schema,
+  participants: z.optional(DiscussionInitialParticipantsV1Schema),
 }).check(z.refine(value => value.target.ref.serverId === undefined
   || ((value.discussionRef === undefined || value.target.ref.serverId === value.discussionRef.serverId)
     && (value.parentMessageRef === undefined || value.target.ref.serverId === value.parentMessageRef.discussion.serverId)),
@@ -40,7 +42,9 @@ export const DocCommentReplyInputV1Schema = lazyZodSchema(() => z.strictObject({
 z.refine(value => value.discussionRef === undefined || value.parentMessageRef === undefined
   || (value.discussionRef.serverId === value.parentMessageRef.discussion.serverId
     && value.discussionRef.discussionId === value.parentMessageRef.discussion.discussionId),
-  'Parent message must belong to the selected Discussion')));
+  'Parent message must belong to the selected Discussion'),
+z.refine(value => !value.participants?.length || (value.discussionRef === undefined && value.parentMessageRef === undefined),
+  'Initial invitations require a new Discussion')));
 export type DocCommentReplyInputV1 = z.infer<typeof DocCommentReplyInputV1Schema>;
 
 /** The existing C3 creation identity, shared with its draft/reconciliation consumer. */
@@ -180,6 +184,7 @@ export function prepareDocDiscussionMutationV1(actionId: 'doc.comment.reply' | '
       creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: { ...target.ref, serverId: target.ref.serverId ?? serverId }, localId: request.localId }),
       anchor: { kind: 'doc', doc: { ref: target.ref, revision: target.revision } },
       title: 'Document comments', firstMessage: { localId: request.localId, content, replyTarget },
+      ...(isComment && request.participants !== undefined ? { participants: request.participants } : {}),
     }) };
   }
   const childId = parent ? 'discussion.reply' as const : 'discussion.post' as const;

@@ -114,11 +114,13 @@ export function requiresPresentUserExecutionAuthorityForActionInputV1(
   spec: Pick<ActionSpec, 'id' | 'requiredAuthority'>,
   input?: unknown,
 ): boolean {
+  const initialDocParticipants = spec.id === 'doc.comment.reply' ? readRecord(input).participants : undefined;
   return spec.requiredAuthority === 'present_user'
     || isProjectSetupTrustRequestV1(spec.id, input)
     || isPublicLinkCreationActionV1(spec.id)
     || isLegacyWorkflowConversionInputV1(spec, input)
     || isSessionMessageHumanReturnInputV1(spec, input)
+    || (Array.isArray(initialDocParticipants) && initialDocParticipants.length > 0)
     || (spec.id === 'session.open' && typeof input === 'object' && input !== null
       && 'approvedNewDirectoryCreation' in input && input.approvedNewDirectoryCreation === true);
 }

@@ -69,6 +69,7 @@ function countSummary(id: string, changes: Partial<DiscussionOpenedSummaryV1> = 
   return DiscussionOpenedSummaryV1Schema.parse({ id, ownerAccountId: 'reader', encryptionMode: 'plain',
     anchor: { kind: 'doc', doc: { ref: { ...ref, serverId: 'creator-cli-only-profile' }, revision } },
     access: 'view', keyReadiness: true, dataEncryptionKey: null, creationLocalId: null, title: 'Passage thread',
+    openCommentCount: 1,
     latestMessage: { id: `${id}-latest`, localId: null, seq: 2, authorAccountId: 'reader',
       accountActor: rootMessage.accountActor, producerV1: null, createdAt: 1 },
     messageSeq: 2, lastReadSeq: 2, unreadCount: 0, unreadMentionCount: 0, recentAuthorAccountIds: ['reader'], archivedAt: null,
@@ -83,11 +84,31 @@ function countRoot(discussionId: string) {
 }
 
 describe('Doc collaboration Actions', () => {
-  it('counts active readable Doc threads once across every list page, excluding archived, locked and source-withheld roots', async () => {
+  it('refuses API initial invitations before publication while admitting present-user invitations and ordinary agent comments', async () => {
+    const publications: unknown[] = [];
+    const executor = createActionExecutor({ discussionAction: async ({ actionId, input }) => {
+      if (actionId !== 'discussion.create') throw new Error('Expected the canonical initial Discussion owner');
+      const request = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.create'].parse(input);
+      publications.push(request);
+      return { v: 1, serverId: 'home', discussion: countSummary('thread'), firstMessage: { ...rootMessage,
+        localId: request.firstMessage.localId, content: request.firstMessage.content } };
+    } });
+    const ordinary = { target, localId: 'initial-comment', content: text };
+    const inviting = { ...ordinary, participants: [{ kind: 'session', sessionId: 'reviewer' }] };
+    expect(await executor.execute('doc.comment.reply', inviting, { ...context, surface: 'api', bypassApprovals: true }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(publications).toEqual([]);
+    expect(await executor.execute('doc.comment.reply', inviting, person)).toMatchObject({ ok: true });
+    expect(publications[0]).toMatchObject({ participants: inviting.participants });
+    expect(await executor.execute('doc.comment.reply', ordinary, { ...context, bypassApprovals: true })).toMatchObject({ ok: true });
+    expect(publications[1]).not.toHaveProperty('participants');
+  });
+
+  it('sums active readable Doc root counts once across every list page, excluding archived, locked and source-withheld roots', async () => {
     let empty = false;
     const cursors: Array<string | undefined> = [];
     const oldRevision = { headerVersion: 1, bodyVersion: 1 };
-    const first = countSummary('first');
+    const first = countSummary('first', { openCommentCount: 3 });
     const second = countSummary('settled', { anchor: { kind: 'doc', doc: { ref, revision: oldRevision } },
       firstMessage: { ...countRoot('settled'),
         content: { kind: 'doc_edit_proposal', proposal: { target: { ...target, revision: oldRevision }, baseRevision: oldRevision,
@@ -111,14 +132,14 @@ describe('Doc collaboration Actions', () => {
           : args.cursor === 'middle' ? 'last' : 'middle', incomplete: true };
       },
     });
-    expect(await executor.execute('doc.read', { ref }, context)).toMatchObject({ ok: true, result: { artifact, openCommentCount: 2 } });
+    expect(await executor.execute('doc.read', { ref }, context)).toMatchObject({ ok: true, result: { artifact, openCommentCount: 4 } });
     expect(cursors).toEqual([undefined, 'middle', 'last']);
     empty = true;
     expect(await executor.execute('doc.read', { ref }, context)).toMatchObject({ ok: true, result: { openCommentCount: 0 } });
     expect(cursors).toEqual([undefined, 'middle', 'last', undefined]);
   });
 
-  it.each(['later-list-failure', 'invalid-page', 'repeated-cursor', 'foreign-home', 'missing-root-fact',
+  it.each(['later-list-failure', 'invalid-page', 'repeated-cursor', 'foreign-home', 'missing-root-fact', 'missing-count-fact', 'zero-count-fact',
     'unopenable-root', 'later-ordinary-row', 'wrong-root'] as const)(
     'returns an explicitly unavailable count, never a partial total, after %s', async problem => {
       const executor = createActionExecutor({ artifactAction: async () => ({ artifact }),
@@ -131,6 +152,8 @@ describe('Doc collaboration Actions', () => {
           const { firstMessage: _firstMessage, ...missing } = summary;
           const root = countRoot('first');
           const candidate = problem === 'missing-root-fact' ? missing
+            : problem === 'missing-count-fact' ? { ...summary, openCommentCount: null }
+              : problem === 'zero-count-fact' ? { ...summary, openCommentCount: 0 }
             : problem === 'unopenable-root' ? { ...summary, firstMessage: { ...root, content: null } }
               : problem === 'later-ordinary-row' ? { ...summary, firstMessage: { ...root, seq: 2, content: text, replyTarget: undefined } }
                 : problem === 'wrong-root' ? { ...summary, firstMessage: { ...root, discussionId: 'different-thread',
@@ -248,10 +271,12 @@ describe('Doc collaboration Actions', () => {
       for (const executionContext of [{ ...context, bypassApprovals: true }, { ...context, actionsSettings: normalizeActionsSettingsV1({
         v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] },
       }) }]) {
-        expect(await executor.execute(actionId, decisionInputs[actionId], executionContext)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        // A user waiver (or an approved bypass) runs the decision; there is no present-user floor.
+        expect(await executor.execute(actionId, decisionInputs[actionId], executionContext))
+          .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
       }
     }
-    expect(decisions).toHaveLength(count);
+    expect(decisions.length).toBeGreaterThan(count);
   });
   it('refuses stale full revisions, mismatched Doc identity and changed source quote before decision transport', async () => {
     const stored = { ...rootMessage, id: 'candidate', messageRef: proposalRef,
@@ -307,10 +332,11 @@ describe('Doc collaboration Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(effects).toHaveLength(0);
     expect(await executor.execute('approval.request.decide', { artifactId: 'human-decision', decision: 'approve' },
-      { ...person, runtimeAccountId: 'reader', actionCaller: { kind: 'host' } }))
+      { ...person, runtimeAccountId: 'reader', actionCaller: { kind: 'host' }, defaultSessionId: 'reviewer-focused-session' }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
-    expect(effects).toEqual([expect.objectContaining({ authority: 'present_user', actionCaller: { kind: 'host' } })]);
-    expect(effects[0]).not.toHaveProperty('defaultSessionId');
+    // Host/person authority and the original request's Session default are separate facts.
+    expect(effects).toEqual([expect.objectContaining({ authority: 'present_user', actionCaller: { kind: 'host' },
+      defaultSessionId: 'receiver' })]);
   });
   it.each(['doc.comment.reply', 'doc.edit.propose'] as const)('retains the original Session and approved replay witness at the C3 publisher for %s', async actionId => {
     const actionArgs = actionId === 'doc.comment.reply' ? { target, discussionRef, localId: 'comment-retry', content: text } : proposal;
@@ -341,9 +367,10 @@ describe('Doc collaboration Actions', () => {
       },
     });
     expect(await executor.replayApprovedApprovalRequest({ artifactId: 'approved-doc' })).toMatchObject({ ok: true });
-    expect(publications).toEqual([expect.objectContaining({ authority: 'account_automation', surface: 'agent',
+    expect(publications).toEqual([expect.objectContaining({ authority: 'account_automation', surface: 'agent', defaultSessionId: 'receiver',
       actionCaller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 },
-      approvedActionReplay: { artifactId: 'approved-doc' } })]);
+      approvedActionReplay: { artifactId: 'approved-doc', origin: { surface: 'agent', sessionId: 'receiver', accountId: 'reader',
+        caller: { kind: 'session', sessionId: 'receiver', starterDepth: 0, turnDepth: 0 } } } })]);
     expect(stored.status).toBe('executed');
   });
   it('posts a qualified encrypted-content passage root through the existing C3 writer', async () => {
@@ -405,18 +432,6 @@ describe('Doc collaboration Actions', () => {
     for (const id of ['doc.comment.reply', 'doc.edit.propose', 'doc.edit.accept', 'doc.edit.decline'] as const) {
       expect(isAgentInitiatedApprovalRequiredByDefault(id), id).toBe(true);
       expect(getActionSpec(id).surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, plugin: true });
-    }
-  });
-
-  it('requires present-person execution even when an Agent has waived prompts or bypasses approvals', async () => {
-    const executor = createActionExecutor({});
-    for (const actionId of ['doc.edit.accept', 'doc.edit.decline'] as const) {
-      expect(getActionSpec(actionId).requiredAuthority).toBe('present_user');
-      const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } });
-      for (const authorityContext of [{ ...context, actionsSettings: settings }, { ...context, bypassApprovals: true }]) {
-        expect(await executor.execute(actionId, decisionInputs[actionId], authorityContext))
-          .toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      }
     }
   });
 

@@ -12,7 +12,6 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { DiscussionInviteRequestV1Schema, DiscussionParticipantPolicySetRequestV1Schema, DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { DiscussionMessageV1Schema, DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
 import { DiscussionModelParticipantLaunchV1Schema, projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -20,13 +19,14 @@ import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/m
 import { ProfileRecordV1Schema, ProfileRowsListResponseV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { SessionSpawnNewResultV1Schema, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewActionInputV2, projectSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema, SessionSpawnNewInputV2Schema, type SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { DiscussionCreateRequestV1Schema } from '@happier-dev/protocol/discussions/api';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { encodeBase64 } from '@/encryption/base64';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { deriveDocCommentDiscussionCreationLocalIdV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 
 installAgentInputCommonModuleMocks({ modal: async () =>
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module });
@@ -45,12 +45,11 @@ let spawnServerId = '';
 let spawnResultOverride: SessionSpawnNewResultV1 | null = null;
 let spawnResponseGate: Promise<void> | null = null;
 let onSpawnRequest: (() => void) | null = null;
-const spawnRequests: SocketRpcRequestPayload[] = [];
+const spawnRequests: SessionSpawnNewActionInputV2[] = [];
 const spawnParseIssues: unknown[] = [];
 let stopAnswer: ((request: SocketRpcRequestPayload) => unknown) | null = null;
 const stopRequests: SocketRpcRequestPayload[] = [];
-// Daemon acknowledgements are a network boundary; admission uses its actual
-// strict RPC binding, also exercised by the CLI registered-handler suite.
+// Own-Machine spawn, directory preflight and ordinary Stop use native RPC.
 installDisconnectedServerSocketBoundary(socket => {
     vi.mocked(socket.connect).mockImplementation(() => {
         socket.connected = true;
@@ -63,27 +62,36 @@ installDisconnectedServerSocketBoundary(socket => {
         if (request.method === `machine-a:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
             return { ok: true, result: createExistingSessionDirectoryPreflightResult(request.params) };
         }
+        if (request.method === `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`) {
+            return { ok: true, result: await answerModelSpawn(projectSessionSpawnNewActionInputV2(
+                SessionSpawnNewInputV2Schema.parse(request.params))) };
+        }
         if (stopAnswer && (request.method === `machine-a:${RPC_METHODS.STOP_SESSION}` || request.method.endsWith(':killSession'))) {
             stopRequests.push(request);
             return { ok: true, result: await stopAnswer(request) };
         }
-        if (request.method !== `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`) throw new Error(`Unexpected daemon request: ${request.method}`);
-        spawnRequests.push(request);
-        const inputSchema = getActionSpec('session.spawn_new').surfaceBindings?.rpc?.inputSchema;
-        if (!inputSchema) throw new Error('Missing canonical Session spawn RPC binding');
-        const parsed = inputSchema.safeParse(request.params);
-        if (!parsed.success) {
-            spawnParseIssues.push(...parsed.error.issues);
-            return { ok: true, result: { ok: false, errorCode: 'invalid_action_transport_input', error: 'invalid_action_transport_input' } };
-        }
-        onSpawnRequest?.();
-        await spawnResponseGate;
-        return { ok: true, result: spawnResultOverride ?? SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'owned-model-session',
-            executionTarget: { serverId: spawnServerId, machineId: 'machine-a' },
-            organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }) };
+        throw new Error(`Unexpected daemon request: ${request.method}`);
     });
 });
+
+async function answerModelSpawn(input: unknown): Promise<SessionSpawnNewResultV1> {
+    const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);
+    if (!parsed.success) {
+        spawnParseIssues.push(...parsed.error.issues);
+        return { type: 'error', code: 'invalid_input', retryable: false };
+    }
+    spawnRequests.push(parsed.data);
+    onSpawnRequest?.();
+    await spawnResponseGate;
+    return spawnResultOverride ?? SessionSpawnNewResultV1Schema.parse({
+        type: 'success', disposition: 'created', sessionId: 'owned-model-session',
+        executionTarget: { serverId: spawnServerId, machineId: 'machine-a' },
+        organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+    });
+}
+
 const { getStorage } = await import('@/sync/domains/state/storage');
+const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
 const { createDiscussionClient } = await import('./discussionActions');
 const { createDiscussionRepository } = await import('@/sync/ops/discussions/discussionRepository');
 const { buildExecutableModelParticipantSelectionFromAuthoringDraft, buildExecutableParticipantPickerOption } = await import('@/components/sessions/authoring/executableParticipantPicker');
@@ -265,6 +273,63 @@ it('keeps model Home admission at the canonical Action before any reservation HT
     expect(homes.requestsFor('/v1/discussions/discussion-a/participants/invite')).toHaveLength(0);
 });
 
+it.each(['first comment', 'reply'] as const)('admits the selected Session before a Doc %s through the real client and Action owner', async entry => {
+    const serverId = await homes.addHome({ name: 'Doc reader', serverUrl: 'https://doc-reader.test', accountId: 'bob', currentAccount: true });
+    const thread = answerDiscussionThreadForTests(homes, serverId, { accountId: 'bob', loseCreate: false, loseFirstRejoin: false });
+    const client = createDiscussionClient({ scope: { serverId, accountId: 'bob' }, availability: 'available' });
+    const passage = { ref: { kind: 'doc' as const, artifactId: 'alice-doc', serverId }, revision: { headerVersion: 1, bodyVersion: 1 },
+        range: { start: 0, end: 5 }, quote: 'again' };
+    const content = { v: 1 as const, parts: [{ t: 'mention' as const, participant: { kind: 'session' as const, sessionId: 'bob-session' } }] };
+    const localId = 'doc-root';
+    const created = await client.create({ creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: passage.ref, localId }),
+        messageLocalId: localId, title: 'Document comments', content: { kind: 'doc_passage_comment', passage,
+            content: entry === 'first comment' ? content : { v: 1, parts: [{ t: 'text', text: 'Review' }] } } });
+    expect(created).toMatchObject({ kind: 'succeeded' });
+    if (created.kind !== 'succeeded') throw new Error(JSON.stringify(created));
+    const create = homes.requestsFor('/v1/discussions').map(row => row.input).find(input => !!input && typeof input === 'object' && 'firstMessage' in input);
+    const admitted = new Set(DiscussionCreateRequestV1Schema.parse(create).participants?.flatMap(row => row.kind === 'session' ? [row.sessionId] : []));
+    if (entry === 'first comment') expect(admitted.has('bob-session')).toBe(true);
+    else expect(create).not.toHaveProperty('participants');
+    const discussionId = created.value.discussion.id;
+    homes.answer(serverId, `/v1/discussions/${discussionId}/participants`, { body: { discussionId, ownerAccountId: 'bob', access: 'owner',
+        grants: [],
+        participants: [...admitted].map(sessionId => ({ participant: { kind: 'session', sessionId }, answerPolicy: 'when_addressed', createdAt: 1 })) } });
+    homes.answer(serverId, `POST /v1/discussions/${discussionId}/participants/invite`, { select: input => {
+        const request = DiscussionInviteRequestV1Schema.parse(input);
+        if (request.participant.kind !== 'session') throw new Error('A Session mention must not share the Doc with an Account');
+        admitted.add(request.participant.sessionId);
+        return { body: { discussionId, ownerAccountId: 'bob', access: 'owner', grants: [], changed: true } };
+    } });
+    if (entry === 'reply') {
+        const posted = await client.post({ discussionId, localId: 'doc-reply', content,
+            replyTarget: { kind: 'message', messageId: created.value.firstMessage.id } });
+        expect(posted).toMatchObject({ kind: 'succeeded' });
+        expect(admitted.has('bob-session')).toBe(true);
+        expect(thread.messages.at(-1)?.content).toEqual({ t: 'plain', v: content });
+    }
+    const proposal = await client.post({ discussionId, localId: 'doc-proposal', content: { kind: 'doc_edit_proposal', proposal: {
+        target: passage, baseRevision: passage.revision, before: passage.quote, after: 'again, clearly', reason: 'Clarify' } } });
+    expect(proposal).toMatchObject({ kind: 'succeeded', value: { message: { docEditProposalDispositionV1: { state: 'open' } } } });
+});
+
+it('retains a Session-addressed draft when its explicit invitation is refused', async () => {
+    const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://mention-refused.test', accountId: 'alice', currentAccount: true });
+    const thread = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+    const client = createDiscussionClient({ scope: { serverId, accountId: 'alice' }, availability: 'available' });
+    const passage = { ref: { kind: 'doc' as const, artifactId: 'doc', serverId }, revision: { headerVersion: 1, bodyVersion: 1 },
+        range: { start: 0, end: 5 }, quote: 'again' };
+    const created = await client.create({ messageLocalId: 'root', creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: passage.ref, localId: 'root' }),
+        title: 'Review', content: { kind: 'doc_passage_comment', passage, content: { v: 1, parts: [{ t: 'text', text: 'Review' }] } } });
+    if (created.kind !== 'succeeded') throw new Error(JSON.stringify(created));
+    const discussionId = created.value.discussion.id;
+    homes.answer(serverId, `/v1/discussions/${discussionId}/participants`, { body: { discussionId, ownerAccountId: 'alice', access: 'owner', grants: [], participants: [] } });
+    homes.answer(serverId, `POST /v1/discussions/${discussionId}/participants/invite`, { status: 403, body: { error: 'discussion_subject_ineligible' } });
+    expect(await client.post({ discussionId, localId: 'addressed', content: { v: 1, parts: [
+        { t: 'mention', participant: { kind: 'session', sessionId: 'uninvitable' } },
+    ] } })).toMatchObject({ kind: 'failed', errorCode: 'discussion_subject_ineligible' });
+    expect(thread.messages).toHaveLength(1);
+});
+
 it('invites an executable Session choice through the real captured-Home Action and HTTP owner', async () => {
     const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://review.test', accountId: 'alice', currentAccount: true });
     const path = '/v1/discussions/discussion-a/participants/invite';
@@ -357,14 +422,17 @@ it.each(['success', 'repeated', 'failed', 'pending', 'unknown', 'approval', 'rem
     'offers a reserved model slot in the actual composer and starts it only on Send before posting a real Session mention (%s)', async scenario => {
     await loadSyncSingletonForTests();
     const serverUrl = 'https://model-mention.test';
-    const serverId = await homes.addHome({ name: 'Model mention', serverUrl, accountId: 'alice', currentAccount: true });
+    const serverId = await homes.addHome({ name: 'Model mention', serverUrl, serverIdentityId: 'srv_model_mention', accountId: 'alice', currentAccount: true });
     const token = homes.findByServerUrl(serverUrl)?.token;
     if (!token) throw new Error('Missing fixture Account token');
-    connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', credentials: { token }, request: createSessionReadBatchFetchBoundary(homes.request) });
+    connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId: 'srv_model_mention', accountId: 'alice', credentials: { token },
+        request: createSessionReadBatchFetchBoundary(homes.request) });
     spawnServerId = serverId;
     const machineRow = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' });
-    const machine = createMachineFixture({ id: 'machine-a', activeAt: machineRow.activeAt });
-    getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+    const machine = createMachineFixture({ id: 'machine-a', activeAt: machineRow.activeAt,
+        storageMode: 'plain', dataEncryptionKey: machineRow.dataEncryptionKey, access: machineRow.access });
+    getStorage().setState({ machines: { [machine.id]: machine } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'alice' }, [machine]);
     homes.answer(serverId, '/v1/machines', { body: { machines: [machineRow] } });
     homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: machineRow } });
     homes.answer(serverId, '/v1/machines/machine-a/access', { body: MachineAccessGrantsListResponseV1Schema.parse({
@@ -402,20 +470,21 @@ it.each(['success', 'repeated', 'failed', 'pending', 'unknown', 'approval', 'rem
     const { AgentInput } = await import('@/components/sessions/agentInput');
     const { useDiscussionDraft } = await import('@/components/discussions/useDiscussionDraft');
     const { useDiscussionParticipantManagement } = await import('@/components/discussions/useDiscussionParticipantManagement');
-    const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+    const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
     const { renderScreen, act } = await import('@/dev/testkit');
     let posted: Promise<unknown> | undefined;
     let disabled = false;
     let available = true;
     let currentDiscussionId = discussionId;
     function Harness() {
-        const bindings = useServerCredentialAccountScopeBindings([serverId]);
-        const accountLifetime = bindings.get(serverId);
+        const { binding: accountLifetime } = useServerCredentialAccountScopeBinding(serverId);
         const draft = useDiscussionDraft({ scope, address: { kind: 'discussion', discussionId: scenario === 'superseded' ? discussionId : currentDiscussionId } });
         const management = useDiscussionParticipantManagement({ accountLifetime: accountLifetime ?? null, discussionId: currentDiscussionId, repository,
             enabled: true, summary: repository.getSnapshot().threads[currentDiscussionId]?.summary ?? null });
         if (!accountLifetime) return null;
         return React.createElement(DiscussionComposer, { scope, accountLifetime, address: { serverId }, discussionId: currentDiscussionId,
+            draftAddress: { kind: 'discussion', discussionId: scenario === 'superseded' ? discussionId : currentDiscussionId },
+            roster: management.roster, onRefreshParticipants: management.refresh,
             availability: available ? 'available' : 'unavailable', value: { text: draft.text, mentions: draft.mentions }, onChange: draft.setComposer,
             disabled,
             prepareParticipantMentions: async (document: DiscussionComposerValue, isCurrent: () => boolean) => {
@@ -550,8 +619,7 @@ it.each(['success', 'repeated', 'failed', 'pending', 'unknown', 'approval', 'rem
                 await posted;
                 await vi.waitFor(() => expect(thread.messages).toHaveLength(2));
                 expect(spawnRequests).toHaveLength(scenario === 'unknown' ? 1 : 2);
-                if (spawnRequests.length === 2) expect(SessionSpawnNewInputV2Schema.parse(spawnRequests[1].params).creationKey)
-                    .toBe(SessionSpawnNewInputV2Schema.parse(spawnRequests[0].params).creationKey);
+                if (spawnRequests.length === 2) expect(spawnRequests[1].creationKey).toBe(spawnRequests[0].creationKey);
                 expect(homes.requestsFor(`${path}/participants/invite`).map(request => DiscussionInviteRequestV1Schema.parse(request.input)))
                     .toEqual(['reads_only', 'when_addressed'].map(answerPolicy => ({ participant: { ...model.participant, launch }, answerPolicy })));
                 expect(thread.messages).toHaveLength(2);
@@ -562,10 +630,10 @@ it.each(['success', 'repeated', 'failed', 'pending', 'unknown', 'approval', 'rem
         await vi.waitFor(() => expect(thread.messages).toHaveLength(2));
         expect(spawnRequests).toHaveLength(scenario === 'bound' ? 0 : 1);
         expect(spawnParseIssues).toEqual([]);
-        for (const request of spawnRequests) expect(SessionSpawnNewInputV2Schema.parse(request.params)).toMatchObject({
+        for (const request of spawnRequests) expect(request).toMatchObject({
             discussionParticipant: { discussionId, participantSlotId: model.participant.participantSlotId }, initialTriggers: [],
         });
-        for (const request of spawnRequests) expect(SessionSpawnNewInputV2Schema.parse(request.params).initialInput).toBeUndefined();
+        for (const request of spawnRequests) expect(request.initialInput).toBeUndefined();
         expect(thread.messages.at(-1)?.content).toEqual({ t: 'plain', v: { v: 1, parts: [
             { t: 'mention', participant: { kind: 'session', sessionId: scenario === 'bound' ? 'already-bound-session' : 'owned-model-session' } },
             ...(scenario === 'repeated' ? [{ t: 'text', text: ' ' }, { t: 'mention', participant: { kind: 'session', sessionId: 'owned-model-session' } }] : []),
@@ -578,7 +646,7 @@ it.each(['stopped', 'already_stopped', 'active', 'unknown', 'not_found', 'unread
     'uses ordinary Stop confirmation for participant removal (%s)', async confirmation => {
     await loadSyncSingletonForTests();
     const serverUrl = 'https://model-removal.test';
-    const serverId = await homes.addHome({ name: 'Model removal', serverUrl, accountId: 'alice', currentAccount: true });
+    const serverId = await homes.addHome({ name: 'Model removal', serverUrl, serverIdentityId: 'srv_model_removal', accountId: 'alice', currentAccount: true });
     const token = homes.findByServerUrl(serverUrl)?.token;
     if (!token) throw new Error('Missing fixture Account token');
     connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', credentials: { token }, request: createSessionReadBatchFetchBoundary(homes.request) });
@@ -592,9 +660,10 @@ it.each(['stopped', 'already_stopped', 'active', 'unknown', 'not_found', 'unread
     const sessionId = 'owned-model-session';
     const session = createSessionFixture({ id: sessionId, serverId, active: true,
         metadata: { path: '/workspace', host: 'model-machine', machineId: 'machine-a' } });
-    const machine = createMachineFixture({ id: 'machine-a', activeAt: machineRow.activeAt });
-    getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] } });
+    const machine = createMachineFixture({ id: 'machine-a', activeAt: machineRow.activeAt,
+        storageMode: 'plain', dataEncryptionKey: machineRow.dataEncryptionKey, access: machineRow.access });
+    getStorage().setState({ sessions: { [sessionId]: session }, machines: { [machine.id]: machine } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'alice' }, [machine]);
     const effects: string[] = [];
     let stopped = false;
     let archivedAt: number | null = null;
@@ -704,17 +773,20 @@ it.each(['stopped', 'already_stopped', 'active', 'unknown', 'not_found', 'unread
 
 it.each([{ enriched: false, failure: false, pending: false }, { enriched: true, failure: false, pending: false },
     { enriched: false, failure: true, pending: false }, { enriched: false, failure: false, pending: true }])(
-    'sends the selected model launch through strict daemon RPC and participant projection (Profile/Role: $enriched, startup failure: $failure, pending: $pending)', async ({ enriched, failure, pending }) => {
+    'sends the selected model launch through the daemon boundary and participant projection (Profile/Role: $enriched, startup failure: $failure, pending: $pending)', async ({ enriched, failure, pending }) => {
     await loadSyncSingletonForTests();
     const serverUrl = 'https://model-transport.test';
-    const serverId = await homes.addHome({ name: 'Model transport', serverUrl, accountId: 'alice', currentAccount: true });
+    const serverId = await homes.addHome({ name: 'Model transport', serverUrl, serverIdentityId: 'srv_model_transport', accountId: 'alice', currentAccount: true });
     const token = homes.findByServerUrl(serverUrl)?.token;
     if (!token) throw new Error('Missing fixture Account token');
-    connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', credentials: { token }, request: createSessionReadBatchFetchBoundary(homes.request) });
+    connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId: 'srv_model_transport', accountId: 'alice', credentials: { token },
+        request: createSessionReadBatchFetchBoundary(homes.request) });
     spawnServerId = serverId;
     const row = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' });
-    const machine = createMachineFixture({ id: row.id, activeAt: row.activeAt });
-    getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+    const machine = createMachineFixture({ id: row.id, activeAt: row.activeAt,
+        storageMode: 'plain', dataEncryptionKey: row.dataEncryptionKey, access: row.access });
+    getStorage().setState({ machines: { [machine.id]: machine } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'alice' }, [machine]);
     homes.answer(serverId, '/v1/machines', { body: { machines: [row] } });
     homes.answer(serverId, '/v1/machines/machine-a', { body: { machine: row } });
     homes.answer(serverId, '/v1/machines/machine-a/access', { body: MachineAccessGrantsListResponseV1Schema.parse({
@@ -761,7 +833,7 @@ it.each([{ enriched: false, failure: false, pending: false }, { enriched: true, 
     if (failure || pending) {
         const { act, renderHook } = await import('@/dev/testkit/hooks/renderHook');
         const { useDiscussionParticipantManagement } = await import('@/components/discussions/useDiscussionParticipantManagement');
-        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
         const repository = createDiscussionRepository({ scope: { serverId, accountId: 'alice' }, address: { serverId }, client });
         await repository.refreshDiscussion('discussion-a');
         homes.answer(serverId, '/v1/discussions/discussion-a/participants', { body: DiscussionParticipantsListResponseV1Schema.parse({
@@ -771,8 +843,8 @@ it.each([{ enriched: false, failure: false, pending: false }, { enriched: true, 
             }],
         }) });
         const hook = await renderHook(() => {
-            const bindings = useServerCredentialAccountScopeBindings([serverId]);
-            return useDiscussionParticipantManagement({ accountLifetime: bindings.get(serverId) ?? null,
+            const { binding: accountLifetime } = useServerCredentialAccountScopeBinding(serverId);
+            return useDiscussionParticipantManagement({ accountLifetime,
                 discussionId: 'discussion-a', repository, enabled: true, summary: repository.getSnapshot().threads['discussion-a']?.summary ?? null });
         });
         await vi.waitFor(() => expect(hook.getCurrent().roster?.participants).toHaveLength(1));
@@ -795,8 +867,8 @@ it.each([{ enriched: false, failure: false, pending: false }, { enriched: true, 
     } });
     expect(spawnParseIssues).toEqual([]);
     expect(spawnRequests).toHaveLength(1);
-    const outgoing = SessionSpawnNewInputV2Schema.parse(spawnRequests[0]?.params);
-    expect(projectDiscussionModelParticipantLaunchV1(outgoing)).toEqual(launch);
+    const outgoing = SessionSpawnNewActionInputV2Schema.parse(spawnRequests[0]);
+    expect(projectDiscussionModelParticipantLaunchV1(admitSessionSpawnNewActionInputV2(outgoing))).toEqual(launch);
     expect(outgoing).toMatchObject({ creationKey: 'retained-slot',
         discussionParticipant: { discussionId: 'discussion-a', participantSlotId: 'retained-slot' }, initialTriggers: [] });
     expect(outgoing).not.toHaveProperty('initialInput');

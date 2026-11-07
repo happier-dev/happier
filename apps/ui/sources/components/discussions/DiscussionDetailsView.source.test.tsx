@@ -47,8 +47,8 @@ afterEach(async () => {
     pushed.mockClear();
 });
 
-it.each(['readable', 'deferred', 'alias', 'foreign_home', 'archived', 'missing', 'denied', 'key_unavailable', 'retired'] as const)(
-    'acquires the exact cold Session anchor before offering source navigation (%s)', async mode => {
+it.each(['readable', 'deferred', 'alias', 'foreign_home', 'archived', 'missing', 'denied', 'key_unavailable', 'retired', 'phone'] as const)(
+    'keeps shared Discussion navigation and cold source behavior (%s)', async mode => {
     const serverUrl = `https://cold-discussion-source-${mode}.test`;
     const serverIdentityId = `srv_cold_discussion_source_${mode}`;
     const localServerId = await homes.addHome({ name: 'Review Home', serverUrl, serverIdentityId, accountId: 'alice', currentAccount: true });
@@ -101,8 +101,13 @@ it.each(['readable', 'deferred', 'alias', 'foreign_home', 'archived', 'missing',
     expect(getStorage().getState().sessionListRowsByServerId[serverId]?.[sourceId]).toBeUndefined();
     if (mode === 'foreign_home') getStorage().setState({ sessions: { [sourceId]: createSessionFixture({ id: sourceId, serverId: 'another-home',
         metadata: { name: 'Other Home secret', path: '/other', host: 'other' } }) } });
-    const screen = await renderScreen(<AppPaneProvider><SurfaceStateSizeProvider size="pane"><DiscussionDetailsView target={{ kind: 'discussion', address: { serverId: mode === 'alias' ? localServerId : serverId }, discussionId: created.value.discussion.id }} active /></SurfaceStateSizeProvider></AppPaneProvider>);
+    const screen = await renderScreen(<AppPaneProvider><SurfaceStateSizeProvider size={mode === 'phone' ? 'phone' : 'pane'}><DiscussionDetailsView target={{ kind: 'discussion', address: { serverId: mode === 'alias' ? localServerId : serverId }, discussionId: created.value.discussion.id }} active standaloneSurface={mode === 'phone'} /></SurfaceStateSizeProvider></AppPaneProvider>);
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('Release discussion'));
+    if (mode === 'phone') {
+        await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-invite')).not.toBeNull());
+        expect(screen.findHostByTestId('session-discussion-header')).not.toBeNull();
+        return;
+    }
     await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('session.collaboration.discussion.participants.invitedOnly')));
     try {
     await vi.waitFor(() => expect(homes.requests.some(request => new URL(request.path, serverUrl).pathname === `/v2/sessions/${sourceId}`)).toBe(true));

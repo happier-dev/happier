@@ -3,9 +3,10 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createSessionFixture, flushHookEffects } from '@/dev/testkit';
+import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionOwnerViewerFixture, flushHookEffects } from '@/dev/testkit';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentInput/agentInputTestHelpers';
+import { t } from '@/text';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -30,21 +31,37 @@ vi.doMock('react-native-reanimated', async () => {
   const hosts = { View: rn.View, ScrollView: rn.ScrollView, Text: rn.Text };
   return { ...mock, ...hosts, default: { ...mock.default, ...hosts } };
 });
-const readParticipants = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/discussions/discussionActions', () => ({
-  createDiscussionClient: () => ({ participants: readParticipants }),
-}));
 const { installSessionPaneRuntimeTestHarness } =
   await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
-// `s1` is an ordinary Session of this Account that nobody invited.
+const candidateReads: string[] = [];
+let failPeopleCandidates = false;
+// An ordinary Session of this Account that nobody invited.
 const runtime = installSessionPaneRuntimeTestHarness({
   sessionId: 'outsider-session',
+  request: async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/user/search') {
+      candidateReads.push(path);
+      if (failPeopleCandidates) return Response.json({ error: 'unavailable' }, { status: 503 });
+      return Response.json({ users: [{ id: 'account-b', name: 'Doc reader', firstName: 'Doc', lastName: 'reader',
+      username: 'reader', avatar: null, bio: null, badges: [], status: 'none', publicKey: null }], nextCursor: null });
+    }
+    if (path === '/v2/sessions/query') {
+      candidateReads.push(path);
+      return Response.json({ sessions: [{ ...createPlainSessionCurrentProjectionRecordFixture({ id: 'outsider-session' }),
+        viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: 'outsider-session' })) }],
+      nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+    }
+    if (path.endsWith('/participants')) return Response.json({ discussionId: 'discussion-1', ownerAccountId: 'account-a', access: 'owner', grants: [], participants: [] });
+    return undefined;
+  },
 });
 const { DiscussionComposer } = await import('./DiscussionComposer');
 const { storage } = await import('@/sync/domains/state/storage');
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 afterEach(async () => {
+  failPeopleCandidates = false;
   await act(async () => {
     root?.unmount();
   });
@@ -54,11 +71,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-// A bare `@` in a Session composer leads with a Recent group from the whole Account. In a Discussion the roster
-// (or, before create, the chosen invitees) is the whole candidate set, so nothing outside it is offered.
-it.each(['new', 'existing'] as const)(
-  'a bare @ in a %s Discussion offers only its participants, never a Recent outsider',
+// A passage draft has no preselected invitees. Its people and executable Session candidates come from
+// the same public Discussion candidate Action as an existing Discussion, without a local Recent fallback.
+it.each(['new', 'existing', 'retry'] as const)(
+  'a bare @ in a %s Doc Discussion offers people and an own Session before it is invited',
   async (kind) => {
+    candidateReads.length = 0;
+    failPeopleCandidates = kind === 'retry';
     const serverId = runtime.serverId;
     const outsider = storage.getState().sessions['outsider-session'];
     if (!outsider) throw new Error('Expected the outsider Session');
@@ -84,9 +103,7 @@ it.each(['new', 'existing'] as const)(
           },
         }),
       ]);
-    readParticipants.mockResolvedValue({
-      kind: 'succeeded',
-      value: DiscussionParticipantsListResponseV1Schema.parse({
+    const roster = DiscussionParticipantsListResponseV1Schema.parse({
         discussionId: 'discussion-1',
         ownerAccountId: 'account-a',
         access: 'owner',
@@ -98,7 +115,6 @@ it.each(['new', 'existing'] as const)(
             createdAt: 1,
           },
         ],
-      }),
     });
     Object.defineProperty(Range.prototype, 'getClientRects', {
       configurable: true,
@@ -121,20 +137,13 @@ it.each(['new', 'existing'] as const)(
         mentions: [] as never[],
       });
       return (
-        <DiscussionComposer
+        <DiscussionComposer draftAddress={{ kind: 'discussion', discussionId: 'draft-address' }}
           scope={scope}
           accountLifetime={lifetime}
           address={{ serverId }}
           {...(kind === 'existing'
-            ? { discussionId: 'discussion-1' }
-            : {
-                invited: {
-                  participants: [
-                    { kind: 'session' as const, sessionId: 'invited-bot' },
-                  ],
-                  accounts: new Map(),
-                },
-              })}
+            ? { discussionId: 'discussion-1', roster }
+            : {})}
           availability="available"
           value={value}
           onChange={(next) => setValue(next as never)}
@@ -157,6 +166,7 @@ it.each(['new', 'existing'] as const)(
       '[data-happier-text-input]',
     )!;
     expect(editor).toBeTruthy();
+    expect(candidateReads).toEqual([]);
     await act(async () => {
       editor.focus();
       const selection = window.getSelection()!;
@@ -173,8 +183,18 @@ it.each(['new', 'existing'] as const)(
     });
     await flushHookEffects();
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('Invited reviewer'),
+      expect(document.body.textContent).toContain('Outsider work'),
     );
-    expect(document.body.textContent).not.toContain('Outsider work');
+    if (kind === 'retry') {
+      await vi.waitFor(() => expect(document.body.textContent).toContain(t('session.collaboration.discussion.retry')));
+      failPeopleCandidates = false;
+      const retry = [...document.querySelectorAll<HTMLElement>('div, span')]
+        .find(element => element.childElementCount === 0
+          && element.textContent === t('session.collaboration.discussion.retry'));
+      expect(retry).toBeTruthy();
+      await act(async () => { retry!.click(); });
+      await vi.waitFor(() => expect(document.body.textContent).toContain('Doc reader'));
+    }
+    expect(document.body.textContent).toContain('Doc reader');
   },
 );

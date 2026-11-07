@@ -18,6 +18,7 @@ import { openSessionStoredContent, sealSessionStoredContent } from '../../../../
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { decideArtifactEditProposal } from '@/app/artifacts/artifactEditProposalService';
 import { db } from '@/storage/db';
@@ -27,6 +28,7 @@ import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerD
 import { getDiscussion, listDiscussions, readDiscussionMessageInTx, readDiscussionMessages } from './queries';
 import { readDiscussionAttention } from './attentionFacts';
 import { setDiscussionReadCursor } from './readState';
+import { inviteDiscussionParticipant } from './accessService';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 const text = (value: string) => ({ v: 1, parts: [{ t: 'text', text: value }] });
@@ -40,6 +42,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
     async function fixture() {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, reader.id);
         const created = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ title: 'Source', kind: 'markdown' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: 'again / again!' })),
@@ -165,6 +168,48 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         } finally { await app.close(); }
     });
 
+    it.each(['account', 'team'] as const)('a %s Doc reader starts a passage thread for the owner and all current readers', async kind => {
+        const { owner, reader, doc, passage } = await fixture();
+        const colleague = await db.account.create({ data: { encryptionMode: 'plain' } });
+        if (kind === 'account') {
+            await db.artifactAccountGrant.createMany({ data: [reader.id, colleague.id].map(accountId => ({
+                artifactId: doc.ref.artifactId, accountId, accessLevel: 'view', createdByAccountId: owner.id,
+            })) });
+        } else {
+            const team = await db.team.create({ data: { name: 'Doc audience' } });
+            await db.teamMembership.createMany({ data: [owner.id, reader.id, colleague.id].map(accountId => ({
+                teamId: team.id, accountId, role: accountId === owner.id ? 'owner' : 'member',
+            })) });
+            await db.artifactTeamGrant.create({ data: { artifactId: doc.ref.artifactId, teamId: team.id,
+                accessLevel: 'view', createdByAccountId: owner.id } });
+        }
+        // Use the same public Doc action's child intent as the inline composer, with no chosen invitees.
+        const prepared = prepareDocDiscussionMutationV1('doc.comment.reply', {
+            target: passage, localId: randomUUID(), content: text('Can we clarify this?'),
+        }, doc.ref.serverId);
+        if (prepared.actionId !== 'discussion.create') throw new Error('Expected a new passage thread');
+        const child = prepared.input;
+        const request = DiscussionCreateRequestV1Schema.parse({ creationLocalId: child.creationLocalId,
+            anchor: child.anchor, titleContent: { t: 'plain', v: { v: 1, title: child.title } },
+            firstMessage: { ...child.firstMessage, mentionedAccountIds: [], content: { t: 'plain', v: child.firstMessage.content } } });
+        const created = await createDiscussion({ authentication, actorAccountId: reader.id, request });
+        if (!created.ok) throw new Error(created.error);
+        const discussionId = created.value.discussion.id;
+        for (const accountId of [owner.id, colleague.id]) {
+            expect(await readDiscussionMessages({ authentication, actorAccountId: accountId, discussionId }))
+                .toMatchObject({ ok: true, value: { messages: [{ id: created.value.firstMessage.id }] } });
+            expect(await listDiscussions({ authentication, actorAccountId: accountId,
+                anchorDocArtifactId: doc.ref.artifactId }))
+                .toMatchObject({ ok: true, value: { discussions: [{ id: discussionId }] } });
+            expect(await readDiscussionAttention({ authentication, actorAccountId: accountId, discussionId }))
+                .toMatchObject({ ok: true, value: { discussions: [{ discussion: { id: discussionId },
+                    occurrences: [{ type: 'update', message: { id: created.value.firstMessage.id } }] }] } });
+        }
+        expect(await db.discussionReadState.count({ where: { discussionId } })).toBe(3);
+        expect(await createDiscussion({ authentication, actorAccountId: reader.id, request }))
+            .toMatchObject({ ok: true, value: { discussion: { id: discussionId } } });
+    });
+
     it('commits the exact passage once and reopens the same root after a lost create/post response', async () => {
         const { owner, passage, request } = await fixture();
         const input = { authentication, actorAccountId: owner.id, request };
@@ -270,6 +315,44 @@ describe('Doc passage Discussions through the canonical writer and client codec 
             request: { localId: randomUUID(), mentionedAccountIds: [], content: { t: 'plain', v: text('Ordinary text') }, docEditProposal: true } });
         expect(forged).toMatchObject({ ok: false, error: 'discussion_invalid_content' });
         expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
+    });
+
+    it.each(['first comment', 'reply'] as const)('admits a Doc reader’s invited Session in the %s before its proposal, without self-invitation', async entry => {
+        const { owner, reader, doc, passage, request } = await fixture();
+        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: reader.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const session = await db.session.create({ data: { accountId: reader.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const content = { v: 1, parts: [{ t: 'mention', participant: { kind: 'session', sessionId: session.id } },
+            { t: 'text', text: ' Propose a clearer version' }] };
+        const addressed = { ...request.firstMessage, mentionedSessionIds: [session.id], content: { t: 'plain' as const,
+            v: { kind: 'doc_passage_comment', passage, content } } };
+        const created = await createDiscussion({ authentication, actorAccountId: reader.id,
+            request: DiscussionCreateRequestV1Schema.parse({ ...request,
+                participants: entry === 'first comment' ? [{ kind: 'session', sessionId: session.id }] : [],
+                firstMessage: entry === 'first comment' ? addressed : request.firstMessage }) });
+        expect(created).toMatchObject({ ok: true });
+        if (!created.ok) throw new Error(created.error);
+        const discussionId = created.value.discussion.id;
+        if (entry === 'reply') {
+            expect(await inviteDiscussionParticipant({ authentication, actorAccountId: reader.id, discussionId,
+                request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
+            expect(await postDiscussionMessage({ authentication, actorAccountId: reader.id, discussionId,
+                request: DiscussionPostRequestV1Schema.parse({ ...addressed, localId: randomUUID(),
+                    content: { t: 'plain', v: content }, replyTarget: { kind: 'message', messageId: created.value.firstMessage.id } }) }))
+                .toMatchObject({ ok: true, value: { message: { addressingV1: { participantSessionIds: [session.id] } } } });
+        }
+        expect(await db.discussionParticipant.findUnique({ where: { discussionId_sessionId: { discussionId, sessionId: session.id } } }))
+            .toMatchObject({ removedAt: null, answerPolicy: 'when_addressed' });
+        const prepared = prepareDocDiscussionMutationV1('doc.edit.propose', { localId: randomUUID(), target: passage,
+            baseRevision: doc.revision, before: passage.quote, after: 'once more', reason: 'Clarify',
+            discussionRef: { serverId: 'test-home', discussionId }, replyTo: createDiscussionMessageRefV1({ serverId: 'test-home', discussionId }, created.value.firstMessage) }, 'test-home');
+        if (prepared.actionId === 'discussion.create') throw new Error('Expected a proposal in the admitted thread');
+        expect(await postDiscussionMessage({ authentication: { ...authentication, contentDisclosureSessionId: session.id },
+            actorAccountId: reader.id, discussionId, producer: { v: 1, kind: 'agent', sessionId: session.id },
+            request: DiscussionPostRequestV1Schema.parse({ localId: prepared.input.localId, replyTarget: prepared.input.replyTarget, mentionedAccountIds: [],
+                content: { t: 'plain', v: prepared.input.content } }) }))
+            .toMatchObject({ ok: true, value: { message: { producerV1: { kind: 'agent', sessionId: session.id },
+                docEditProposalDispositionV1: { state: 'open' } } } });
     });
 
     it('admits a same-Doc redo from another client Home label without admitting a different Doc', async () => {
@@ -445,6 +528,15 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         if (!createdDoc.ok) throw new Error(createdDoc.error);
         const doc = { ref: { kind: 'doc' as const, artifactId: createdDoc.artifact.id, serverId: 'test-home' },
             revision: { headerVersion: createdDoc.artifact.headerVersion, bodyVersion: createdDoc.artifact.bodyVersion } };
+        const recipientKeys = tweetnacl.box.keyPair();
+        const recipient = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(recipientKeys.publicKey) } });
+        const envelope = (dataKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
+            recipientPublicKey: recipientKeys.publicKey, randomBytes: tweetnacl.randomBytes }));
+        const recipientFingerprint = computeContentPublicKeyFingerprint(recipientKeys.publicKey);
+        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: recipient.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactKeyEnvelope.create({ data: { artifactId: doc.ref.artifactId, recipientAccountId: recipient.id,
+            encryptedDataKey: envelope(docKey), recipientContentPublicKeyFingerprint: recipientFingerprint } });
         const passage = { ...doc, range: { start: 8, end: 13 }, quote: 'again', prefix: 'again / ', suffix: '!' };
         const content = DiscussionMessageContentV1StoredSchema.parse({ kind: 'doc_passage_comment', passage, content: text('Review') });
         const title = { v: 1 as const, title: 'Document comments' };
@@ -465,21 +557,13 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
+        expect(await getDiscussion({ authentication, actorAccountId: owner.id, discussionId }))
+            .toMatchObject({ ok: true, value: { discussion: { recipientKeyPreparationRequired: true } } });
         const scopedOwner = await listDiscussions({ authentication, actorAccountId: owner.id, anchorDocArtifactId: doc.ref.artifactId });
         expect(scopedOwner).toMatchObject({ ok: true, value: { discussions: [{ firstMessage: { id: created.value.firstMessage.id, seq: 1 } }] } });
         if (!scopedOwner.ok || !scopedOwner.value.discussions[0]?.firstMessage) throw new Error('Expected the admitted sealed root');
         expect(DiscussionMessageContentV1StoredSchema.parse(openSessionStoredContent({ ...crypto,
             content: scopedOwner.value.discussions[0].firstMessage.content }))).toEqual(content);
-        const recipientKeys = tweetnacl.box.keyPair();
-        const recipient = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(recipientKeys.publicKey) } });
-        const envelope = (dataKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
-            recipientPublicKey: recipientKeys.publicKey, randomBytes: tweetnacl.randomBytes }));
-        const recipientFingerprint = computeContentPublicKeyFingerprint(recipientKeys.publicKey);
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: recipient.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.artifactKeyEnvelope.create({ data: { artifactId: doc.ref.artifactId, recipientAccountId: recipient.id,
-            encryptedDataKey: envelope(docKey), recipientContentPublicKeyFingerprint: recipientFingerprint } });
-        await db.discussionAccountGrant.create({ data: { discussionId, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const scopedRecipient = { authentication, actorAccountId: recipient.id, anchorDocArtifactId: doc.ref.artifactId };
         const locked = await listDiscussions(scopedRecipient);
         expect(locked).toMatchObject({ ok: true, value: { discussions: [{ keyReadiness: false, firstMessage: null }] } });

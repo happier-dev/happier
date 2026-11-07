@@ -1,3 +1,4 @@
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import * as React from 'react';
 import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -117,8 +118,8 @@ export const NEW_SESSION_COMPOSER_SUGGESTION_KINDS = [
 ] as const satisfies readonly ComposerSuggestionKindId[];
 
 /**
- * A Discussion offers its admitted people and executable participant Sessions.
- * The host supplies both candidate sets; ordinary Agent reference catalogs stay separate.
+ * A Discussion offers its roster beside ordinary people and executable Session candidates.
+ * The host supplies both sources; ordinary Agent reference catalogs stay separate.
  */
 export const DISCUSSION_COMPOSER_SUGGESTION_KINDS = [
     'accountMention',
@@ -347,7 +348,7 @@ async function resolveSessionSuggestions(
     const sessions = context.catalogs.sessions ?? readComposerSessionSuggestionItems({
         serverId: context.serverId,
         currentSessionId: context.sessionId,
-    });
+    }, readSessionRecordingVisibility());
     for (const item of sessions) {
         if (out.length >= context.limit) break;
         const slug = buildComposerSessionTokenSlug(item);
@@ -904,8 +905,9 @@ async function applyAccountMentionSelection(
 /**
  * Per-trigger row budget (D-22).
  *
- * `CommandMenu` renders its sections with `virtualization: 'never'`, so the sum
- * of the limits a single trigger can produce is the real ceiling on mounted rows.
+ * `CommandMenu` plain-maps sections up to the SelectionList virtualization
+ * threshold, so the sum of the limits a single trigger can produce is the real
+ * ceiling on mounted rows of the kind sections.
  * A global `slice(0, 40)` is forbidden: it would let an earlier section starve a
  * later one, which is INV-2 again by another route. `suggestions.sectioned.test.ts`
  * enforces the bound per trigger.

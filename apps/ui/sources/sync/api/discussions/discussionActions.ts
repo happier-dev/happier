@@ -20,7 +20,9 @@ import type { SessionCollaborationAvailability } from '@/hooks/session/useSessio
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Encryption } from '@/sync/encryption/encryption';
+import type { CryptoWorkerWorkClass } from '@/sync/encryption/nativeCryptoWorker/types';
 import { createResourceDataKey, openResourceDataKey, type ResourceDataKey } from '@/sync/encryption/resourceDataKey';
+import { isDataKeyOpeningCancelled } from '@/sync/encryption/dataKeyOpenings';
 import { resourceStoredContentContext } from '@/sync/encryption/resourceStoredContent';
 import { randomUUID } from '@/platform/randomUUID';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -82,17 +84,22 @@ async function readTransportJson(options: AdapterOptions, path: string, method: 
     }
     return payload;
 }
-async function resourceKey(options: AdapterOptions, row: DiscussionSummaryV1): Promise<ResourceDataKey | null> {
+async function resourceKey(options: AdapterOptions, row: DiscussionSummaryV1, workClass: CryptoWorkerWorkClass = 'interactive'): Promise<ResourceDataKey | null> {
     if (!row.keyReadiness) return null;
     try {
         const encryption = row.encryptionMode === 'e2ee' ? await options.resolveEncryption?.() ?? options.encryption : null;
         return await openResourceDataKey({ mode: row.encryptionMode, dataEncryptionKey: row.dataEncryptionKey,
-            ...(encryption ? { decryptDataEncryptionKey: envelope => encryption.decryptEncryptionKey(envelope, options.scope) } : {}) });
-    } catch { return null; }
+            ...(encryption ? { decryptDataEncryptionKey: envelope => encryption.decryptEncryptionKey(envelope, { ...options.scope, workClass }) } : {}) });
+    } catch (error) {
+        // A cancelled opening is not an unreadable (locked) Discussion.
+        if (isDataKeyOpeningCancelled(error)) throw error;
+        return null;
+    }
 }
-async function prepareDiscussionRecipients(options: AdapterOptions, row: DiscussionSummaryV1, signal?: AbortSignal) {
+async function prepareDiscussionRecipients(options: AdapterOptions, row: DiscussionSummaryV1, signal?: AbortSignal,
+    openedKey?: ResourceDataKey | null) {
     if (row.encryptionMode === 'plain') return;
-    const key = await resourceKey(options, row);
+    const key = openedKey === undefined ? await resourceKey(options, row) : openedKey;
     const path = (template: string) => template.replace(':discussionId', encodeURIComponent(row.id));
     await runResourceRecipientKeyPreparationV1({ dataKey: key?.dataKey ?? null, openedDataEncryptionKey: key?.dataEncryptionKey ?? null,
         randomBytes: getRandomBytes, signal,
@@ -104,8 +111,9 @@ async function prepareDiscussionRecipients(options: AdapterOptions, row: Discuss
             path(DISCUSSION_HTTP_PATHS_V1.recipientEnvelopes), 'PUT', input, signal)),
     });
 }
-async function openSummary(options: AdapterOptions, row: DiscussionSummaryV1, context: Parameters<DiscussionAction>[0]['context']) {
-    const key = await resourceKey(options, row);
+async function openSummary(options: AdapterOptions, row: DiscussionSummaryV1, context: Parameters<DiscussionAction>[0]['context'],
+    workClass: CryptoWorkerWorkClass = 'interactive', openedKey?: ResourceDataKey | null) {
+    const key = openedKey === undefined ? await resourceKey(options, row, workClass) : openedKey;
     const storedContext = resourceStoredContentContext(key);
     const opened = await openSessionStoredContent(storedContext, row.titleContent);
     const title = opened.status === 'ready' ? DiscussionTitleV1StoredSchema.safeParse(opened.value) : null;
@@ -275,13 +283,22 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
             }
             if (actionId === 'discussion.list') {
                 const value = DiscussionListResponseV1Schema.parse(payload);
-                const discussions = await Promise.all(value.discussions.map(row => openSummary(options, row, context)));
+                const discussions = await Promise.all(value.discussions.map(row => openSummary(options, row, context, 'bulk')));
                 return DiscussionListResultV1Schema.parse({ ...envelope, discussions, nextCursor: value.nextCursor,
                     incomplete: discussions.some(row => row.title === null || row.latestMessage.content === null) });
             }
             if (actionId === 'discussion.get' || actionId === 'discussion.rename' || actionId === 'discussion.archive' || actionId === 'discussion.restore') {
                 const value = DiscussionDetailsResponseV1Schema.parse(payload);
-                return DiscussionDetailsResultV1Schema.parse({ ...envelope, discussion: await openSummary(options, value.discussion, context),
+                const key = actionId === 'discussion.get' ? await resourceKey(options, value.discussion) : undefined;
+                const discussion = await openSummary(options, value.discussion, context, 'interactive', key);
+                if (actionId === 'discussion.get' && key?.mode === 'e2ee'
+                    && value.discussion.recipientKeyPreparationRequired === true) {
+                    // Home projects demand from the current audience, bindings and envelopes.
+                    // A failed maintenance attempt must not hide readable content; a later
+                    // demanded open retries through the same fenced owner.
+                    try { await prepareDiscussionRecipients(options, value.discussion, signal, key); } catch { /* retry on a later open */ }
+                }
+                return DiscussionDetailsResultV1Schema.parse({ ...envelope, discussion,
                     ...('ownedSessions' in value ? { ownedSessions: value.ownedSessions } : {}) });
             }
             if (actionId === 'discussion.read') {
@@ -296,7 +313,9 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
             if (actionId === 'discussion.create') {
                 const value = DiscussionCreateResponseV1Schema.parse(payload);
                 if (value.firstMessage.discussionId !== value.discussion.id) throw refusal('outcome_unknown');
-                if (DiscussionCreateInputV1Schema.parse(input).participants?.some(participant => participant.kind === 'account')) {
+                const args = DiscussionCreateInputV1Schema.parse(input);
+                if (args.firstMessage.replyTarget?.kind === 'doc_passage'
+                    || args.participants?.some(participant => participant.kind === 'account')) {
                     preparingRecipients = true;
                     await prepareDiscussionRecipients(options, value.discussion, signal);
                     preparingRecipients = false;
@@ -375,6 +394,8 @@ export async function readDiscussionAttentionPage(options: AdapterOptions, input
     if (options.availability === 'unavailable') return { kind: 'failed', errorCode: 'unsupported_action' };
     try {
         const query = new URLSearchParams();
+        if (input.discussionId !== undefined) query.set('discussionId', input.discussionId);
+        if (input.afterCursor !== undefined) query.set('afterCursor', input.afterCursor);
         if (input.cursor) query.set('cursor', input.cursor);
         if (input.limit !== undefined) query.set('limit', String(input.limit));
         const suffix = query.size ? `?${query}` : '';
@@ -382,8 +403,9 @@ export async function readDiscussionAttentionPage(options: AdapterOptions, input
             `${DISCUSSION_HTTP_PATHS_V1.attention}${suffix}`, 'GET', undefined, signal));
         const discussions = await Promise.all(page.discussions.map(async entry => {
             if (entry.occurrences.some(occurrence => occurrence.message.discussionId !== entry.discussion.id)) throw refusal('discussion_invalid_content');
-            const key = await resourceKey(options, entry.discussion);
-            return { discussion: await openSummary(options, entry.discussion, { surface: 'ui', serverId: options.scope.serverId }),
+            const workClass = input.discussionId ? 'interactive' : 'bulk';
+            const key = await resourceKey(options, entry.discussion, workClass);
+            return { discussion: await openSummary(options, entry.discussion, { surface: 'ui', serverId: options.scope.serverId }, workClass),
                 occurrences: await Promise.all(entry.occurrences.map(async occurrence => ({ type: occurrence.type,
                     message: await openMessage(options, key, occurrence.message) }))) };
         }));
@@ -438,6 +460,42 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
         }
         return outcome;
     };
+    const post = async (input: Omit<DiscussionActionInputV1ById['discussion.post'], 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> & {
+        mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[]; attachmentSources?: readonly PreparedAttachmentSource[];
+    }, signal?: AbortSignal) => {
+        const addressed = readDiscussionMentionedParticipantIdsV1(input.content).mentionedSessionIds;
+        if (addressed.length > 0) {
+            const roster = await run('discussion.participants.list', { discussionId: input.discussionId }, signal);
+            if (roster.kind !== 'succeeded') return roster;
+            const admitted = new Set(roster.value.participants.flatMap(row => row.participant.kind === 'session'
+                ? [row.participant.sessionId] : row.sessionId ? [row.sessionId] : []));
+            for (const sessionId of addressed) {
+                if (admitted.has(sessionId)) continue;
+                const invitation = await run('discussion.invite', { discussionId: input.discussionId,
+                    participant: { kind: 'session', sessionId } }, signal);
+                if (invitation.kind !== 'succeeded') return invitation;
+            }
+        }
+        if ('kind' in input.content && input.content.kind === 'doc_passage_comment') {
+            if (!input.localId) return { kind: 'failed' as const, errorCode: 'discussion_invalid_content' };
+            return run('doc.comment.reply', { target: input.content.passage, content: input.content.content, localId: input.localId,
+                discussionRef: { serverId: options.scope.serverId, discussionId: input.discussionId },
+                ...(input.replyTarget?.kind === 'message' ? { parentMessageRef: { kind: 'discussion' as const,
+                    discussion: { serverId: options.scope.serverId, discussionId: input.discussionId }, messageId: input.replyTarget.messageId } } : {}) }, signal, undefined, input.attachmentSources);
+        }
+        if ('kind' in input.content && input.content.kind === 'doc_edit_proposal') {
+            if (!input.localId) return { kind: 'failed' as const, errorCode: 'discussion_invalid_content' };
+            return run('doc.edit.propose', { ...input.content.proposal, localId: input.localId,
+                discussionRef: { serverId: options.scope.serverId, discussionId: input.discussionId },
+                ...(input.replyTarget?.kind === 'message' ? { replyTo: { kind: 'discussion' as const,
+                    discussion: { serverId: options.scope.serverId, discussionId: input.discussionId }, messageId: input.replyTarget.messageId } } : {}) }, signal);
+        }
+        return run(input.replyTarget ? 'discussion.reply' : 'discussion.post', {
+            discussionId: input.discussionId, localId: input.localId, content: input.content,
+            mentionedAccountIds: input.mentionedAccountIds === undefined ? undefined : [...input.mentionedAccountIds],
+            mentionedSessionIds: input.mentionedSessionIds === undefined ? undefined : [...input.mentionedSessionIds], replyTarget: input.replyTarget,
+        }, signal, undefined, input.attachmentSources);
+    };
     return {
         async attention(input: DiscussionAttentionQueryV1 = {}, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionAttentionResultV1>> {
             const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -472,17 +530,24 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             onResolvedParticipants?: (participants: readonly DiscussionInitialParticipantV1[]) => void;
             replyTarget?: DiscussionActionInputV1ById['discussion.post']['replyTarget'] }, signal?: AbortSignal,
             continuation?: DiscussionApprovalCallbacks<DiscussionCreateResultV1>): Promise<DiscussionClientOutcome<DiscussionCreateResultV1>> => {
+            const participants = [...(input.participants ?? [])];
+            for (const sessionId of readDiscussionMentionedParticipantIdsV1(input.content).mentionedSessionIds) {
+                if (!participants.some(participant => participant.kind === 'session' && participant.sessionId === sessionId)) {
+                    participants.push({ kind: 'session', sessionId });
+                }
+            }
             if ('kind' in input.content && input.content.kind === 'doc_passage_comment') {
-                // The Doc comment owner declares no initial-audience operand.
-                // Never acknowledge invitations that delegation would discard.
-                if (input.participants?.length) return { kind: 'failed', errorCode: 'invalid_parameters' };
+                const initial = DiscussionInitialParticipantsV1Schema.safeParse(participants);
+                if (!initial.success) return { kind: 'failed', errorCode: 'invalid_parameters' };
                 const { passage, content } = input.content;
                 const ref = { ...passage.ref, serverId: passage.ref.serverId ?? options.scope.serverId };
                 if (ref.serverId !== options.scope.serverId) return { kind: 'failed', errorCode: 'server_target_mismatch' };
                 if (input.creationLocalId !== deriveDocCommentDiscussionCreationLocalIdV1({ ref, localId: input.messageLocalId })) {
                     return { kind: 'failed', errorCode: 'discussion_idempotency_conflict' };
                 }
-                const posted = await run('doc.comment.reply', { target: passage, localId: input.messageLocalId, content }, signal, undefined, input.attachmentSources);
+                if (initial.data.length > 0) input.onResolvedParticipants?.(initial.data);
+                const posted = await run('doc.comment.reply', { target: passage, localId: input.messageLocalId, content,
+                    ...(initial.data.length > 0 ? { participants: initial.data } : {}) }, signal, undefined, input.attachmentSources);
                 if (posted.kind !== 'succeeded') return posted;
                 const details = await run('discussion.get', { discussionId: posted.value.message.discussionId }, signal);
                 if (details.kind !== 'succeeded') return { kind: 'failed', errorCode: 'outcome_unknown' };
@@ -491,7 +556,7 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             }
             return run('discussion.create', {
             creationLocalId: input.creationLocalId, title: input.title, anchor: input.anchor,
-            participants: input.participants === undefined ? undefined : [...input.participants],
+            participants: participants.length > 0 ? participants : undefined,
             firstMessage: { localId: input.messageLocalId, content: input.content,
                 mentionedAccountIds: input.mentionedAccountIds === undefined ? undefined : [...input.mentionedAccountIds],
                 mentionedSessionIds: input.mentionedSessionIds === undefined ? undefined : [...input.mentionedSessionIds], replyTarget: input.replyTarget } }, signal,
@@ -501,32 +566,8 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
                 input.onResolvedParticipants?.(DiscussionInitialParticipantsV1Schema.parse(resolved.participants ?? []));
             }, input.attachmentSources, continuation);
         },
-        post: (input: Omit<DiscussionActionInputV1ById['discussion.post'], 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> & { mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[];
-            attachmentSources?: readonly PreparedAttachmentSource[] }, signal?: AbortSignal) => {
-            if ('kind' in input.content && input.content.kind === 'doc_passage_comment') {
-                if (!input.localId) return Promise.resolve({ kind: 'failed' as const, errorCode: 'discussion_invalid_content' });
-                return run('doc.comment.reply', { target: input.content.passage, content: input.content.content, localId: input.localId,
-                    discussionRef: { serverId: options.scope.serverId, discussionId: input.discussionId },
-                    ...(input.replyTarget?.kind === 'message' ? { parentMessageRef: { kind: 'discussion' as const,
-                        discussion: { serverId: options.scope.serverId, discussionId: input.discussionId }, messageId: input.replyTarget.messageId } } : {}) }, signal, undefined, input.attachmentSources);
-            }
-            if ('kind' in input.content && input.content.kind === 'doc_edit_proposal') {
-                if (!input.localId) return Promise.resolve({ kind: 'failed' as const, errorCode: 'discussion_invalid_content' });
-                return run('doc.edit.propose', { ...input.content.proposal, localId: input.localId,
-                    discussionRef: { serverId: options.scope.serverId, discussionId: input.discussionId },
-                    ...(input.replyTarget?.kind === 'message' ? { replyTo: { kind: 'discussion' as const,
-                        discussion: { serverId: options.scope.serverId, discussionId: input.discussionId }, messageId: input.replyTarget.messageId } } : {}) }, signal);
-            }
-            return run('discussion.post', {
-            discussionId: input.discussionId, localId: input.localId, content: input.content,
-            mentionedAccountIds: input.mentionedAccountIds === undefined ? undefined : [...input.mentionedAccountIds],
-            mentionedSessionIds: input.mentionedSessionIds === undefined ? undefined : [...input.mentionedSessionIds], replyTarget: input.replyTarget,
-        }, signal, undefined, input.attachmentSources);
-        },
-        reply: (input: Omit<DiscussionActionInputV1ById['discussion.reply'], 'attachmentSources'> & { attachmentSources?: readonly PreparedAttachmentSource[] }, signal?: AbortSignal) => {
-            const { attachmentSources, ...authored } = input;
-            return run('discussion.reply', authored, signal, undefined, attachmentSources);
-        },
+        post,
+        reply: post,
         rename: (discussionId: string, title: string, signal?: AbortSignal) => run('discussion.rename', { discussionId, title }, signal),
         archive: (discussionId: string, signal?: AbortSignal) => run('discussion.archive', { discussionId }, signal),
         restore: (discussionId: string, signal?: AbortSignal) => run('discussion.restore', { discussionId }, signal),

@@ -144,12 +144,13 @@ async function readDiscussionCreationAdmissionInTx(tx: Tx, input: DiscussionCrea
         ...(request.firstMessage.mentionedSessionIds ?? []),
         ...(request.participants ?? []).flatMap(participant => participant.kind === 'session' ? [participant.sessionId] : []),
     ].filter((id): id is string => typeof id === 'string');
+    const sourceAudienceAccountIds = await readDiscussionDocSourceAuthorityAccountIdsInTx(tx,
+        request.firstMessage.replyTarget?.kind === 'doc_passage' ? request.firstMessage.replyTarget.doc : null);
     const admissionAccountIds = [input.actorAccountId,
         ...(request.participants ?? []).flatMap(participant => participant.kind === 'account' ? [participant.accountId] : []),
-        ...await readDiscussionDocSourceAuthorityAccountIdsInTx(tx,
-            request.firstMessage.replyTarget?.kind === 'doc_passage' ? request.firstMessage.replyTarget.doc : null)];
+        ...sourceAudienceAccountIds];
     const admissionAudience = await readSessionAccountCursorAudienceInTx(tx, admissionSessionIds, admissionAccountIds);
-    return { admissionAudience, admissionSessionIds, admissionAccountIds,
+    return { admissionAudience, admissionSessionIds, admissionAccountIds, sourceAudienceAccountIds,
         artifactId: request.firstMessage.replyTarget?.kind === 'doc_passage' ? request.firstMessage.replyTarget.doc.ref.artifactId : null };
 }
 
@@ -176,7 +177,8 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     const parsed = DiscussionCreateRequestV1Schema.safeParse(input.request);
     if (!parsed.success) return discussionFailure('discussion_invalid_content');
     const request = parsed.data;
-    await fenceDiscussionCreationAdmissionInTx(tx, await readDiscussionCreationAdmissionInTx(tx, { ...input, request }));
+    const creationAdmission = await readDiscussionCreationAdmissionInTx(tx, { ...input, request });
+    await fenceDiscussionCreationAdmissionInTx(tx, creationAdmission);
     if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) {
         return discussionFailure('discussion_post_denied');
     }
@@ -233,7 +235,8 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
         return discussionSuccess({ discussion: projected.value, firstMessage: projectDiscussionMessageV1(admitted.value, input.actorAccountId,
             actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null) });
     }
-    const initial = await validateInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId, authentication: creatorAuthentication, request });
+    const initial = await validateInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId,
+        authentication: creatorAuthentication, request, sourceAudienceAccountIds: creationAdmission.sourceAudienceAccountIds });
     if (!initial.ok) return initial;
     const mode = initial.value.storageMode;
     const intent = messageIntent(mode, request.firstMessage);

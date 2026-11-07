@@ -99,10 +99,12 @@ export type ApprovalDiscussionAddress = Readonly<{ serverId: string; discussionI
 export type DiscussionRequesterApproval = Readonly<{
     artifact: DecryptedArtifact;
     parsed: Extract<ParsedApprovalArtifactBodyV1, { family: 'built_in' | 'target_action' }>;
-    subject: ApprovalRequesterConfirmationV1;
     requestRef: string;
     originMessageId: string;
-}>;
+}> & Readonly<
+    | { kind: 'requester_confirmation'; subject: ApprovalRequesterConfirmationV1 }
+    | { kind: 'request'; subject: null }
+>;
 
 /** The admitted body owns the requester cause for discovery and presentation alike. */
 export function readDiscussionRequesterApprovalFact(artifact: DecryptedArtifact):
@@ -115,8 +117,16 @@ export function readDiscussionRequesterApprovalFact(artifact: DecryptedArtifact)
     const subject = request.requesterConfirmation;
     const cause = request.executionOriginV1?.actionRequestAttributionV1;
     const origin = cause?.origin;
-    if (!subject || !cause || origin?.kind !== 'discussion') return null;
-    return { artifact, parsed, subject, requestRef: cause.requestRef, originMessageId: origin.messageId,
+    if (!cause || origin?.kind !== 'discussion' || (!subject && request.status !== 'open')) return null;
+    const waiting = !subject ? readOpenApprovalDiscussionAttention(artifact) : null;
+    const executionOrigin = request.executionOriginV1;
+    if (waiting?.discussionId === origin.discussion.discussionId
+        && (origin.discussion.serverId === executionOrigin?.serverId
+            || origin.discussion.serverId === executionOrigin?.serverIdentityId)) return null;
+    // The immutable ask links ordinary own-agent requests too. Only the request's
+    // explicit confirmation subject establishes cross-person consent.
+    return { artifact, parsed, ...(subject ? { kind: 'requester_confirmation' as const, subject } : { kind: 'request' as const, subject: null }),
+        requestRef: cause.requestRef, originMessageId: origin.messageId,
         discussion: origin.discussion };
 }
 

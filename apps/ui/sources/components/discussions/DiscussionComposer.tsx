@@ -1,3 +1,4 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -9,14 +10,26 @@ import {
     type ComposerAccountMentionSource,
 } from '@/components/autocomplete/composerSuggestionKinds';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
+import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { matchesComposerSuggestionQuery, type ComposerSuggestionCatalogs } from '@/components/autocomplete/composerSuggestionCatalogs';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
-import type { DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
+import { resolveAccountActorName } from '@/sync/domains/account/accountActorPresentation';
+import type { DiscussionInitialParticipantV1, DiscussionModelParticipantV1, DiscussionParticipantsListResponseV1 } from '@happier-dev/protocol/discussions/participants';
 import type { SessionResponsibilityCandidateV1 } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
 import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
-import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { projectAgentInputAttachmentRowItems, type AgentInputAttachmentsRowItem, type AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
+import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
+import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
+import { planComposerAttachmentReferenceRemoval } from '@/components/sessions/composer/composerAttachmentReferences';
+import { insertComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
+import { useDiscussionAttachmentDrafts, type DiscussionAttachmentSendSubmission } from './useDiscussionAttachmentDrafts';
+import type { DiscussionDraftAddress } from './useDiscussionDraft';
 import {
     structuredInputMentionSurvivesText,
     reconcileStructuredInputMentionsWithText,
@@ -24,7 +37,6 @@ import {
 } from '@/components/sessions/agentInput/structuredInputMentions';
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { createDiscussionClient } from '@/sync/api/discussions/discussionActions';
 import { reportDiscussionTypingEdit, stopDiscussionTyping } from '@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime';
 import { t } from '@/text';
 import type { DiscussionHomeAddress } from './discussionDetailsTarget';
@@ -37,6 +49,7 @@ import type { RecipientMultiSelectModel } from '@/components/sessions/agentInput
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/suggestionSession';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveExecutableModelParticipantDisplay } from '@/components/sessions/authoring/useExecutableParticipantLabel';
@@ -49,13 +62,41 @@ import {
     readDiscussionMentionParticipant,
 } from './discussionComposerDocument';
 
-import { parseComposerStructuredInputMentionsForText } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+
+function projectAccountMentionCandidate(
+    actor: Pick<TranscriptAccountActor, 'accountId' | 'profile' | 'accessibility'>,
+    viewerAccountId: string,
+): SessionResponsibilityCandidateV1 {
+    const retained = actor.accessibility === 'former' ? null : actor.profile;
+    return { accountId: actor.accountId, profile: {
+        name: resolveAccountActorName(actor, actor.accountId === viewerAccountId),
+        firstName: retained?.firstName ?? null,
+        lastName: retained?.lastName ?? null,
+        username: retained?.username ?? null,
+        avatarUrl: retained?.avatarUrl ?? null,
+    } };
+}
 
 export type DiscussionComposerValue = Readonly<{
     text: string;
+    /** Exact occurrences admitted by the Discussion draft owner for this text. */
     mentions: readonly ComposerStructuredInputMention[];
 }>;
+
+
+/** The picker joins participant and declared-reference sources through their existing owners. */
+function DiscussionComposerInput(props: Readonly<{
+    suggestParticipants(query: string, signal: AbortSignal): Promise<AutocompleteSuggestion[]>;
+    suggestReferences(query: string, signal: AbortSignal): Promise<AutocompleteSuggestion[]>;
+    render(suggest: (query: string, signal: AbortSignal) => Promise<AutocompleteSuggestion[]>): React.ReactElement;
+}>): React.ReactElement {
+    const suggest = React.useCallback(async (query: string, signal: AbortSignal) => {
+        const rows = await Promise.all([props.suggestParticipants(query, signal), props.suggestReferences(query, signal)]);
+        return signal.aborted ? [] : rows.flat();
+    }, [props.suggestParticipants, props.suggestReferences]);
+    return props.render(suggest);
+}
 
 /**
  * A human discussion's composer: the one composer (`AgentInput`) with the discussion adapter
@@ -78,11 +119,16 @@ export function DiscussionComposer(props: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     address: DiscussionHomeAddress;
     discussionId?: string;
+    /** The page's admitted roster; autocomplete filters it, never reacquires it. */
+    roster?: DiscussionParticipantsListResponseV1 | null;
+    onRefreshParticipants?: () => Promise<unknown>;
     availability: SessionCollaborationAvailability;
     value: DiscussionComposerValue;
     onChange: (value: DiscussionComposerValue) => void;
     disabled: boolean;
-    onSend: (content: ReturnType<typeof buildDiscussionContent>) => void;
+    onSend: (content: ReturnType<typeof buildDiscussionContent>, attachments?: DiscussionAttachmentSendSubmission) => void;
+    /** The draft this composer edits; its attachment tray shares the address (one draft, one tray). */
+    draftAddress: DiscussionDraftAddress;
     /** Send-only resolution of inert model slots; never called by typing or selection. */
     prepareParticipantMentions?: (document: DiscussionComposerValue, isCurrent: () => boolean) => Promise<ReturnType<typeof buildDiscussionContent> | null>;
     /** The page's own composer controls after `@` (a running Discussion's Run…). */
@@ -94,18 +140,20 @@ export function DiscussionComposer(props: Readonly<{
      * first message (C3 §6.1), with the names the page already resolved for them.
      */
     invited?: Readonly<{ participants: readonly DiscussionInitialParticipantV1[]; accounts: ReadonlyMap<string, TranscriptAccountActor> }>;
+    /** What this draft is about (the passage it comments on, the message it answers), in the composer's badge row. */
+    contextItems?: readonly AgentInputAttachmentsRowItem[];
+    /** Opened for writing (a comment just started): the field takes the caret once, when it can. */
+    focusOnOpen?: boolean;
 }>): React.ReactElement {
     const { scope, availability, disabled, accountLifetime } = props;
-    const currentContext = React.useRef({ accountLifetime, discussionId: props.discussionId, disabled, availability });
-    currentContext.current = { accountLifetime, discussionId: props.discussionId, disabled, availability };
+    const recordingVisibility = useSessionRecordingVisibility(availability === 'available' && !disabled);
+    const currentContext = React.useRef({ accountLifetime, discussionId: props.discussionId, disabled, availability, roster: props.roster, invited: props.invited });
+    currentContext.current = { accountLifetime, discussionId: props.discussionId, disabled, availability, roster: props.roster, invited: props.invited };
     const mounted = React.useRef(true);
     React.useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     const sending = React.useRef<Readonly<{ accountLifetime: ServerAccountScopeLifetime; discussionId: string | undefined }> | null>(null);
-    const client = React.useMemo(() => createDiscussionClient({ scope, availability }), [availability, scope]);
-    const composerMentions = React.useMemo(
-        () => parseComposerStructuredInputMentionsForText(props.value.mentions, props.value.text).mentions,
-        [props.value.mentions, props.value.text],
-    );
+    // The draft owner admits the controlled value; this binding only pairs input callbacks.
+    const composerMentions = props.value.mentions;
 
     // The composer reports text and mentions in separate callbacks, in either order. The draft
     // admits a mention only against the text it covers, so both are written together from the
@@ -125,11 +173,34 @@ export function DiscussionComposer(props: Readonly<{
     const write = React.useCallback((next: DiscussionComposerValue) => {
         if (next.text !== latestRef.current.text || !pluginJsonValuesEqual(next.mentions, latestRef.current.mentions)) revisionRef.current += 1;
         latestRef.current = next;
-        onChangeRef.current({
-            text: next.text,
-            mentions: parseComposerStructuredInputMentionsForText(next.mentions, next.text).mentions,
-        });
+        onChangeRef.current(next);
     }, []);
+
+    // Files go through the Session attachment owners: one intake, tray and upload-source model (N2-ATT).
+    // Removing a file from the tray also removes its inline chip from the text, as in a Session.
+    const removeAttachmentToken = React.useCallback((attachmentId: string) => {
+        const latest = latestRef.current;
+        const edits = planComposerAttachmentReferenceRemoval({ text: latest.text,
+            references: composerReferencesFromStructuredMentions({ text: latest.text, mentions: latest.mentions }) }, [attachmentId]);
+        if (edits.length === 0) return;
+        let text = latest.text;
+        for (const edit of [...edits].sort((left, right) => right.range.start - left.range.start)) {
+            text = text.slice(0, edit.range.start) + edit.text + text.slice(edit.range.end);
+        }
+        write({ text, mentions: reconcileStructuredInputMentionsWithText({ previousText: latest.text, nextText: text, mentions: latest.mentions }) });
+    }, [write]);
+    const composer = React.useMemo(() => props.discussionId
+        ? { kind: 'discussion' as const, discussionId: props.discussionId } : null, [props.discussionId]);
+    // A picked file gets its inline chip at the caret, as in a Session; drops and pastes are placed by the input itself.
+    const insertPickedTokens = React.useCallback((drafts: readonly AttachmentDraft[]) => {
+        if (composer && accountLifetime.isCurrent()) insertComposerAttachmentReferences({ ref: composer, scope: accountLifetime.scope,
+            items: drafts.map(draft => ({ draft })) });
+    }, [accountLifetime, composer]);
+    const uploadConfig = useAttachmentsUploadConfig();
+    const attachments = useDiscussionAttachmentDrafts({ scope, address: props.draftAddress,
+        enabled: availability === 'available', maxFileBytes: uploadConfig.maxFileBytes,
+        onPickedDrafts: insertPickedTokens, onRemoveDraft: removeAttachmentToken });
+    const { filePickerRef, prepareSubmission, settleSubmission, getDraftsSnapshot, pasteClipboardImage } = attachments;
 
     const presenceTarget = React.useMemo(() => props.discussionId
         ? { serverId: props.address.serverId, discussionId: props.discussionId }
@@ -159,38 +230,68 @@ export function DiscussionComposer(props: Readonly<{
         latestRef.current = { text, mentions };
     }, [write]);
 
-    // Retry is a new source, hence a new handler: the open picker asks again for the same token
-    // (useActiveSuggestions re-runs its query when the handler changes).
-    const [searchRevision, setSearchRevision] = React.useState(0);
+    const [candidateRetry, setCandidateRetry] = React.useState(0);
     const suggestParticipants = React.useCallback(async (query: string, signal: AbortSignal) => {
-        const invited = props.discussionId ? null : props.invited ?? null;
-        if (availability !== 'available' || (!props.discussionId && !invited) || !accountLifetime.isCurrent() || signal.aborted) return [];
-        // One current roster is the eligibility authority for both picker sections; before create, the
-        // chosen invitees are. A Session title is display only; it can never admit an outsider.
-        const outcome = props.discussionId ? await client.participants(props.discussionId, signal).catch(() => null) : null;
-        if (!accountLifetime.isCurrent() || signal.aborted) return [];
+        const context = currentContext.current;
+        const invited = props.discussionId ? null : context.invited ?? null;
+        const isCurrent = () => mounted.current && accountLifetime.isCurrent() && !signal.aborted
+            && currentContext.current.accountLifetime === accountLifetime
+            && currentContext.current.discussionId === props.discussionId
+            && currentContext.current.roster === context.roster
+            && currentContext.current.invited === context.invited
+            && !currentContext.current.disabled && currentContext.current.availability === 'available';
+        if (!isCurrent()) return [];
+        const { createDiscussionClient } = await import('@/sync/api/discussions/discussionActions');
+        if (!isCurrent()) return [];
+        const client = createDiscussionClient({ scope, availability: context.availability });
+        const parsedQuery = parseComposerSuggestionQuery(query);
+        const scopedQuery = parsedQuery?.trigger === '@' ? resolveComposerSuggestionScope('@', parsedQuery.query) : null;
+        const [sessionAcquisition, peopleAcquisition] = await Promise.allSettled([
+            scopedQuery && (scopedQuery.kind === null || scopedQuery.kind === 'session')
+                ? client.listCandidates({ source: 'sessions' }, signal) : null,
+            scopedQuery && (scopedQuery.kind === null || scopedQuery.kind === 'accountMention')
+                ? client.listCandidates({ source: 'people', query: scopedQuery.scopedQuery }, signal) : null,
+        ]);
+        if (!isCurrent()) return [];
+        const sessionCandidates = sessionAcquisition.status === 'fulfilled' ? sessionAcquisition.value : null;
+        const peopleCandidates = peopleAcquisition.status === 'fulfilled' ? peopleAcquisition.value : null;
+        // Candidate acquisition is demand driven. The roster retains already
+        // admitted people, Sessions and model slots beside the ordinary Invite candidates.
+        const roster = props.discussionId && context.roster?.discussionId === props.discussionId ? context.roster : null;
         const sessions: Array<NonNullable<ComposerSuggestionCatalogs['sessions']>[number]> = [];
-        const rosterSessionIds = outcome?.kind === 'succeeded'
-            ? outcome.value.participants.map(participant => participant.participant.kind === 'session'
-                ? participant.participant.sessionId : 'sessionId' in participant ? participant.sessionId ?? null : null)
-            : invited ? invited.participants.map(participant => participant.kind === 'session' ? participant.sessionId : null) : [];
-        {
-            const seen = new Set<string>();
-            for (const sessionId of rosterSessionIds) {
-                if (!sessionId || seen.has(sessionId)) continue;
-                seen.add(sessionId);
-                const display = readComposerSessionSuggestionDisplay({ serverId: scope.serverId, sessionId });
-                const neutralLabel = t('session.collaboration.discussion.participants.session');
-                sessions.push({
-                    id: sessionId,
-                    title: display?.title || neutralLabel,
-                    serverId: scope.serverId,
-                    workspaceLabel: display?.workspaceLabel ?? null,
-                    agentLabel: display?.agentLabel ?? neutralLabel,
-                    agentId: display?.agentId ?? null,
-                    machineId: display?.machineId ?? null,
-                });
+        const sessionIds = new Set<string>();
+        const modelParticipants: DiscussionModelParticipantV1[] = [];
+        if (roster) {
+            for (const participant of roster.participants) {
+                if (participant.participant.kind === 'session') sessionIds.add(participant.participant.sessionId);
+                else if ('launch' in participant) {
+                    if (participant.sessionId) sessionIds.add(participant.sessionId);
+                    else modelParticipants.push(participant);
+                }
             }
+        } else if (invited) {
+            for (const participant of invited.participants) {
+                if (participant.kind === 'session') sessionIds.add(participant.sessionId);
+            }
+        }
+        if (sessionCandidates?.kind === 'succeeded') {
+            for (const candidate of sessionCandidates.value.candidates) {
+                if (candidate.kind === 'session') sessionIds.add(candidate.selection.session.sessionId);
+            }
+        }
+        for (const sessionId of sessionIds) {
+            if (!recordingVisibility({ serverId: scope.serverId, sessionId })) continue;
+            const display = readComposerSessionSuggestionDisplay({ serverId: scope.serverId, sessionId });
+            const neutralLabel = t('session.collaboration.discussion.participants.session');
+            sessions.push({
+                id: sessionId,
+                title: display?.title || neutralLabel,
+                serverId: scope.serverId,
+                workspaceLabel: display?.workspaceLabel ?? null,
+                agentLabel: display?.agentLabel ?? neutralLabel,
+                agentId: display?.agentId ?? null,
+                machineId: display?.machineId ?? null,
+            });
         }
         const accountMentions: ComposerAccountMentionSource = {
             search: async ({ query, limit }) => {
@@ -198,49 +299,50 @@ export function DiscussionComposer(props: Readonly<{
                 if (invited) {
                     for (const participant of invited.participants) {
                         if (participant.kind !== 'account' || participant.accountId === scope.accountId) continue;
-                        const profile = invited.accounts.get(participant.accountId)?.profile;
-                        people.set(participant.accountId, { accountId: participant.accountId, profile: {
-                            name: profile?.name ?? null, firstName: profile?.firstName ?? null, lastName: profile?.lastName ?? null,
-                            username: profile?.username ?? null, avatarUrl: profile?.avatarUrl ?? null } });
+                        const actor = invited.accounts.get(participant.accountId);
+                        if (actor) people.set(participant.accountId, projectAccountMentionCandidate(actor, scope.accountId));
                     }
-                    const matches = [...people.values()].filter((person) => !query || matchesComposerSuggestionQuery(person.profile.name ?? person.profile.username ?? '', query));
-                    return { candidates: matches.slice(0, limit), hasMore: matches.length > limit };
+                } else if (roster) {
+                    for (const actor of roster.accountActors ?? []) {
+                        if (actor.accountId === scope.accountId) continue;
+                        people.set(actor.accountId, projectAccountMentionCandidate(actor, scope.accountId));
+                    }
                 }
-                if (outcome?.kind !== 'succeeded') throw new Error('Discussion participants unavailable');
-                for (const grant of outcome.value.grants) {
-                    if (grant.principal.kind !== 'account' || grant.principal.accountId === scope.accountId) continue;
-                    people.set(grant.principal.accountId, {
-                        accountId: grant.principal.accountId,
-                        profile: { name: grant.display.name, firstName: null, lastName: null, username: grant.display.username ?? null, avatarUrl: null },
-                    });
-                }
-                if (outcome.value.ownerAccountId !== scope.accountId && !people.has(outcome.value.ownerAccountId)) {
-                    people.set(outcome.value.ownerAccountId, {
-                        accountId: outcome.value.ownerAccountId,
-                        profile: { name: null, firstName: null, lastName: null, username: null, avatarUrl: null },
-                    });
-                }
+                if (peopleCandidates?.kind === 'succeeded') {
+                    for (const candidate of peopleCandidates.value.candidates) {
+                        if (candidate.kind !== 'account' || people.has(candidate.participant.accountId)) continue;
+                        people.set(candidate.participant.accountId, { accountId: candidate.participant.accountId, profile: {
+                            name: candidate.profile.name ?? null, username: candidate.profile.username ?? null,
+                            firstName: candidate.profile.firstName ?? null, lastName: candidate.profile.lastName ?? null,
+                            avatarUrl: candidate.profile.avatarUrl ?? null,
+                        } });
+                    }
+                } else if (!roster && !invited) throw new Error('Discussion candidates unavailable');
                 const matches = [...people.values()].filter((person) => !query || matchesComposerSuggestionQuery(person.profile.name ?? person.profile.username ?? '', query));
-                return { candidates: matches.slice(0, limit), hasMore: matches.length > limit };
+                return { candidates: matches.slice(0, limit), hasMore: matches.length > limit
+                    || (peopleCandidates?.kind === 'succeeded' && peopleCandidates.value.nextCursor !== null) };
             },
-            retry: () => setSearchRevision((revision) => revision + 1),
+            // Existing threads renew from their roster owner; drafts without a
+            // roster renew this handler to run the same demanded candidate query.
+            retry: () => {
+                if (props.onRefreshParticipants) void props.onRefreshParticipants();
+                else setCandidateRetry(revision => revision + 1);
+            },
         };
         const suggestions = await getSuggestions(null, query, {
             kinds: DISCUSSION_COMPOSER_SUGGESTION_KINDS,
             accountMentions,
-            // Explicitly empty is authoritative, including after participant removal.
+            // The candidate owner supplies Sessions; do not fall back to Recent.
             catalogs: { sessions },
             signal,
         });
-        const parsedQuery = parseComposerSuggestionQuery(query);
-        if (outcome?.kind === 'succeeded' && parsedQuery?.trigger === '@') {
+        if (roster && parsedQuery?.trigger === '@') {
             const scoped = resolveComposerSuggestionScope('@', parsedQuery.query);
             if (scoped.kind === null || scoped.kind === 'session') {
                 const machines = getStorage().getState().machineListByServerId[scope.serverId] ?? [];
                 const limit = resolveComposerSuggestionKind('session').limit;
                 let sessionCount = suggestions.filter(suggestion => suggestion.kind === 'session').length;
-                for (const participant of outcome.value.participants) {
-                    if (participant.participant.kind !== 'model' || !('launch' in participant) || participant.sessionId) continue;
+                for (const participant of modelParticipants) {
                     const display = resolveExecutableModelParticipantDisplay(participant.launch, machines);
                     if (!matchesComposerSuggestionQuery(display.displayLabel, scoped.scopedQuery)) continue;
                     if (sessionCount >= limit) break;
@@ -255,9 +357,8 @@ export function DiscussionComposer(props: Readonly<{
                 }
             }
         }
-        return accountLifetime.isCurrent() && !signal.aborted ? suggestions : [];
-        // `searchRevision` renews the active query after the existing Retry action.
-    }, [accountLifetime, availability, client, props.discussionId, props.invited, scope.serverId, scope.accountId, searchRevision]);
+        return isCurrent() ? suggestions : [];
+    }, [accountLifetime, availability, candidateRetry, props.discussionId, props.invited, props.roster, props.onRefreshParticipants, recordingVisibility, scope.serverId, scope.accountId]);
 
     const onSendProp = props.onSend;
     const prepareParticipantMentions = props.prepareParticipantMentions;
@@ -265,16 +366,18 @@ export function DiscussionComposer(props: Readonly<{
         const latest = latestRef.current;
         const text = options?.inputTextOverride ?? latest.text;
         const active = sending.current;
+        const hasFiles = getDraftsSnapshot().length > 0;
         if (disabled || (active?.accountLifetime === accountLifetime && active.discussionId === props.discussionId)
-            || text.trim().length === 0 || !accountLifetime.isCurrent()) return;
+            || (text.trim().length === 0 && !hasFiles) || !accountLifetime.isCurrent()) return;
         if (presenceTarget) stopDiscussionTyping(presenceTarget, accountLifetime);
         const mentions = reconcileStructuredInputMentionsWithText({ previousText: latest.text, nextText: text,
-            mentions: parseComposerStructuredInputMentionsForText(latest.mentions, latest.text).mentions });
-        if (!mentions.some(mention => readDiscussionMentionParticipant(mention)?.kind === 'model')) {
+            mentions: latest.mentions });
+        const needsModelSessions = mentions.some(mention => readDiscussionMentionParticipant(mention)?.kind === 'model');
+        if (!needsModelSessions && !hasFiles) {
             onSendProp(buildDiscussionContent(text, mentions));
             return;
         }
-        if (!prepareParticipantMentions) return;
+        if (needsModelSessions && !prepareParticipantMentions) return;
         const revision = revisionRef.current;
         const discussionId = props.discussionId;
         const attempt = { accountLifetime, discussionId };
@@ -284,16 +387,39 @@ export function DiscussionComposer(props: Readonly<{
             && revisionRef.current === revision && sending.current === attempt;
         sending.current = attempt;
         try {
-            const content = await prepareParticipantMentions({ text, mentions }, isCurrent);
-            if (content && isCurrent()) onSendProp(content);
+            // Model slots resolve to Sessions first (only on Send); a send with files carries them as attachment parts.
+            const resolved = needsModelSessions && prepareParticipantMentions ? await prepareParticipantMentions({ text, mentions }, isCurrent) : null;
+            if ((needsModelSessions && !resolved) || !isCurrent()) return;
+            if (!hasFiles) { if (resolved) onSendProp(resolved); return; }
+            // The tray shows these files uploading until the page settles them from its mutation status.
+            // A file that cannot be read stays in the tray marked failed (the shared owner settles it), and nothing is sent.
+            const submission = await prepareSubmission({ isCurrent }).catch(() => null);
+            if (!submission) return;
+            if (!isCurrent()) { settleSubmission(submission.drafts, 'failed', 'canceled'); return; }
+            let content: ReturnType<typeof buildDiscussionContent>;
+            try {
+                content = resolved
+                    ? { ...resolved, parts: [...resolved.parts, ...submission.attachments.map(attachment => ({ t: 'attachment' as const, attachment }))] }
+                    : buildDiscussionContent(text, mentions, undefined, submission.attachments);
+            } catch (error) {
+                settleSubmission(submission.drafts, 'failed', 'discussion_invalid_content');
+                throw error;
+            }
+            onSendProp(content, { sources: submission.sources, settle: (status, errorCode) => settleSubmission(submission.drafts, status, errorCode) });
         } finally { if (sending.current === attempt) sending.current = null; }
-    }, [accountLifetime, disabled, onSendProp, presenceTarget, prepareParticipantMentions, props.discussionId]);
+    }, [accountLifetime, disabled, getDraftsSnapshot, onSendProp, prepareSubmission, presenceTarget, prepareParticipantMentions, props.discussionId, settleSubmission]);
 
     const placeholder = t('session.collaboration.discussion.messagePlaceholder');
     // `@` as a control and the one-line addressing rule beside send (lab T2-A): the trigger is written into
     // the document and the field focused, so the composer's own suggestions open on it.
     const focusRequestRef = React.useRef<(() => void) | null>(null);
-    const captureFocusRequest = React.useCallback((request: (() => void) | null) => { focusRequestRef.current = request; }, []);
+    const focusOnOpen = React.useRef(props.focusOnOpen === true);
+    const captureFocusRequest = React.useCallback((request: (() => void) | null) => {
+        focusRequestRef.current = request;
+        if (!request || !focusOnOpen.current) return;
+        focusOnOpen.current = false;
+        requestAnimationFrame(() => focusRequestRef.current?.());
+    }, []);
     // The mounted Composer binding also listens for the focus request: one listener per binding feeds both,
     // so a new binding still receives the composer's request.
     type FocusRequestListener = (request: (() => void) | null) => void;
@@ -302,7 +428,7 @@ export function DiscussionComposer(props: Readonly<{
         if (!bound) return captureFocusRequest;
         let listener = focusListenersRef.current.get(bound);
         if (!listener) {
-            listener = (request) => { focusRequestRef.current = request; bound(request); };
+            listener = (request) => { captureFocusRequest(request); bound(request); };
             focusListenersRef.current.set(bound, listener);
         }
         return listener;
@@ -315,20 +441,31 @@ export function DiscussionComposer(props: Readonly<{
     }, [write]);
     const pageChips = props.extraActionChips;
     const recipients = props.recipients;
+    const attachChip = React.useMemo(() => createAttachmentActionChip({
+        onPickFile: () => openAttachmentFilePickerFiles(filePickerRef.current),
+        onPickImage: () => openAttachmentFilePickerImages(filePickerRef.current),
+        onPasteImage: pasteClipboardImage,
+        disabled: disabled || availability !== 'available',
+    }), [availability, disabled, filePickerRef, pasteClipboardImage]);
     const mentionChips = React.useMemo(() => {
         const recipientChip = recipients ? createRecipientMultiSelectActionChip({ isReadOnly: disabled, model: recipients }) : undefined;
-        return [...(recipientChip ? [recipientChip] : []), createMentionActionChip({
+        // The Session order: Send to, then the paperclip, then the page's own controls.
+        return [...(recipientChip ? [recipientChip] : []), attachChip, createMentionActionChip({
             label: t('session.collaboration.discussion.composer.mention'),
             disabled,
             onMention: insertMention,
         }), ...(pageChips ?? [])];
-    }, [disabled, insertMention, pageChips, recipients]);
+    }, [attachChip, disabled, insertMention, pageChips, recipients]);
+    const attachmentRowItems = React.useMemo(() => projectAgentInputAttachmentRowItems({
+        items: props.contextItems, transferAttachments: attachments.agentInputAttachments }), [attachments.agentInputAttachments, props.contextItems]);
     const phone = useSurfaceStateSize() === 'phone';
+    // The rule beside send shares the action row with the chip rail; where the composer itself is narrow
+    // (a narrow pane, large text) the rail keeps the room. Hidden until measured, so it never squeezes in first.
+    const [composerWidth, setComposerWidth] = React.useState<number | null>(null);
+    const hintFits = composerWidth !== null && composerWidth >= HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
     // A new Discussion's page says how addressing works itself, so the line beside send is for a running thread.
-    const addressingHint = phone || !props.discussionId ? undefined : <Text testID="session-discussion-composer-hint" style={styles.hint} numberOfLines={1}>{t('session.collaboration.discussion.composer.mentionHint')}</Text>;
+    const addressingHint = phone || !hintFits || !props.discussionId ? undefined : <Text testID="session-discussion-composer-hint" style={styles.hint} numberOfLines={1}>{t('session.collaboration.discussion.composer.mentionHint')}</Text>;
     const readDocument = React.useCallback(() => ({ ...latestRef.current, revision: revisionRef.current }), []);
-    const composer = React.useMemo(() => props.discussionId
-        ? { kind: 'discussion' as const, discussionId: props.discussionId } : null, [props.discussionId]);
     const renderInput = (binding: Partial<React.ComponentProps<typeof AgentInput>> = {}, focusChanged?: (focused: boolean) => void) => {
         return (
             <AgentInput
@@ -336,6 +473,9 @@ export function DiscussionComposer(props: Readonly<{
                 onComposerFocusRequestChange={focusRequestListener(binding.onComposerFocusRequestChange)}
                 extraActionChips={binding.extraActionChips ?? mentionChips}
                 trailingAccessory={addressingHint}
+                attachmentRowItems={attachmentRowItems}
+                onAttachmentsAdded={availability === 'available' && !disabled ? attachments.addWebFiles : undefined}
+                hasSendableAttachments={attachments.hasSendableAttachments}
                 value={props.value.text}
                 placeholder={placeholder}
                 inputAccessibilityLabel={placeholder}
@@ -347,7 +487,7 @@ export function DiscussionComposer(props: Readonly<{
                 onSend={send}
                 disabled={disabled}
                 autocompleteKinds={DISCUSSION_COMPOSER_SUGGESTION_KINDS}
-                autocompleteSuggestions={suggestParticipants}
+                autocompleteSuggestions={binding.autocompleteSuggestions ?? suggestParticipants}
                 engineControls="none"
                 voiceAffordance="dictation"
                 messageHistory="none"
@@ -358,7 +498,8 @@ export function DiscussionComposer(props: Readonly<{
         );
     };
     return (
-        <View testID="session-discussion-composer-root" style={styles.root}>
+        <View testID="session-discussion-composer-root" style={styles.root}
+            onLayout={(event) => { const width = Math.round(event.nativeEvent.layout.width); setComposerWidth(current => current === width ? current : width); }}>
             {composer ? <DiscussionComposerMount
                 key={JSON.stringify([scope.serverId, scope.accountId, composer.discussionId])}
                 composer={composer} scope={scope} lifetime={accountLifetime}
@@ -366,12 +507,16 @@ export function DiscussionComposer(props: Readonly<{
                 readDocument={readDocument} writeDocument={write}
             >{(binding, focusChanged) => <DiscussionComposerPluginContributions
                 composer={composer} lifetime={accountLifetime} enabled={availability === 'available'}
-            >{slots => <>
+            >{slots => <DiscussionComposerInput suggestParticipants={suggestParticipants} suggestReferences={slots.suggestReferences}
+                render={suggest => <>
                 {/* A plugin's line sits in the composer's column, as in a Session (one auxiliary frame owner). */}
                 {React.Children.count(slots.beforeComposer) > 0 ? <ComposerAuxiliaryFrame>{slots.beforeComposer}</ComposerAuxiliaryFrame> : null}
-                {renderInput({ ...binding, extraActionChips: [...mentionChips, ...slots.extraActionChips] }, focusChanged)}
+                {renderInput({ ...binding, autocompleteSuggestions: suggest,
+                    statusRegions: slots.statusRegions,
+                    extraActionChips: [...mentionChips, ...slots.extraActionChips] }, focusChanged)}
                 {React.Children.count(slots.afterComposer) > 0 ? <ComposerAuxiliaryFrame>{slots.afterComposer}</ComposerAuxiliaryFrame> : null}
-            </>}</DiscussionComposerPluginContributions>}</DiscussionComposerMount> : renderInput()}
+            </>} />}</DiscussionComposerPluginContributions>}</DiscussionComposerMount> : renderInput()}
+            <AttachmentFilePicker ref={filePickerRef} onAttachmentsPicked={attachments.addPickedAttachments} multiple />
         </View>
     );
 }
