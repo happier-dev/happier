@@ -1203,6 +1203,15 @@ private, bundle-owned package closure. The source-runtime producer uses the exis
 compiler and workspace materializer with the source condition, without preparing workspace
 `dist` or requiring semantic typechecking. Plugin authoring resolves that physical closure;
 the CLI's source-runtime provenance and published SDK contracts are unchanged.
+The author producer reuses individual packages from the selected bundle through the
+workspace build's existing input fingerprint owner. It compares each package's captured
+sources, shipped resources, compiler/tooling and declared external dependencies, plus
+its workspace dependencies' already emitted declarations. Unchanged packages copy their
+prior physical output; changed packages compile in dependency order, so a changed
+declaration invalidates its consumers. Runtime-only dependency edits do not recompile
+consumers of unchanged declarations. This reuse stays inside the captured-source bundle
+lifetime. The replacement daemon still binds the current dependency publication and
+inventories current host bundles; no separate author cache or service is retained.
 Plugin UI preparation fingerprints its resolved executable import graph and
 declared shipped resources, including hosted-static inputs. An unconsumed plugin
 daemon source edit does not recompile its unchanged UI; a consumed UI edit still

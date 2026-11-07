@@ -645,7 +645,7 @@ finally { server.closeAllConnections(); await new Promise((resolve) => server.cl
 });
 }
 
-test('workspace input identity includes excluded config files reached through extends', (t) => {
+test('workspace input identity includes extended config and shipped resource modes', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'workspace-extended-inputs-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: '@fixture/extended' }));
@@ -655,6 +655,14 @@ test('workspace input identity includes excluded config files reached through ex
   const before = readWorkspacePackageInputFingerprint({ packageDir: root });
   writeFileSync(extended, JSON.stringify({ compilerOptions: { strict: false } }));
   assert.notEqual(readWorkspacePackageInputFingerprint({ packageDir: root }), before);
+  if (process.platform !== 'win32') {
+    const resource = join(root, 'README.md');
+    writeFileSync(resource, 'shipped resource');
+    const fingerprint = readWorkspacePackageInputFingerprint({ packageDir: root, includeShippedFiles: true });
+    chmodSync(resource, 0o755);
+    assert.notEqual(readWorkspacePackageInputFingerprint({ packageDir: root, includeShippedFiles: true }), fingerprint,
+      'a copied resource must not retain the old executable mode');
+  }
 });
 
 test('generated first-party plugin manifests do not invalidate compilation while authored plugin source does', async (t) => {

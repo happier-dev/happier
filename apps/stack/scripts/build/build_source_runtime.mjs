@@ -1,3 +1,4 @@
+import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
 import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 import { reapHistoricalTempRoots } from '../utils/dev_targets/historical_temp_roots.mjs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -25,7 +26,7 @@ import { retainPendingSourcePreparation, updatePendingSourcePreparationPhase } f
 import { readBundledPluginPackageResourceRelativePaths } from '../../../../packages/cli-common/bundledPluginResources.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 
-import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, workspaceSourceCompilerPaths, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { SOURCE_CONDITION, SOURCE_RUNTIME_OUTPUT_OPTIONS, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 export { readWorkspacePackages, resolveWorkspaceSource } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
@@ -205,107 +206,6 @@ export async function setBundleReadOnly(directory, readOnly) {
 async function readOptionalJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
-}
-
-function isFirstPartyBuiltInput(key, workspacePackages) {
-  key = key.replaceAll('\\', '/');
-  if (!/^(?:packages|apps)\//.test(key)) return false;
-  // The innermost installed package owns its files. A third-party dist tree
-  // below a workspace (or bundled workspace copy) is not first-party output.
-  const installed = key.split('/node_modules/').at(-1);
-  if (installed !== key && !workspacePackages.has(packageNameOfSpecifier(installed))
-      && !installed.startsWith('@happier-dev/')) return false;
-  return /(?:^|\/)(?:dist|package-dist|\.happier-plugin)\//.test(installed);
-}
-
-async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, projectDir, runtimeDir, workspacePackages, build,
-  sourceInputDigests, readSourceInput, env, signal }) {
-  const workDir = await mkdtemp(join(runtimeDir, '.author-emission-'));
-  try {
-    const { withDistProjectCompilerArgs } = await import('../../../../scripts/workspaces/buildTypeScriptPackageDist.mjs');
-    const { resolveTypeScriptCliInvocation, matchesNativeTypeScriptInputVersion } = await import('../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
-    // Run the existing package classification, closure and physical copier
-    // directly from source, not from a workspace dist prerequisite.
-    const ownerPath = join(workDir, 'workspaces.mjs');
-    await build({entryPoints:[join(repoDir, 'packages/cli-common/src/workspaces/index.ts')],
-      outfile:ownerPath, bundle:true, platform:'node', format:'esm', logLevel:'silent'});
-    const owner = await import(pathToFileURL(ownerPath).href);
-    const bundles = owner.resolveWorkspaceBundlesFromPackageJson({repoRoot:repoDir,hostPackageDir:projectDir});
-    const roots = bundles.filter(bundle => owner.sanitizeBundledPackageJson(
-      workspacePackages.get(bundle.packageName).manifest).happier?.publicSdkRelease);
-    const closure = new Set(owner.resolveInternalWorkspacePackageNameClosure({repoRoot:repoDir,
-      packageNames:roots.map(bundle => bundle.packageName)}));
-    const authorRoot = join(runtimeDir, 'authoring/node_modules');
-    const codeFiles = [];
-    const sourcePaths = workspaceSourceCompilerPaths(workspacePackages);
-    for (const bundle of bundles) {
-      const destDir = join(authorRoot, ...bundle.packageName.split('/'));
-      await mkdir(destDir, {recursive:true});
-      if (!closure.has(bundle.packageName)) {
-        // The existing author materializer inventories all host bundle names,
-        // but only public roots and their declared dependencies are copied.
-        await writeFile(join(destDir, 'package.json'), JSON.stringify(workspacePackages.get(bundle.packageName).manifest));
-        continue;
-      }
-      const compilerDir = join(workDir, ...bundle.packageName.split('/'));
-      await mkdir(compilerDir, {recursive:true});
-      const outputDir = join(compilerDir, 'emitted');
-      const buildInfoPath = join(compilerDir, 'build.tsbuildinfo');
-      const args = await withDistProjectCompilerArgs(['--outDir',outputDir,'--tsBuildInfoFile',buildInfoPath,
-        '--incremental','--noCheck'], {projectPath:join(bundle.srcDir,'tsconfig.json'),workDir:compilerDir,
-        compilerOptions:{rootDir:repoDir,customConditions:[SOURCE_CONDITION],paths:sourcePaths,declaration:true,
-          noEmit:false,emitDeclarationOnly:false}});
-      const invocation = resolveTypeScriptCliInvocation({args,workspaceDir:repoDir,admissionClass:'source-bundle',env});
-      await runCapture(invocation.command, [...invocation.argsPrefix,...args], {cwd:repoDir,ownedProcessGroup:true,env,signal});
-      const info = JSON.parse(await readFile(buildInfoPath, 'utf8'));
-      for (const [index, file] of info.fileNames.entries()) {
-        // Native TypeScript records its built-in libraries as bare logical
-        // names, not paths relative to this caller-owned compiler directory.
-        if (/^lib(?:\.[^/\\]+)?\.d\.ts$/.test(file)) continue;
-        const path = realpathSync(resolve(compilerDir, file));
-        // These are this build's dependency-first outputs, already traced to
-        // consumed source bytes above. Checkout/installed dist stays forbidden.
-        if (path.startsWith(realpathSync(authorRoot) + sep)) continue;
-        const key = relative(realpathSync(repoDir), path).replaceAll('\\', '/');
-        if (!/^(?:packages|apps)\//.test(key)) continue;
-        if (isFirstPartyBuiltInput(key, workspacePackages)) {
-          throw new Error(`Source author closure consumed first-party built code: ${key}`);
-        }
-        const contents = await readSourceInput(path);
-        const version = typeof info.fileInfos[index] === 'string' ? info.fileInfos[index] : info.fileInfos[index].version;
-        // The compiler's consumed input version is the authority. An editor
-        // undo during emission cannot cache the graph under restored bytes.
-        if (!await matchesNativeTypeScriptInputVersion(contents, version)) sourceInputDigests[relative(repoDir,path).split(sep).join('/')] = null;
-      }
-      owner.bundleWorkspacePackageWithRuntimeDependencies({...bundle,destDir,
-        resolveFromPackageJsonPath: join(sourceRepoDir, relative(repoDir, bundle.srcDir), 'package.json'),
-        dereferenceRootDir: sourceRepoDir,
-        distDir:join(outputDir, relative(repoDir,bundle.srcDir),'src')});
-      // The closure is dependency-first. Later packages consume declarations
-      // from this build's physical package, rather than re-inferring and
-      // re-emitting every dependency's source graph. Never use checkout dist.
-      for (const [specifier, targets] of Object.entries(sourcePaths)) {
-        if (packageNameOfSpecifier(specifier) !== bundle.packageName) continue;
-        sourcePaths[specifier] = targets.map(source => {
-          if (!/\.(?:tsx?|mts|cts)$/.test(source)) return source;
-          const declaration = relative(join(bundle.srcDir, 'src'), source)
-            .replace(/\.(?:ts|tsx)$/, '.d.ts').replace(/\.mts$/, '.d.mts').replace(/\.cts$/, '.d.cts');
-          return join(destDir, 'dist', declaration);
-        });
-      }
-      const visit = async directory => {
-        for (const entry of await readdir(directory, {withFileTypes:true})) {
-          const path = join(directory,entry.name);
-          if (entry.isDirectory()) await visit(path);
-          else if (!entry.isSymbolicLink()) codeFiles.push(path);
-        }
-      };
-      await visit(destDir);
-    }
-    return codeFiles;
-  } finally {
-    await rm(workDir, {recursive:true,force:true});
-  }
 }
 
 function privateSourceStackActive(state, pending) {
@@ -922,7 +822,7 @@ async function prepareSharedSourceRuntimeBundle({repoDir, stackBaseDir, componen
   try {
     // This worker inherits dependency custody and owns fingerprint custody and compiler admission.
     // There is no second launch/admission for the same finite graph.
-    const {sourceInputDigests, inputIdentity, ...built} = await buildSourceRuntimeBundleInProcess({...inputs, outputDir, retainedPluginUiInventoryPath, env, signal});
+    const {sourceInputDigests, inputIdentity, ...built} = await buildSourceRuntimeBundleInProcess({...inputs, outputDir, retainedPluginUiInventoryPath, retainedRuntime: incumbent, env, signal});
     signal?.throwIfAborted();
     if (component === 'daemon') await probeCliDistRuntimeImport(built.entrypoint, { cwd: built.cliDir, env, signal });
     return await publishSourceRuntimeBundle({stackBaseDir, bundleRoot, component, built, signal, reuseSelected, pendingRequestId,
@@ -976,9 +876,9 @@ export async function admitSourceRuntimeReload({ stackBaseDir, components, ui = 
     staleAfterMs: Infinity, signal: pending.signal, errorLabel: 'source-bundle publication lock' })) };
 }
 
-async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env = process.env, signal }) {
+async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env = process.env, signal }) {
   return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (env, publication) => ({
-      ...await consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env, signal }),
+      ...await consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env, signal }),
       dependencyPublication: { ...publication.state,
         markerPath: resolveDependencyRefreshMarkerPath(resolveDependencyInstallRoot(repoDir)),
         generationPath: `${resolveDependencyRefreshLockPath(resolveDependencyInstallRoot(repoDir), env)}.generation`,
@@ -986,7 +886,7 @@ async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component
     }));
 }
 
-async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, sharedSourceInputs, env, signal }) {
+async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, env, signal }) {
   if (component !== 'daemon' && component !== 'server') throw new Error(`Unsupported source runtime component: ${component}`);
   repoDir = resolve(repoDir);
   outputDir = resolve(outputDir);
@@ -1010,7 +910,7 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   process.once('SIGTERM', interrupt);
   try {
     const built = await emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles: captured.files, guestPayloadTargets,
-      outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
+      outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime, projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal });
     if (guestPayloadTargets) {
       built.guestPayload = await buildSourceGuestPayload({ repoDir, sourceRepoDir, outputDir, runtimeDir,
         targets: guestPayloadTargets, sourceCapture, env, signal });
@@ -1058,7 +958,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
 }
 
-async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath,
+async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, guestPayloadTargets, outputDir, component, serverComponent, dbProvider, retainedPluginUiInventoryPath, retainedRuntime,
   projectDir, runtimeDir, manifest, requireFromProject, esbuild, env, signal }) {
   const { transform } = esbuild;
   const sourceInputDigests = {};
@@ -1249,6 +1149,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   await linkInstalledDirectory(join(sourceRepoDir, 'node_modules'), join(outputDir, 'node_modules'));
   const installedProjectDir = join(sourceRepoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(runtimeDir, 'node_modules'));
+  let authorPackageInputIdentities;
   if (component === 'daemon') {
     // Plugin entries live outside apps/cli, but externalize against that same
     // host. Preserve its Node lookup chain before the checkout-root fallback.
@@ -1256,8 +1157,10 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     // Only hosts declaring public author packages need a physical author
     // closure; tiny source runtime fixtures have no such package inventory.
     if ((manifest.bundledDependencies ?? []).some(name => workspacePackages.get(name)?.manifest.happier?.publicSdkRelease)) {
-      retainedCodeFiles.push(...await emitSourceAuthorPackages({repoDir,sourceRepoDir,projectDir,runtimeDir,workspacePackages,
-        build,sourceInputDigests,readSourceInput,env,signal}));
+      const author = await emitSourceAuthorPackages({repoDir,sourceRepoDir,projectDir,runtimeDir,workspacePackages,
+        build,sourceInputDigests,readSourceInput,retainedRuntime,env,signal});
+      retainedCodeFiles.push(...author.codeFiles);
+      authorPackageInputIdentities = author.inputIdentities;
     }
     const sidecars = await bundleCliSourceSidecars({repoDir,outputDir:join(runtimeDir,'scripts'),build,workspacePackages,requireFromProject});
     retainedCodeFiles.push(...sidecars.codeFiles);
@@ -1382,6 +1285,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   return {
     identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir, sourceInputDigests,
     ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
+    ...(authorPackageInputIdentities ? { authorPackageInputIdentities } : {}),
     ...(component === 'daemon' ? {
       nodeEntrypoint: entrypoint, cliDir: runtimeDir,
       env: {

@@ -43,9 +43,9 @@ registerHooks({load(url, context, next) {
   const result = next(url, context);
   if (url.endsWith('/source_author_inputs.mjs') && result.source) {
     let observed = 0;
-    const source = String(result.source).replace(/(export function (readSourceAuthorDependencyIdentity|readSourceRuntimeDependencyIdentity)\\([^)]*\\)\\s*\\{)/g,
+    const source = String(result.source).replace(/(export function (readSourceRuntimeDependencyIdentity)\\([^)]*\\)\\s*\\{)/g,
       (declaration, name) => { observed++; return declaration + 'globalThis.__recordStackCliPreparation(' + JSON.stringify(name) + ');'; });
-    if (observed !== 2) throw new Error('Dependency digest observation unavailable');
+    if (observed !== 1) throw new Error('Dependency digest observation unavailable');
     return { ...result, source };
   }
   return result;

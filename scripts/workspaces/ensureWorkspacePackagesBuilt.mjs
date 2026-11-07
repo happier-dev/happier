@@ -561,6 +561,8 @@ export function readWorkspacePackageInputFingerprint({
   includeShippedFiles = false,
   excludeGeneratedPluginManifest,
   excludeGeneratedPluginArtifacts = false,
+  additionalInputPaths = [],
+  dependencyIdentityPathFor,
   identitySourceRepoDir = coerceHappyMonorepoRootFromPath(packageDir) ?? env.HAPPIER_STACK_REPO_DIR,
   identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
   installedDependencyRepoDir = env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR,
@@ -577,6 +579,7 @@ export function readWorkspacePackageInputFingerprint({
     excludeGeneratedPluginManifest: excludeGeneratedPluginManifest
       ?? (!includeShippedFiles && String(packageJson.name ?? '').startsWith('@happier-dev/plugins-')),
     excludeGeneratedPluginArtifacts,
+    additionalInputPaths,
   })
     .map((path) => join(packageDir, path));
   const invocation = resolveTypeScriptCliInvocationImpl({ args: [], env, invocationKind: 'build' });
@@ -606,7 +609,8 @@ export function readWorkspacePackageInputFingerprint({
   ])].sort((a, b) => identityPathFor(a) < identityPathFor(b) ? -1 : identityPathFor(a) > identityPathFor(b) ? 1 : 0);
   for (const path of paths) {
     const identityPath = identityPathFor(path);
-    hash.update(`${identityPath}\0${readWorkspaceBuildFileDigest(path)}\0`);
+    const stat = lstatSync(path, { bigint: true });
+    hash.update(`${identityPath}\0${stat.mode}\0${readWorkspaceBuildFileDigestAtStat(path, stat)}\0`);
   }
   hash.update(`compiler-installation:${identityPathFor(compilerInstallationDir)}\0`);
   digestDirectory(compilerInstallationDir, hash, { followSymlinks: true });
@@ -630,9 +634,9 @@ export function readWorkspacePackageInputFingerprint({
       identityPathFor,
     }));
   }
-  for (const dependencyDir of [...dependencyDirs].sort()) {
-    const identityDependencyDir = identityRepoDir && identitySourceRepoDir
-      ? remapPathToDirectory(dependencyDir, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : dependencyDir;
+  const dependencyIdentity = dependencyIdentityPathFor ?? identityPathFor;
+  for (const dependencyDir of [...dependencyDirs].sort((a, b) => dependencyIdentity(a).localeCompare(dependencyIdentity(b)))) {
+    const identityDependencyDir = dependencyIdentity(dependencyDir);
     hash.update(`dependency:${identityDependencyDir}\0`);
     const metadata = JSON.parse(readFileSync(join(dependencyDir, 'package.json'), 'utf8'));
     hash.update(JSON.stringify(Object.fromEntries(
