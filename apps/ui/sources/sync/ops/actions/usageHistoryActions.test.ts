@@ -42,11 +42,17 @@ describe('Usage history through the shared Account Action', () => {
           tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
         if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
-        if (++requests === 1) return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
         const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        if (++requests === 1) return Response.json({
+          requests: input.requests.map(row => ({ query: row.query, sessionIds: ['retry-session'] })),
+          results: [{ sessionId: 'retry-session', detail: { status: 503, body: { error: 'temporarily_unavailable' } },
+            turns: { status: 200, body: { v: 1, sessionId: 'retry-session', updatedAt: 1, turns: [] } } }],
+        });
         signals.push(request.signal);
         await held.promise;
-        return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })), results: [] });
+        return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: ['retry-session'] })),
+          results: [{ sessionId: 'retry-session', detail: { status: 403, body: { error: 'forbidden' } },
+            turns: { status: 200, body: { v: 1, sessionId: 'retry-session', updatedAt: 1, turns: [] } } }] });
       } });
     const focused = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
@@ -69,6 +75,21 @@ describe('Usage history through the shared Account Action', () => {
       const historyRetry = mounted.reader!.readCurrentUiContext()!.commands.find(command =>
         command.title === t('usage.board.page.historyReadCommand'));
       expect(historyRetry).toBeDefined();
+      const { storage } = await import('@/sync/domains/state/storage');
+      const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
+      const settings = storage.getState().settings;
+      storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, actions: { [USAGE_HISTORY_ACTION_IDS.read]: { disabledSurfaces: ['agent'] } },
+      }) } });
+      try {
+        await act(async () => {
+          await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+            { commandId: historyRetry!.id }, { surface: 'agent', authority: 'account_automation' });
+        });
+        await flushHookEffects({ cycles: 10 });
+        expect(requests, 'an agent page command cannot acquire history using present-user authority').toBe(1);
+        expect(model!.state?.status).toBe('partial');
+      } finally { storage.setState({ settings }); }
       await act(async () => {
         expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
           { commandId: historyRetry!.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
@@ -78,7 +99,7 @@ describe('Usage history through the shared Account Action', () => {
       expect(mounted.reader!.resolveCurrentUiCommand(historyRetry!.id)).toBeNull();
       expect(signals[0]?.aborted).toBe(false);
       await act(async () => { held.resolve(); });
-      await expect.poll(() => model!.state?.status).toBe('complete');
+      await expect.poll(() => model!.state).toMatchObject({ status: 'partial', errorCode: 'forbidden', progress: { failed: 0 } });
     } finally { held.resolve(); await screen.unmount(); }
   });
   it.each(['complete', 'hidden', 'unmounted'] as const)('keeps Read now across a Usage view transition until %s', async ending => {
@@ -200,7 +221,7 @@ describe('Usage history through the shared Account Action', () => {
     };
     const first = new AbortController();
     const settled = await invoke('read', first.signal);
-    expect(settled).toMatchObject({ status: 'partial', errorCode: 'usage_session_evidence_read_failed', progress: { failed: 1 } });
+    expect(settled).toMatchObject({ status: 'partial', errorCode: 'usage_session_evidence_read_failed', progress: { failed: 0 } });
     first.abort();
     const beforeObserve = home.requests.length;
     expect(await invoke('status')).toEqual(settled);
@@ -251,17 +272,6 @@ describe('Usage history through the shared Account Action', () => {
       await expect(executor.execute('usage.history.read', { query }, { ...caller, signal: preaborted.signal }))
         .rejects.toMatchObject({ name: 'AbortError' });
       expect(dataReads(), 'a locally cancelled request is never admitted').toHaveLength(0);
-      const { storage } = await import('@/sync/domains/state/storage');
-      const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-      const settings = storage.getState().settings;
-      storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
-        v: 1, actions: { [USAGE_HISTORY_ACTION_IDS.read]: { disabledSurfaces: ['agent'] } },
-      }) } });
-      try {
-        expect(await hook.getCurrent().readNow({ surface: 'agent', authority: 'account_automation' }))
-          .toMatchObject({ ok: false });
-        expect(dataReads(), 'an agent command cannot acquire history using present-user authority').toHaveLength(0);
-      } finally { storage.setState({ settings }); }
       let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
       await act(async () => { result = await hook.getCurrent().readNow(); });
       expect(result).toMatchObject({ ok: true, result: { status: 'complete', progress } });

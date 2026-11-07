@@ -658,14 +658,29 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 if (!reader) await consumeChunk(await response.text());
                 else {
                     const text = new TextDecoder();
+                    const startedAt = Date.now();
+                    let receivedBytes = 0;
+                    let reachedEof = false;
+                    let failure: ReturnType<typeof readUsageHistoryFailure> | undefined;
                     try {
                         while (true) {
                             const chunk = await reader.read();
+                            receivedBytes += chunk.value?.byteLength ?? 0;
+                            reachedEof = chunk.done;
                             requireCurrent(context, phaseSignal);
                             await consumeChunk(text.decode(chunk.value, { stream: !chunk.done }));
                             if (chunk.done) break;
                         }
+                    } catch (error) {
+                        failure = readUsageHistoryFailure(error);
+                        throw error;
                     } finally {
+                        // This is the domain reader's own cancel boundary, including
+                        // transports that do not enter withServerReadLifetime.
+                        console.info('[usageHistory] evidence termination', { source: 'reader-finally', startedAt,
+                            receivedBytes, reachedEof, upstreamAborted: phaseSignal?.aborted === true,
+                            accountCurrent: context.accountLifetime.isCurrent(), capturedTransport: !!context.readTransport,
+                            ...(failure ? { failure } : {}) });
                         await reader.cancel().catch(() => {});
                         reader.releaseLock();
                     }

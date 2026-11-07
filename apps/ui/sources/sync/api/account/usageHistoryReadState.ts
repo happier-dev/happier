@@ -13,6 +13,7 @@ function isLastingCoverageReason(code: string): boolean {
         case 'session_key_unavailable':
         case 'session_key_invalid':
         case 'session_encryption_not_found':
+        case 'scoped_session_encryption_unavailable':
         case 'metadata_unavailable':
         case 'agent_state_unavailable':
         case 'encrypted_content_unavailable':

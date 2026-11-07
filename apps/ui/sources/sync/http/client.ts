@@ -334,6 +334,7 @@ export async function withServerReadLifetime<T = Response>(
     } finally {
         clearTimeout(timer);
         upstream?.removeEventListener('abort', abortFromUpstream);
+        if (reader && !reachedEof) reportReadTermination('owner-finally-cancel-before-eof');
         void reader?.cancel().catch(() => {});
         inFlightControllers.delete(controller);
     }

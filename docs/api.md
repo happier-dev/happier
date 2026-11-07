@@ -1321,6 +1321,15 @@ remain unchecked evidence but are not offered for durable historical conversion
 until they become inactive.
 An admitted UI Read now belongs to the presented Usage page and captured Account:
 switching Usage views retains it; hiding or leaving Usage releases it.
+The client history owner counts distinct Sessions with a current retryable
+failure. Repeated failures of one Session count once, and a later success removes
+it. Any positive failed count offers Retry through the same page command for the
+person and agent, including when no unread Sessions remain. Lasting access,
+content-shape or encryption-reader refusals retain their typed partial-coverage
+reason and contribute neither a failed Session nor a Retry. Existing Session
+input invalidation admits changed access or content again. An aggregate transport
+failure has no Session identity to add to this count; completed Session facts stay
+available.
 
 Optional `underSessionId` bounds snapshot-only demand to the current readable
 managed subtree. Every requested ID must be admitted both at capture and before
