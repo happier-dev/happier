@@ -1,3 +1,5 @@
+// Install native SDK ports before UI imports perform process-lifetime discovery.
+import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import React from 'react';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -17,12 +19,11 @@ import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCat
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
-import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit';
+import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import type { PartialOptions as ElevenLabsStartOptions } from '@elevenlabs/client';
-import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { VoiceLocalDirectSchema } from '@happier-dev/protocol/voice/settings/localDirect';
 import { VoiceLocalConversationSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
@@ -32,12 +33,15 @@ import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/u
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema,
+  SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 
 const nativeSpeech = createVoiceSpeechOutputBoundary({ getAccount: () => {
   if (!accountConnection) throw new Error('Mounted native Voice Account unavailable');
   return accountConnection;
 } });
 const platformOsMock = nativeSpeech.platform;
+const browserStorageBoundaries: Array<{ restore(): void }> = [];
 let nativeAudio = nativeSpeech.reset().audioSession;
 const recognizer = vi.hoisted(() => ({
   listeners: new Map<string, Set<() => void>>(),
@@ -175,7 +179,8 @@ async function applyAccountScope(scope: AccountScope | null, retiringSession?: R
           // The bound daemon Stop's real scoped crypto admission rereads this
           // exact old-Account Session before issuing RPC. Preserve only that
           // original authenticated record, not an arbitrary retired Home read.
-          expect(retiringSession.address.serverId).toBe(previousConnection.home.id);
+          const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+          expect(retiringSession.address.serverId).toBe(resolveServerProfileScopeIdForIdentifier(previousConnection.home.id));
           const response = retiringSession.boundary.handle(url, init);
           if (!response) throw new Error('Retiring bound Session HTTP record unavailable');
           expect(response.status).toBe(200);
@@ -239,6 +244,7 @@ function LayoutCommitBoundary({
 // Load the shared graph once, outside per-case hooks; cold module transformation
 // is not part of the mounted runtime's lifecycle operation budget.
 await loadSyncSingletonForTests();
+await import('@/sync/ops/actions/defaultActionExecutor');
 
 async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolean; startGate?: Promise<void>; selectedProviderId?: string; local?: boolean; localPlatform?: 'ios' | 'web'; codex?: boolean;
   coldShell?: boolean;
@@ -257,6 +263,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const agentProtocol = await import('@happier-dev/protocol/voice/realtime/agentSession');
   const { SessionSpawnNewInputV2Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
   const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+  const { projectSessionSpawnNewActionResultV1 } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+  const { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2');
   const machineId = 'mounted-codex-machine';
   let profile = AccountProfileSchema.parse({ id: 'account-a', ...(input.codex ? {
     connectedServicesV2: [{ serviceId: 'openai-codex', profiles: ['work', 'primary', 'backup'].map(profileId => ({ profileId, status: 'connected', kind: 'oauth' })),
@@ -276,6 +284,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     ...(input.codex ? { metadata: { machineId, path: '/voice', host: 'test', flavor: 'codex' } } : {}),
   });
   const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [history.id]: history, [nativeSession.id]: nativeSession, ...daemonSessions }));
+  sessionHttp.replaceSession(nativeSession.id, createPlainSessionCurrentProjectionRecordFixture({
+    id: nativeSession.id, active: nativeSession.active, activeAt: nativeSession.activeAt, metadata: nativeSession.metadata,
+  }));
   const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1} = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
   const historyOwner = createSessionOwnerMetadataV1({ metadata: history.metadata });
   if (!historyOwner.ok) throw new Error('Voice history fixture metadata owner unavailable');
@@ -289,7 +300,29 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   }) });
   const httpRequests: Array<Readonly<{ path: string; method: string; settingsPost?: Readonly<{ expectedVersion: unknown; contentType: unknown; responseValid: boolean; status: number }> }>> = [];
   const transcriptSequences = new Map<string, number>();
+  let hostedLeaseIndex = 0;
   const serverUrl = 'https://voice-mounted-runtime.example.test';
+  const spawnSession = (raw: unknown) => {
+    const request = SessionSpawnNewInputV2Schema.parse(raw);
+    if (!('path' in request.directory)) throw new Error('Expected actual Global absolute directory');
+    const sessionId = `mounted-codex-global-${Object.keys(daemonSessions).length + 1}`;
+    daemonSessions[sessionId] = createSessionFixture({ id: sessionId, serverId: request.executionTarget.serverId, active: true, encryptionMode: 'plain',
+      metadata: { machineId, path: request.directory.path, host: 'test', flavor: 'codex', connectedServices: request.connectedServices },
+      permissionMode: request.permissionMode,
+    });
+    sessionHttp.replaceSession(sessionId, createPlainSessionCurrentProjectionRecordFixture({
+      id: sessionId, active: true, metadata: daemonSessions[sessionId]!.metadata,
+    }));
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    return SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId,
+      executionTarget: request.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } });
+  };
+  const { createServedHomeAccountToken } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+  const actionHttp = input.codex ? await (await import('@/dev/testkit/harness/externalActionAccountHttpBoundary'))
+    .createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: 'srv_voice-mounted-runtime',
+      accountId: 'account-a', machineId, actionId: 'session.spawn_new', tokenEpoch: 0,
+      execute: raw => projectSessionSpawnNewActionResultV1(spawnSession(admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(raw)))),
+    }) : null;
   const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl, initialAccounts: [{ accountId: 'account-a',
     snapshot: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }),
   }] });
@@ -305,6 +338,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     });
     socket.timeout = vi.fn<typeof socket.timeout>(value => { timeoutMs = value ?? null; return socket; });
     socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, raw: unknown) => {
+      if (event === SESSION_CONSUMPTION_REPLACE_EVENT) return SessionConsumptionReplaceAckV1Schema.parse({
+        ok: true, ...SessionConsumptionReplaceV1Schema.parse(raw),
+      });
       if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
       // Socket.IO's payload is untyped; the framed DTO is narrowed here and each
       // provider/spawn payload is parsed by its actual strict Protocol schema.
@@ -354,18 +390,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         return { ok: true, result: createExistingSessionDirectoryPreflightResult(raw.params) };
       }
       if (method === RPC_METHODS.SESSION_SPAWN_NEW) {
-        const request = SessionSpawnNewInputV2Schema.parse(raw.params);
-        if (!('path' in request.directory)) throw new Error('Expected actual Global absolute directory');
-        const sessionId = `mounted-codex-global-${Object.keys(daemonSessions).length + 1}`;
-        daemonSessions[sessionId] = createSessionFixture({ id: sessionId, serverId: request.executionTarget.serverId, active: true, encryptionMode: 'plain',
-          metadata: { machineId: targetId, path: request.directory.path, host: 'test', flavor: 'codex', connectedServices: request.connectedServices },
-          permissionMode: request.permissionMode,
-        });
-        sessionHttp.replaceSession(sessionId);
-        expect(storage.getState().sessions[sessionId]).toBeUndefined();
-        return { ok: true, result: SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId,
-          executionTarget: request.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
-        }) };
+        return { ok: true, result: spawnSession(raw.params) };
       }
       throw new Error(`Unexpected daemon RPC: ${method}`);
     });
@@ -373,7 +398,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   accountConnection = await restoreServerAccountForTest({
     serverUrl, accountId: 'account-a', credentialScope: 'restored-home',
     activation: 'switch',
-    ...(input.codex ? { configureSocket } : {}),
+    ...(input.codex ? { configureSocket, serverIdentityId: 'srv_voice-mounted-runtime',
+      credentials: { token: createServedHomeAccountToken('account-a', true) } } : {}),
     request: createSessionReadBatchFetchBoundary(async (url, init) => {
       const path = new URL(String(url)).pathname;
       const preparation = settingsHttp.handle(url, init) ?? answerVoiceRealtimePreparationHttpRequest(url, {});
@@ -389,6 +415,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         };
       }
       httpRequests.push({ path, method: init?.method ?? 'GET', ...(settingsPost ? { settingsPost } : {}) });
+      const actionResponse = await actionHttp?.handle(new URL(String(url)), init);
+      if (actionResponse) return actionResponse;
       if (preparation) return preparation;
       if (path === '/v1/account/profile') return Response.json(profile);
       if (input.codex && path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' })]);
@@ -400,7 +428,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         return Response.json({ machineId, custodian: row.access!.custodian, access: row.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] });
       }
       if (path === '/health') return Response.json({ status: 'ok' });
-      if (path === '/v1/voice/token') return Response.json({ allowed: true, token: 'mounted-token', leaseId: 'mounted-lease', bindingNonce: 'mounted-nonce', expiresAtMs: Date.now() + 60_000 });
+      if (path === '/v1/voice/token') return Response.json({ allowed: true, token: 'mounted-token', leaseId: `mounted-lease-${++hostedLeaseIndex}`, bindingNonce: 'mounted-nonce', expiresAtMs: Date.now() + 60_000 });
       if (path === '/v1/voice/session/complete' || path === '/v1/voice/session/release') return Response.json({ ok: true });
       const transcriptWrite = /^\/v2\/sessions\/([^/]+)\/messages$/.exec(path);
       if (transcriptWrite && init?.method === 'POST') {
@@ -412,10 +440,18 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
         const override = await input.transcriptResponse?.(body);
         if (override) return override;
         const sessionId = decodeURIComponent(transcriptWrite[1]!);
-        const seq = Math.max(transcriptSequences.get(sessionId) ?? 0, storage.getState().sessions[sessionId]?.seq ?? 0) + 1;
+        const storedResponse = sessionHttp.handle(`https://voice-mounted-runtime.example.test/v2/sessions/${sessionId}`);
+        if (!storedResponse) throw new Error('Transcript fixture Session unavailable');
+        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+        const stored = SessionCurrentProjectionRecordV1Schema.parse((await storedResponse.json()).session);
+        const seq = Math.max(stored.seq, transcriptSequences.get(sessionId) ?? 0, storage.getState().sessions[sessionId]?.seq ?? 0) + 1;
+        const createdAt = Date.now();
         transcriptSequences.set(sessionId, seq);
+        sessionHttp.replaceSession(sessionId, SessionCurrentProjectionRecordV1Schema.parse({
+          ...stored, seq, updatedAt: Math.max(stored.updatedAt, createdAt),
+        }));
         return Response.json({ didWrite: true, message: { id: `ack:${body.localId}`,
-          localId: body.localId, seq, createdAt: Date.now() } });
+          localId: body.localId, seq, createdAt } });
       }
       if (path === '/v2/sessions/lookup-by-tags') {
         const request = SessionLookupByTagsRequestV2Schema.parse(JSON.parse(String(init?.body)));
@@ -431,6 +467,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
     }),
   });
   const account = accountConnection;
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  const accountServerId = resolveServerProfileScopeIdForIdentifier(account.home.id);
   if (input.codex) {
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     actionLoaderDisposals.push(await installRealActionExecutorModuleLoader());
@@ -438,8 +476,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const { sync } = await import('@/sync/sync');
   await sync.resumeSync('manual');
   await waitForTestEvent(storage.subscribe, storage.getState, state => state.isDataReady
-    && state.profileScope?.serverId === account.home.id && state.profileScope.accountId === 'account-a');
-  expect(storage.getState().profileScope).toEqual({ serverId: account.home.id, accountId: 'account-a' });
+    && state.profileScope?.serverId === accountServerId && state.profileScope.accountId === 'account-a');
+  expect(storage.getState().profileScope).toEqual({ serverId: accountServerId, accountId: 'account-a' });
   expect(storage.getState().isDataReady).toBe(true);
   const localProviderId = input.selectedProviderId === 'local_conversation' ? 'local_conversation' : 'local_direct';
   const voice = input.local
@@ -511,6 +549,9 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
   expect(lifecycle.getConfiguredProviderId()).toBe(input.codex ? CODEX_PROVIDER_ID : input.local ? localProviderId : ELEVENLABS_PROVIDER_ID);
+  const registry = (await import('./voiceAdapterRegistry')).getVoiceAdapterRegistry();
+  await waitForTestEvent(listener => registry.subscribe!(listener),
+    () => registry.get(lifecycle.getConfiguredProviderId()!), adapter => adapter !== null);
   return { screen, lifecycle, runtime, httpRequests, agentRequests, sessionHttp,
     waitForAgentRequests(predicate: (requests: typeof agentRequests) => boolean) {
       return waitForTestEvent(notify => {
@@ -541,13 +582,14 @@ async function mountGeneratedElevenLabsRuntime(input: Readonly<{ currentUi?: boo
 async function mountGeneratedLocalRuntime(selectedProviderId: 'local_direct' | 'local_conversation' = 'local_direct', localPlatform: 'ios' | 'web' = 'ios') {
   const mounted = await prepareGeneratedVoiceRuntime({ local: true, selectedProviderId, localPlatform });
   if (!accountConnection) throw new Error('Native Voice Account unavailable');
-  const target = { serverId: accountConnection.home.id, sessionId: 'mounted-native-session' };
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  const target = { serverId: resolveServerProfileScopeIdForIdentifier(accountConnection.home.id), sessionId: 'mounted-native-session' };
   await act(async () => { await mounted.lifecycle.toggle(target); });
-  await waitForRecognizerCall('start', 1);
-  expect(recognizer.start, JSON.stringify(mounted.lifecycle.getSnapshot())).toHaveBeenCalledOnce();
   expect(mounted.lifecycle.getSnapshot()).toMatchObject({ adapterId: selectedProviderId,
     sessionId: target.sessionId, status: 'connected', canStop: true,
   });
+  await waitForRecognizerCall('start', 1);
+  expect(recognizer.start, JSON.stringify(mounted.lifecycle.getSnapshot())).toHaveBeenCalledOnce();
   if (localPlatform !== 'web') expect(nativeSpeech.getAudioSessionCoordinator().getSnapshot().leaseCount).toBeGreaterThan(0);
   return { ...mounted, target };
 }
@@ -572,6 +614,7 @@ async function mountGeneratedCodexRuntime(input: Readonly<{ global?: boolean; gr
   browserBoundaries.push(browser);
   vi.stubGlobal('window', new EventTarget());
   vi.stubGlobal('document', createMountedBrowserDocument());
+  browserStorageBoundaries.push((await import('@/auth/storage/tokenStorage.web.testHelpers')).installLocalStorageMock());
   const mounted = await prepareGeneratedVoiceRuntime({ codex: true, selectedProviderId: CODEX_PROVIDER_ID });
   const { storage } = await import('@/sync/domains/state/storage');
   const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
@@ -583,7 +626,11 @@ async function mountGeneratedCodexRuntime(input: Readonly<{ global?: boolean; gr
     await mounted.screen.update(mounted.runtime);
   }
   if (!accountConnection) throw new Error('Codex mounted Account unavailable');
-  const target = { serverId: accountConnection.home.id, sessionId: 'mounted-native-session' };
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  const target = {
+    serverId: resolveServerProfileScopeIdForIdentifier(accountConnection.home.id),
+    sessionId: 'mounted-native-session',
+  };
   if (!input.global) {
     const { sync } = await import('@/sync/sync');
     await sync.ensureSessionVisibleForMessageRoute(target.sessionId, { serverId: target.serverId });
@@ -644,6 +691,9 @@ async function prepareMountedOpenAiRuntime(input: Readonly<{ credentialSource?: 
   const lifecycle = getVoiceSessionLifecycleController();
   if (!lifecycle) throw new Error('Mounted OpenAI lifecycle unavailable');
   expect(lifecycle.getConfiguredProviderId()).toBe(OPENAI_PROVIDER_ID);
+  const registry = (await import('./voiceAdapterRegistry')).getVoiceAdapterRegistry();
+  await waitForTestEvent(listener => registry.subscribe!(listener),
+    () => registry.get(OPENAI_PROVIDER_ID), adapter => adapter !== null);
   return { environment, browser, screen, lifecycle, runtime };
 }
 
@@ -699,6 +749,7 @@ describe('VoiceSessionRuntime', () => {
     await accountConnection?.dispose();
     accountConnection = null;
     for (const connection of retiredAccountConnections.splice(0).reverse()) await connection.dispose();
+    for (const boundary of browserStorageBoundaries.splice(0).reverse()) boundary.restore();
     retireActiveServerAccountScopeLifetime();
     const { resetVoiceSessionRuntimeStateForTests } = await import('./voiceSessionStore');
     await resetVoiceSessionRuntimeStateForTests();
@@ -774,7 +825,8 @@ describe('VoiceSessionRuntime', () => {
     const { useVoiceSurfaceModel } = await import('@/components/voice/surface/useVoiceSurfaceModel');
     const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
     const { Text } = await import('@/components/ui/text/Text');
-    const { createSessionMessagesFixture } = await import('@/dev/testkit');
+    const { createSessionMessagesFixture, createPlainSessionByIdResponseFixture } = await import('@/dev/testkit');
+    const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
     const now = Date.now();
     const request = { tool: 'Bash', kind: 'permission' as const, arguments: { command: 'git status' }, createdAt: now };
     const session = createSessionFixture({ id: mounted.target.sessionId, serverId: mounted.target.serverId,
@@ -782,6 +834,10 @@ describe('VoiceSessionRuntime', () => {
       pendingPermissionRequestCount: 1, pendingRequestObservedAt: now,
       agentState: { requests: { 'direct-request': request } },
     });
+    // The Home and client projection describe the same pending approval. A
+    // subsequent exact read must not replace it with the fixture's empty seed.
+    mounted.sessionHttp.replaceSession(session.id,
+      SessionCurrentProjectionRecordV1Schema.parse(createPlainSessionByIdResponseFixture(session).session));
     await act(async () => {
       storage.getState().applySessions([session]);
       storage.setState({ sessionMessages: { ...storage.getState().sessionMessages,
@@ -811,11 +867,14 @@ describe('VoiceSessionRuntime', () => {
       expect(glance.findByTestId('permission-prompt-card')).not.toBeNull();
       expect(glance.getTextContent()).toContain(request.arguments.command);
     } else {
-      await glance.pressByTestIdAsync('voice-glance-transport-end');
-      await waitForTestEvent(mounted.lifecycle.subscribe, () => mounted.lifecycle.getSnapshot(), snapshot => snapshot.status === 'disconnected');
+      await act(async () => {
+        await glance.pressByTestIdAsync('voice-glance-transport-end');
+        await waitForTestEvent(mounted.lifecycle.subscribe, () => mounted.lifecycle.getSnapshot(), snapshot => snapshot.status === 'disconnected');
+      });
       expect(mounted.lifecycle.getSnapshot().status).toBe('disconnected');
       expect(getVoiceSessionEndedAttempt()).toMatchObject({ targetSessionAddress: mounted.target,
         accountScope: { serverId: mounted.target.serverId, accountId: 'account-a' }, conversationSessionAddress: null });
+      expect(storage.getState().sessions[session.id]?.agentState?.requests?.['direct-request']).toEqual(request);
       await waitForTestEvent(glance.subscribe, () => expect(glance.findByTestId('voice-glance-ended-pending.review')).not.toBeNull());
       await glance.pressByTestIdAsync('voice-glance-ended-pending.review');
       expect(glance.findByTestId('direct-review-destination')?.props.children)
@@ -930,16 +989,25 @@ describe('VoiceSessionRuntime', () => {
       .toMatchObject({ conversationSessionAddress: foreignBinding.conversationSessionAddress });
     expect(getVoiceSessionPresentedBinding()).toMatchObject(binding);
     expect(getVoiceSessionAttemptId()).toBe(attemptId);
-    expect(mounted.lifecycle.getSnapshot().status).toBe('connected');
+    expect(mounted.lifecycle.getSnapshot().status, JSON.stringify({ snapshot: mounted.lifecycle.getSnapshot(), sdkStarts: sdk.startSession.mock.calls.length,
+      requests: mounted.httpRequests.map(({ path, method }) => ({ path, method })) })).toBe('connected');
 
     // Only Home's acknowledgement is substituted. The note writer, strict codec,
     // normalized message and mounted Sync→continuation→local End path stay real.
     let persistence: ReturnType<typeof persistSessionTranscriptMessage> | undefined;
     const projector = createVoiceTranscriptProjector({ getState: storage.getState,
       persistFinal: input => {
-        persistence = persistSessionTranscriptMessage({ sessionEncryptionMode: 'plain', request: async () =>
-          Response.json({ didWrite: true, message: { id: 'remote-continuation', localId: input.localId,
-            seq: boundary + 1, createdAt: Date.now() } }) }, input);
+        persistence = persistSessionTranscriptMessage({ sessionEncryptionMode: 'plain', request: async () => {
+          const response = mounted.sessionHttp.handle(`https://voice-mounted-runtime.example.test/v2/sessions/${conversation.sessionId}`);
+          if (!response) throw new Error('Remote continuation Session unavailable');
+          const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+          const current = SessionCurrentProjectionRecordV1Schema.parse((await response.json()).session);
+          const createdAt = Date.now();
+          const seq = Math.max(current.seq, boundary) + 1;
+          mounted.sessionHttp.replaceSession(conversation.sessionId,
+            SessionCurrentProjectionRecordV1Schema.parse({ ...current, seq, updatedAt: Math.max(current.updatedAt, createdAt) }));
+          return Response.json({ didWrite: true, message: { id: 'remote-continuation', localId: input.localId, seq, createdAt } });
+        } }, input);
         return persistence;
       } });
     await projector.projectNoteText({ conversationSessionId: conversation.sessionId, text: 'Voice continued.', ...note });
@@ -967,10 +1035,21 @@ describe('VoiceSessionRuntime', () => {
       storage.getState().applyMessages(conversation.sessionId, [persisted.message]);
       const session = storage.getState().sessions[conversation.sessionId];
       if (!session) throw new Error('Expected the retained synced conversation');
-      storage.getState().applySessions([{ ...session, seq: boundary + 1 }]);
+      const response = mounted.sessionHttp.handle(`https://voice-mounted-runtime.example.test/v2/sessions/${conversation.sessionId}`);
+      if (!response) throw new Error('Acknowledged continuation Session unavailable');
+      const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+      const current = SessionCurrentProjectionRecordV1Schema.parse((await response.json()).session);
+      // Local End can acknowledge its own final note after the other client's
+      // continuation. Receiving that earlier note cannot roll Home's head back.
+      const acknowledgedSeq = Math.max(current.seq, boundary + 1);
+      const updatedAt = Math.max(current.updatedAt, session.updatedAt);
+      storage.getState().applySessions([{ ...session, seq: acknowledgedSeq, updatedAt }]);
+      mounted.sessionHttp.replaceSession(conversation.sessionId,
+        SessionCurrentProjectionRecordV1Schema.parse({ ...current, seq: acknowledgedSeq, updatedAt }));
       await mounted.lifecycle.toggle(null);
     });
-    expect(mounted.lifecycle.getSnapshot().status).toBe('connected');
+    expect(mounted.lifecycle.getSnapshot().status, JSON.stringify({ snapshot: mounted.lifecycle.getSnapshot(), sdkStarts: sdk.startSession.mock.calls.length,
+      requests: mounted.httpRequests.map(({ path, method }) => ({ path, method })) })).toBe('connected');
     expect(getVoiceSessionPresentedBinding()?.conversationSessionAddress).toEqual(conversation);
     const arrivingAttemptId = getVoiceSessionAttemptId();
     expect(arrivingAttemptId).not.toBeNull();
@@ -1413,14 +1492,6 @@ describe('VoiceSessionRuntime', () => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime || !environment.entry.declaration.credentials) throw new Error('Actual selected credential authority unavailable');
-    const selectedAuthority = createAccountVoiceCredentialAuthorityLease({
-      contribution: { pluginId: environment.entry.pluginId, localId: environment.entry.declaration.id },
-      providerId: environment.entry.providerId,
-      credentialSlotId: environment.entry.declaration.credentials.slot.id,
-      purpose: { consumer: { pluginId: environment.entry.pluginId, localId: environment.entry.declaration.id }, purpose: environment.entry.declaration.credentials.slot.purpose },
-      isCurrent: lifetime.isCurrent,
-    });
-    expect(selectedAuthority.isCurrent()).toBe(true);
     const mintGate = createDeferred<void>();
     const mintStarted = createDeferred<void>();
     const providerResponse = environment.providerFetch.getMockImplementation();
@@ -1438,6 +1509,15 @@ describe('VoiceSessionRuntime', () => {
       await Promise.race([mintStarted.promise, start]);
       expect(environment.providerFetch, JSON.stringify(lifecycle.getSnapshot())).toHaveBeenCalledOnce();
       expect(lifecycle.getSnapshot()).toMatchObject({ adapterId: OPENAI_PROVIDER_ID, status: 'connecting' });
+      // Start has now joined the real catalog producers and selected its source.
+      const selectedAuthority = createAccountVoiceCredentialAuthorityLease({
+        contribution: { pluginId: environment.entry.pluginId, localId: environment.entry.declaration.id },
+        providerId: environment.entry.providerId,
+        credentialSlotId: environment.entry.declaration.credentials.slot.id,
+        purpose: { consumer: { pluginId: environment.entry.pluginId, localId: environment.entry.declaration.id }, purpose: environment.entry.declaration.credentials.slot.purpose },
+        isCurrent: lifetime.isCurrent,
+      });
+      expect(selectedAuthority.isCurrent()).toBe(true);
       const added = applyAccountSettingsSavedSecretMutation(storage.getState().settings, {
         kind: 'add',
         secret: SavedSecretSchema.parse({ id: 'unrelated-secret', name: 'Unrelated', kind: 'token',
@@ -1746,7 +1826,9 @@ describe('VoiceSessionRuntime', () => {
     });
     expect(layoutScopes[0]).toBeNull();
     expect(layoutScopes.at(-1)).toEqual({ serverId: accountConnection!.home.id, accountId: 'account-b' });
-    expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
+    const committedLifecycle = getVoiceSessionLifecycleController();
+    expect(committedLifecycle).not.toBeNull();
+    expect(committedLifecycle?.getSnapshot()).toMatchObject({ status: 'disconnected', canStop: false });
     expect(sdk.startSession).not.toHaveBeenCalled();
     expect(sdk.endSession).not.toHaveBeenCalled();
     expect(browser.peers).toEqual([]);
@@ -1946,7 +2028,7 @@ describe('VoiceSessionRuntime', () => {
     expect(getVoiceAdapterRegistry().get('local_direct')?.getSnapshot()).toMatchObject({
       adapterId: 'local_direct', sessionId: target.sessionId, status: 'connected',
     });
-    expect(getVoiceAdapterRegistry().get(ELEVENLABS_PROVIDER_ID)?.getSnapshot().status).toBe('disconnected');
+    expect(getVoiceAdapterRegistry().get(ELEVENLABS_PROVIDER_ID)).toBeNull();
     expect(getVoiceSessionSnapshot()).toEqual(lifecycle.getSnapshot());
     expect(getVoiceSessionSnapshot()).toMatchObject({
       adapterId: 'local_conversation', sessionId: target.sessionId, status: 'connected', canStop: true,

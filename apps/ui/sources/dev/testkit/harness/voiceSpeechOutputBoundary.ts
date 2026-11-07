@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { installOptionalNativeModuleForTests } from '@/dev/expoModulesCoreStub';
 import Module, { createRequire } from 'node:module';
 import { installDisconnectedServerSocketBoundary } from './serverAccountConnectionHarness';
 import { createPlainMachineRowFixture } from '../fixtures/machineFixtures';
@@ -88,11 +89,7 @@ const nativeAudioModule = encodedAudio.nativeModule({ ...audioSession.nativeModu
     return await stopping as VoiceFileRecordingStopResult;
   },
 });
-vi.mock('expo-modules-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('expo-modules-core')>();
-  return { ...actual, requireOptionalNativeModule: (name: string) =>
-    name === 'HappierAudioStreamNative' ? nativeAudioModule : actual.requireOptionalNativeModule(name) };
-});
+const restoreNativeAudioModule = installOptionalNativeModuleForTests('HappierAudioStreamNative', nativeAudioModule);
 const expoSpeechSpeak = vi.fn<(text: string, options: SpeechOptions) => void>();
 const expoSpeechStop = vi.fn();
 const speechListeners = new Set<(event: 'speak' | 'stop') => void>();
@@ -166,6 +163,7 @@ export function createVoiceSpeechOutputBoundary(input: Readonly<{ getAccount: ()
     async disposeAudioSession() {
       await getSharedVoiceAudioSessionCoordinator()?.dispose();
       await audioSession.coordinator.dispose();
+      restoreNativeAudioModule();
     },
     speechSynthesizeRpc, daemonStreamStartRpc,
     setNativeAvailable(available: boolean) { nativeAvailable = available; },
