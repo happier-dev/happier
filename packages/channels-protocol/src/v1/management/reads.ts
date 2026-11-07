@@ -64,7 +64,6 @@ export const ConversationConnectionManagementRowV1Schema = defineProtocolObject(
     selectedTransport: values(['checkpointedPull', 'socket', 'durablePush']), integrationPrincipalLabel: defineProtocolString().optional(),
     sharedEndpointInputModes: defineProtocolArray(values(['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'])).optional(),
     authorityEpoch: integer, enabled: boolean, deletionState: values(['none', 'pendingStopReconciliation', 'finalizingDelete']),
-    maximumObservationAgeMs: integer,
     recommendedRecovery,
     attention: defineProtocolObject({
         historyGap: defineProtocolObject({ reportedAt: integer, reason: values(['providerHistoryUnavailable', 'applicationAdmissionLost']) }, closed).nullable(),
@@ -99,7 +98,6 @@ export const ConversationIngressAttentionResultV1Schema = defineProtocolObject({
     defineProtocolObject({ ...ingressIdentity, kind: defineProtocolLiteral('blocked'), attemptCount: integer }, closed),
     defineProtocolObject({ ...ingressIdentity, kind: defineProtocolLiteral('terminal'), category: values(['informational', 'recoverable']),
         reason: values(CONVERSATION_NON_ADMISSION_REASONS_V1).optional() }, closed),
-    defineProtocolObject({ kind: defineProtocolLiteral('occurrenceConflict'), censusId: custodyId, revision, connectionId: ConversationConnectionIdV1Schema, recommendedRecovery }, closed),
 ])), nextCursor }, closed);
 const createdThreadEndpointRequired = defineProtocolObject({ parentId: text }, closed).optional();
 export const ConversationDeliveryAttentionResultV1Schema = defineProtocolObject({ rows: defineProtocolArray(defineProtocolObject({

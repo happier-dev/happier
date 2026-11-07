@@ -111,20 +111,8 @@ export const MAX_CONVERSATION_RECEIVE_WAIT_MS = 60_000;
 export const MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES = 256;
 /** Millisecond quantities are safe integers, not workload or freshness policy ceilings. */
 export const MAX_CONVERSATION_RETRY_AFTER_MS = Number.MAX_SAFE_INTEGER;
-export const MIN_CONVERSATION_OBSERVATION_AGE_MS = 0;
-export const MAX_CONVERSATION_OBSERVATION_AGE_MS = Number.MAX_SAFE_INTEGER;
-/** Existing setup suggestion, separate from the representable range. */
-export const DEFAULT_CONVERSATION_OBSERVATION_AGE_MS = 30 * 86_400_000;
 
 
-/**
- * `occurredAt` is minted by the provider's clock and compared against this
- * host's clock, so a provider timestamp may legitimately lead local time. This
- * is the same cross-host boundary the Account freshness proofs already allow
- * 60s for. Beyond it a timestamp is not skew, and admitting it would pin the
- * occurrence's retained message body past every retention horizon.
- */
-export const MAX_CONVERSATION_OBSERVATION_CLOCK_SKEW_MS = 60_000;
 
 export const CONVERSATION_TRANSPORT_KINDS_V1 = [
     'checkpointedPull',

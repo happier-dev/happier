@@ -1,3 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { encodePluginCollectionLogicalValueV1, type PluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
+import { PLUGIN_MANIFEST as CHANNELS_MANIFEST, collectionMigrations as channelsCollectionMigrations } from '../../../../../../../../packages/plugins/channels/src/manifest';
+import { promotePluginCollectionCandidatePreparationInTx, stagePluginCollectionCandidatePreparation } from '@/app/plugins/data/collections/candidatePreparation';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes } from 'node:crypto';
 import { createPluginCollectionSharingClientV1 } from '@happier-dev/protocol/plugins/data/collectionSharingClientV1';
@@ -1374,6 +1380,93 @@ function racePluginCollectionQuerySnapshot(input: Readonly<{
 }
 
 describe("plugin collection UI query route", () => {
+    it("promotes retained Channels census custody to v20 and serves new input through its exact HTTP reader", async () => {
+        const accountId = 'channels-v20-retained-census';
+        const captured = JSON.parse(readFileSync(new URL(
+            '../../../../../../../../packages/protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
+        ), 'utf8'));
+        const sourceContract = PluginCollectionContractReadResultV1Schema.parse({ access: 'writable', contract: captured.writer }).contract;
+        const { pluginId, collectionId, contractDigest: _digest, ...sourceDeclaration } = sourceContract;
+        const targetDeclaration = CHANNELS_MANIFEST.contributes?.accountCollections?.find(item => item.id === collectionId);
+        if (!targetDeclaration) throw new Error('Missing current Channels state declaration');
+        const manifest = (version: string, collection: unknown) => PluginManifestV2Schema.parse({
+            ...CHANNELS_MANIFEST, version, contributes: { accountCollections: [collection] },
+        });
+        const sourceManifest = manifest('1.0.0', { ...sourceDeclaration, id: collectionId });
+        const targetManifest = manifest('2.0.0', targetDeclaration);
+        const [source] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: sourceManifest }));
+        const [target] = await inTx(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: targetManifest }));
+        if (!source || !target) throw new Error('Missing Channels migration contracts');
+        const targetContract = normalizePluginAccountCollectionContractV1({ pluginId,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(targetDeclaration) });
+        await createAccount({ id: accountId, mode: 'plain', seq: 1 });
+        await retainCollectionRelease({ accountId, manifest: sourceManifest, refs: [source] });
+        await retainCollectionRelease({ accountId, manifest: targetManifest, refs: [target] });
+        await db.accountPluginIntent.create({ data: { accountId, pluginId, desiredVersion: '1.0.0', enabled: true,
+            offlineUiHosting: 'disabled', writableCollections: toPrismaJson([source]), revision: BigInt(1) } });
+        await inTx(tx => preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [source] }));
+        const historical = { id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
+            'connection-id': 'connection-1', 'created-at': 1, 'updated-at': 1, 'due-at': 100,
+            terminal: false, attention: false, payload: { censusId: 'C'.repeat(43), occurrenceIds: ['observation-1'], target: null,
+                sourceAuthority: { connectionAuthorityEpoch: 1 }, lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+                disposition: null, nonAdmission: null } };
+        const encode = (contract: typeof sourceContract, value: PluginCollectionLogicalValueV1) => {
+            const validate = compilePluginJsonSchema(contract.schema);
+            const result = encodePluginCollectionLogicalValueV1({ contract, value, encryptionMode: 'plain', material: null,
+                isValidLogicalValue: candidate => isValidPluginJsonSchemaValue(validate, candidate), randomBytes });
+            if (result.status === 'failed') throw new Error(`Channels fixture rejected: ${result.reason}`);
+            return result;
+        };
+        const sourceValue = encode(sourceContract, historical);
+        await mutatePluginCollection({ accountId, request: { pluginId, collectionId,
+            writerContext: { schemaVersion: source.schemaVersion, contractDigest: source.contractDigest },
+            operations: [{ kind: 'put', rowId: historical.id, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
+                content: sourceValue.content, projection: sourceValue.projection }] } });
+        const edge = channelsCollectionMigrations['channel-state']?.find(step => step.fromSchemaVersion === source.schemaVersion);
+        if (!edge) throw new Error('Missing Channels v19-to-v20 migration');
+        const migrated = await edge.migrate(historical, { currentRevision: 1 });
+        expect(migrated).toEqual(historical);
+        const staged = encode(targetContract, migrated);
+        await stagePluginCollectionCandidatePreparation({ accountId, request: {
+            binding: { source, target, candidate: { releaseVersion: '2.0.0', artifactDigest: `sha256:${'f'.repeat(64)}` } },
+            items: [{ source: { rowId: historical.id, revision: 1 },
+                target: { content: staged.content, projection: staged.projection } }],
+        } });
+        await inTx(async tx => {
+            const currentIntent = await tx.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId, pluginId } } });
+            await promotePluginCollectionCandidatePreparationInTx({ tx, accountId, pluginId, currentIntent,
+                targetReleaseVersion: '2.0.0', targetContracts: [target] });
+            await preparePluginCollectionWritableContractsTx({ tx, accountId, pluginId, contracts: [target] });
+            await tx.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId } },
+                data: { desiredVersion: '2.0.0', writableCollections: toPrismaJson([target]), revision: { increment: 1 } } });
+        });
+        const { censusId: _censusId, ...payload } = historical.payload;
+        const current = { ...historical, id: 'B'.repeat(43), payload: { ...payload, normalizedIngress: null,
+            observationShell: { v: 1, occurrenceId: 'observation-1', occurredAt: 1, transport: { kind: 'poll' },
+                endpoint: { kind: 'direct', audience: 'direct', id: 'provider:chat:1' },
+                actor: { kind: 'human', principalId: 'person-1', isIntegrationSelf: false },
+                message: { id: 'provider:message:1', providerTimestamp: 1, addressingEvidence: 'none', contentProvenance: 'original' } } } };
+        const encoded = encode(targetContract, current);
+        const headers = { 'content-type': 'application/json', 'x-test-user-id': accountId, ...V3_HEADERS };
+        await withPluginDataApp(async app => {
+            const mutation = await app.inject({ method: 'POST', url: '/v1/plugins/data/mutate', headers,
+                payload: { pluginId, collectionId, writerContext: { schemaVersion: target.schemaVersion, contractDigest: target.contractDigest }, operations: [{ kind: 'put', rowId: current.id,
+                    expectedRevision: 'absent', expectedAbsenceEpoch: 0, content: encoded.content, projection: encoded.projection }] } });
+            expect(mutation.statusCode).toBe(200);
+            const contract = await app.inject({ method: 'POST', url: '/v1/plugins/data/contract', headers, payload: { ref: target } });
+            expect(contract.statusCode).toBe(200);
+            expect(PluginCollectionContractReadResultV1Schema.parse(contract.json()).contract.schemaVersion).toBe(20);
+            const get = await app.inject({ method: 'POST', url: '/v1/plugins/data/get', headers,
+                payload: { pluginId, collectionId, readerContext: target, rowId: current.id } });
+            expect(get.statusCode).toBe(200);
+            expect(PluginCollectionGetResultV1Schema.parse(get.json()).row?.content).toEqual(encoded.content);
+        });
+        const retained = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId, rowId: historical.id } });
+        expect(retained).toMatchObject({ schemaVersion: 20, contractDigest: target.contractDigest, deletedAt: null });
+        expect(retained.contentEnvelope).toEqual(staged.content);
+    });
+
+
     it("registers candidate-preparation routes behind authenticated Data transport and maps malformed/currentness failures", async () => {
         const accountId = "account-candidate-preparation-routes";
         const { ref } = await seedCurrentCollectionAccount({

@@ -501,7 +501,6 @@ describe('GitHub Channel Actions', () => {
       recommendedTransport: 'checkpointedPull',
       overlapSafety: 'safe',
       replayContinuity: 'checkpointed',
-      recommendedMaximumObservationAgeMs: 30 * 86_400_000,
       outboundTextLimit: { maximum: 65_536, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
     });
 

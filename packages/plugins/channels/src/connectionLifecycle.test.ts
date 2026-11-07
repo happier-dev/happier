@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/plugin-sdk/actions';
-import {
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
-} from '@happier-dev/channels-protocol/v1';
 
 import {
   freezeConversationConnectionTransportOrigin,
@@ -27,8 +23,6 @@ function connection(
     historyGap: null,
     providerReadiness: null,
     pollFailure: null,
-    maximumObservationAgeMs: 60_000,
-    observationAgeExpansionFloorOccurredAt: null,
     ...overrides,
   };
 }
@@ -87,7 +81,6 @@ describe('Conversation connection lifecycle', () => {
       current,
       requested: {
         enabled: false,
-        maximumObservationAgeMs: 120_000,
       },
     })).toEqual({
       kind: 'updated',
@@ -100,117 +93,18 @@ describe('Conversation connection lifecycle', () => {
         historyGap: current.historyGap,
         providerReadiness: null,
         pollFailure: null,
-        maximumObservationAgeMs: 120_000,
-        observationAgeExpansionFloorOccurredAt: null,
       },
     });
   });
 
-  it('changes freshness policy without advancing connection authority', () => {
-    const current = connection({
-      authorityEpoch: 4,
-      historyGap: { reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable' },
-    });
-
-    expect(transitionConversationConnection({
-      current,
-      requested: {
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
-      },
-    })).toEqual({
-      kind: 'updated',
-      connection: {
-        ...current,
-        maximumObservationAgeMs: 120_000,
-      },
-    });
-  });
-
-  it('keeps the previous freshness horizon as one connection-local floor when widening observation age', () => {
-    const current = connection({ authorityEpoch: 4 });
-
-    expect(transitionConversationConnection({
-      current,
-      requested: {
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
-      },
-      now: 70_000,
-    })).toEqual({
-      kind: 'updated',
-      connection: {
-        ...current,
-        maximumObservationAgeMs: 120_000,
-        pollFailure: null,
-        observationAgeExpansionFloorOccurredAt: 10_000,
-      },
-    });
-  });
-
-  it('retains the expansion floor through later useful policy edits', () => {
-    const original = connection({ authorityEpoch: 4 });
-    const expanded = transitionConversationConnection({
-      current: original,
-      requested: { enabled: true, maximumObservationAgeMs: 120_000 },
-      now: 70_000,
-    });
-    if (expanded.kind !== 'updated') throw new Error('Expected the age expansion to update the connection.');
-
-    const narrowed = transitionConversationConnection({
-      current: expanded.connection,
-      requested: { enabled: true, maximumObservationAgeMs: 60_000 },
-      now: 80_000,
-    });
-    expect(narrowed).toMatchObject({
-      kind: 'updated',
-      connection: {
-        authorityEpoch: 4,
-        maximumObservationAgeMs: 60_000,
-        observationAgeExpansionFloorOccurredAt: 10_000,
-      },
-    });
-    if (narrowed.kind !== 'updated') throw new Error('Expected the age reduction to update the connection.');
-
-    expect(transitionConversationConnection({
-      current: narrowed.connection,
-      requested: { enabled: true, maximumObservationAgeMs: 120_000 },
-      now: 130_000,
-    })).toMatchObject({
-      kind: 'updated',
-      connection: {
-        authorityEpoch: 4,
-        maximumObservationAgeMs: 120_000,
-        observationAgeExpansionFloorOccurredAt: 70_000,
-      },
-    });
-  });
-
-  it('clears a poll failure for any relevant connection policy change but retains it for an unchanged request', () => {
-    const current = connection({
-      pollFailure: {
-        phase: 'blocked',
-        attemptCount: 1,
-        retryNotBeforeMs: null,
-        evidence: { kind: 'provider', reason: 'credentialInvalid' },
-      },
-    });
-
-    expect(transitionConversationConnection({
-      current,
-      requested: { enabled: true, maximumObservationAgeMs: 120_000 },
-    })).toEqual({
-      kind: 'updated',
-      connection: {
-        ...current,
-        pollFailure: null,
-        maximumObservationAgeMs: 120_000,
-      },
-    });
-    expect(transitionConversationConnection({
-      current,
-      requested: { enabled: true, maximumObservationAgeMs: 60_000 },
-    })).toEqual({ kind: 'unchanged', connection: current });
+  // Owner ruling 2026-10-29: provider-derived dedupe replaces per-connection age.
+  it('retains a poll failure when the enabled policy is unchanged', () => {
+    const current = connection({ pollFailure: { phase: 'blocked', attemptCount: 1,
+      retryNotBeforeMs: null, evidence: { kind: 'provider', reason: 'credentialInvalid' } } });
+    expect(transitionConversationConnection({ current, requested: { enabled: true } }))
+      .toEqual({ kind: 'unchanged', connection: current });
+    expect(transitionConversationConnection({ current, requested: { enabled: false } }))
+      .toMatchObject({ kind: 'updated', connection: { enabled: false, pollFailure: null } });
   });
 
   it('rejects an authority-changing policy write at the safe-integer epoch boundary', () => {
@@ -218,38 +112,12 @@ describe('Conversation connection lifecycle', () => {
 
     expect(transitionConversationConnection({
       current,
-      requested: { enabled: false, maximumObservationAgeMs: current.maximumObservationAgeMs },
+      requested: { enabled: false },
     })).toEqual({ kind: 'rejected', code: 'authorityEpochExhausted' });
     expect(transitionConversationConnection({
       current,
-      requested: { enabled: true, maximumObservationAgeMs: current.maximumObservationAgeMs },
+      requested: { enabled: true },
     })).toEqual({ kind: 'unchanged', connection: current });
-  });
-
-  it('rejects observation-age boundary neighbors before it can write authority', () => {
-    const current = connection();
-
-    for (const maximumObservationAgeMs of [
-      MIN_CONVERSATION_OBSERVATION_AGE_MS - 1,
-      MAX_CONVERSATION_OBSERVATION_AGE_MS + 1,
-    ]) {
-      expect(transitionConversationConnection({
-        current,
-        requested: {
-          enabled: current.enabled,
-          maximumObservationAgeMs,
-        },
-      })).toEqual({ kind: 'rejected', code: 'maximumObservationAgeInvalid' });
-    }
-  });
-
-  it('preserves an owner-selected freshness policy beyond thirty days', () => {
-    const current = connection();
-    const maximumObservationAgeMs = 31 * 86_400_000;
-    expect(transitionConversationConnection({
-      current,
-      requested: { enabled: current.enabled, maximumObservationAgeMs },
-    })).toMatchObject({ kind: 'updated', connection: { maximumObservationAgeMs } });
   });
 
   it('records one current history gap and never lets a stale or changed report rewrite first evidence', () => {

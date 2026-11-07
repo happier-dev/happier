@@ -34,13 +34,6 @@ import { ConversationProviderFailureV1ProtocolSchema } from '../diagnostics.js';
 const ConversationPluginContributionRefV1ProtocolSchema = PluginContributionIdentityV1Schema;
 const conversationPluginContributionRefV1 = ConversationPluginContributionRefV1ProtocolSchema;
 
-/** @internal One configurable freshness range, also used by connection writes. */
-export const ConversationMaximumObservationAgeV1ProtocolSchema = defineProtocolNumber({
-    integer: true,
-    minimum: 0,
-    maximum: Number.MAX_SAFE_INTEGER,
-});
-
 const conversationTransportKindV1 = defineProtocolUnion([
     defineProtocolLiteral(CONVERSATION_TRANSPORT_KINDS_V1[0]),
     defineProtocolLiteral(CONVERSATION_TRANSPORT_KINDS_V1[1]),
@@ -133,7 +126,6 @@ export const ConversationProviderSetupResultV1ProtocolSchema = defineProtocolObj
     overlapSafety: ConversationConnectionOverlapSafetyV1ProtocolSchema,
     replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
     outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema.optional(),
-    recommendedMaximumObservationAgeMs: ConversationMaximumObservationAgeV1ProtocolSchema.optional(),
     sharedEndpointInputModes: ConversationSharedEndpointInputModesV1ProtocolSchema.optional(),
     setupGuidance: ConversationProviderSetupGuidanceV1ProtocolSchema.optional(),
     pairingDeepLinkTemplate: pairingDeepLinkTemplateV1.optional(),

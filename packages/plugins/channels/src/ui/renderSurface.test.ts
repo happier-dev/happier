@@ -10,7 +10,6 @@ import {
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
   ConversationBindingReadResultV1Schema,
-  DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
 } from '@happier-dev/channels-protocol/v1';
 import {
   createPluginUiTestkit,
@@ -190,7 +189,6 @@ function connectionsResourceForTransport(selectedTransport: 'checkpointedPull' |
       integrationPrincipalLabel: 'Example conversation',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: null,
         pollFailure: null,
@@ -228,7 +226,6 @@ const connectionsResourceWithoutSharedAllMessages: ResourceContent = jsonResourc
     sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages'],
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       pollFailure: null,
@@ -261,7 +258,6 @@ function connectionsResourceWithProviderReadiness(input: Readonly<{
       integrationPrincipalLabel: 'Example conversation',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: null,
         providerReadiness: {
@@ -296,7 +292,6 @@ function connectionsResourceWithIngressConflict(): ResourceContent {
       integrationPrincipalLabel: 'Example conversation',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: null,
         providerReadiness: null,
@@ -340,7 +335,6 @@ function connectionsResourceWithHistoryGap(input: Readonly<{
       integrationPrincipalLabel: 'Example conversation',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: {
           reportedAt: input.reportedAt,
@@ -379,7 +373,6 @@ const pausedAndPollBlockedConnectionsResource = jsonResource({
     integrationPrincipalLabel: 'Example conversation',
     enabled: false,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       providerReadiness: null,
@@ -416,7 +409,6 @@ const pausedHealthyConnectionsResource = jsonResource({
     integrationPrincipalLabel: 'Example conversation',
     enabled: false,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       providerReadiness: null,
@@ -447,7 +439,6 @@ const oldTransportStopUnconfirmedConnectionsResource = jsonResource({
     integrationPrincipalLabel: 'Example conversation',
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       pollFailure: null,
@@ -476,7 +467,6 @@ const endpointRetargetOwedConnectionsResource = jsonResource({
     integrationPrincipalLabel: 'Example conversation',
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       pollFailure: null,
@@ -505,7 +495,6 @@ const acceptedPossibleLossConnectionsResource = jsonResource({
     integrationPrincipalLabel: 'Example conversation',
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       pollFailure: null,
@@ -1750,9 +1739,6 @@ describe('Channels mounted provider setup recovery', () => {
         providerSetupInput: submittedProviderSetup.input,
         credentialRef,
         selectedTransport: 'socket',
-        // Setup seeds the Channels domain freshness default, not the smallest
-        // value an owner is allowed to configure.
-        maximumObservationAgeMs: DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
       });
       expect(createRequest?.selectedActionInput).toEqual(selectedActionInput);
       // Prepare may reuse the exact selected settlement. Create is the one
@@ -5535,7 +5521,6 @@ describe('Channels mounted binding editor', () => {
         integrationPrincipalLabel: 'Foreign integration',
         enabled: true,
         deletionState: 'none',
-        maximumObservationAgeMs: 60_000,
         attention: {
           historyGap: null,
           pollFailure: null,
@@ -7275,7 +7260,6 @@ describe('Channels connection policy editing across a source change', () => {
   function connectionsResourceAtRevision(input: Readonly<{
     revision: number;
     enabled: boolean;
-    maximumObservationAgeMs: number;
     digestDigit: string;
   }>): ResourceContent {
     return jsonResource({
@@ -7289,7 +7273,6 @@ describe('Channels connection policy editing across a source change', () => {
         integrationPrincipalLabel: 'Example conversation',
         enabled: input.enabled,
         deletionState: 'none',
-        maximumObservationAgeMs: input.maximumObservationAgeMs,
         attention: {
           historyGap: null,
           pollFailure: null,
@@ -7308,8 +7291,6 @@ describe('Channels connection policy editing across a source change', () => {
     }, input.digestDigit);
   }
 
-  const editedObservationAge = '5 minutes';
-
   it('keeps an in-progress policy edit when the connection changes elsewhere and locks saving until an explicit reload', async () => {
     // A background reread used to silently rebase the draft: the edit the
     // person was typing vanished with no notice, and Save would then have
@@ -7317,7 +7298,6 @@ describe('Channels connection policy editing across a source change', () => {
     let current = connectionsResourceAtRevision({
       revision: 1,
       enabled: true,
-      maximumObservationAgeMs: 60_000,
       digestDigit: 'b',
     });
     const executeAction = vi.fn(async () => {
@@ -7328,7 +7308,6 @@ describe('Channels connection policy editing across a source change', () => {
       authorPlugin: { id: 'happier.channels', version: '0.0.0' },
       surface: renderSurface,
       surfaceContext: createChannelsSurfaceContext(),
-      // The observation-age field opens its choices through the host popover, which the testkit draws only with overlays.
       adapter: createChannelsSemanticAdapter(emptyDataClient, undefined, { overlays: true }),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
@@ -7344,21 +7323,18 @@ describe('Channels connection policy editing across a source change', () => {
 
     try {
       await pressByTestId('channels-connection-connection-1');
-      await chooseFieldOption('Maximum observation age', editedObservationAge);
+      await pressByTestId('channels-connection-enabled');
       expect(document.querySelector('[data-testid="channels-connection-source-changed"]')).toBeNull();
 
       // Another writer advances the connection while the edit is open.
       current = connectionsResourceAtRevision({
         revision: 2,
-        enabled: false,
-        maximumObservationAgeMs: 120_000,
+        enabled: true,
         digestDigit: 'c',
       });
       await pressByTestId('channels-detail-resource-refresh');
 
-      await expect(fixture.getByRole('button', {
-        name: `Maximum observation age: ${editedObservationAge}`,
-      })).resolves.toBeDefined();
+      expect(document.querySelector('[data-testid="channels-connection-enabled"]')?.getAttribute('aria-checked')).toBe('false');
       const notice = document.querySelector<HTMLElement>('[data-testid="channels-connection-source-changed"]');
       expect(notice).not.toBeNull();
       const save = document.querySelector<HTMLElement>('[data-testid="channels-connection-save"]');
@@ -7372,9 +7348,7 @@ describe('Channels connection policy editing across a source change', () => {
       await vi.waitFor(() => {
         expect(document.querySelector('[data-testid="channels-connection-source-changed"]')).toBeNull();
       });
-      await expect(fixture.getByRole('button', {
-        name: 'Maximum observation age: 2 minutes',
-      })).resolves.toBeDefined();
+      expect(document.querySelector('[data-testid="channels-connection-enabled"]')?.getAttribute('aria-checked')).toBe('true');
       expect(document.querySelector('[data-testid="channels-connection-save"]')?.getAttribute('aria-disabled'))
         .not.toBe('true');
     } finally {
@@ -7389,14 +7363,12 @@ describe('Channels connection policy editing across a source change', () => {
     let current = connectionsResourceAtRevision({
       revision: 1,
       enabled: true,
-      maximumObservationAgeMs: 60_000,
       digestDigit: 'b',
     });
-    const executeAction = vi.fn(async () => {
+    const executeAction = vi.fn(async (_request: Parameters<PluginUiHostApi['executeAction']>[0]) => {
       current = connectionsResourceAtRevision({
         revision: 2,
-        enabled: true,
-        maximumObservationAgeMs: 5 * 60_000,
+        enabled: false,
         digestDigit: 'c',
       });
       return { kind: 'ready' as const, connectionId: 'connection-1', revision: 2, authorityEpoch: 1 };
@@ -7406,7 +7378,6 @@ describe('Channels connection policy editing across a source change', () => {
       authorPlugin: { id: 'happier.channels', version: '0.0.0' },
       surface: renderSurface,
       surfaceContext: createChannelsSurfaceContext(),
-      // The observation-age field opens its choices through the host popover, which the testkit draws only with overlays.
       adapter: createChannelsSemanticAdapter(emptyDataClient, undefined, { overlays: true }),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
@@ -7422,10 +7393,14 @@ describe('Channels connection policy editing across a source change', () => {
 
     try {
       await pressByTestId('channels-connection-connection-1');
-      await chooseFieldOption('Maximum observation age', editedObservationAge);
+      await pressByTestId('channels-connection-enabled');
       await pressByTestId('channels-connection-save');
       await vi.waitFor(() => {
         expect(executeAction).toHaveBeenCalledTimes(1);
+      });
+      // Owner ruling 2026-10-29: provider-derived dedupe replaces the connection age policy.
+      expect(executeAction.mock.calls[0]?.[0].input).toEqual({
+        connectionId: 'connection-1', expectedRevision: 1, enabled: false,
       });
 
       await vi.waitFor(() => {
@@ -7445,7 +7420,6 @@ describe('Channels connection policy editing across a source change', () => {
     let current = connectionsResourceAtRevision({
       revision: 1,
       enabled: true,
-      maximumObservationAgeMs: 60_000,
       digestDigit: 'b',
     });
     const fixture = await createPluginUiTestkit({
@@ -7453,7 +7427,6 @@ describe('Channels connection policy editing across a source change', () => {
       authorPlugin: { id: 'happier.channels', version: '0.0.0' },
       surface: renderSurface,
       surfaceContext: createChannelsSurfaceContext(),
-      // The observation-age field opens its choices through the host popover, which the testkit draws only with overlays.
       adapter: createChannelsSemanticAdapter(emptyDataClient, undefined, { overlays: true }),
       handlers: {
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
@@ -7473,16 +7446,13 @@ describe('Channels connection policy editing across a source change', () => {
       await pressByTestId('channels-connection-connection-1');
       current = connectionsResourceAtRevision({
         revision: 2,
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
+        enabled: false,
         digestDigit: 'c',
       });
       await pressByTestId('channels-detail-resource-refresh');
 
       expect(document.querySelector('[data-testid="channels-connection-source-changed"]')).toBeNull();
-      await expect(fixture.getByRole('button', {
-        name: 'Maximum observation age: 2 minutes',
-      })).resolves.toBeDefined();
+      expect(document.querySelector('[data-testid="channels-connection-enabled"]')?.getAttribute('aria-checked')).toBe('false');
       expect(document.querySelector('[data-testid="channels-connection-save"]')?.getAttribute('aria-disabled'))
         .not.toBe('true');
     } finally {
@@ -7677,7 +7647,6 @@ describe('Channels connection lifecycle actions', () => {
         integrationPrincipalLabel: 'Example conversation',
         enabled: true,
         deletionState: 'none',
-        maximumObservationAgeMs: 60_000,
         attention: {
           historyGap: null,
           pollFailure: null,
@@ -9941,7 +9910,6 @@ describe('Channels collapsed row identity', () => {
       integrationPrincipalLabel: 'Team bot',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: null,
         pollFailure: null,
@@ -9965,7 +9933,6 @@ describe('Channels collapsed row identity', () => {
       selectedTransport: 'checkpointedPull',
       enabled: true,
       deletionState: 'none',
-      maximumObservationAgeMs: 60_000,
       attention: {
         historyGap: null,
         pollFailure: null,
@@ -10479,7 +10446,6 @@ describe('Channels first connection continuation', () => {
         integrationPrincipalLabel: 'Example conversation',
         enabled: true,
         deletionState: 'none',
-        maximumObservationAgeMs: 60_000,
         attention: {
           historyGap: null,
           providerReadiness: null,

@@ -320,10 +320,6 @@ export async function setupGithubChannels(
     recommendedTransport: 'checkpointedPull',
     overlapSafety: 'safe',
     replayContinuity: 'checkpointed',
-    // The REST comment history supports `since`, not Telegram's update expiry:
-    // https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository
-    // This provider's recommendation is policy, not a GitHub retention guarantee.
-    recommendedMaximumObservationAgeMs: 30 * 86_400_000,
     // GitHub's native REST comment limit; Channels owns lossless chunking.
     outboundTextLimit: { maximum: 65_536, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
   });

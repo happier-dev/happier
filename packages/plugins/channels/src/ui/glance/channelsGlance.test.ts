@@ -46,7 +46,6 @@ function connection(input: Readonly<{ id: string; provider: string; label: strin
     integrationPrincipalLabel: input.label,
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
       historyGap: null,
       pollFailure: input.blocked === true

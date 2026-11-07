@@ -24,7 +24,6 @@ import {
     ConversationConnectionOverlapSafetyV1ProtocolSchema,
     ConversationConnectionReplayContinuityV1ProtocolSchema,
     ConversationOutboundTextLimitV1ProtocolSchema,
-    ConversationMaximumObservationAgeV1ProtocolSchema,
     ConversationProviderSetupGuidanceV1ProtocolSchema,
     ConversationProviderSetupRemediationV1ProtocolSchema,
 } from '../provider/setup.js';
@@ -80,7 +79,6 @@ const conversationConnectionPrepareReadyV1 = defineProtocolObject({
     overlapSafety: ConversationConnectionOverlapSafetyV1ProtocolSchema,
     replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
     outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema.optional(),
-    recommendedMaximumObservationAgeMs: ConversationMaximumObservationAgeV1ProtocolSchema.optional(),
     // The provider-authenticated shared-endpoint delivery truth. Preparation
     // is where a person first sees what this connection could do, so dropping
     // it here is how a surface ends up offering a policy the platform refuses.

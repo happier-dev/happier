@@ -1,6 +1,4 @@
 import {
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
   type ConversationJsonObjectV1,
   type ConversationJsonValueV1,
   type ConversationConnectionHistoryGapFactV1,
@@ -237,19 +235,11 @@ export type ConversationConnectionLifecycleStateV1 = Readonly<{
   historyGap: ConversationConnectionHistoryGapV1 | null;
   providerReadiness: ConversationConnectionProviderReadinessV1;
   pollFailure: ConversationConnectionPollFailureV1 | null;
-  maximumObservationAgeMs: number;
-  /**
-   * The earliest occurrence time that may use a subsequently widened age
-   * window. It is connection-local replay history, never an occurrence
-   * tombstone: existing censuses continue to own their frozen windows.
-   */
-  observationAgeExpansionFloorOccurredAt: number | null;
 }>;
 
 /** The Account-local policy facts mutable by the ordinary connection Action. */
 export type ConversationConnectionRequestedStateV1 = Readonly<{
   enabled: boolean;
-  maximumObservationAgeMs: number;
 }>;
 
 export type ConversationConnectionDeleteStartResultV1 =
@@ -271,7 +261,7 @@ export type ConversationConnectionEnabledResultV1 =
   | Readonly<{ kind: 'unchanged'; connection: ConversationConnectionLifecycleStateV1 }>
   | Readonly<{
     kind: 'rejected';
-    code: 'deleteInProgress' | 'authorityEpochExhausted' | 'maximumObservationAgeInvalid';
+    code: 'deleteInProgress' | 'authorityEpochExhausted';
   }>;
 
 export type ConversationConnectionTransitionResultV1 = ConversationConnectionEnabledResultV1;
@@ -293,16 +283,6 @@ function hasAuthoritySteps(
   steps: number,
 ): boolean {
   return authorityEpoch <= MAX_SAFE_INTEGER - steps;
-}
-
-function hasValidMaximumObservationAge(value: number): boolean {
-  return Number.isSafeInteger(value)
-    && value >= MIN_CONVERSATION_OBSERVATION_AGE_MS
-    && value <= MAX_CONVERSATION_OBSERVATION_AGE_MS;
-}
-
-function hasValidNonNegativeTimestamp(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
 }
 
 function freezeJsonValue(value: ConversationJsonValueV1): ConversationJsonValueV1 {
@@ -424,66 +404,31 @@ export function freezeConversationPendingOldTransportStop(input: Readonly<{
 export function transitionConversationConnection(input: Readonly<{
   current: ConversationConnectionLifecycleStateV1;
   requested: ConversationConnectionRequestedStateV1;
-  /** The one row-write timestamp captured by the Account-local CAS owner. */
-  now?: number;
 }>): ConversationConnectionTransitionResultV1 {
   const { current, requested } = input;
-  if (!hasValidMaximumObservationAge(requested.maximumObservationAgeMs)) {
-    return { kind: 'rejected', code: 'maximumObservationAgeInvalid' };
-  }
   if (current.deletionState !== 'none') {
     return { kind: 'rejected', code: 'deleteInProgress' };
   }
   const enabledChanged = current.enabled !== requested.enabled;
-  const maximumObservationAgeChanged = current.maximumObservationAgeMs !== requested.maximumObservationAgeMs;
-  if (!enabledChanged && !maximumObservationAgeChanged) {
+  if (!enabledChanged) {
     return { kind: 'unchanged', connection: current };
   }
-  if (enabledChanged && !hasAuthoritySteps(current.authorityEpoch, 1)) {
+  if (!hasAuthoritySteps(current.authorityEpoch, 1)) {
     return { kind: 'rejected', code: 'authorityEpochExhausted' };
   }
-
-  // Widening the live window cannot make an occurrence that was already past
-  // the previous window eligible again after its finite census was pruned.
-  // The connection keeps only this monotonic timestamp floor, while an
-  // occurrence that was still fresh at the edit and later observations can
-  // use the wider requested window.
-  const observationAgeExpansionFloorOccurredAt = requested.maximumObservationAgeMs
-    > current.maximumObservationAgeMs
-    ? (() => {
-      const now = input.now ?? 0;
-      if (!hasValidNonNegativeTimestamp(now)) {
-        throw new Error('Connection observation-age expansion requires a non-negative safe timestamp.');
-      }
-      const currentFloor = current.observationAgeExpansionFloorOccurredAt ?? 0;
-      const preservedFreshnessFloor = Math.max(0, now - current.maximumObservationAgeMs);
-      const nextFloor = Math.max(currentFloor, preservedFreshnessFloor);
-      return nextFloor === 0 ? null : nextFloor;
-    })()
-    : current.observationAgeExpansionFloorOccurredAt;
 
   return {
     kind: 'updated',
     connection: {
       ...current,
       enabled: requested.enabled,
-      maximumObservationAgeMs: requested.maximumObservationAgeMs,
       // A requested policy write drops retired stop metadata; reads and
       // unchanged requests leave the historical stored row untouched.
       pendingOldTransportStop: null,
       pollFailure: null,
-      observationAgeExpansionFloorOccurredAt,
-      ...(enabledChanged
-        ? {
-          authorityEpoch: current.authorityEpoch + 1,
-          // A replacement baseline may already have durably advanced its
-          // checkpoint and still be covering retained censuses. Keep that
-          // ingress fence across policy epochs so the same owner can rejoin
-          // coverage under the new row revision before admitting ingress.
-          historyGap: current.historyGap,
-          providerReadiness: null,
-        }
-        : {}),
+      authorityEpoch: current.authorityEpoch + 1,
+      historyGap: current.historyGap,
+      providerReadiness: null,
     },
   };
 }

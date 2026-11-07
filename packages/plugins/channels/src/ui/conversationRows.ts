@@ -10,8 +10,6 @@ import {
 } from '@happier-dev/plugin-ui';
 import {
   CONVERSATION_CORE_PLUGIN_ID_V1,
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
   conversationSessionBindingDeliveryModeForOmittedFieldV1,
   ConversationRecommendedRecoveryV1Schema,
 } from '@happier-dev/channels-protocol/v1';
@@ -171,13 +169,6 @@ export function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
-export function isValidObservationAge(value: unknown): value is number {
-  return typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= MIN_CONVERSATION_OBSERVATION_AGE_MS
-    && value <= MAX_CONVERSATION_OBSERVATION_AGE_MS;
-}
-
 export function isConnectionTransport(value: unknown): value is ConnectionTransport {
   return value === 'checkpointedPull' || value === 'socket' || value === 'durablePush';
 }
@@ -279,7 +270,6 @@ export function parseConnection(value: unknown): ChannelsConnection | undefined 
   const integrationPrincipalLabel = value.integrationPrincipalLabel;
   const enabled = value.enabled;
   const deletionState = value.deletionState;
-  const maximumObservationAgeMs = value.maximumObservationAgeMs;
   const sharedEndpointInputModes = parseSharedEndpointInputModes(value.sharedEndpointInputModes);
   const bestEffortBeforeDurableAdmission = value.attention.bestEffortBeforeDurableAdmission;
   const oldTransportStopUnconfirmed = value.attention.oldTransportStopUnconfirmed;
@@ -297,7 +287,6 @@ export function parseConnection(value: unknown): ChannelsConnection | undefined 
     || !isNonEmptyString(selectedMachineId)
     || !isConnectionTransport(selectedTransport)
     || !isConnectionDeletionState(deletionState)
-    || !isValidObservationAge(maximumObservationAgeMs)
     || typeof enabled !== 'boolean'
     || typeof bestEffortBeforeDurableAdmission !== 'boolean'
     || typeof oldTransportStopUnconfirmed !== 'boolean'
@@ -321,7 +310,6 @@ export function parseConnection(value: unknown): ChannelsConnection | undefined 
     ...(sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes }),
     enabled,
     deletionState,
-    maximumObservationAgeMs,
     attention: {
       historyGap,
       providerReadiness,

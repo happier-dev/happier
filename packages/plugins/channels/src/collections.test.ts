@@ -16,6 +16,11 @@ import {
   ConversationScopedPullRequestTriggerV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import { AutomationResultDeliverySourceV1JsonSchema } from '@happier-dev/plugin-sdk/automations';
+import {
+  PluginCollectionContractReadResultV1Schema,
+  preparePluginAccountCollectionContractV1,
+  resolvePluginCollectionMigrationChainV1,
+} from '../../../protocol/src/plugins/data/collectionsV1.js';
 
 import {
   CHANNEL_ACCOUNT_COLLECTIONS,
@@ -104,13 +109,92 @@ function findChannelStateRecordPayload(recordKind: string): PluginJsonSchema | u
   // These assertions describe provider ingress. Configured Fix is the other
   // explicit obligation cause and has no fabricated census or provider target.
   return recordKind === CHANNEL_STATE_RECORD_KIND.ingressObligation
-    ? payload?.oneOf?.find(branch => branch.properties?.censusId !== undefined)
+    ? payload?.oneOf?.find(branch => branch.properties?.normalizedIngress !== undefined)
     : recordKind === CHANNEL_STATE_RECORD_KIND.ingressCensus
       ? payload?.oneOf?.at(-1) ?? payload
       : payload;
 }
 
+const providerObservationShell = {
+  v: 1,
+  occurrenceId: 'provider-observation',
+  occurredAt: 1,
+  transport: { kind: 'poll' },
+  endpoint: { kind: 'direct', audience: 'direct', id: 'provider:chat:1' },
+  actor: { kind: 'human', principalId: 'person-1', isIntegrationSelf: false },
+  message: { id: 'provider:message:1', providerTimestamp: 1, addressingEvidence: 'none', contentProvenance: 'original' },
+} as const;
+
 describe('Channels collection declarations', () => {
+  it('publishes self-contained ingress above the retained census-backed v19 contract', async () => {
+    // Public Data contract captured on QA #86, before census-backed input was
+    // removed. Keep negotiation anchored to that producer, not current types.
+    const retained = JSON.parse(readFileSync(new URL(
+      '../../../protocol/src/plugins/data/__fixtures__/channelStateV19Qa86.json', import.meta.url,
+    ), 'utf8'));
+    const source = PluginCollectionContractReadResultV1Schema.parse({
+      access: 'writable', contract: retained.writer,
+    }).contract;
+    const declaration = CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS.find(
+      collection => collection.id === CHANNEL_STATE_COLLECTION.id,
+    );
+    const target = preparePluginAccountCollectionContractV1({
+      pluginId: PLUGIN_MANIFEST.id, contribution: declaration,
+    }).normalized;
+    expect(declaration?.schema).toEqual(CHANNEL_STATE_COLLECTION.schema);
+    expect(declaration?.schemaVersion).toBe(CHANNEL_STATE_COLLECTION.schemaVersion);
+    expect(target.migrations).toEqual((CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-state'] ?? [])
+      .map(({ id, fromSchemaVersion, toSchemaVersion }) => ({ id, fromSchemaVersion, toSchemaVersion })));
+    const historicalRow = {
+      id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
+      'connection-id': 'connection-1', 'created-at': 1, 'updated-at': 1,
+      'due-at': 100, terminal: false, attention: false,
+      payload: { censusId: 'C'.repeat(43), occurrenceIds: ['provider-observation'], target: null,
+        sourceAuthority: { connectionAuthorityEpoch: 1 },
+        lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+        disposition: null, nonAdmission: null },
+    };
+    const { censusId: _censusId, ...sharedPayload } = historicalRow.payload;
+    const currentRow = { ...historicalRow, id: 'B'.repeat(43), payload: {
+      ...sharedPayload, normalizedIngress: null, observationShell: providerObservationShell,
+    } };
+    const historicalRows: readonly Readonly<Record<string, JsonValue>>[] = [historicalRow,
+      { ...historicalRow, payload: { ...historicalRow.payload, prEventActors: [{ occurrenceId: 'provider-observation',
+        sender: { principalId: 'writer' }, observationActorPrincipalId: 'writer',
+        actor: { principalId: 'writer', repositoryWriteAccess: true } }] } },
+      { ...historicalRow, payload: { ...historicalRow.payload, userActionAnswerRequestId: 'question-1' } },
+    ];
+    const validateSource = compilePluginJsonSchema(source.schema);
+    const validateTarget = compilePluginJsonSchema(target.schema);
+    for (const row of historicalRows) {
+      expect(isValidPluginJsonSchemaValue(validateSource, row)).toBe(true);
+      expect(isValidPluginJsonSchemaValue(validateTarget, row)).toBe(true);
+    }
+    expect(isValidPluginJsonSchemaValue(validateTarget, currentRow)).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validateTarget, { ...currentRow,
+      payload: { ...currentRow.payload, censusId: historicalRow.payload.censusId },
+    })).toBe(false);
+    expect(target.schemaVersion).toBeGreaterThan(source.schemaVersion);
+    const chain = resolvePluginCollectionMigrationChainV1({
+      sourceSchemaVersion: source.schemaVersion,
+      targetSchemaVersion: target.schemaVersion,
+      readableSchemaVersions: target.readableSchemaVersions,
+      migrations: target.migrations,
+    });
+    expect(chain).not.toBeNull();
+    expect(chain?.length).toBeGreaterThan(0);
+    for (const row of [...historicalRows, currentRow]) {
+      let migrated: Readonly<Record<string, JsonValue>> = row;
+      for (const edge of chain ?? []) {
+        const callback = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-state']?.find(step => step.id === edge.id);
+        if (!callback) throw new Error(`Missing executable migration ${edge.id}`);
+        migrated = await callback.migrate(migrated, { currentRevision: 1 });
+      }
+      expect(migrated).toEqual(row);
+      expect(isValidPluginJsonSchemaValue(validateTarget, migrated)).toBe(true);
+    }
+  });
+
   it('keeps answer request metadata without a second copy of pending values', () => {
     const schema = findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'userActionAnswer');
     if (schema === undefined) throw new Error('Missing answer target declaration.');
@@ -124,7 +208,7 @@ describe('Channels collection declarations', () => {
     if (requestOnly === undefined) throw new Error('Missing native answer request metadata declaration.');
     const validateAssociation = compilePluginJsonSchema(requestOnly);
     expect(isValidPluginJsonSchemaValue(validateAssociation, {
-      occurrenceIds: ['answer-1'], censusId: 'A'.repeat(43), target: null,
+      occurrenceIds: ['answer-1'], normalizedIngress: null, observationShell: { ...providerObservationShell, occurrenceId: 'answer-1' }, target: null,
       sourceAuthority: { connectionAuthorityEpoch: 1 },
       lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
       disposition: null, nonAdmission: null, userActionAnswerRequestId: 'question-1',
@@ -135,7 +219,7 @@ describe('Channels collection declarations', () => {
     const association = (payload: JsonValue) => ({ id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
       'connection-id': 'connection-1', 'binding-id': 'binding-1', 'session-id': 'session-1',
       'created-at': 1, 'updated-at': 1, 'due-at': 100, terminal: false, attention: false, payload });
-    const historical = { occurrenceIds: ['pr-1'], censusId: 'A'.repeat(43),
+    const historical = { occurrenceIds: ['pr-1'], normalizedIngress: null, observationShell: { ...providerObservationShell, occurrenceId: 'pr-1' },
       target: { kind: 'automation', automationId: 'automation-1', occurrenceKey: 'pr-1', resultDelivery: { kind: 'none' } },
       sourceAuthority: { connectionAuthorityEpoch: 1 }, lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
       disposition: null, nonAdmission: null,
@@ -300,7 +384,7 @@ describe('Channels collection declarations', () => {
       },
     };
     const { configurationRevision: _currentConfigurationRevision, ...historicalConnectionPayload } = connection.payload;
-    const historicalConnection = { ...connection, payload: historicalConnectionPayload };
+    const historicalConnection = { ...connection, payload: { ...historicalConnectionPayload, maximumObservationAgeMs: 60_000 } };
     const migration = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-state']?.find((edge) => edge.fromSchemaVersion === sourceVersion);
     expect(migration).toMatchObject({ toSchemaVersion: sourceVersion + 1 });
     const target = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
@@ -542,35 +626,25 @@ describe('Channels collection declarations', () => {
     expect(isValidPluginJsonSchemaValue(validate, { arbitraryAuthority: true })).toBe(false);
   });
 
-  it('keeps one pending occurrence body without an all-destination preparation state', () => {
+  it('keeps pending input and permanent reply identity on each obligation', () => {
     const ingressPayload = findChannelStateRecordPayload(
       CHANNEL_STATE_RECORD_KIND.ingressObligation,
     );
-    const censusPayload = findChannelStateRecordPayload(
-      CHANNEL_STATE_RECORD_KIND.ingressCensus,
-    );
-
     expect(ingressPayload?.required).toEqual(expect.arrayContaining([
-      'censusId',
+      'normalizedIngress',
+      'observationShell',
       'lifecycle',
       'nonAdmission',
     ]));
     expect(ingressPayload?.properties?.input).toBeUndefined();
-    expect(censusPayload?.required).toContain('normalizedIngress');
-    expect(censusPayload?.properties?.phase).toBeUndefined();
-    expect(censusPayload?.required).not.toContain('connectionAuthorityEpoch');
-    expect(censusPayload?.required).not.toContain('maximumObservationAgeMs');
-    // The admitted arm stays the exact protocol schema object rather than a
-    // drifting hand-rolled copy; only its settled-census null arm is added.
-    expect(censusPayload?.properties?.normalizedIngress).toEqual({
+    expect(ingressPayload?.properties?.censusId).toBeUndefined();
+    // Both fields compose the protocol owner's exact schema instead of a copy.
+    expect(ingressPayload?.properties?.normalizedIngress).toEqual({
       anyOf: [ConversationNormalizedIngressV1JsonSchema, { type: 'null' }],
     });
-    expect((censusPayload?.properties?.normalizedIngress as { anyOf: readonly unknown[] }).anyOf[0])
+    expect((ingressPayload?.properties?.normalizedIngress as { anyOf: readonly unknown[] }).anyOf[0])
       .toBe(ConversationNormalizedIngressV1JsonSchema);
-    expect((censusPayload?.properties?.compacted as unknown as
-      Readonly<{ anyOf: readonly [Readonly<{ properties: Record<string, unknown> }>, unknown] }>)
-      .anyOf[0].properties.shell)
-      .toBe(ConversationAuthenticatedObservationShellV1JsonSchema);
+    expect(ingressPayload?.properties?.observationShell).toBe(ConversationAuthenticatedObservationShellV1JsonSchema);
     expect(ingressPayload?.properties?.text).toBeUndefined();
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('due-at');
     expect(CHANNEL_STATE_COLLECTION.serverReadable).toContain('attention');
@@ -660,8 +734,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(19);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(20);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -712,6 +786,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v17-to-v18', fromSchemaVersion: 17, toSchemaVersion: 18,
     }, {
       id: 'channel-state-v18-to-v19', fromSchemaVersion: 18, toSchemaVersion: 19,
+    }, {
+      id: 'channel-state-v19-to-v20', fromSchemaVersion: 19, toSchemaVersion: 20,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');

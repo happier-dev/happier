@@ -2,7 +2,7 @@ import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { ConversationDeliveryContentV1Schema, ConversationDeliveryInputV1Schema } from '@happier-dev/channels-protocol/v1';
-import type { ConversationDeliveryInputV1, ConversationDeliveryResultV1 } from '@happier-dev/channels-protocol/v1';
+import type { ConversationDeliveryInputV1, ConversationDeliveryResultV1, ConversationEndpointIdentityV1 } from '@happier-dev/channels-protocol/v1';
 import type {
   PluginInvocationContext,
   PluginServices,
@@ -49,7 +49,7 @@ import {
   createConversationSessionProjectionFrontierRowId,
 } from './sessionProjection.js';
 import { createConversationDiscussionProjectionFrontierRow } from './discussionProjection.js';
-import { createIngressCensusValue, deriveConversationSessionRotationRowId } from './ingress.js';
+import { deriveConversationSessionRotationRowId } from './ingress.js';
 import {
   createCurrentConversationConnectionFixture,
   type ConversationConnectionFixtureAuthority,
@@ -336,6 +336,7 @@ function finalizingBindingDeleteRow() {
 }
 
 function bindingDeleteIngressObligationRow() {
+  const observationShell = ingressObservationShell('poll:binding-delete-ingress', 'message-binding-delete');
   return {
     id: 'binding-delete-ingress-obligation',
     'record-kind': 'ingress-obligation',
@@ -349,7 +350,10 @@ function bindingDeleteIngressObligationRow() {
     'updated-at': 0,
     payload: {
       occurrenceIds: ['poll:binding-delete-ingress'],
-      censusId: 'd'.repeat(43),
+      normalizedIngress: { kind: 'fullText', observation: {
+        ...observationShell, message: { ...observationShell.message, text: 'Pending ingress evidence.' },
+      } },
+      observationShell,
       target: null,
       sourceAuthority: {
         connectionAuthorityEpoch: 4,
@@ -389,6 +393,15 @@ const FINALIZING_INGRESS_CENSUS_ID = 'a'.repeat(43);
 // 17 relation pairs plus connection/reservation/census forces a second 32-row page.
 const FINALIZING_INGRESS_RELATION_COUNT = 17;
 
+function ingressObservationShell(occurrenceId: string, messageId: string, replyEndpoint: ConversationEndpointIdentityV1 = endpoint) {
+  return {
+    v: 1 as const, occurrenceId, occurredAt: 0, transport: { kind: 'poll' as const }, endpoint: replyEndpoint,
+    actor: { principalId: 'principal-finalizing', kind: 'human' as const, isIntegrationSelf: false },
+    message: { id: messageId, revision: '1', addressingEvidence: 'none' as const,
+      contentProvenance: 'original' as const, providerTimestamp: 0 },
+  };
+}
+
 function finalizingIngressCensusRow(bindingIds: readonly string[]) {
   return {
     id: FINALIZING_INGRESS_CENSUS_ID,
@@ -423,7 +436,6 @@ function finalizingIngressCensusRow(bindingIds: readonly string[]) {
       },
       phase: 'prepared',
       connectionAuthorityEpoch: 5,
-      maximumObservationAgeMs: 60_000,
       matchedBindings: bindingIds.map((bindingId) => ({
         bindingId,
         bindingRevision: 1,
@@ -440,6 +452,7 @@ function finalizingIngressObligationRow(input: Readonly<{
 }>) {
   const terminal = input.phase === 'terminal';
   const dueAt = input.phase === 'attempting' ? 10 : null;
+  const observationShell = ingressObservationShell(`poll:finalizing:${input.ordinal}`, `message-finalizing:${input.ordinal}`);
   return {
     id: `z${String(input.ordinal).padStart(42, '0')}`,
     'record-kind': 'ingress-obligation',
@@ -453,7 +466,10 @@ function finalizingIngressObligationRow(input: Readonly<{
     'updated-at': 0,
     payload: {
       occurrenceIds: [`poll:finalizing:${input.ordinal}`],
-      censusId: FINALIZING_INGRESS_CENSUS_ID,
+      normalizedIngress: terminal ? null : { kind: 'fullText', observation: {
+        ...observationShell, message: { ...observationShell.message, text: 'Retained ingress evidence.' },
+      } },
+      observationShell,
       target: null,
       sourceAuthority: {
         connectionAuthorityEpoch: 5,
@@ -590,16 +606,13 @@ async function seedDiscussionProjectionState(state: MemoryCollection): Promise<v
   await state.put(createConversationDiscussionProjectionFrontierRow({ bindingId: 'binding-1',
     targetDiscussionId: 'discussion-1', lastScannedSeq: 1, now: 0 }), { expectedRevision: 'absent' });
   const obligationId = 'a'.repeat(43);
-  const censusId = 'd'.repeat(43);
-  await state.put(createIngressCensusValue({ censusId, connectionId: 'connection-1', now: 0, matchedBindings: [],
-    ingress: { kind: 'fullText', observation: { v: 1, occurrenceId: 'discussion-origin', occurredAt: 0,
-      transport: { kind: 'poll' }, endpoint, actor: { principalId: 'principal-1', kind: 'human', isIntegrationSelf: false },
-      message: { id: 'external-message-1', text: 'External input', providerTimestamp: 0, addressingEvidence: 'none', contentProvenance: 'original' } } },
-  }), { expectedRevision: 'absent' });
   await state.put({ id: obligationId, 'record-kind': 'ingress-obligation', v: 1,
     'created-at': 0, 'updated-at': 0, attention: false,
     'connection-id': 'connection-1', 'binding-id': 'binding-1', terminal: true,
-    payload: { occurrenceIds: ['discussion-origin'], censusId,
+    payload: { occurrenceIds: ['discussion-origin'], normalizedIngress: null, eventCandidate: null,
+      observationShell: { v: 1, occurrenceId: 'discussion-origin', occurredAt: 0, transport: { kind: 'poll' }, endpoint,
+        actor: { principalId: 'principal-1', kind: 'human', isIntegrationSelf: false },
+        message: { id: 'external-message-1', providerTimestamp: 0, addressingEvidence: 'none', contentProvenance: 'original' } },
       target: { kind: 'discussion', discussionId: 'discussion-1', localId: `channels:9:binding-1:${obligationId}`, providerPluginId: 'example.channel.provider' },
       sourceAuthority: { connectionAuthorityEpoch: 4 }, lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null },
       disposition: 'admitted', nonAdmission: null } }, { expectedRevision: 'absent' });
@@ -1113,26 +1126,14 @@ describe('Channels outward-delivery supervisor', () => {
     const retainedBinding = bindingRow();
     if (!parentBound) await state.put({ ...retainedBinding, payload: { ...retainedBinding.payload, endpoint: threadEndpoint } }, { expectedRevision: 1 });
     for (const ordinal of [1, 2]) {
-      const censusId = String(ordinal).repeat(43);
-      await state.put({
-        ...finalizingIngressCensusRow([]), id: censusId, 'connection-id': 'connection-1',
-        attention: false,
-        payload: {
-          ...finalizingIngressCensusRow([]).payload, conflict: null, compacted: null,
-          normalizedIngress: { kind: 'fullText', observation: {
-            ...finalizingIngressCensusRow([]).payload.normalizedIngress.observation,
-            endpoint: threadEndpoint, message: {
-              ...finalizingIngressCensusRow([]).payload.normalizedIngress.observation.message, id: `M${ordinal}`,
-            },
-          } },
-        },
-      }, { expectedRevision: 'absent' });
       await state.put({
         ...finalizingIngressObligationRow({ bindingId: 'binding-1', ordinal, phase: 'terminal' }),
         'connection-id': 'connection-1',
         payload: {
           ...finalizingIngressObligationRow({ bindingId: 'binding-1', ordinal, phase: 'terminal' }).payload,
-          censusId, disposition: 'admitted',
+          normalizedIngress: null,
+          observationShell: ingressObservationShell(`poll:finalizing:${ordinal}`, `M${ordinal}`, threadEndpoint),
+          disposition: 'admitted',
           sessionInput: { sessionId: 'session-1', localId: `L${ordinal}`, projectedReplySeq: null },
         },
       }, { expectedRevision: 'absent' });
@@ -3666,6 +3667,7 @@ describe('Channels outward-delivery supervisor', () => {
     const logger = { warn: vi.fn() };
     let rejected = true;
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       if (rejected) throw new PluginError({
         code: 'invalid_cursor',
@@ -3703,7 +3705,7 @@ describe('Channels outward-delivery supervisor', () => {
     await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
     expect(execute).toHaveBeenCalledWith(
       'session.transcript.get',
-      { sessionId: 'session-1', projection: 'externalShareableV1', cursor: null, limit: 100 },
+      { sessionId: 'session-1', projection: 'externalShareableV1', cursor: 'tail', limit: 100 },
       expect.anything(),
     );
     expect(state.rows.get('projection-frontier:binding-1')?.value).toMatchObject({

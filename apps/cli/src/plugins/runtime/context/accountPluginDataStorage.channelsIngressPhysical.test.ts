@@ -3,8 +3,6 @@ import tweetnacl from 'tweetnacl';
 import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
-    PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
-    PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
     PLUGIN_COLLECTION_LIMITS_V1,
     PluginAccountCollectionContributionV1Schema,
     PluginCollectionMutationRequestV1Schema,
@@ -77,10 +75,6 @@ type CurrentChannelsSources = Readonly<{
         input: ConversationProviderObservationIngestInputV1,
         context: PluginInvocationContext,
     ) => Promise<void>;
-    retain: (
-        input: Readonly<{ now: number; limit: number }>,
-        context: PluginInvocationContext,
-    ) => Promise<Readonly<{ compactedCensuses: number; deletedCensuses: number }>>;
     poll: (input: Readonly<{ connectionId: string; waitMs: number }>, context: PluginInvocationContext) => Promise<unknown>;
 }>;
 
@@ -109,10 +103,9 @@ async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
     }
     const createCurrentConnectionFixture = fixtureNamespace.createCurrentConversationConnectionFixture;
     const ingest = ingressNamespace.ingestConversationProviderObservationForInvocation;
-    const retain = ingressNamespace.runConversationIngressRetentionForInvocation;
     const poll = ingressNamespace.runConversationCheckpointedPollForInvocation;
     if (typeof createCurrentConnectionFixture !== 'function' || typeof ingest !== 'function'
-        || typeof retain !== 'function' || typeof poll !== 'function') {
+        || typeof poll !== 'function') {
         throw new Error('Expected the current Channels ingress fixtures and handler.');
     }
     const parsedManifest = parsePluginManifest(manifestNamespace.PLUGIN_MANIFEST);
@@ -147,7 +140,6 @@ async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
         // their exported symbols before narrowing them to the exercised contract.
         createCurrentConnectionFixture: createCurrentConnectionFixture as (input: unknown) => unknown,
         ingest: ingest as CurrentChannelsSources['ingest'],
-        retain: retain as CurrentChannelsSources['retain'],
         poll: poll as CurrentChannelsSources['poll'],
     });
 }
@@ -442,17 +434,14 @@ describe('Channels C3 physical E2EE ingress batches', () => {
         ));
         const ingressRequests = allRequests.slice(ingressMutationStart);
         expect(ingressRequests.length).toBeGreaterThan(0);
-        // Preparation batches carry one census fence plus as many obligation
-        // puts as the deployment admits. Sizing them from the Account Data
-        // owner's own measurement, instead of a private worst-case reservation,
-        // is what turns eighteen preparation round trips into three.
+        // The Account Data owner measures self-contained obligation writes.
+        // Fanout fills each deployment-sized batch without a census fence.
         const preparationRequests = ingressRequests.filter((request) => (
             request.operations.length > 2
-            && request.operations[0]?.kind === 'assert'
-            && request.operations.slice(1).every((operation) => operation.kind === 'put')
+            && request.operations.every((operation) => operation.kind === 'put' && jsonRecord(operation.value)['record-kind'] === 'ingress-obligation')
         ));
         expect(preparationRequests.map((request) => request.operations.length))
-            .toEqual([100, 100, 59]);
+            .toEqual([100, 100, 56]);
         const obligations = await readEveryRowOfKind({
             collection,
             recordKind: 'ingress-obligation',
@@ -463,7 +452,6 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             const value = jsonRecord(row.value);
             const bindingId = value['binding-id'];
             if (typeof bindingId !== 'string') throw new Error('Expected a persisted ingress binding identity.');
-            expect(row.revision).toBe(1);
             expect(value.v).toBe(1);
             expect(value['record-kind']).toBe('ingress-obligation');
             expect(value['connection-id']).toBe('connection-1');
@@ -471,10 +459,13 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             const payload = jsonRecord(value.payload);
             expect(jsonRecord(payload.sourceAuthority)).toMatchObject({
                 connectionAuthorityEpoch: 4,
-                bindingRevision: 1,
-                bindingAuthorityEpoch: 7,
+                ...(kind === 'fullText' ? { bindingAuthorityEpoch: 7 } : {}),
             });
             expect(jsonRecord(payload.lifecycle)).toMatchObject({ phase: 'terminal', dueAt: null });
+            expect(payload.normalizedIngress).toBeNull();
+            expect(payload.eventCandidate ?? null).toBeNull();
+            expect(payload).not.toHaveProperty('censusId');
+            expect(jsonRecord(payload.observationShell)).toMatchObject({ occurrenceId: ingress.entry.observation.kind === 'fullText' ? ingress.entry.observation.observation.occurrenceId : '' });
             return bindingId;
         }).sort();
         expect(persistedBindingIds).toEqual(bindingIds);
@@ -483,16 +474,10 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             collection,
             recordKind: 'ingress-census',
         });
-        expect(censuses).toHaveLength(1);
-        const census = jsonRecord(censuses[0]!.value);
-        expect(censuses[0]!.revision).toBe(2);
-        expect(census.v).toBe(1);
-        expect(census['record-kind']).toBe('ingress-census');
-        expect(typeof census['created-at']).toBe('number');
-        expect(jsonRecord(census.payload).phase).toBe('prepared');
+        expect(censuses).toEqual([]);
 
-        // A permissive collection replacement would accept the reader's null
-        // projection sentinel and conceal the exact live retention regression.
+        // The real host schema rejects a query projection's null due-at sentinel
+        // before it reaches the HTTP mutation boundary.
         const member = obligations[0]!;
         const beforeInvalidWrite = boundary.capturedMutationRequests.length;
         await expect(collection.batch([{
@@ -502,41 +487,6 @@ describe('Channels C3 physical E2EE ingress batches', () => {
         }])).rejects.toMatchObject({ code: 'plugin_collection_invalid_value' });
         expect(boundary.capturedMutationRequests).toHaveLength(beforeInvalidWrite);
 
-        if (kind === 'routableNonAdmission') {
-            boundary.capturedReadPaths.length = 0;
-            await expect(channels.retain({ now, limit: 1 }, context))
-                .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0,
-                    nextRetentionAt: now + Number(jsonRecord(census.payload).maximumObservationAgeMs) + 1 });
-            expect(boundary.capturedReadPaths).toEqual([PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1]);
-            // The deadline still hydrates the whole unit: attention continues
-            // to prevent physical retirement through the real encrypted reader.
-            boundary.capturedReadPaths.length = 0;
-            await expect(channels.retain({ now: now + Number(jsonRecord(census.payload).maximumObservationAgeMs) + 1, limit: 1 }, context))
-                .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
-            expect(boundary.capturedReadPaths.filter(path => path === PLUGIN_COLLECTION_GET_HTTP_PATH_V1))
-                .toHaveLength(bindingIds.length + 1);
-            expect(await readEveryRowOfKind({ collection, recordKind: 'ingress-obligation' })).toHaveLength(bindingIds.length);
-            return;
-        }
 
-        await expect(channels.retain({ now: Date.now(), limit: 1 }, context))
-            .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
-        const retainedMembers = await readEveryRowOfKind({ collection, recordKind: 'ingress-obligation' });
-        expect(retainedMembers).toHaveLength(bindingIds.length);
-        for (const row of retainedMembers) {
-            const value = jsonRecord(row.value);
-            expect(value).not.toHaveProperty('due-at');
-            expect(value).toMatchObject({ terminal: true, attention: true,
-                payload: { target: null, disposition: 'rejected', lifecycle: { phase: 'terminal', dueAt: null } } });
-        }
-        const compacted = await readEveryRowOfKind({ collection, recordKind: 'ingress-census' });
-        expect(compacted).toHaveLength(1);
-        const compactedPayload = jsonRecord(jsonRecord(compacted[0]!.value).payload);
-        expect(compactedPayload.normalizedIngress).toBeNull();
-        const retainedIds = jsonRecord(compactedPayload.compacted).retainedAttentionObligationRowIds;
-        expect(retainedIds).toHaveLength(retainedMembers.length);
-        expect(retainedIds).toEqual(expect.arrayContaining(retainedMembers.map(row => row.rowId)));
-        await expect(channels.retain({ now: Date.now(), limit: 1 }, context))
-            .resolves.toMatchObject({ compactedCensuses: 0, deletedCensuses: 0 });
     });
 });

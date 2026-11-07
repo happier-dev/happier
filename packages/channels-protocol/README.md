@@ -7,6 +7,18 @@ schemas, role contracts, contribution-point definitions, and public
 conformance fixtures. It does not contain a runtime, provider implementation,
 registry, UI, polling loop, persistence, or credential materialization.
 
+## Connection observation policy (unreleased 0.3)
+
+Connection create/update inputs and connection reads no longer carry
+`maximumObservationAgeMs`; provider setup/preparation no longer carries
+`recommendedMaximumObservationAgeMs`. Channels applies no common message-age
+cutoff or expansion floor. Providers retain their native continuity boundary and
+replay identity; delivery and recovery keep their existing lifecycle owners.
+Historical connection-age properties remain accepted in stored rows and are
+ignored. No data rewrite is required. These closed development contracts require
+matching Channels core, provider and UI versions; older strict development
+readers and writers are not an interoperability target for this removal.
+
 ## Session PR relationship batches (unreleased 0.3)
 
 The existing `session-pull-request-binding-v1` Action accepts `kind: 'attach'`
@@ -578,37 +590,23 @@ retained in the connection's readiness record.
 Development-source poll `bindings` also includes retained ordinary thread
 endpoints, alongside the existing linked PR and scoped-trigger context. A
 thread entry may carry `excludedMessageIds` for its inbound birth message.
-That binding-owned fact preserves first-message shaping if the first census
-write fails after child creation.
+That binding-owned fact preserves first-message shaping if input retention
+fails after child creation.
 
-Providers whose shaping depends on retained thread context can decode the
-actual batch's identities, then call the existing
-`provider/connection-read-v1` Action with optional
-`pollOccurrences: [occurrenceId, ...]`. The caller-filtered connection snapshot
-then includes `pollShaping: [{ occurrenceId, endpointWasRetainedAtPoll }]` for
-the requested occurrences that have a census. A requested read that cannot
-supply its shaping projection is unavailable, not permission to guess. An
-occurrence without a retained entry uses the original poll's binding context.
-The bound is the existing provider batch bound; an empty poll needs no census
-read. Ordinary callers omitting the selector retain the original read result.
+Email decodes MIME once and shapes each message from the current retained-thread
+context supplied with the poll. It does not reverse-read a per-occurrence shaping
+snapshot. Channels keeps the first admitted occurrence on replay, so a later
+presentation change neither replaces its accepted content nor creates another
+input. Sender trust remains independently enforced for inbound mail, reply
+refetches and attachments.
 
-The census owner performs exact keyed reads, including compacted censuses;
-polling does not enumerate retained history to construct an exception list.
-Decode MIME once, resolve this batch's context once, then shape the retained
-decoded messages without polling or fetching them again. No separate thread,
-shaping store, cache or checkpoint exists. This is an in-place, one-way 0.3
-development contract extension, not support for older 0.3 core binaries.
-
-In current 0.3 development source, setup may return
-`recommendedMaximumObservationAgeMs`. Preparation preserves it and the setup
-form seeds that value; a provider without a recommendation uses the existing
-30-day suggestion. Freshness values and provider retry hints accept nonnegative
-safe-integer milliseconds, without a one-minute floor or 30-day/24-hour ceiling.
-Telegram recommends 24 hours because of its
-[update retention](https://core.telegram.org/bots/api#getting-updates).
-GitHub and Discord recommend 30 days as provider-owned policy, not a retention
-promise: GitHub exposes [comment history with `since`](https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository),
-whereas Discord's [Gateway replay is session-bound](https://docs.discord.com/developers/events/gateway#resuming).
+In unreleased 0.3 development source, inbound history follows the provider's
+available history and checkpoint. Channels has no common message-age cutoff,
+per-connection age setting or expansion floor. A healthy reconnect catches up
+unseen messages the provider still returns, regardless of their timestamps.
+A first connection or real continuity gap establishes a provider-owned baseline
+and presents the existing dismissible history-gap notice. Provider retry hints
+remain nonnegative safe-integer milliseconds.
 
 The c0.69 limit ruling supersedes the historical Packet 01 §1.4 count/text/
 retry/debounce caps. Channels imposes no per-Account connection or binding

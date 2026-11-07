@@ -604,8 +604,6 @@ export async function setupTelegramChannels(
     recommendedTransport: 'checkpointedPull',
     overlapSafety: 'providerExclusive',
     replayContinuity: 'checkpointed',
-    // Bot API update retention: https://core.telegram.org/bots/api#getting-updates
-    recommendedMaximumObservationAgeMs: 86_400_000,
     outboundTextLimit: { maximum: TELEGRAM_MAX_MESSAGE_CODE_POINTS, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
     // The authenticated delivery truth travels with the connection instead of
     // being discarded into the opaque provider configuration.

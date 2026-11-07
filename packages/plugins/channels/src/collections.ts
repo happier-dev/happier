@@ -47,8 +47,6 @@ import {
   ConversationNormalizedIngressV1JsonSchema,
   MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES,
   MAX_CONVERSATION_ENDPOINT_STABLE_ID_UTF8_BYTES,
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
   MAX_CONVERSATION_OCCURRENCE_ID_UTF8_BYTES,
   MAX_CONVERSATION_PAIRING_DEEP_LINK_TEMPLATE_UTF8_BYTES,
   MAX_CONVERSATION_PROVIDER_CONNECTION_KEY_UTF8_BYTES,
@@ -548,11 +546,7 @@ const CONNECTION_PAYLOAD_SCHEMA = {
     // private connection snapshot is written. These facts are re-read by the
     // single custody/pairing paths; list/read never project either one.
     outboundTextLimit: ConversationOutboundTextLimitV1JsonSchema,
-    recommendedMaximumObservationAgeMs: {
-      type: 'integer',
-      minimum: MIN_CONVERSATION_OBSERVATION_AGE_MS,
-      maximum: MAX_CONVERSATION_OBSERVATION_AGE_MS,
-    },
+    recommendedMaximumObservationAgeMs: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
     // The provider-authenticated shared-endpoint delivery truth. Optional
     // because a provider that declares no restriction asserts every mode is
     // deliverable; the binding policy owner reads that absence the same way.
@@ -599,14 +593,8 @@ const CONNECTION_PAYLOAD_SCHEMA = {
     historyGap: HISTORY_GAP_SCHEMA,
     providerReadiness: PROVIDER_READINESS_SCHEMA,
     pollFailure: ConversationConnectionPollFailureJsonSchema,
-    maximumObservationAgeMs: {
-      type: 'integer',
-      minimum: MIN_CONVERSATION_OBSERVATION_AGE_MS,
-      maximum: MAX_CONVERSATION_OBSERVATION_AGE_MS,
-    },
-    // Optional for predecessor rows. A widened observation-age policy writes
-    // this one connection-local replay floor; it never stores ingress bodies
-    // or per-occurrence tombstones.
+    maximumObservationAgeMs: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+    // Historical connection-age fields remain readable, but have no runtime consumer.
     observationAgeExpansionFloorOccurredAt: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
   },
   required: [
@@ -630,7 +618,6 @@ const CONNECTION_PAYLOAD_SCHEMA = {
     'pendingOldTransportStop',
     'historyGap',
     'pollFailure',
-    'maximumObservationAgeMs',
   ],
   additionalProperties: false,
   allOf: [
@@ -958,7 +945,9 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
       maxItems: MAX_CONVERSATION_RECEIVE_BATCH_ENTRIES,
       items: OCCURRENCE_ID_SCHEMA,
     },
-    censusId: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+    normalizedIngress: nullable(ConversationNormalizedIngressV1JsonSchema),
+    observationShell: ConversationAuthenticatedObservationShellV1JsonSchema,
+    eventCandidate: nullable(ConversationIngressAutomationEventCandidateV1JsonSchema),
     prUpdate: SessionPullRequestUpdateV1Schema.jsonSchema,
     prSplitContinuation: SessionPullRequestUpdateContinuationV1Schema.jsonSchema,
     prBatchMemberIds: { type: 'array', items: OPAQUE_ROUTING_ROW_ID_SCHEMA, uniqueItems: true },
@@ -1019,7 +1008,8 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
   },
   required: [
     'occurrenceIds',
-    'censusId',
+    'normalizedIngress',
+    'observationShell',
     'target',
     'sourceAuthority',
     'lifecycle',
@@ -1055,6 +1045,27 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
       },
     ],
   }],
+} satisfies PluginJsonSchema;
+
+const {
+  normalizedIngress: _normalizedIngress,
+  observationShell: _observationShell,
+  eventCandidate: _eventCandidate,
+  ...historicalIngressObligationProperties
+} = INGRESS_OBLIGATION_PAYLOAD_SCHEMA.properties;
+
+// Inert pre-release development transition; remove at 0.3 migration consolidation (OWNER-RULINGS 2026-10-31).
+const HISTORICAL_INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
+  ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA,
+  properties: {
+    ...historicalIngressObligationProperties,
+    censusId: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+    prEventActors: AutomationConversationEventActorsV1Schema.jsonSchema,
+    userActionAnswerRequestId: boundedString(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES),
+  },
+  required: ['censusId', ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.required.filter(
+    field => field !== 'normalizedIngress' && field !== 'observationShell',
+  )],
 } satisfies PluginJsonSchema;
 
 /**
@@ -1125,11 +1136,7 @@ const RETAINED_INGRESS_CENSUS_PAYLOAD_SCHEMA = {
     compacted: nullable(INGRESS_CENSUS_COMPACTED_SCHEMA),
     phase: { type: 'string', enum: ['preparing', 'prepared'] },
     connectionAuthorityEpoch: POSITIVE_SAFE_INTEGER_SCHEMA,
-    maximumObservationAgeMs: {
-      type: 'integer',
-      minimum: MIN_CONVERSATION_OBSERVATION_AGE_MS,
-      maximum: MAX_CONVERSATION_OBSERVATION_AGE_MS,
-    },
+    maximumObservationAgeMs: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
     // Historical checkpoint coverage is readable but no longer produced.
     checkpointCoveredAt: nullable(NON_NEGATIVE_SAFE_INTEGER_SCHEMA),
     conflict: nullable(INGRESS_CENSUS_CONFLICT_FACT_SCHEMA),
@@ -1518,8 +1525,8 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 19,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+  schemaVersion: 20,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
   schema: {
     type: 'object',
     properties: {
@@ -1583,7 +1590,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
               properties: { ...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.properties,
                 userActionAnswerRequestId: boundedString(MAX_CONVERSATION_APPROVAL_REQUEST_ID_UTF8_BYTES) },
               required: [...INGRESS_OBLIGATION_PAYLOAD_SCHEMA.required, 'userActionAnswerRequestId'],
-            }] } : payload,
+            }, HISTORICAL_INGRESS_OBLIGATION_PAYLOAD_SCHEMA] } : payload,
         },
         required: [
           CHANNEL_STATE_FIELD.id,

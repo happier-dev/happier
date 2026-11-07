@@ -66,7 +66,7 @@ describe('Channels V1 provider setup outcomes', () => {
         } as const;
 
         expect(ConversationProviderSetupResultV1Schema.parse(durablePush)).toEqual(durablePush);
-        const longFreshness = { ...durablePush, recommendedMaximumObservationAgeMs: 31 * 86_400_000 };
+        const longFreshness = { ...durablePush, };
         expect(ConversationProviderSetupResultV1Schema.parse(longFreshness)).toEqual(longFreshness);
         const { outboundTextLimit: _nativeLimit, ...unlimited } = durablePush;
         expect(ConversationProviderSetupResultV1Schema.parse(unlimited)).toEqual(unlimited);

@@ -201,7 +201,6 @@ describe('Channels connections Resource invalidation', () => {
       transport: { kind: 'checkpointedPull' },
       replayContinuity: 'checkpointed',
       overlapSafety: 'safe',
-      maximumObservationAgeMs: 120_000,
       pollFailure: {
         phase: 'blocked',
         attemptCount: 2,
@@ -295,8 +294,8 @@ describe('Channels connections Resource invalidation', () => {
     for (let index = 0; index < 512; index += 1) {
       const connectionId = `long-lived-connection-${index}`;
       const value = { ...connection, id: connectionId, 'connection-id': connectionId,
-        payload: { ...connection.payload, maximumObservationAgeMs: 31 * 86_400_000,
-          recommendedMaximumObservationAgeMs: 31 * 86_400_000 } };
+        payload: { ...connection.payload,
+          } };
       expect(isValidPluginJsonSchemaValue(validates, value)).toBe(true);
       await state.put(value, { expectedRevision: 'absent' });
     }

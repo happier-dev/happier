@@ -271,7 +271,7 @@ async function journey(kind: 'source' | 'bundled' | 'materialization', omitCreat
     target: { pluginId: PLUGIN_MANIFEST.id, sourceCustody: snapshot.sourceCustody },
     point: { pointId: CHANNELS_PROVIDER_POINT_REF.id, protocol: CHANNELS_PROVIDER_POINT_REF.protocol },
     contributor: { pluginId, contributionId: contribution.contributor.contributionId, sourceCustody: contribution.contributor.sourceCustody },
-  }, providerSetupInput: { credentialRef }, credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: 60_000 } as const;
+  }, providerSetupInput: { credentialRef }, credentialRef, selectedTransport: 'checkpointedPull', } as const;
   const create = () => invoke('journey/create', setupInput);
   return { state, deliveries, effects, providerActions, create, currentOrigin, invoke,
     placeCoreOn(machineId: string) { coreMachineId = machineId; },
@@ -363,11 +363,6 @@ describe('Channels connection creation to registered provider journey', () => {
           running = fixture.invoke('journey/supervise', {}, generation.signal);
           await vi.advanceTimersByTimeAsync(0);
           await gate.started;
-          const subject = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0]!;
-          await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-            connectionId: created.connectionId, expectedRevision: subject.revision,
-            enabled: true, maximumObservationAgeMs: subject.maximumObservationAgeMs + 1,
-          });
         } else if (mode === 'not-started') {
           await fixture.invoke('journey/gap', {});
           running = fixture.invoke('journey/supervise', {}, generation.signal);
@@ -510,7 +505,7 @@ describe('Channels connection creation to registered provider journey', () => {
   );
 
   it.each(['bindingResolve', 'connectionRetest'] as const)(
-    'uses the current %s contract after a real observation-age policy edit', async consumer => {
+    'uses the current %s contract after real enabled-policy edits', async consumer => {
       const fixture = await journey('materialization');
       try {
         const created = await fixture.create();
@@ -520,12 +515,15 @@ describe('Channels connection creation to registered provider journey', () => {
         fixture.setConnectionId(connectionId);
         const original = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
         if (!original) throw new Error('Expected the public connection subject.');
+        const disabled = await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
+          connectionId, expectedRevision: original.revision, enabled: false,
+        });
+        expect(disabled).toMatchObject({ kind: 'updated', revision: original.revision + 1 });
         await fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-          connectionId, expectedRevision: original.revision, enabled: original.enabled,
-          maximumObservationAgeMs: original.maximumObservationAgeMs + 1,
+          connectionId, expectedRevision: original.revision + 1, enabled: true,
         });
         const current = ConversationConnectionListResultV1Schema.parse(JSON.parse(await fixture.connectionsResource())).connections[0];
-        expect(current?.authorityEpoch).toBe(original.authorityEpoch);
+        expect(current?.authorityEpoch).toBe(original.authorityEpoch + 2);
         expect(current?.revision).toBeGreaterThan(original.revision);
         const pending = fixture.invoke(CONVERSATION_MANAGEMENT_ACTION_IDS_V1[consumer], consumer === 'bindingResolve'
           ? { kind: 'endpoint', connectionId, expectedConnectionRevision: original.revision, query: '456' }

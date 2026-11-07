@@ -361,7 +361,6 @@ describe('Telegram Channel plugin activation', () => {
         recommendedTransport: 'checkpointedPull',
         overlapSafety: 'providerExclusive',
         replayContinuity: 'checkpointed',
-        recommendedMaximumObservationAgeMs: 86_400_000,
         outboundTextLimit: { maximum: 4096, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
         // This bot has group privacy enabled, so Telegram withholds ordinary
         // group and supergroup messages. Setup carries that authenticated

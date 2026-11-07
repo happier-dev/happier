@@ -722,11 +722,12 @@ describe('Channels pairing management writer', () => {
       connectionId: 'connection-1',
     }, context)).resolves.toMatchObject({ kind: 'retryScheduled', revision: 4 });
     expect(collection.batches).toHaveLength(1);
-    await management.updateConversationConnectionForInvocation({
-      connectionId: 'connection-1', expectedRevision: 4, enabled: true, maximumObservationAgeMs: 120_000,
-    }, context);
+    await expect(management.updateConversationConnectionForInvocation({
+      connectionId: 'connection-1', expectedRevision: 4, enabled: true,
+    }, context)).resolves.toMatchObject({ kind: 'unchanged', revision: 4 });
     await expect(retry({ connectionId: 'connection-1' }, context))
-      .resolves.toMatchObject({ kind: 'retryScheduled', revision: 5 });
+      .resolves.toMatchObject({ kind: 'retryScheduled', revision: 4 });
+    expect(collection.batches).toHaveLength(1);
   });
 
   it('retries the current connection generation without a caller version witness', async () => {
@@ -1015,7 +1016,7 @@ describe('Channels pairing management writer', () => {
                 ...(change === 'authority'
                   ? { configurationRevision: 5, authorityEpoch: 2 }
                   : change === 'configuration'
-                  ? { configurationRevision: 5, maximumObservationAgeMs: 120_000 }
+                  ? { configurationRevision: 5, }
                   : { providerReadiness: { code: 'providerCredentialInvalid' } }),
               } } });
           }

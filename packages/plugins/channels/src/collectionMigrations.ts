@@ -383,6 +383,11 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Retired checkpoint counters and authority fields stay readable. Adopt
     // the current writer contract without transforming retained rows.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v19-to-v20',
+    fromSchemaVersion: 19,
+    toSchemaVersion: 20,
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

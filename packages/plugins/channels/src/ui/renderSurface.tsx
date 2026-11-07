@@ -104,9 +104,6 @@ import {
   conversationBindingPolicyForOmittedFieldsV1,
   conversationSessionBindingDeliveryModeForOmittedFieldV1,
   CONVERSATION_CORE_PLUGIN_ID_V1,
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
-  DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationProviderFailureV1,
@@ -195,7 +192,6 @@ import {
   isNonEmptyString,
   isNonNegativeSafeInteger,
   isRecord,
-  isValidObservationAge,
   parseBindingsResource,
   parseBindingsValue,
   parseConnectionsResource,
@@ -235,14 +231,6 @@ const MILLISECONDS_PER_SECOND = 1_000;
 const MILLISECONDS_PER_MINUTE = 60 * MILLISECONDS_PER_SECOND;
 const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
-const OBSERVATION_AGE_PRESETS_MS = Object.freeze([
-  MILLISECONDS_PER_MINUTE,
-  5 * MILLISECONDS_PER_MINUTE,
-  MILLISECONDS_PER_HOUR,
-  MILLISECONDS_PER_DAY,
-  7 * MILLISECONDS_PER_DAY,
-  30 * MILLISECONDS_PER_DAY,
-]);
 const INBOUND_GROUPING_PRESETS_MS = Object.freeze([0, 250, 500, 750, 1_000, 2_000, 5_000]);
 
 
@@ -293,7 +281,6 @@ type PreparedConnectionSetup = Readonly<{
   >['ref'] | null;
   supportedTransports: readonly ConnectionCreateTransport[];
   selectedTransport: ConnectionCreateTransport;
-  maximumObservationAgeMs: string;
   presentation: PreparedConnectionPresentation;
   setupGuidance?: PreparedConnectionReady['setupGuidance'];
 }>;
@@ -462,7 +449,6 @@ type ConnectionPolicyInput = Readonly<{
   connectionId: string;
   expectedRevision: number;
   enabled: boolean;
-  maximumObservationAgeMs: number;
 }>;
 type ConnectionPolicyOperation = Readonly<{
   execution: PluginActionExecution;
@@ -1162,7 +1148,7 @@ function ConnectionPreparationReview(props: Readonly<{
   );
 }
 
-function formatObservationAge(value: number, t: Translate): string {
+function formatDuration(value: number, t: Translate): string {
   const units = [
     [MILLISECONDS_PER_DAY, 'plugins.channels.surface.day', 'plugins.channels.surface.days', 'day', 'days'],
     [MILLISECONDS_PER_HOUR, 'plugins.channels.surface.hour', 'plugins.channels.surface.hours', 'hour', 'hours'],
@@ -1191,7 +1177,7 @@ function durationPresetOptions(
   const values = Number.isInteger(current) && current >= 0
     ? [...new Set([...presets, current])].sort((left, right) => left - right)
     : presets;
-  return values.map((value) => ({ value: String(value), label: formatObservationAge(value, t) }));
+  return values.map((value) => ({ value: String(value), label: formatDuration(value, t) }));
 }
 
 function parseResourceErrorMessage(
@@ -1832,12 +1818,6 @@ function ConnectionContinuityDisclosures(props: Readonly<{
       ) : null}
     </Stack>
   );
-}
-
-function validObservationAge(value: string): number | undefined {
-  if (!/^\d+$/u.test(value)) return undefined;
-  const parsed = Number(value);
-  return isValidObservationAge(parsed) ? parsed : undefined;
 }
 
 /**
@@ -9785,24 +9765,21 @@ function AccountLocalBindingsSurface(props: Readonly<{
 type ConnectionPolicyDraft = Readonly<{
   revision: number;
   enabled: boolean;
-  maximumObservationAgeMs: string;
   /**
    * The exact saved policy this draft started from. It is the dirtiness
    * authority: without it a rebase cannot tell an untouched editor from one
    * holding work that has not been written yet.
    */
-  base: Readonly<{ enabled: boolean; maximumObservationAgeMs: string }>;
+  base: Readonly<{ enabled: boolean }>;
 }>;
 
 function connectionPolicyDraft(connection: ChannelsConnection): ConnectionPolicyDraft {
   const base = Object.freeze({
     enabled: connection.enabled,
-    maximumObservationAgeMs: String(connection.maximumObservationAgeMs),
   });
   return {
     revision: connection.revision,
     enabled: base.enabled,
-    maximumObservationAgeMs: base.maximumObservationAgeMs,
     base,
   };
 }
@@ -9820,12 +9797,7 @@ function connectionPolicyDraftHasUnsavedWork(
   draft: ConnectionPolicyDraft,
   connection: ChannelsConnection,
 ): boolean {
-  const edited = draft.enabled !== draft.base.enabled
-    || draft.maximumObservationAgeMs !== draft.base.maximumObservationAgeMs;
-  return edited && (
-    draft.enabled !== connection.enabled
-    || draft.maximumObservationAgeMs !== String(connection.maximumObservationAgeMs)
-  );
+  return draft.enabled !== draft.base.enabled && draft.enabled !== connection.enabled;
 }
 
 /**
@@ -10028,13 +10000,6 @@ function ConnectionRow(props: Readonly<{
     }));
   }, [props.connection]);
 
-  const onMaximumObservationAgeMsChange = React.useCallback((maximumObservationAgeMs: string) => {
-    setDraft((previous) => ({
-      ...currentConnectionPolicyDraft(previous, props.connection),
-      maximumObservationAgeMs,
-    }));
-  }, [props.connection]);
-
   /**
    * The explicit way out of a source change: the retained draft is replaced by
    * the current saved policy, so the person reads what is actually stored
@@ -10046,7 +10011,7 @@ function ConnectionRow(props: Readonly<{
     requestRefresh();
   }, [props.connection, requestRefresh]);
 
-  const save = React.useCallback(async (maximumObservationAgeMs: number) => {
+  const save = React.useCallback(async () => {
     if (updateUnavailable || mutationOutcomeUnknown || sourceChanged || mutationPendingRef.current) return;
     mutationPendingRef.current = true;
     let outcomeUnknown = false;
@@ -10055,7 +10020,6 @@ function ConnectionRow(props: Readonly<{
         connectionId: props.connection.connectionId,
         expectedRevision: props.connection.revision,
         enabled: currentDraft.enabled,
-        maximumObservationAgeMs,
       });
       if (settled.status !== 'pending' && settled.status !== 'outcomeUnknown') {
         props.onRefresh();
@@ -10186,7 +10150,6 @@ function ConnectionRow(props: Readonly<{
           resource={props.resource}
           sourceChanged={sourceChanged}
           onEnabledChange={onEnabledChange}
-          onMaximumObservationAgeMsChange={onMaximumObservationAgeMsChange}
           onRefresh={requestRefresh}
           onReload={reloadPolicyDraft}
           onSave={save}
@@ -10315,44 +10278,24 @@ function ConnectionPolicyEditor(props: Readonly<{
   /** The saved policy advanced past the revision this draft was read from. */
   sourceChanged: boolean;
   onEnabledChange: (enabled: boolean) => void;
-  onMaximumObservationAgeMsChange: (maximumObservationAgeMs: string) => void;
   onRefresh: () => void;
   onReload: () => void;
-  onSave: (maximumObservationAgeMs: number) => Promise<void>;
+  onSave: () => Promise<void>;
   t: Translate;
 }>): React.ReactElement {
-  const [validationIssue, setValidationIssue] = React.useState<string | undefined>();
   const updateUnavailable = props.connection.deletionState !== 'none';
   const outcomeUnknown = props.execution.status === 'outcomeUnknown';
   const saving = props.execution.status === 'pending';
   const mutationUnavailable = outcomeUnknown;
   const saveUnavailable = updateUnavailable || mutationUnavailable || props.sourceChanged;
 
-  React.useEffect(() => {
-    setValidationIssue(undefined);
-  }, [props.connection.revision]);
-
   const save = React.useCallback(async () => {
     if (saveUnavailable) return;
-    const parsedAge = validObservationAge(props.draft.maximumObservationAgeMs);
-    if (parsedAge === undefined) {
-      setValidationIssue(`${props.t(
-        'plugins.channels.surface.observationAgeInvalid',
-        'Enter a whole number from',
-      )} ${formatObservationAge(MIN_CONVERSATION_OBSERVATION_AGE_MS, props.t)} ${props.t(
-        'plugins.channels.surface.through',
-        'through',
-      )} ${formatObservationAge(MAX_CONVERSATION_OBSERVATION_AGE_MS, props.t)}.`);
-      return;
-    }
-
-    setValidationIssue(undefined);
-    await props.onSave(parsedAge);
-  }, [props.draft.maximumObservationAgeMs, props.onSave, props.t, saveUnavailable]);
+    await props.onSave();
+  }, [props.onSave, saveUnavailable]);
 
   const formDisabled = updateUnavailable || saving || mutationUnavailable;
   const enabledLabel = props.t('plugins.channels.surface.enabledPolicy', 'Enabled');
-  const observationAgeLabel = props.t('plugins.channels.surface.maximumObservationAge', 'Maximum observation age');
   // The row above names the connection and its state; the detail starts with what needs the reader,
   // then the policy as settings rows, then the facts it runs on.
   return (
@@ -10444,36 +10387,7 @@ function ConnectionPolicyEditor(props: Readonly<{
             />
           )}
         />
-        <Item
-          title={observationAgeLabel}
-          subtitle={props.t(
-            'plugins.channels.surface.maximumObservationAgeDescription',
-            'Accept incoming observations no older than this limit.',
-          )}
-          fieldAccessory
-          accessoryOutsidePressable
-          accessory={(
-            <Form.Select
-              testID="channels-connection-observation-age"
-              presentation="field"
-              label={observationAgeLabel}
-              options={durationPresetOptions(OBSERVATION_AGE_PRESETS_MS, props.draft.maximumObservationAgeMs, props.t)}
-              value={props.draft.maximumObservationAgeMs}
-              onChange={(next) => {
-                const selected = readActionInputOptionValue(next);
-                if (typeof selected !== 'string') return;
-                props.onMaximumObservationAgeMsChange(selected);
-                if (validationIssue !== undefined) setValidationIssue(undefined);
-              }}
-              disabled={formDisabled}
-            />
-          )}
-        />
       </ItemGroup>
-      {validationIssue !== undefined ? (
-        <Status testID="channels-connection-observation-age-issue" tone="danger" label={validationIssue} />
-      ) : null}
-
       {props.execution.status === 'success' ? (
         <Status
           testID="channels-save-outcome"
@@ -12581,7 +12495,6 @@ function ProviderSetupPicker(props: Readonly<{
   const [remediationSelection, setRemediationSelection] = React.useState<
     SelectedProviderSetupRemediationActionInput | undefined
   >();
-  const [createValidationIssue, setCreateValidationIssue] = React.useState<string | undefined>();
   const selectionPendingRef = React.useRef(false);
   const remediationSelectionPendingRef = React.useRef(false);
   /**
@@ -12628,7 +12541,6 @@ function ProviderSetupPicker(props: Readonly<{
     prepareAction.reset();
     retireSelectedProviderSetup();
     setPreparedConnection(undefined);
-    setCreateValidationIssue(undefined);
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
     setEndpointContinuation(undefined);
@@ -12645,7 +12557,6 @@ function ProviderSetupPicker(props: Readonly<{
     createAction.reset();
     retireSelectedProviderSetup();
     setPreparedConnection(undefined);
-    setCreateValidationIssue(undefined);
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
     setEndpointContinuation(undefined);
@@ -12753,7 +12664,6 @@ function ProviderSetupPicker(props: Readonly<{
           overlapSafety,
           replayContinuity,
           outboundTextLimit,
-          recommendedMaximumObservationAgeMs,
           setupGuidance,
         } = prepared.data;
         setRemediationSetupOperation(undefined);
@@ -12769,7 +12679,6 @@ function ProviderSetupPicker(props: Readonly<{
               : null,
             supportedTransports,
             selectedTransport,
-            maximumObservationAgeMs: String(recommendedMaximumObservationAgeMs ?? DEFAULT_CONVERSATION_OBSERVATION_AGE_MS),
             presentation: {
               providerDisplayName: resolveProviderDisplayName(operation.contributor.pluginId)
                 ?? props.t('plugins.channels.surface.providerFallback', 'Integration provider'),
@@ -12818,7 +12727,6 @@ function ProviderSetupPicker(props: Readonly<{
       setActiveOperationKey(operationKey);
       setFeedback(undefined);
       setPreparedConnection(undefined);
-      setCreateValidationIssue(undefined);
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
       setEndpointContinuation(undefined);
@@ -12990,13 +12898,6 @@ function ProviderSetupPicker(props: Readonly<{
     });
   }, []);
 
-  const onObservationAgeChange = React.useCallback((maximumObservationAgeMs: string) => {
-    setPreparedConnection((current) => (
-      current === undefined ? current : { ...current, maximumObservationAgeMs }
-    ));
-    setCreateValidationIssue(undefined);
-  }, []);
-
   const createConnection = React.useCallback(async () => {
     if (preparedConnection === undefined
       || props.signal.aborted
@@ -13008,21 +12909,6 @@ function ProviderSetupPicker(props: Readonly<{
       || endpointEnsurePending) {
       return;
     }
-    const maximumObservationAgeMs = validObservationAge(preparedConnection.maximumObservationAgeMs);
-    if (maximumObservationAgeMs === undefined) {
-      setCreateValidationIssue(`${props.t(
-        'plugins.channels.surface.observationAgeInvalid',
-        'Enter a whole number within the allowed observation-age range.',
-      )} ${props.t('plugins.channels.surface.observationAgeRange', 'Choose a value from')} ${formatObservationAge(
-        MIN_CONVERSATION_OBSERVATION_AGE_MS,
-        props.t,
-      )} ${props.t('plugins.channels.surface.through', 'through')} ${formatObservationAge(
-        MAX_CONVERSATION_OBSERVATION_AGE_MS,
-        props.t,
-      )}.`);
-      return;
-    }
-    setCreateValidationIssue(undefined);
     const readSettledCreateResult = (
       settled: Extract<PluginActionExecution, Readonly<{ status: 'success' }>>,
     ): Readonly<{ kind: 'created' | 'rejoined'; connectionId: string }>
@@ -13154,7 +13040,6 @@ function ProviderSetupPicker(props: Readonly<{
         providerSetupInput: preparedConnection.providerSetupInput,
         credentialRef: preparedConnection.credentialRef,
         selectedTransport: preparedConnection.selectedTransport,
-        maximumObservationAgeMs,
         endpointContinuation: {
           connectionId: continuedDraft.connectionId,
           webhookEndpointId,
@@ -13185,7 +13070,6 @@ function ProviderSetupPicker(props: Readonly<{
       providerSetupInput: preparedConnection.providerSetupInput,
       credentialRef: preparedConnection.credentialRef,
       selectedTransport: preparedConnection.selectedTransport,
-      maximumObservationAgeMs,
     } as const;
     const executionOptions = {
       signal: props.signal,
@@ -13229,7 +13113,6 @@ function ProviderSetupPicker(props: Readonly<{
         },
       };
       setEndpointContinuation(draft);
-      setCreateValidationIssue(undefined);
       setFeedback(undefined);
       setEndpointEnsurePending(true);
       try {
@@ -13551,37 +13434,7 @@ function ProviderSetupPicker(props: Readonly<{
                 detail={transportOutcomeLabel(preparedConnection.selectedTransport, props.t)}
               />
             )}
-            <Item
-              title={props.t('plugins.channels.surface.maximumObservationAge', 'Maximum observation age')}
-              subtitle={props.t(
-                'plugins.channels.surface.maximumObservationAgeDescription',
-                'Accept incoming observations no older than this limit.',
-              )}
-              fieldAccessory
-              accessoryOutsidePressable
-              accessory={(
-                <Form.Select
-                  testID="channels-provider-setup-observation-age"
-                  presentation="field"
-                  label={props.t('plugins.channels.surface.maximumObservationAge', 'Maximum observation age')}
-                  options={durationPresetOptions(
-                    OBSERVATION_AGE_PRESETS_MS,
-                    preparedConnection.maximumObservationAgeMs,
-                    props.t,
-                  )}
-                  value={preparedConnection.maximumObservationAgeMs}
-                  onChange={(next) => {
-                    const selected = readActionInputOptionValue(next);
-                    if (typeof selected === 'string') onObservationAgeChange(selected);
-                  }}
-                  disabled={actionUnavailable}
-                />
-              )}
-            />
           </ItemGroup>
-          {createValidationIssue === undefined ? null : (
-            <Status testID="channels-provider-setup-observation-age-issue" tone="danger" label={createValidationIssue} />
-          )}
           <Button
             testID="channels-provider-setup-create"
             title={createAction.execution.status === 'pending'

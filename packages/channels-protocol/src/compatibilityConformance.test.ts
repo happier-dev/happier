@@ -263,7 +263,6 @@ describe('Channels V1 compatibility policy and schema projections', () => {
                 providerSetupInput: { setupFuture: { nested: true } },
                 credentialRef: null,
                 selectedTransport: 'checkpointedPull',
-                maximumObservationAgeMs: 60_000,
             },
             {
                 providerSelection: {
@@ -276,7 +275,6 @@ describe('Channels V1 compatibility policy and schema projections', () => {
                 providerSetupInput: {},
                 credentialRef: null,
                 selectedTransport: 'checkpointedPull',
-                maximumObservationAgeMs: 60_000,
             },
         );
         assertExecutableJsonSchemaParity(

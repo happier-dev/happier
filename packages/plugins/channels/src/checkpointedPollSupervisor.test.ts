@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createIngressSupervisor, type IngressSupervisorOptions } from './checkpointedPollSupervisor.js';
 import { createConversationPairingManager } from './pairing.js';
+import { CHANNEL_STATE_INDEX_ID } from './collections.js';
 
 import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
@@ -74,6 +75,107 @@ function backgroundContext(
 }
 
 describe('Checkpointed poll supervisor', () => {
+  it.each([
+    { kind: 'connection', reset: false }, { kind: 'binding', reset: false }, { kind: 'checkpoint', reset: false },
+    { kind: 'binding', reset: true }, { kind: 'checkpoint', reset: true },
+  ] as const)('preserves unrelated schedules, backoff and permanent parking on a $kind edit (reset first: $reset)', async ({ kind, reset }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const generation = new AbortController();
+    const watchers: Array<{ index: string; prefix: readonly unknown[]; notify(event: { kind: 'changed' | 'reset'; changeCursor: number }): void }> = [];
+    const waitingConnection = createCurrentConversationConnectionFixture({ connectionId: 'connection-2', authority: {
+      providerPluginId: 'example.channel.provider', providerContributionSelection: { contributionId: 'test-provider' },
+      providerSetupInput: {}, credentialRef: null,
+      transportOrigin: { serverIdentityId: 'srv_account_one', materializationRef: {
+        pluginId: 'example.channel.provider', machineId: 'machine-1', materializationId: 'provider-2',
+      } }, providerConnectionKey: 'provider-2', providerConfig: {}, routingIdentityKey: 'a'.repeat(43),
+      integrationPrincipal: { id: 'principal-2' }, authorityEpoch: 1,
+    } });
+    let rows = connectionRows(4);
+    let repaired = false;
+    let inputRevision = 1;
+    const logger = { warn: vi.fn() };
+    let checkpointRead!: () => void;
+    const checkpointReady = new Promise<void>(resolve => { checkpointRead = resolve; });
+    const reads = new Map<string, number[]>();
+    const get = async (rowId: string) => {
+      if (rowId.startsWith('connection-')) {
+        const times = reads.get(rowId) ?? [];
+        times.push(Date.now()); reads.set(rowId, times);
+      }
+      if (rowId === 'connection-3' || rowId === 'connection-4') throw new PluginError({
+        code: 'collection_transport_unavailable', message: 'Account boundary unavailable', retryable: rowId === 'connection-3',
+      });
+      if (rowId === 'connection-1' && kind === 'checkpoint' && !repaired) throw new PluginError({
+        code: 'plugin_collection_invalid_value', message: 'Checkpoint requires repair', retryable: false,
+      });
+      if (rowId === 'connection-2') return Date.now() < 60_000 ? { rowId, revision: 1, value: waitingConnection } : null;
+      if (!rowId.startsWith('connection-')) {
+        checkpointRead();
+        return { rowId, revision: 1, value: {
+        id: rowId, 'record-kind': 'checkpoint', 'connection-id': 'connection-2', 'created-at': 0, 'updated-at': 0,
+        payload: { authorityEpoch: 1, opaqueToken: null, nextPollNotBeforeMs: 60_000 },
+      } };
+      }
+      return null;
+    };
+    const context = backgroundContext(generation.signal, undefined, logger);
+    const supervisor = createIngressSupervisor();
+    const running = supervisor.run({ ...context, services: { ...context.services,
+      storage: { account: { collection: () => ({ get,
+        query: async (request: Readonly<{ index?: string; prefix?: readonly unknown[] }>) => ({
+          rows: request.prefix?.[0] === 'connection' ? rows
+            : request.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1 && request.prefix?.[0] === 'connection-1'
+              ? [{ rowId: `${request.prefix[1]}-1`, revision: inputRevision, value: {
+                id: `${request.prefix[1]}-1`, 'record-kind': request.prefix[1], 'connection-id': 'connection-1',
+              } }] : [], changeCursor: 1,
+        }),
+        watch: (request: Readonly<{ index: string; prefix: readonly unknown[] }>, notify: (event: { kind: 'changed' | 'reset'; changeCursor: number }) => void) => {
+          const watch = { ...request, notify }; watchers.push(watch);
+          return { dispose() { const index = watchers.indexOf(watch); if (index >= 0) watchers.splice(index, 1); } };
+        },
+      }) } },
+      actions: { getCurrentExecutionRouting: async () => ({ serverIdentityId: 'srv_account_one', machineId: 'machine-1', pluginId: 'happier.channels' }) },
+      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
+    } as unknown as PluginServices });
+    const publish = (connectionId: string, recordKind: string) => {
+      for (const watch of [...watchers]) {
+        const key = watch.index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1 ? [connectionId, recordKind] : [recordKind];
+        if (watch.prefix.every((value, index) => value === key[index])) watch.notify({ kind: 'changed', changeCursor: 2 });
+      }
+    };
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await checkpointReady;
+      await vi.advanceTimersByTimeAsync(0);
+      for (const id of ['connection-1', 'connection-2', 'connection-3', 'connection-4']) expect(reads.get(id)).toEqual([0]);
+      expect(logger.warn.mock.calls.filter(([, details]) => details?.connectionId === 'connection-2')).toEqual([]);
+      await vi.advanceTimersByTimeAsync(100);
+      if (reset) {
+        for (const watch of watchers) watch.notify({ kind: 'reset', changeCursor: 2 });
+        await vi.advanceTimersByTimeAsync(0);
+        for (const id of ['connection-1', 'connection-2', 'connection-3', 'connection-4']) expect(reads.get(id)).toEqual([0]);
+      }
+      repaired = true;
+      inputRevision += 1;
+      if (kind === 'connection') rows = rows.map(row => row.rowId === 'connection-1' ? { ...row, revision: row.revision + 1 } : row);
+      publish('connection-1', kind);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reads.get('connection-1')).toEqual([0, 100]);
+      for (const id of ['connection-2', 'connection-3', 'connection-4']) expect(reads.get(id)).toEqual([0]);
+      await vi.advanceTimersByTimeAsync(2_900);
+      expect(reads.get('connection-3')).toEqual([0, 1_000, 3_000]);
+      expect(reads.get('connection-2')).toEqual([0]);
+      expect(reads.get('connection-4')).toEqual([0]);
+      await vi.advanceTimersByTimeAsync(57_000);
+      expect(reads.get('connection-2')).toEqual([0, 60_000]);
+      expect(reads.get('connection-4')).toEqual([0]);
+    } finally {
+      generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
+    }
+    expect(watchers).toEqual([]);
+  });
+
   it.each([false, true])('paces no-hint GitHub polls by their provider budget and still delivers a new comment at the next fire (all headers missing: %s)', async allHeadersMissing => {
     vi.useFakeTimers();
     const startedAt = Date.parse('2026-08-10T12:00:00Z');
@@ -86,7 +188,6 @@ describe('Checkpointed poll supervisor', () => {
     let changed = false;
     const supervisor = createIngressSupervisor({
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
       runPoll: async () => {
         pollTimes.push(Date.now() - startedAt);
         const result = ConversationPollResultV1Schema.parse(await pollGithubIssueCommentsForChannels({
@@ -236,7 +337,7 @@ describe('Checkpointed poll supervisor', () => {
     }
   });
 
-  it.each(['retention', 'due-work', 'connection-discovery', 'poll'] as const)(
+  it.each(['due-work', 'connection-discovery', 'poll'] as const)(
     'settles collection_update_required from %s without reads or writes on later wakes', async boundary => {
       vi.useFakeTimers();
       const generation = new AbortController();
@@ -248,8 +349,7 @@ describe('Checkpointed poll supervisor', () => {
       const get = vi.fn(async () => { if (outdated && boundary === 'poll') throw refusal; return null; });
       const query = vi.fn(async (request: Readonly<{ prefix?: readonly unknown[] }>) => {
         const kind = request.prefix?.[0];
-        if (outdated && ((boundary === 'retention' && kind === 'ingress-census')
-          || (boundary === 'due-work' && kind === 'ingress-obligation')
+        if (outdated && ((boundary === 'due-work' && kind === 'ingress-obligation')
           || (boundary === 'connection-discovery' && kind === 'connection'))) throw refusal;
         return { rows: kind === 'connection' ? connectionRows(1) : [], changeCursor: 1 };
       });
@@ -298,9 +398,10 @@ describe('Checkpointed poll supervisor', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const generation = new AbortController();
-    const listeners: Array<() => void> = [];
+    let invalidateBinding: (() => void) | undefined;
     const pollTimes: number[] = [];
     let failing = true;
+    let bindingRevision = 1;
     // Fault the Account transport, keeping the real poll eligibility, due-work,
     // retention, classification and supervisor scheduling owners in the path.
     const get = async () => {
@@ -315,9 +416,14 @@ describe('Checkpointed poll supervisor', () => {
     const running = supervisor.run({ ...context, services: { ...context.services,
       storage: { account: { collection: () => ({ get,
         query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
-          rows: request.prefix?.[0] === 'connection' ? connectionRows(1) : [], changeCursor: 1,
+          rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
+            : request.prefix?.[1] === 'binding' ? [{ rowId: 'binding-1', revision: bindingRevision,
+              value: { id: 'binding-1', 'record-kind': 'binding', 'connection-id': 'connection-1' } }] : [], changeCursor: 1,
         }),
-        watch: (_request: unknown, notify: () => void) => { listeners.push(notify); return { dispose() {} }; },
+        watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: () => void) => {
+          if (request.prefix?.[1] === 'binding') invalidateBinding = notify;
+          return { dispose() {} };
+        },
       }) } },
       events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } as unknown as PluginServices });
@@ -329,9 +435,10 @@ describe('Checkpointed poll supervisor', () => {
       expect(pollTimes).toEqual([0, 1_000, 3_000, 7_000, 15_000]);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(pollTimes).toHaveLength(5);
-      // Changed connection input starts a fresh admission/recovery sequence.
+      // Changed binding input starts a fresh admission/recovery sequence.
       failing = true;
-      listeners.at(-1)?.();
+      bindingRevision += 1;
+      invalidateBinding?.();
       await vi.advanceTimersByTimeAsync(3_000);
       expect(pollTimes.slice(5)).toEqual([75_000, 76_000, 78_000]);
     } finally {
@@ -342,8 +449,9 @@ describe('Checkpointed poll supervisor', () => {
   it('parks a permanent poll failure for a settled minute and recovers on a Collection change with attributable logs', async () => {
     vi.useFakeTimers();
     const generation = new AbortController();
-    const listeners: Array<() => void> = [];
+    let invalidateCheckpoint: (() => void) | undefined;
     let failing = true;
+    let checkpointRevision = 1;
     const get = vi.fn(async () => {
       if (failing) throw new PluginError({ code: 'plugin_collection_invalid_value',
         message: 'private payload must never be logged', retryable: false });
@@ -354,10 +462,12 @@ describe('Checkpointed poll supervisor', () => {
     const collection = {
       get,
       query: async (request: Readonly<{ prefix?: readonly unknown[] }>) => ({
-        rows: request.prefix?.[0] === 'connection' ? connectionRows(1) : [], changeCursor: 1,
+        rows: request.prefix?.[0] === 'connection' ? connectionRows(1)
+          : request.prefix?.[1] === 'checkpoint' ? [{ rowId: 'checkpoint-1', revision: checkpointRevision,
+            value: { id: 'checkpoint-1', 'record-kind': 'checkpoint', 'connection-id': 'connection-1' } }] : [], changeCursor: 1,
       }),
-      watch: (_request: unknown, notify: () => void) => {
-        listeners.push(notify);
+      watch: (request: Readonly<{ prefix?: readonly unknown[] }>, notify: () => void) => {
+        if (request.prefix?.[1] === 'checkpoint') invalidateCheckpoint = notify;
         return { dispose() {} };
       },
     };
@@ -378,7 +488,8 @@ describe('Checkpointed poll supervisor', () => {
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private payload');
       // A typed checkpoint repair releases the parked poll without rediscovering connections.
       failing = false;
-      listeners[0]?.();
+      checkpointRevision += 1;
+      invalidateCheckpoint?.();
       await vi.advanceTimersByTimeAsync(0);
       expect(get.mock.calls.length).toBeGreaterThan(1);
     } finally {
@@ -482,7 +593,7 @@ describe('Checkpointed poll supervisor', () => {
         routingIdentityKey: 'a'.repeat(43), integrationPrincipal: { id: 'principal-1' }, authorityEpoch: 1,
       },
     });
-    const row = { rowId: value.id, revision: 1, value };
+    let row = { rowId: value.id, revision: 1, value };
     let release: (() => void) | undefined;
     const heldRead = new Promise<void>(resolve => { release = resolve; });
     let readReleased = false;
@@ -518,6 +629,7 @@ describe('Checkpointed poll supervisor', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(get).toHaveBeenCalledTimes(1);
+      row = { ...row, revision: row.revision + 1 };
       for (const notify of listeners) notify();
       await vi.advanceTimersByTimeAsync(0);
       expect(get).toHaveBeenCalledTimes(1);
@@ -593,7 +705,6 @@ describe('Checkpointed poll supervisor', () => {
     });
     const supervisor = createIngressSupervisor({
       runDueWork,
-      runRetention: async () => ({}),
       reconciliationIntervalMs: 1_000,
       runPoll,
       clock: {
@@ -606,100 +717,6 @@ describe('Checkpointed poll supervisor', () => {
 
     expect(callTimes).toEqual([1_000_000, 1_002_000]);
     expect(calls.filter(call => call === 'poll')).toEqual(['poll', 'poll']);
-    await supervisor.dispose();
-  });
-
-  it('runs ingress retention through the existing supervisor with a generation-local keyset cursor', async () => {
-    let now = 2_000_000;
-    const generation = new AbortController();
-    const retentionInputs: Array<Readonly<{ now: number; limit: number; cursor?: string }>> = [];
-    const runRetention = vi.fn(async (input: Readonly<{ now: number; limit: number; cursor?: string }>) => {
-      retentionInputs.push(input);
-      if (retentionInputs.length === 2) generation.abort(new Error('retention cursor observed'));
-      return retentionInputs.length === 1 ? { nextCursor: 'retention:next' } : {};
-    });
-    const supervisor = createIngressSupervisor({
-      runDueWork: async () => 0,
-      runRetention,
-      runPoll: async () => ({ kind: 'ineligible' }),
-      reconciliationIntervalMs: 1_000,
-      clock: {
-        now: () => now,
-        async sleep(delayMs) { now += delayMs; },
-      },
-    });
-
-    await supervisor.run(backgroundContext(generation.signal));
-
-    expect(retentionInputs).toEqual([
-      { now: 2_000_000, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 },
-      { now: 2_000_000, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, cursor: 'retention:next' },
-    ]);
-    await supervisor.dispose();
-  });
-
-  it('does not rescan handed-off metadata on an age timer', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(3_000_000);
-    const generation = new AbortController();
-    const retentionAt: number[] = [];
-    const supervisor = createIngressSupervisor({
-      runDueWork: async () => 0,
-      runRetention: async (input) => {
-        retentionAt.push(input.now);
-        return {};
-      },
-      runPoll: async () => {
-        return { kind: 'ineligible' as const };
-      },
-      reconciliationIntervalMs: 1_000,
-    });
-    const running = supervisor.run(backgroundContext(generation.signal));
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(retentionAt).toEqual([3_000_000]);
-    } finally {
-      generation.abort();
-      await running;
-      await supervisor.dispose();
-      vi.useRealTimers();
-    }
-  });
-
-  it('retries a failed retention page at the existing recovery deadline', async () => {
-    let now = 4_000_000;
-    const generation = new AbortController();
-    const logger = { warn: vi.fn() };
-    let retentionCalls = 0;
-    const supervisor = createIngressSupervisor({
-      runDueWork: async () => 0,
-      runRetention: async () => {
-        retentionCalls += 1;
-        if (retentionCalls === 2) generation.abort(new Error('test complete'));
-        throw new Error('secret retention detail');
-      },
-      runPoll: async () => {
-        return { kind: 'ineligible' as const };
-      },
-      reconciliationIntervalMs: 1_000,
-      clock: {
-        now: () => now,
-        async sleep(delayMs) { now += delayMs; },
-      },
-    });
-
-    await supervisor.run(backgroundContext(generation.signal, undefined, logger));
-
-    expect(retentionCalls).toBe(2);
-    expect(now).toBe(4_001_000);
-    expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(logger.warn).toHaveBeenNthCalledWith(
-      1,
-      '[Channels] ingress supervisor work failed',
-      { boundary: 'retention' },
-    );
-    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
     await supervisor.dispose();
   });
 
@@ -721,7 +738,6 @@ describe('Checkpointed poll supervisor', () => {
     const supervisor = createIngressSupervisor({
       runPoll,
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
     });
     const firstContext = backgroundContext(first.signal);
     const firstRun = supervisor.run(firstContext);
@@ -764,7 +780,6 @@ describe('Checkpointed poll supervisor', () => {
     });
     const supervisor = createIngressSupervisor({
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
       reconciliationIntervalMs: 1_000,
       runPoll,
       clock: {
@@ -775,7 +790,7 @@ describe('Checkpointed poll supervisor', () => {
 
     await expect(supervisor.run(context)).resolves.toBeUndefined();
 
-    expect(queryCalls).toBe(2);
+    expect(queryCalls).toBe(4); // Two discovery attempts, then one binding and checkpoint snapshot.
     expect(runPoll).toHaveBeenCalledTimes(1);
     expect(now).toBe(2_001_000);
     await supervisor.dispose();
@@ -810,7 +825,6 @@ describe('Checkpointed poll supervisor', () => {
         if (dueWorkCalls === 1) throw new Error('secret due-work detail');
         return 0;
       },
-      runRetention: async () => ({}),
       reconciliationIntervalMs: 1_000,
       runPoll: async () => {
         pollCalls += 1;
@@ -880,7 +894,6 @@ describe('Checkpointed poll supervisor', () => {
         if (dueWorkCalls === 1) throw refusal();
         return 0;
       },
-      runRetention: async () => ({}),
       reconciliationIntervalMs: 1_000,
       runPoll: async () => {
         generation.abort(new Error('test complete'));
@@ -896,7 +909,7 @@ describe('Checkpointed poll supervisor', () => {
 
     expect(logger.warn).not.toHaveBeenCalled();
     expect(dueWorkCalls).toBe(2);
-    expect(queryCalls).toBe(2);
+    expect(queryCalls).toBe(4); // Recovery discovers once, then snapshots the two watched inputs.
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
     await supervisor.dispose();
   });
@@ -913,7 +926,6 @@ describe('Checkpointed poll supervisor', () => {
     });
     const supervisor = createIngressSupervisor({
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
       runPoll,
       reconciliationIntervalMs: 1_000,
     });
@@ -943,7 +955,6 @@ describe('Checkpointed poll supervisor', () => {
     const slowPoll = new Promise<void>((resolve) => { releaseSlowPoll = resolve; });
     const supervisor = createIngressSupervisor({
       runDueWork: async () => { dueWorkCalls += 1; return 0; },
-      runRetention: async () => ({}),
       runPoll: async (input) => {
         polls.push(input.connectionId);
         if (input.connectionId === 'connection-1') await slowPoll;
@@ -975,7 +986,6 @@ describe('Checkpointed poll supervisor', () => {
     let observedWaitMs: number | undefined;
     const supervisor = createIngressSupervisor({
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
       runPoll: async (input, context) => {
         observedWaitMs = input.waitMs;
         generation.abort(new Error('wait observed'));
@@ -991,40 +1001,6 @@ describe('Checkpointed poll supervisor', () => {
     await supervisor.dispose();
   });
 
-  it('starts connection polls without waiting for a coarse retention page', async () => {
-    const generation = new AbortController();
-    const polls: string[] = [];
-    let retentionCalls = 0;
-    let releaseRetention: (() => void) | undefined;
-    const slowRetention = new Promise<void>((resolve) => { releaseRetention = resolve; });
-    const supervisor = createIngressSupervisor({
-      runDueWork: async () => 0,
-      runRetention: async () => {
-        retentionCalls += 1;
-        await slowRetention;
-        return {};
-      },
-      runPoll: async (input) => {
-        polls.push(input.connectionId);
-        return { kind: 'retry' as const, retryAfterMs: 20 };
-      },
-      reconciliationIntervalMs: 20,
-    });
-
-    const run = supervisor.run(backgroundContext(generation.signal));
-    // One retention page can walk a whole census unit per row, so awaiting it
-    // inline stopped every connection from being polled for the whole sweep.
-    await vi.waitFor(() => expect(polls.length).toBeGreaterThanOrEqual(3));
-    // Still exactly one sweep in flight: the wake that finds one outstanding
-    // does not start a second pass over the same cursor.
-    expect(retentionCalls).toBe(1);
-
-    releaseRetention?.();
-    generation.abort(new Error('test complete'));
-    await run;
-    await supervisor.dispose();
-  });
-
   it('keeps polling a connection whose poll fails before its first suspension point', async () => {
     let now = 5_000_000;
     const generation = new AbortController();
@@ -1036,7 +1012,6 @@ describe('Checkpointed poll supervisor', () => {
         if (wakes > 5) generation.abort(new Error('test complete'));
         return 0;
       },
-      runRetention: async () => ({}),
       // A provider adapter that throws before returning its promise settles
       // the poll inside the same synchronous turn that started it.
       runPoll: (() => {
@@ -1058,37 +1033,6 @@ describe('Checkpointed poll supervisor', () => {
     await supervisor.dispose();
   });
 
-  it('keeps sweeping retention after a page that fails before its first suspension point', async () => {
-    let now = 6_000_000;
-    const generation = new AbortController();
-    let retentionCalls = 0;
-    let wakes = 0;
-    const supervisor = createIngressSupervisor({
-      runDueWork: async () => {
-        wakes += 1;
-        if (wakes > 5) generation.abort(new Error('test complete'));
-        return 0;
-      },
-      runRetention: (() => {
-        retentionCalls += 1;
-        if (retentionCalls === 1) throw new Error('synchronous retention failure');
-        generation.abort(new Error('retention recovered'));
-        return Promise.resolve({});
-      }) as IngressSupervisorOptions['runRetention'],
-      runPoll: async () => ({ kind: 'ineligible' as const }),
-      reconciliationIntervalMs: 1_000,
-      clock: {
-        now: () => now,
-        async sleep(delayMs) { now += delayMs; },
-      },
-    });
-
-    await supervisor.run(backgroundContext(generation.signal));
-
-    expect(retentionCalls).toBeGreaterThanOrEqual(2);
-    await supervisor.dispose();
-  });
-
   it('retires a generation only after the polls it started have settled', async () => {
     const generation = new AbortController();
     let settled = false;
@@ -1098,7 +1042,6 @@ describe('Checkpointed poll supervisor', () => {
     const started = new Promise<void>((resolve) => { pollStarted = resolve; });
     const supervisor = createIngressSupervisor({
       runDueWork: async () => 0,
-      runRetention: async () => ({}),
       runPoll: async () => {
         pollStarted?.();
         await slowPoll;

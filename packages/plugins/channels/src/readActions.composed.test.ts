@@ -118,7 +118,7 @@ describe('registered Channels Account read Actions', () => {
     } finally { await kit.dispose(); }
   });
   it.each<Readonly<{ name: string; payload: Readonly<Record<string, JsonValue>>; action: string; input: JsonValue }>>([
-    { name: 'paused', payload: { enabled: false }, action: 'connection/update-v1', input: { connectionId: 'connection-1', expectedRevision: 1, enabled: true, maximumObservationAgeMs: 60_000 } },
+    { name: 'paused', payload: { enabled: false }, action: 'connection/update-v1', input: { connectionId: 'connection-1', expectedRevision: 1, enabled: true, } },
     { name: 'permission loss', payload: { providerReadiness: { code: 'providerPermissionMissing' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1' } },
     { name: 'expired credential', payload: { providerReadiness: { code: 'providerCredentialInvalid' } }, action: 'connection/retest-v1', input: { connectionId: 'connection-1' } },
     { name: 'blocked poll', payload: { pollFailure: { phase: 'blocked', attemptCount: 1, retryNotBeforeMs: null, evidence: { kind: 'provider', reason: 'permissionMissing' } } }, action: 'connection/poll-retry-v1', input: { connectionId: 'connection-1' } },
@@ -182,7 +182,8 @@ describe('registered Channels Account read Actions', () => {
       const census = { id: censusId, 'record-kind': 'ingress-census', v: 1, 'connection-id': 'connection-1',
         'created-at': 100, 'updated-at': 101, attention: true,
         payload: { normalizedIngress, compacted: null, phase: 'prepared', connectionAuthorityEpoch: 1,
-          maximumObservationAgeMs: 60_000, checkpointCoveredAt: null, eventCandidate: null,
+          maximumObservationAgeMs: 60_000,
+          checkpointCoveredAt: null, eventCandidate: null,
           conflict: { kind: 'occurrenceEvidenceMismatch' }, matchedBindings: [] } };
       expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema), census)).toBe(true);
       await state.put(census, { expectedRevision: 'absent' });

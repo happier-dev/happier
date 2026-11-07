@@ -7,7 +7,6 @@ import {
   CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_ID_V1,
   CONVERSATION_PROVIDERS_CONTRIBUTION_PROTOCOL_VERSION_V1,
-  DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
 } from '@happier-dev/channels-protocol/v1';
 import {
   PluginUiArtifactDigestV1Schema,
@@ -136,7 +135,6 @@ type ConnectionResourceRow = Readonly<{
   integrationPrincipalLabel?: string;
   enabled: boolean;
   deletionState: 'none' | 'pendingStopReconciliation' | 'finalizingDelete';
-  maximumObservationAgeMs: number;
   attention: Readonly<{
     historyGap: Readonly<{
       reportedAt: number;
@@ -299,7 +297,6 @@ function connectionFixture(overrides: ConnectionResourceRowOverrides = {}): Conn
     integrationPrincipalLabel: 'Happier Relay',
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 120_000,
     attention: {
       historyGap: null,
       bestEffortBeforeDurableAdmission: false,
@@ -396,7 +393,6 @@ function offlineConnectionStateRow(overrides: Readonly<{
         pendingOldTransportStop: null,
         historyGap: null,
         pollFailure: null,
-        maximumObservationAgeMs: 60_000,
       },
     },
   };
@@ -1612,7 +1608,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findByTestId(renderer, 'channels-connection-delete')).toHaveLength(0);
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-connection-enabled').props.onPress();
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '5 minutes');
     });
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-save').props.onPress();
@@ -1631,7 +1626,6 @@ describe('Channels settings surface (real source, mounted)', () => {
           payload: expect.objectContaining({
             enabled: false,
             authorityEpoch: 3,
-            maximumObservationAgeMs: 5 * 60_000,
           }),
         }),
       }),
@@ -2042,7 +2036,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-connection-enabled').props.onPress();
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '5 minutes');
     });
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-save').props.onPress();
@@ -2055,7 +2048,6 @@ describe('Channels settings surface (real source, mounted)', () => {
         payload: {
           enabled: false,
           authorityEpoch: 3,
-          maximumObservationAgeMs: 5 * 60_000,
         },
       },
     });
@@ -2073,7 +2065,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(data.query.mock.calls.length).toBeGreaterThan(readsBeforeExplicitReread);
     expect(findByTestId(renderer, 'channels-save-outcome-unknown')).toHaveLength(0);
     expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
-    expect(fieldMenuValue(renderer, 'channels-connection-observation-age')).toBe('5 minutes');
     expect(host.readResource).not.toHaveBeenCalled();
   });
 
@@ -2415,7 +2406,6 @@ describe('Channels settings surface (real source, mounted)', () => {
           connectionId: connection.connectionId,
           expectedRevision: connection.revision,
           enabled: false,
-          maximumObservationAgeMs: 5 * 60_000,
         });
         return {
           kind: 'updated',
@@ -2470,7 +2460,6 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-connection-enabled').props.onPress();
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '5 minutes');
     });
     await act(async () => {
       await findPressableByTestId(renderer!, 'channels-connection-save').props.onPress();
@@ -2624,49 +2613,6 @@ describe('Channels settings surface (real source, mounted)', () => {
       'channels-connection-connection-danger-bravo',
       'channels-connection-connection-zulu',
     ]);
-  });
-
-  it('offers the bounded human observation-age presets through the update Action', async () => {
-    const connection = connectionFixture();
-    const host = createChannelsHostApi({
-      readResource: async () => connectionResourceContent([connection]),
-    });
-    renderer = await renderChannelsSurface(host.hostApi);
-
-    await act(async () => {
-      findPressableByTestId(renderer!, 'channels-connection-connection-1').props.onPress();
-    });
-    await flushHookEffects();
-
-    const save = () => findPressableByTestId(renderer!, 'channels-connection-save');
-
-    await act(async () => {
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '1 minute');
-    });
-    await act(async () => {
-      await save().props.onPress();
-    });
-    await flushHookEffects();
-    expect(host.executeAction).toHaveBeenLastCalledWith('connection/update-v1', {
-      connectionId: connection.connectionId,
-      expectedRevision: connection.revision,
-      enabled: connection.enabled,
-      maximumObservationAgeMs: 60_000,
-    });
-
-    await act(async () => {
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '30 days');
-    });
-    await act(async () => {
-      await save().props.onPress();
-    });
-    await flushHookEffects();
-    expect(host.executeAction).toHaveBeenLastCalledWith('connection/update-v1', {
-      connectionId: connection.connectionId,
-      expectedRevision: connection.revision,
-      enabled: connection.enabled,
-      maximumObservationAgeMs: 30 * 86_400_000,
-    });
   });
 
   it('unlocks an unknown update only after a requested fresh reread, even when its digest is unchanged', async () => {
@@ -2831,7 +2777,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     connection = connectionFixture({
       revision: 5,
-      maximumObservationAgeMs: 240_000,
+      enabled: false,
     });
     digestCharacter = 'd';
     await act(async () => {
@@ -2841,8 +2787,7 @@ describe('Channels settings surface (real source, mounted)', () => {
 
     expect(findByTestId(renderer, 'channels-save-outcome-unknown').length).toBeGreaterThan(0);
     expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
-    expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(true);
-    expect(fieldMenuValue(renderer, 'channels-connection-observation-age')).toBe('4 minutes');
+    expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
 
     deferReconciliationRead = true;
     await act(async () => {
@@ -2871,7 +2816,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-connection-enabled').props.onPress();
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '5 minutes');
     });
 
     await act(async () => {
@@ -2884,7 +2828,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
-    expect(fieldMenuValue(renderer, 'channels-connection-observation-age')).toBe('5 minutes');
   });
 
   it('preserves an unsaved connection draft and blocks it from overwriting a newer revision', async () => {
@@ -2901,12 +2844,10 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
     await act(async () => {
       findPressableByTestId(renderer!, 'channels-connection-enabled').props.onPress();
-      chooseFieldMenuOption(renderer!, 'channels-connection-observation-age', '5 minutes');
     });
 
     connection = connectionFixture({
       revision: 5,
-      maximumObservationAgeMs: 240_000,
     });
     digestCharacter = 'd';
     await act(async () => {
@@ -2915,7 +2856,6 @@ describe('Channels settings surface (real source, mounted)', () => {
     await flushHookEffects();
 
     expect(findPressableByTestId(renderer, 'channels-connection-enabled').props.checked).toBe(false);
-    expect(fieldMenuValue(renderer, 'channels-connection-observation-age')).toBe('5 minutes');
     expect(findByTestId(renderer, 'channels-connection-source-changed').length).toBeGreaterThan(0);
     expect(findPressableByTestId(renderer, 'channels-connection-save').props.disabled).toBe(true);
     await act(async () => {
@@ -3371,9 +3311,6 @@ describe('Channels settings surface (real source, mounted)', () => {
           providerSetupInput,
           credentialRef,
           selectedTransport: 'checkpointedPull',
-          // Setup seeds the Channels domain freshness default, not the smallest
-          // value an owner is allowed to configure.
-          maximumObservationAgeMs: DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
         });
         if (!isRecord(payload)) throw new Error('Expected a connection-create input object.');
         expect(payload.providerSelection).toEqual(selection);

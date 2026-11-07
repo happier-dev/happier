@@ -56,12 +56,9 @@ describe('Channels V1 connection management contracts', () => {
             providerSetupInput: { botToken: 'opaque' },
             credentialRef: null,
             selectedTransport: 'checkpointedPull',
-            maximumObservationAgeMs: 60_000,
         } as const;
 
         expect(ConversationConnectionCreateInputV1Schema.parse(checkpointedPull)).toEqual(checkpointedPull);
-        const longFreshness = { ...checkpointedPull, maximumObservationAgeMs: 31 * 86_400_000 };
-        expect(ConversationConnectionCreateInputV1Schema.parse(longFreshness)).toEqual(longFreshness);
         expect(ConversationConnectionCreateInputV1Schema.parse({
             ...checkpointedPull,
             selectedTransport: 'socket',
@@ -154,7 +151,6 @@ describe('Channels V1 connection management contracts', () => {
         }).success).toBe(false);
         expect(ConversationConnectionTransferInputV1Schema.safeParse({
             ...transfer,
-            maximumObservationAgeMs: 60_000,
         }).success).toBe(false);
         expect(ConversationConnectionTransferInputV1Schema.safeParse({
             ...transfer,
@@ -195,7 +191,6 @@ describe('Channels V1 connection management contracts', () => {
             connectionId,
             expectedRevision: 7,
             enabled: true,
-            maximumObservationAgeMs: 60_000,
         } as const;
         const updateResult = {
             kind: 'updated',
@@ -259,7 +254,7 @@ describe('Channels V1 connection management contracts', () => {
         expect(ConversationConnectionUpdateInputV1Schema.jsonSchema).toMatchObject({
             type: 'object',
             additionalProperties: false,
-            required: ['connectionId', 'expectedRevision', 'enabled', 'maximumObservationAgeMs'],
+            required: ['connectionId', 'expectedRevision', 'enabled'],
         });
         expect(ConversationConnectionCreateResultV1Schema.jsonSchema).toMatchObject({
             anyOf: expect.arrayContaining([

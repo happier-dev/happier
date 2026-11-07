@@ -34,7 +34,7 @@ export function recommendConversationConnectionRecovery(row: ConversationConnect
   if (row.attention.providerReadiness !== null) return recommendConversationRecovery(actions.connectionRetest, exact,
     row.attention.providerReadiness.code);
   if (!row.enabled) return recommendConversationRecovery(actions.connectionUpdate,
-    { connectionId: row.connectionId, expectedRevision: row.revision, enabled: true, maximumObservationAgeMs: row.maximumObservationAgeMs }, 'connectionDisabled');
+    { connectionId: row.connectionId, expectedRevision: row.revision, enabled: true }, 'connectionDisabled');
   if (row.attention.pollFailure?.phase === 'blocked') return recommendConversationRecovery(actions.connectionPollRetry, exact, 'pollBlocked');
   if (row.attention.pollFailure?.phase === 'retryDue') return recommendConversationRecovery(actions.connectionList, {}, 'retryScheduled');
   const delivery = row.attention.outwardDelivery;

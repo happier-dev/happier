@@ -263,13 +263,12 @@ available in an installed release.
 
 ### The history baseline
 
-New connections start with their provider's recommended freshness value:
-24 hours for Telegram, whose [pending updates expire after that interval](https://core.telegram.org/bots/api#getting-updates),
-and 30 days for GitHub and Discord. Those latter defaults are Happier provider
-policy, not promises of provider retention or durable replay: GitHub offers
-[comment history](https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository),
-while Discord's [Gateway replay depends on its current session](https://docs.discord.com/developers/events/gateway#resuming).
-You can change the freshness value during setup.
+In **unreleased 0.3 development source**, Channels has no common message-age
+cutoff or per-connection age setting. A healthy reconnect catches up unseen
+messages the service still returns. First connections and real history gaps
+start at the service's available baseline and show a dismissible note when
+older messages were not imported. The service's own retention and replay
+capabilities determine which messages remain available.
 
 The current development source has no fixed connection/binding count, generic
 message-text or chunk-count ceiling, five-attempt delivery budget, or five-second
@@ -348,12 +347,14 @@ model are about failure rather than success:
   guessed: you record it as accepted or discard it. Happier never resends an
   ambiguous delivery on its own.
 
-What Happier keeps is bounded to what recovery still needs. Inbound message
-content is retained while its admission obligations are live, then reduced to
-a compact replay-evidence shell. An accepted Session input keeps that shell's
-exact message relation until its reply has terminal delivery custody and its
-transcript frontier has passed, or the binding no longer targets that Session.
-Other settled ingress evidence is deleted once its replay window has passed.
+In **unreleased 0.3 development source**, Channels is not a message archive.
+It keeps inbound content only while a destination still needs
+delivery, then drops it at the native Session or Discussion acceptance handoff.
+Unfinished accepted input does not expire merely because it is old. Minimal
+native-message and sender dedupe metadata, reply relations and per-conversation
+lifecycle records remain where recovery or replies need them. Once the original
+body is gone, a replay of that processed message creates neither another input
+nor a new content conflict.
 An outbound delivery that reaches a terminal state is kept for a
 thirty-day recovery window so a failure can be resolved; an ambiguous partial
 delivery keeps only a fingerprint of its content but stays visible until you

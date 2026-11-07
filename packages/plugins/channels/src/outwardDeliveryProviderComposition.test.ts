@@ -170,7 +170,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
       const setup = ConversationProviderSetupResultV1Schema.parse(await coreKit.invokeAction('setup', null));
       expect(setup.credentialRef).toEqual(credentialRef);
       if (setupOrigin === undefined || !('materializationRef' in setupOrigin)) throw new Error('Native setup must produce materialized transport authority');
-      const initial = createCurrentConversationConnectionFixture({ connectionId: 'github-legacy', maximumObservationAgeMs: 60_000,
+      const initial = createCurrentConversationConnectionFixture({ connectionId: 'github-legacy',
         authority: { providerPluginId: pluginId, providerContributionSelection: { contributionId: 'native' }, providerSetupInput: setupInput,
           credentialRef, transportOrigin: setupOrigin,
           providerConnectionKey: setup.providerConnectionKey, providerConfig: setup.providerConfig, integrationPrincipal: setup.integrationPrincipal,
@@ -188,7 +188,7 @@ describe('Channels chunk producer to registered native-handler fixture seam', ()
       await expect(coreKit.invokeAction('retest', null)).resolves.toMatchObject({ kind: 'ready' });
       const refreshed = (await state.get('github-legacy'))?.value.payload;
       expect(refreshed).toMatchObject({ outboundTextLimit: setup.outboundTextLimit,
-        recommendedMaximumObservationAgeMs: setup.recommendedMaximumObservationAgeMs, maximumObservationAgeMs: 60_000 });
+        });
       const text = 'x'.repeat(70_000);
       await expect(coreKit.invokeAction('deliver', { text })).resolves.toMatchObject({ kind: 'settled', custody: { state: 'delivered' } });
       expect(comments).toHaveLength(2);

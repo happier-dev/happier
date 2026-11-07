@@ -921,7 +921,7 @@ describe('Channels target-persisting binding management', () => {
       const current = collection.rows.get('connection-1');
       if (current === undefined) throw new Error('Expected current connection row.');
       collection.rows.set('connection-1', { ...current, revision: current.revision + 1,
-        value: { ...current.value, payload: { ...current.value.payload, configurationRevision: 5, maximumObservationAgeMs: 120_000 } } });
+        value: { ...current.value, payload: { ...current.value.payload, configurationRevision: 5, } } });
       return { kind: 'verified' as const };
     });
 
@@ -1246,7 +1246,7 @@ describe('Channels target-persisting binding management', () => {
         const current = input.collection.rows.get('connection-1');
         if (current === undefined) throw new Error('Expected current connection row.');
         input.collection.rows.set('connection-1', { ...current, revision: current.revision + 1,
-          value: { ...current.value, payload: { ...current.value.payload, configurationRevision: 5, maximumObservationAgeMs: 120_000 } } });
+          value: { ...current.value, payload: { ...current.value.payload, configurationRevision: 5, } } });
       },
     },
     {
@@ -1650,7 +1650,7 @@ describe('Channels target-persisting binding management', () => {
         revision: current.revision + 1,
         value: { ...current.value, payload: { ...current.value.payload,
           ...(change === 'configuration'
-            ? { configurationRevision: 5, maximumObservationAgeMs: 120_000 }
+            ? { configurationRevision: 5, }
             : { providerReadiness: { code: 'providerCredentialInvalid' } }),
         } },
       });
@@ -2184,7 +2184,6 @@ describe('Channels target-persisting binding management', () => {
       connectionId: 'connection-1',
       expectedRevision: 4,
       enabled: false,
-      maximumObservationAgeMs: 120_000,
       signal: new AbortController().signal,
     })).resolves.toEqual({
       kind: 'updated',
@@ -2202,7 +2201,6 @@ describe('Channels target-persisting binding management', () => {
           payload: expect.objectContaining({
             enabled: false,
             authorityEpoch: 2,
-            maximumObservationAgeMs: 120_000,
             historyGap: null,
             pollFailure: null,
           }),
@@ -2211,31 +2209,7 @@ describe('Channels target-persisting binding management', () => {
     ]]);
   });
 
-  it('accepts observation ages beyond the former 30-day cap and rejects unsafe intervals', async () => {
-    const update = Reflect.get(management, 'updateConversationConnectionForInvocation');
-    expect(update).toEqual(expect.any(Function));
-    if (typeof update !== 'function') return;
-
-    const collection = createCollection([connectionRow()]);
-    await expect(update({
-      connectionId: 'connection-1',
-      expectedRevision: 4,
-      enabled: false,
-      maximumObservationAgeMs: Number.MAX_SAFE_INTEGER + 1,
-    }, context(collection, vi.fn()))).rejects.toMatchObject({
-      code: 'channels_connection_update_maximum_observation_age_invalid',
-    });
-    expect(collection.batches).toEqual([]);
-    const maximumObservationAgeMs = 30 * 86_400_000 + 1;
-    await expect(update({
-      connectionId: 'connection-1',
-      expectedRevision: 4,
-      enabled: false,
-      maximumObservationAgeMs,
-    }, context(collection, vi.fn()))).resolves.toMatchObject({ kind: 'updated', revision: 5 });
-    expect(collection.rows.get('connection-1')?.value.payload).toMatchObject({ maximumObservationAgeMs });
-  });
-
+  // Owner ruling 2026-10-29 removed configurable per-connection observation ages.
   it('clears retired transfer-stop metadata when the Account-local connection policy changes', async () => {
     const update = Reflect.get(management, 'updateConversationConnectionInAccountCollection');
     expect(update).toEqual(expect.any(Function));
@@ -2275,7 +2249,6 @@ describe('Channels target-persisting binding management', () => {
       connectionId: 'connection-1',
       expectedRevision: 4,
       enabled: false,
-      maximumObservationAgeMs: 60_000,
       signal: new AbortController().signal,
     })).resolves.toMatchObject({
       kind: 'updated',
@@ -2285,7 +2258,6 @@ describe('Channels target-persisting binding management', () => {
     });
     expect(collection.rows.get('connection-1')?.value.payload).toMatchObject({
       enabled: false,
-      maximumObservationAgeMs: 60_000,
       authorityEpoch: 3,
       pendingOldTransportStop: null,
     });

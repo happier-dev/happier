@@ -5,7 +5,7 @@ import { ConversationProviderObservationIngestInputV1Schema, ConversationProvide
   ConversationProviderConnectionsListInputV1Schema, ConversationTransportFactReportInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CHANNELS_PLUGIN, CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from '../manifest.js';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_DELIVERIES_COLLECTION } from '../collections.js';
-import { runConversationCheckpointedPollForInvocation, runConversationIngressDueWorkForInvocation, runConversationIngressRetentionForInvocation,
+import { runConversationCheckpointedPollForInvocation, runConversationIngressDueWorkForInvocation,
   type ConversationCheckpointedPollRunResult } from '../ingress.js';
 import { runConversationOutwardDeliveryCycle } from '../outwardDeliverySupervisor.js';
 import { channelsTargetedContributionServices } from './operationOnlyTargetedContributionsFixture.js';
@@ -99,13 +99,6 @@ export async function createChannelsJourneyFixture(input: Readonly<{
         await runConversationIngressDueWorkForInvocation({}, context);
         return null;
       } },
-    'journey/retention': { title: 'Run the production ingress retention cycle', surfaces: ['plugin'], dangerLevel: 'safe',
-      hostAccess: ['account-storage', 'bound-session'],
-      inputSchema: { type: 'object' }, resultSchema: { type: 'null' },
-      async run(_request, context) {
-        await runConversationIngressRetentionForInvocation({}, context);
-        return null;
-      } },
     'journey/ingest': { title: 'Invoke the activated ingress registration', surfaces: ['plugin'], dangerLevel: 'safe',
       hostAccess: ['account-storage', 'bound-session'], inputSchema: ConversationProviderObservationIngestInputV1Schema,
       resultSchema: { type: 'null' }, async run(request, context) {
@@ -186,7 +179,6 @@ export async function createChannelsJourneyFixture(input: Readonly<{
     poll: async () => { await invoke('journey/poll', {}); return pollResults.at(-1); },
     pollResults, outward: () => invoke('journey/outward', {}),
     due: () => invoke('journey/due', {}),
-    retention: () => invoke('journey/retention', {}),
     ingest: (value: JsonValue) => invoke('journey/ingest', value),
     resolveAttachments: (request: ComposerAttachmentResolveRequestV1) => kit.invokeAction('journey/resolve-attachments', request, {
       surface: 'plugin', sessionId: request.sessionId, services: channelsTargetedContributionServices(kit),

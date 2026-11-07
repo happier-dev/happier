@@ -488,8 +488,8 @@ describe('Channels core manifest', () => {
     ]);
     expect(collections?.find(({ id }) => id === CHANNEL_STATE_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_STATE_COLLECTION_ID,
-      schemaVersion: 19,
-      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+      schemaVersion: 20,
+      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
       migrations: [{
         id: 'channel-state-v1-to-v2',
         fromSchemaVersion: 1,
@@ -562,6 +562,10 @@ describe('Channels core manifest', () => {
         id: 'channel-state-v18-to-v19',
         fromSchemaVersion: 18,
         toSchemaVersion: 19,
+      }, {
+        id: 'channel-state-v19-to-v20',
+        fromSchemaVersion: 19,
+        toSchemaVersion: 20,
       }],
       rowIdField: CHANNEL_STATE_FIELD.id,
       serverReadable: [
@@ -1100,6 +1104,12 @@ describe('Channels core manifest', () => {
 
   it('owns C3/C4 ingress, checkpoint, frontier, and rotation state in the same strict collection', () => {
     const validate = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+    const observationShell = {
+      v: 1, occurrenceId: 'occurrence-1', occurredAt: 1, transport: { kind: 'poll' },
+      endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
+      actor: { principalId: 'principal-1', kind: 'human', isIntegrationSelf: false },
+      message: { id: 'message-1', revision: '1', addressingEvidence: 'none', contentProvenance: 'original', providerTimestamp: 1 },
+    };
     const ingress = {
       [CHANNEL_STATE_FIELD.id]: 'C'.repeat(43),
       [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.ingressObligation,
@@ -1120,7 +1130,10 @@ describe('Channels core manifest', () => {
           requestedPermissionCeiling: 'default',
           remoteApprovalMaxScope: 'off',
         },
-        censusId: 'D'.repeat(43),
+        normalizedIngress: { kind: 'fullText', observation: {
+          ...observationShell, message: { ...observationShell.message, text: 'Investigate this.' },
+        } },
+        observationShell,
         sourceAuthority: {
           connectionAuthorityEpoch: 1,
           bindingRevision: 1,
@@ -1185,6 +1198,7 @@ describe('Channels core manifest', () => {
         compacted: null,
         phase: 'prepared',
         connectionAuthorityEpoch: 1,
+        // Historical census rows stay schema-readable, but have no live reader.
         maximumObservationAgeMs: 60_000,
         checkpointCoveredAt: null,
         conflict: null,
@@ -1399,7 +1413,7 @@ describe('Channels core manifest', () => {
       },
     })).toBe(false);
     const {
-      maximumObservationAgeMs: _maximumObservationAgeMs,
+      maximumObservationAgeMs,
       ...ingressCensusWithoutObservationAge
     } = ingressCensus.payload;
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1410,10 +1424,15 @@ describe('Channels core manifest', () => {
       ...ingressCensus,
       payload: { ...ingressCensus.payload, text: 'must not become a prompt store' },
     })).toBe(false);
-    const { censusId: _censusId, ...ingressWithoutCensus } = ingress.payload;
+    const { normalizedIngress: _normalizedIngress, ...ingressWithoutInput } = ingress.payload;
     expect(isValidPluginJsonSchemaValue(validate, {
       ...ingress,
-      payload: ingressWithoutCensus,
+      payload: ingressWithoutInput,
+    })).toBe(false);
+    const { observationShell: _observationShell, ...ingressWithoutShell } = ingress.payload;
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingress,
+      payload: ingressWithoutShell,
     })).toBe(false);
     const { occurredAt: _occurredAt, ...observationWithoutOccurredAt } = ingressCensus.payload.normalizedIngress.observation;
     expect(isValidPluginJsonSchemaValue(validate, {

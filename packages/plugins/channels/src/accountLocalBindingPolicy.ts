@@ -14,8 +14,6 @@ import {
   conversationThreadRouterAllowedPrincipalIdsV1,
   ConversationConnectionIdV1Schema,
   ConversationProviderConnectionStopInputV1Schema,
-  MAX_CONVERSATION_OBSERVATION_AGE_MS,
-  MIN_CONVERSATION_OBSERVATION_AGE_MS,
   conversationBindingInputModesForEndpointV1,
   isConversationBindingInputModeDeliverableV1,
   isConversationBindingTargetKindKnownV1,
@@ -176,7 +174,6 @@ export type ConversationConnectionManagementRow = Readonly<{
   authorityEpoch: number;
   enabled: boolean;
   deletionState: 'none' | 'pendingStopReconciliation' | 'finalizingDelete';
-  maximumObservationAgeMs: number;
   attention: Readonly<{
     historyGap: Readonly<{
       reportedAt: number;
@@ -454,11 +451,6 @@ export function readConversationConnectionUpdateRow(input: Readonly<{
   const pollFailure = readPersistedConversationConnectionPollFailure(
     ownChannelStateValue(payload, 'pollFailure'),
   );
-  const maximumObservationAgeMs = ownChannelStateValue(payload, 'maximumObservationAgeMs');
-  const observationAgeExpansionFloorOccurredAt = ownChannelStateValue(
-    payload,
-    'observationAgeExpansionFloorOccurredAt',
-  );
   if (typeof configurationRevision !== 'number'
     || !Number.isSafeInteger(configurationRevision)
     || configurationRevision < 1
@@ -479,15 +471,7 @@ export function readConversationConnectionUpdateRow(input: Readonly<{
     || historyGap === undefined
     || (historyGap !== null && !isChannelStateJsonRecord(historyGap))
     || (providerReadiness !== null && !isChannelStateJsonRecord(providerReadiness))
-    || pollFailure === undefined
-    || typeof maximumObservationAgeMs !== 'number'
-    || !Number.isSafeInteger(maximumObservationAgeMs)
-    || maximumObservationAgeMs < MIN_CONVERSATION_OBSERVATION_AGE_MS
-    || maximumObservationAgeMs > MAX_CONVERSATION_OBSERVATION_AGE_MS
-    || (observationAgeExpansionFloorOccurredAt !== undefined
-      && (typeof observationAgeExpansionFloorOccurredAt !== 'number'
-        || !Number.isSafeInteger(observationAgeExpansionFloorOccurredAt)
-        || observationAgeExpansionFloorOccurredAt < 0))) {
+    || pollFailure === undefined) {
     throw policyError('channels_connection_update_corrupt', 'Connection update target has an invalid lifecycle payload.');
   }
   return {
@@ -509,8 +493,6 @@ export function readConversationConnectionUpdateRow(input: Readonly<{
       historyGap: historyGap as ConversationConnectionLifecycleStateV1['historyGap'],
       providerReadiness: providerReadiness as ConversationConnectionLifecycleStateV1['providerReadiness'],
       pollFailure,
-      maximumObservationAgeMs,
-      observationAgeExpansionFloorOccurredAt: observationAgeExpansionFloorOccurredAt ?? null,
     },
   };
 }
@@ -561,10 +543,6 @@ export function withConversationConnectionLifecycle(input: Readonly<{
       historyGap: input.lifecycle.historyGap,
       providerReadiness: input.lifecycle.providerReadiness,
       pollFailure: input.lifecycle.pollFailure,
-      maximumObservationAgeMs: input.lifecycle.maximumObservationAgeMs,
-      ...(input.lifecycle.observationAgeExpansionFloorOccurredAt === null
-        ? {}
-        : { observationAgeExpansionFloorOccurredAt: input.lifecycle.observationAgeExpansionFloorOccurredAt }),
     },
   });
 }
@@ -717,7 +695,6 @@ function projectConversationConnectionManagementRow(
     authorityEpoch: current.lifecycle.authorityEpoch,
     enabled: current.lifecycle.enabled,
     deletionState: current.lifecycle.deletionState,
-    maximumObservationAgeMs: current.lifecycle.maximumObservationAgeMs,
     attention: {
       historyGap,
       providerReadiness,
@@ -1446,7 +1423,6 @@ export async function updateConversationConnectionInAccountCollection(input: Rea
   connectionId: string;
   expectedRevision: number;
   enabled: boolean;
-  maximumObservationAgeMs: number;
   signal?: AbortSignal;
   assertCurrent?: () => void;
   now?: () => number;
@@ -1454,13 +1430,11 @@ export async function updateConversationConnectionInAccountCollection(input: Rea
   return await mutateConversationConnectionLifecycleInAccountCollection({
     ...input,
     operation: 'channels_connection_update',
-    transition: (current, now) => transitionConversationConnection({
+    transition: (current) => transitionConversationConnection({
       current,
       requested: {
         enabled: input.enabled,
-        maximumObservationAgeMs: input.maximumObservationAgeMs,
       },
-      now,
     }),
   });
 }

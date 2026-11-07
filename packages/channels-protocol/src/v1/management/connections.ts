@@ -26,7 +26,6 @@ import {
 } from '../identity.js';
 import { ConversationJsonValueV1ProtocolSchema } from '../json.js';
 import { ConversationQualifiedConnectedAccountRefV1ProtocolSchema } from '../provider/connection.js';
-import { ConversationMaximumObservationAgeV1ProtocolSchema } from '../provider/setup.js';
 
 /**
  * A Channels-owned authority epoch. It is advanced by this package rather
@@ -40,7 +39,6 @@ const authorityEpochV1 = defineProtocolNumber({
 });
 /** Logical connection configuration revision; physical storage CAS is private. */
 const configurationRevision = ConversationCollectionRowRevisionV1ProtocolSchema;
-const observationAgeV1 = ConversationMaximumObservationAgeV1ProtocolSchema;
 const protocolBoolean = defineProtocolUnion([
     defineProtocolLiteral(true),
     defineProtocolLiteral(false),
@@ -248,7 +246,6 @@ const conversationConnectionCreateInputV1 = defineProtocolObject({
     providerSetupInput: ConversationJsonValueV1ProtocolSchema,
     credentialRef: ConversationQualifiedConnectedAccountRefV1ProtocolSchema.nullable(),
     selectedTransport: ConversationConnectionCreateSelectableTransportV1ProtocolSchema,
-    maximumObservationAgeMs: observationAgeV1,
     endpointContinuation: defineProtocolObject({
         connectionId: ConversationConnectionIdV1ProtocolSchema,
         webhookEndpointId: ConversationWebhookEndpointIdRelayV1ProtocolSchema,
@@ -298,7 +295,6 @@ export const ConversationConnectionUpdateInputV1Schema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedRevision: configurationRevision,
     enabled: protocolBoolean,
-    maximumObservationAgeMs: observationAgeV1,
 }, { policy: 'closed' });
 export type ConversationConnectionUpdateInputV1 = ReturnType<
     typeof ConversationConnectionUpdateInputV1Schema.parse

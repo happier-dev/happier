@@ -59,7 +59,6 @@ describe('Discord setup facts', () => {
       recommendedTransport: 'socket',
       overlapSafety: 'safe',
       replayContinuity: 'sessionBound',
-      recommendedMaximumObservationAgeMs: 30 * 86_400_000,
       outboundTextLimit: { maximum: 2_000, unit: 'unicodeCodePoints', formatting: 'preservesNativeUnits' },
       setupGuidance: {
         externalUrl: buildDiscordInviteUrl('application-123'),

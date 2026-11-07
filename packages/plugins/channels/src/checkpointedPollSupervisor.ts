@@ -19,7 +19,6 @@ import {
   readNextConversationIngressDueAtForInvocation,
   runConversationCheckpointedPollForInvocation,
   runConversationIngressDueWorkForInvocation,
-  runConversationIngressRetentionForInvocation,
   settleConversationIngressAttemptsForInvocation,
   type ConversationCheckpointedPollRunResult,
 } from './ingress.js';
@@ -49,10 +48,6 @@ export type IngressSupervisorOptions = Readonly<{
     input: Readonly<{ now: number; limit: number }>,
     context: BackgroundServiceContext,
   ) => Promise<number>;
-  runRetention?: (
-    input: Readonly<{ now: number; limit: number; cursor?: string }>,
-    context: BackgroundServiceContext,
-  ) => Promise<Readonly<{ nextCursor?: string }>>;
 }>;
 
 export type IngressSupervisor = Readonly<{
@@ -103,7 +98,7 @@ function connectionIdFromRow(value: JsonValue): string | undefined {
 
 function logIngressSupervisorFailure(
   context: BackgroundServiceContext,
-  boundary: 'due-work' | 'retention' | 'connection-discovery' | 'poll',
+  boundary: 'due-work' | 'connection-discovery' | 'poll',
   error: unknown,
   connectionId?: string,
 ): void {
@@ -117,12 +112,13 @@ function logIngressSupervisorFailure(
 
 async function readCurrentConnections(context: BackgroundServiceContext): Promise<readonly Readonly<{
   connectionId: string;
+  revision: number;
   retryAt?: number;
   durablePush?: true;
   desiredKey?: string;
 }>[]> {
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-  const result: Array<{ connectionId: string; retryAt?: number; durablePush?: true; desiredKey?: string }> = [];
+  const result: Array<{ connectionId: string; revision: number; retryAt?: number; durablePush?: true; desiredKey?: string }> = [];
   let cursor: string | undefined;
   do {
     const page = await collection.query({
@@ -142,7 +138,7 @@ async function readCurrentConnections(context: BackgroundServiceContext): Promis
       const retryAt = failure !== undefined && isJsonRecord(failure) && failure.phase === 'retryDue'
         && typeof failure.retryNotBeforeMs === 'number' && Number.isSafeInteger(failure.retryNotBeforeMs)
         ? failure.retryNotBeforeMs : undefined;
-      result.push({ connectionId, ...(retryAt === undefined ? {} : { retryAt }),
+      result.push({ connectionId, revision: row.revision, ...(retryAt === undefined ? {} : { retryAt }),
         ...(transport !== undefined && isJsonRecord(transport) && transport.kind === 'durablePush' ? {
           durablePush: true as const,
           // Scheduling input only: the endpoint owner reads and admits current
@@ -180,10 +176,6 @@ export function createIngressSupervisor(
     RECOVERY_INTERVAL_MS,
     'Checkpointed poll reconciliation interval',
   );
-  const runRetention = options.runRetention ?? (async (input, context) => await runConversationIngressRetentionForInvocation(
-    input,
-    context,
-  ));
   let controller: AbortController | null = null;
   let running: Promise<void> | null = null;
   let disposed = false;
@@ -198,14 +190,11 @@ export function createIngressSupervisor(
     const abortFromContext = (): void => supervisorController.abort(context.signal.reason);
     if (context.signal.aborted) abortFromContext();
     else context.signal.addEventListener('abort', abortFromContext, { once: true });
-    let retentionCursor: string | undefined;
-    let retentionInvalidated = false;
-    // The first wake owns the startup pass: there is no earlier sweep to pace.
-    let nextRetentionSweepAt = 0;
     const wake = createSupervisorWake(supervisorController.signal);
     // null parks a permanent boundary failure until stored input changes;
     // Infinity remains an ordinary ineligible connection awaiting its watch.
-    const pollDeadlines = new Map<string, { deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number }>();
+    const pollDeadlines = new Map<string, { revision: number; deadline: number | null; retryAt?: number; durablePush?: true; desiredKey?: string; thrownFailures?: number; observations: readonly { dispose(): void }[];
+      inputs: Map<'binding' | 'checkpoint', { revision?: string; invalidated: boolean }> }>();
     let discoverConnections = true;
     const observations: Array<{ dispose(): void }> = [];
     // The polls this generation started and has not yet seen settle, keyed by
@@ -216,9 +205,6 @@ export function createIngressSupervisor(
     // durable queue, no retained connection cache, no second scheduler — and
     // the generation is not retired until every entry has drained.
     const inFlightPollsByConnectionId = new Map<string, Promise<void>>();
-    // The single outstanding retention pass, for exactly the same reason and
-    // with exactly the same lifetime as the poll map above.
-    let retentionPass: Promise<void> | null = null;
     // Collection pushes may wake maintenance during recovery; they do not
     // bring a failed due-work attempt forward from the owner's retry time.
     let dueWorkRetryAt = 0;
@@ -249,29 +235,10 @@ export function createIngressSupervisor(
           ...context.services.storage, account: access.storage,
         } } };
         const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
-        const resumeFailedPolls = () => {
-          let resumed = false;
-          for (const schedule of pollDeadlines.values()) {
-            if (schedule.deadline === null) { schedule.deadline = 0; resumed = true; }
-          }
-          return resumed;
-        };
+        // Obligation changes wake their existing due-work owner, without
+        // changing a provider's schedule or permanent-failure parking.
         observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
-          prefix: [CHANNEL_STATE_RECORD_KIND.checkpoint], order: 'asc' }, () => {
-          if (resumeFailedPolls()) wake.wake();
-        }));
-        const invalidateRetention = () => {
-          resumeFailedPolls();
-          retentionInvalidated = true;
-          nextRetentionSweepAt = 0;
-          wake.wake();
-        };
-        // Only pending content and destination handoffs can change body
-        // recovery. Cursors and projected reply frontiers are not its owners.
-        for (const kind of [CHANNEL_STATE_RECORD_KIND.ingressCensus,
-          CHANNEL_STATE_RECORD_KIND.ingressObligation]) {
-          observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [kind], order: 'asc' }, invalidateRetention));
-        }
+          prefix: [CHANNEL_STATE_RECORD_KIND.ingressObligation], order: 'asc' }, () => wake.wake()));
         const invalidateProviderConnections = () => {
           context.services.logger.info('[Channels] Provider connections invalidated', { phase: 'connectionsInvalidated' });
           void context.services.events.plugin.emit('connections-invalidated-v1', {}, { signal: supervisorController.signal })
@@ -281,13 +248,12 @@ export function createIngressSupervisor(
             .catch(error => logIngressSupervisorFailure(context, 'connection-discovery', error));
         };
         if (options.pairing !== undefined) observations.push(options.pairing.subscribe(invalidateProviderConnections));
-        for (const kind of [CHANNEL_STATE_RECORD_KIND.connection, CHANNEL_STATE_RECORD_KIND.binding]) {
-          observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind, prefix: [kind], order: 'asc' }, () => {
-            discoverConnections = true;
-            invalidateRetention();
-            invalidateProviderConnections();
-          }));
-        }
+        observations.push(collection.watch({ index: CHANNEL_STATE_INDEX_ID.byKind,
+          prefix: [CHANNEL_STATE_RECORD_KIND.connection], order: 'asc' }, () => {
+          discoverConnections = true;
+          wake.wake();
+          invalidateProviderConnections();
+        }));
         while (!supervisorController.signal.aborted) {
           wake.reset();
           const workerContext = {
@@ -295,54 +261,6 @@ export function createIngressSupervisor(
             signal: supervisorController.signal,
           } satisfies BackgroundServiceContext;
           const now = clock.now();
-          // Retention is maintenance and one page of it walks a whole
-          // census unit per row — up to a connection read plus one read per
-          // matched binding. Awaiting it inline put thousands of serial storage
-          // round trips in front of every connection poll on the sweeping
-          // wakes, so live ingress stalled behind cleanup of rows that are
-          // already past a horizon measured in minutes. The pass runs as this
-          // generation's own work instead, and the wake that finds one still
-          // outstanding simply does not start a second pass over the cursor it
-          // is already advancing.
-          if (retentionPass === null && now >= nextRetentionSweepAt) {
-            if (retentionInvalidated && retentionCursor === undefined) {
-              // Finish this keyset sweep before replaying invalidations. The
-              // sweep's own compaction writes also publish Collection changes;
-              // restarting every page would repeatedly reread its prefix.
-              // Keep the pending invalidation until exhaustion so rows changed
-              // behind the cursor are still covered by the following sweep.
-              retentionInvalidated = false;
-            }
-            const pass = (async () => {
-              try {
-                const retention = await runRetention({
-                  now,
-                  limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
-                  ...(retentionCursor === undefined ? {} : { cursor: retentionCursor }),
-                }, workerContext);
-                retentionCursor = retention.nextCursor;
-                // A live cursor means this sweep is still mid-collection, so the
-                // next wake takes its next page. After exhaustion, replay any
-                // pending invalidation, then park until an actual change.
-                // Failed pages use the existing recovery path below.
-                nextRetentionSweepAt = retentionCursor !== undefined || retentionInvalidated
-                  ? now
-                  : Number.POSITIVE_INFINITY;
-              } catch (error) {
-                if (supervisorController.signal.aborted) return;
-                logIngressSupervisorFailure(workerContext, 'retention', error);
-                // A failed page keeps its cursor but loses its urgency: retrying
-                // it immediately would continuously re-fail the same page.
-                nextRetentionSweepAt = now + reconciliationIntervalMs;
-              }
-            })();
-            retentionPass = pass;
-            // Cleared the same way, and for the same reason, as a poll key.
-            void pass.finally(() => {
-              retentionPass = null;
-              if (Number.isFinite(nextRetentionSweepAt)) wake.wake();
-            });
-          }
           if (now >= dueWorkRetryAt) {
             try {
               await runDueWork({ now, limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 }, workerContext);
@@ -352,39 +270,87 @@ export function createIngressSupervisor(
               dueWorkRetryAt = clock.now() + reconciliationIntervalMs;
             }
           }
-          if (discoverConnections) {
-            discoverConnections = false;
-            try {
+          try {
+            if (discoverConnections) {
+              discoverConnections = false;
               const connections = await readCurrentConnections(workerContext);
               const currentIds = new Set(connections.map(connection => connection.connectionId));
-              for (const id of pollDeadlines.keys()) if (!currentIds.has(id)) pollDeadlines.delete(id);
+              for (const [id, schedule] of pollDeadlines) if (!currentIds.has(id)) {
+                pollDeadlines.delete(id);
+                for (const observation of schedule.observations) observation.dispose();
+              }
               for (const { connectionId, ...schedule } of connections) {
                 const current = pollDeadlines.get(connectionId);
-                // Bindings can make ordinary polls eligible. A settled
-                // endpoint instead follows only its own desired target.
-                if (schedule.durablePush && current?.desiredKey === schedule.desiredKey) continue;
-                pollDeadlines.set(connectionId, { ...schedule, deadline: 0 });
+                // An unchanged connection keeps its deadline and failure
+                // progress. Endpoints follow only their desired target.
+                const unchanged = current !== undefined && (schedule.durablePush
+                  ? current.desiredKey === schedule.desiredKey
+                  : current.revision === schedule.revision);
+                const inputs = current?.inputs ?? new Map<'binding' | 'checkpoint', { revision?: string; invalidated: boolean }>([
+                  ['binding', { invalidated: true }], ['checkpoint', { invalidated: true }],
+                ]);
+                const connectionObservations = current?.observations ?? [...inputs].map(([kind, input]) =>
+                  collection.watch({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+                    prefix: [connectionId, kind], order: 'asc' }, () => {
+                    input.invalidated = true;
+                    wake.wake();
+                  }));
+                const next = unchanged ? current : { ...schedule, inputs, observations: connectionObservations, deadline: 0 };
+                pollDeadlines.set(connectionId, next);
               }
-            } catch (error) {
-              if (supervisorController.signal.aborted) break;
-              discoverConnections = true;
-              logIngressSupervisorFailure(workerContext, 'connection-discovery', error);
-              try {
-                await wake.wait(clock, now + reconciliationIntervalMs);
-              } catch {
-                if (!supervisorController.signal.aborted) {
-                  throw new Error('Checkpointed poll supervisor retry wait failed.');
-                }
-              }
-              continue;
             }
+            for (const [connectionId, schedule] of pollDeadlines) {
+              let next = schedule;
+              for (const [kind, input] of next.inputs) {
+                if (!input.invalidated) continue;
+                input.invalidated = false;
+                const revisions: Array<readonly [string, number]> = [];
+                let cursor: string | undefined;
+                try {
+                  do {
+                    const page = await collection.query({ index: CHANNEL_STATE_INDEX_ID.byConnectionKindV1,
+                      prefix: [connectionId, kind], order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
+                      ...(cursor === undefined ? {} : { cursor }),
+                    }, { signal: supervisorController.signal });
+                    for (const row of page.rows) revisions.push([row.rowId, row.revision]);
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
+                } catch (error) {
+                  input.invalidated = true;
+                  throw error;
+                }
+                const revision = JSON.stringify(revisions);
+                // Watch resets describe delivery continuity, not an input
+                // edit. Only changed stored rows release this connection.
+                if (input.revision !== undefined && input.revision !== revision) {
+                  if (kind === 'binding') invalidateProviderConnections();
+                  if (kind === 'binding' ? !next.durablePush : next.deadline === null) {
+                    next = { ...next, deadline: 0, thrownFailures: 0 };
+                    pollDeadlines.set(connectionId, next);
+                  }
+                }
+                input.revision = revision;
+              }
+            }
+          } catch (error) {
+            if (supervisorController.signal.aborted) break;
+            discoverConnections = true;
+            logIngressSupervisorFailure(workerContext, 'connection-discovery', error);
+            try {
+              await wake.wait(clock, now + reconciliationIntervalMs);
+            } catch {
+              if (!supervisorController.signal.aborted) {
+                throw new Error('Checkpointed poll supervisor retry wait failed.');
+              }
+            }
+            continue;
           }
           for (const [connectionId, schedule] of pollDeadlines) {
             if (supervisorController.signal.aborted) break;
             // A provider long poll blocks for its own wait, not for the other
             // connections': awaiting each one in turn made connections share a
             // serial sweep, so the last connection waited for every earlier round trip before it was
-            // polled again, and due work and retention below waited with it.
+            // polled again, and due work waited with it.
             if (inFlightPollsByConnectionId.has(connectionId)) continue;
             if (schedule.deadline === null) continue;
             const deadline = Math.max(schedule.deadline, schedule.retryAt ?? 0);
@@ -446,7 +412,6 @@ export function createIngressSupervisor(
             .filter(([connectionId]) => !inFlightPollsByConnectionId.has(connectionId))
             .map(([, schedule]) => schedule.deadline)
             .filter((value): value is number => value !== null && Number.isFinite(value));
-          if (retentionPass === null && Number.isFinite(nextRetentionSweepAt)) deadlines.push(nextRetentionSweepAt);
           if (dueAt !== undefined) deadlines.push(Math.max(dueAt, dueWorkRetryAt));
           else if (dueWorkRetryAt > now) deadlines.push(dueWorkRetryAt);
           try {
@@ -459,15 +424,13 @@ export function createIngressSupervisor(
         }
       } finally {
         for (const observation of observations) observation.dispose();
+        for (const schedule of pollDeadlines.values()) for (const observation of schedule.observations) observation.dispose();
         wake.dispose();
         // Provider I/O this generation started still belongs to it. Resolving
         // while a poll is outstanding would let the replacement generation
         // admitted by `run` poll the same connection concurrently, and would
         // let `dispose` report a stopped service that is still calling out.
-        await Promise.allSettled([
-          ...inFlightPollsByConnectionId.values(),
-          ...(retentionPass === null ? [] : [retentionPass]),
-        ]);
+        await Promise.allSettled(inFlightPollsByConnectionId.values());
         await settleConversationIngressAttemptsForInvocation({ signal: supervisorController.signal });
         context.signal.removeEventListener('abort', abortFromContext);
         controller = null;

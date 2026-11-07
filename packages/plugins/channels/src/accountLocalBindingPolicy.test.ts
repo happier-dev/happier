@@ -119,36 +119,50 @@ function frozenOldStop(overrides: Readonly<Record<string, JsonValue>> = {}): Jso
 }
 
 describe('connection configuration revision', () => {
+  it('ignores retired message-age fields in retained rows and exposes no age policy', async () => {
+    // Owner ruling 2026-10-29 replaces per-connection age with provider-derived dedupe.
+    const row = connectionRow(null, { maximumObservationAgeMs: 60_000,
+      observationAgeExpansionFloorOccurredAt: 10_000 });
+    const current = readConversationConnectionUpdateRow({ row, connectionId: CONNECTION_ID });
+    expect(current.lifecycle).not.toHaveProperty('maximumObservationAgeMs');
+    expect(current.lifecycle).not.toHaveProperty('observationAgeExpansionFloorOccurredAt');
+    const collection = new MemoryCollection<Record<string, JsonValue>>();
+    collection.rows.set(row.rowId, row);
+    const projection = await readConversationConnectionManagementRows({
+      collection: collection as unknown as ChannelStateBindingCollection });
+    expect(projection.connections[0]).not.toHaveProperty('maximumObservationAgeMs');
+  });
+
   it('reads and edits Account-local configuration with the logical revision while CAS uses the latest physical row', async () => {
     const collection = new MemoryCollection<Record<string, JsonValue>>();
     // The persistence boundary fixture requires the explicit limit these owners supply.
     const accountCollection = collection as unknown as ChannelStateBindingCollection;
-    const row = connectionRow(null, { configurationRevision: 2, maximumObservationAgeMs: 60_000 });
+    const row = connectionRow(null, { configurationRevision: 2, });
     collection.rows.set(row.rowId, row);
     const projection = await readConversationConnectionManagementRows({ collection: accountCollection });
     expect(projection.connections[0]?.revision).toBe(2);
     const result = await updateConversationConnectionInAccountCollection({
       collection: accountCollection, connectionId: CONNECTION_ID, expectedRevision: 2,
-      enabled: true, maximumObservationAgeMs: 120_000, now: () => 100,
+      enabled: false, now: () => 100,
     });
     expect(result).toMatchObject({ kind: 'updated', revision: 3 });
     expect(await collection.get(CONNECTION_ID)).toMatchObject({
-      revision: row.revision + 1, value: { payload: { configurationRevision: 3, maximumObservationAgeMs: 120_000 } },
+      revision: row.revision + 1, value: { payload: { configurationRevision: 3, enabled: false } },
     });
     await expect(updateConversationConnectionInAccountCollection({
       collection: accountCollection, connectionId: CONNECTION_ID, expectedRevision: 2,
-      enabled: false, maximumObservationAgeMs: 120_000,
+      enabled: false,
     })).rejects.toMatchObject({ code: 'channels_connection_update_conflict' });
   });
 
   it('retains exact physical compare-and-swap conflict refusal for Account-local edits', async () => {
     const collection = new MemoryCollection<Record<string, JsonValue>>({ conflictNextBatch: true });
     const accountCollection = collection as unknown as ChannelStateBindingCollection;
-    const row = connectionRow(null, { configurationRevision: 2, maximumObservationAgeMs: 60_000 });
+    const row = connectionRow(null, { configurationRevision: 2, });
     collection.rows.set(row.rowId, row);
     await expect(updateConversationConnectionInAccountCollection({
       collection: accountCollection, connectionId: CONNECTION_ID, expectedRevision: 2,
-      enabled: true, maximumObservationAgeMs: 120_000,
+      enabled: false,
     })).rejects.toMatchObject({ code: 'channels_connection_update_conflict' });
     expect(await collection.get(CONNECTION_ID)).toEqual(row);
   });
@@ -280,7 +294,7 @@ describe('readConversationConnectionUpdateRow frozen provider selection', () => 
     await expect(updateConversationConnectionInAccountCollection({
       collection: collection as unknown as ChannelStateBindingCollection,
       connectionId: CONNECTION_ID, expectedRevision: 4,
-      enabled: false, maximumObservationAgeMs: 60_000,
+      enabled: false,
     })).resolves.toMatchObject({ kind: 'updated', authorityEpoch: 9 });
     const emitted = collection.rows.get(row.rowId);
     if (!emitted) throw new Error('Expected the updated connection row.');

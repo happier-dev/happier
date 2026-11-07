@@ -82,7 +82,6 @@ const connection = (connectionId: string, providerPluginId: string, label: strin
     integrationPrincipalLabel: label,
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 60_000,
     attention: {
         historyGap: null,
         pollFailure: null,

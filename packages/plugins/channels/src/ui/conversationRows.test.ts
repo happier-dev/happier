@@ -44,7 +44,6 @@ function connection(attention: Partial<ChannelsConnection['attention']> = {}): C
     selectedTransport: 'socket',
     enabled: true,
     deletionState: 'none',
-    maximumObservationAgeMs: 120_000,
     attention: {
       historyGap: null,
       providerReadiness: null,

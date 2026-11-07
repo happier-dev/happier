@@ -947,7 +947,6 @@ describe('Channels core activation', () => {
       providerSetupInput,
       credentialRef: null,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     } as const;
 
     try {
@@ -1112,7 +1111,6 @@ describe('Channels core activation', () => {
           providerSetupInput,
           credentialRef: null,
           selectedTransport: 'socket',
-          maximumObservationAgeMs: 60_000,
         },
         { services: channelsTargetedContributionServices(core) },
       )).rejects.toMatchObject({
@@ -1532,7 +1530,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 4,
         enabled: false,
-        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'updated',
         connectionId,
@@ -1551,8 +1548,6 @@ describe('Channels core activation', () => {
               authorityEpoch: 5,
               enabled: false,
               historyGap: initialPayload.historyGap,
-              maximumObservationAgeMs: 120_000,
-              observationAgeExpansionFloorOccurredAt: expect.any(Number),
             }),
           }),
         },
@@ -1564,16 +1559,12 @@ describe('Channels core activation', () => {
       if (!isChannelStateJsonRecord(updatedPayload)) {
         throw new Error('Expected the updated connection row to carry a payload record.');
       }
-      const observationAgeExpansionFloorOccurredAt = updatedPayload.observationAgeExpansionFloorOccurredAt;
-      expect(observationAgeExpansionFloorOccurredAt).toEqual(expect.any(Number));
       expect(updated?.value.payload).toEqual({
         ...initialPayload,
         configurationRevision: 5,
         authorityEpoch: 5,
         enabled: false,
         historyGap: initialPayload.historyGap,
-        maximumObservationAgeMs: 120_000,
-        observationAgeExpansionFloorOccurredAt,
       });
       expect(invalidations).toBe(1);
       await expect(resource.read(createTestResourceInvocationContext({
@@ -1591,7 +1582,6 @@ describe('Channels core activation', () => {
           authorityEpoch: 5,
           enabled: false,
           deletionState: 'none',
-          maximumObservationAgeMs: 120_000,
           attention: {
             historyGap: initialPayload.historyGap,
             providerReadiness: null,
@@ -1604,7 +1594,7 @@ describe('Channels core activation', () => {
             outwardDelivery: NO_OUTWARD_DELIVERY_ATTENTION,
           },
           recommendedRecovery: { action: { pluginId: 'happier.channels', localId: 'connection/update-v1' },
-            input: { connectionId, expectedRevision: 5, enabled: true, maximumObservationAgeMs: 120_000 }, reason: 'connectionDisabled' },
+            input: { connectionId, expectedRevision: 5, enabled: true, }, reason: 'connectionDisabled' },
         }],
       }));
       await observation.dispose();
@@ -1619,7 +1609,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: false,
-        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'unchanged',
         connectionId,
@@ -1633,7 +1622,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 4,
         enabled: true,
-        maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
         code: 'channels_connection_update_conflict',
         retryable: true,
@@ -1642,7 +1630,7 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: false,
-        maximumObservationAgeMs: -1,
+        retiredPolicy: true,
       })).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
       expect(updatedBatches).toHaveLength(writeCountAfterSuccess);
       expect(collection.rows.get(connectionId)?.revision).toBe(5);
@@ -1653,7 +1641,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: true,
-        maximumObservationAgeMs: 120_000,
       }, { signal: cancellation.signal })).rejects.toMatchObject({ code: 'plugin_action_aborted' });
       abortDuringConnectionGet = null;
       expect(updatedBatches).toHaveLength(writeCountAfterSuccess);
@@ -1664,7 +1651,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: true,
-        maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
         code: 'channels_connection_update_conflict',
         retryable: true,
@@ -1672,28 +1658,20 @@ describe('Channels core activation', () => {
       expect(updatedBatches).toHaveLength(writeCountAfterSuccess);
       expect(collection.rows.get(connectionId)?.revision).toBe(6);
 
-      // Freshness is owner-configured, with no former 30-day policy ceiling.
-      const olderObservationAgeMs = 31 * 86_400_000;
+      // Enabled is the remaining connection policy (owner ruling 2026-10-29).
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
-        connectionId,
-        expectedRevision: 5,
-        enabled: false,
-        maximumObservationAgeMs: olderObservationAgeMs,
-      })).resolves.toMatchObject({ kind: 'updated', revision: 6, authorityEpoch: 5 });
-      expect(collection.rows.get(connectionId)?.value.payload).toMatchObject({
-        maximumObservationAgeMs: olderObservationAgeMs,
-      });
-      const writeCountAfterOlderUpdate = updatedBatches.length;
+        connectionId, expectedRevision: 5, enabled: true,
+      })).resolves.toMatchObject({ kind: 'updated', revision: 6, authorityEpoch: 6 });
+      const writeCountBeforeRetirement = updatedBatches.length;
 
       retireDuringConnectionGet = true;
       await expect(core.invokeAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, {
         connectionId,
         expectedRevision: 6,
-        enabled: true,
-        maximumObservationAgeMs: 120_000,
+        enabled: false,
       })).rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
       retireDuringConnectionGet = false;
-      expect(updatedBatches).toHaveLength(writeCountAfterOlderUpdate);
+      expect(updatedBatches).toHaveLength(writeCountBeforeRetirement);
       expect(collection.rows.get(connectionId)?.revision).toBe(7);
     } finally {
       await reconciler.dispose();
@@ -1727,7 +1705,6 @@ describe('Channels core activation', () => {
         payload: {
           ...initial.payload,
           historyGap,
-          maximumObservationAgeMs: 120_000,
         },
       },
     });
@@ -1745,7 +1722,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 4,
         enabled: false,
-        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'updated',
         connectionId,
@@ -1764,7 +1740,6 @@ describe('Channels core activation', () => {
               authorityEpoch: 5,
               enabled: false,
               historyGap,
-              maximumObservationAgeMs: 120_000,
             }),
           }),
         },
@@ -1776,7 +1751,6 @@ describe('Channels core activation', () => {
             authorityEpoch: 5,
             enabled: false,
             historyGap,
-            maximumObservationAgeMs: 120_000,
           },
         },
       });
@@ -1784,7 +1758,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: false,
-        maximumObservationAgeMs: 120_000,
       })).resolves.toEqual({
         kind: 'unchanged',
         connectionId,
@@ -1795,7 +1768,6 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 4,
         enabled: true,
-        maximumObservationAgeMs: 120_000,
       })).rejects.toMatchObject({
         code: 'channels_connection_update_conflict',
         retryable: true,
@@ -1804,6 +1776,7 @@ describe('Channels core activation', () => {
         connectionId,
         expectedRevision: 5,
         enabled: true,
+        retiredPolicy: true,
       })).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
     } finally {
       await core.dispose();
@@ -2108,7 +2081,6 @@ describe('Channels core activation', () => {
           id: 'principal-id-labeled-must-not-be-projected',
           label: 'Visible integration label',
         },
-        maximumObservationAgeMs: 120_000,
       },
     };
     const unlabeled = {
@@ -2149,7 +2121,6 @@ describe('Channels core activation', () => {
             authorityEpoch: 4,
             enabled: true,
             deletionState: 'none',
-            maximumObservationAgeMs: 120_000,
             attention: {
               historyGap: null,
               providerReadiness: null,
@@ -2171,7 +2142,6 @@ describe('Channels core activation', () => {
             authorityEpoch: 4,
             enabled: true,
             deletionState: 'none',
-            maximumObservationAgeMs: 60_000,
             attention: {
               historyGap: null,
               providerReadiness: null,
@@ -2242,7 +2212,6 @@ describe('Channels core activation', () => {
             reportedAt: Number.MAX_SAFE_INTEGER,
             reason: 'providerHistoryUnavailable' as const,
           },
-          maximumObservationAgeMs: 30 * 86_400_000,
         },
       };
     });
@@ -2295,7 +2264,6 @@ describe('Channels core activation', () => {
           authorityEpoch: 4,
           enabled: false,
           deletionState: 'none',
-          maximumObservationAgeMs: 30 * 86_400_000,
           attention: {
             historyGap: {
               reportedAt: Number.MAX_SAFE_INTEGER,
@@ -2312,7 +2280,7 @@ describe('Channels core activation', () => {
           },
           recommendedRecovery: { action: { pluginId: 'happier.channels', localId: 'connection/update-v1' },
             input: { connectionId: connection.id, expectedRevision: PLUGIN_COLLECTION_REVISION_MAX, enabled: true,
-              maximumObservationAgeMs: 30 * 86_400_000 }, reason: 'connectionDisabled' },
+              }, reason: 'connectionDisabled' },
         })),
       });
       expect(serialized).not.toContain(hiddenPrincipalId);

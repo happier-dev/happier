@@ -345,7 +345,6 @@ const connectionCreateInput = {
   providerSetupInput: { source: 'create' },
   credentialRef: null,
   selectedTransport: 'socket',
-  maximumObservationAgeMs: 60_000,
 } as const;
 
 describe('connection Create acknowledgement recovery', () => {
@@ -742,7 +741,6 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
           overlapSafety: 'safe',
           replayContinuity: 'none',
           ...(hasNativeLimit ? { outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' } } : {}),
-          recommendedMaximumObservationAgeMs: 30 * 86_400_000,
           setupGuidance: {
             externalUrl: 'https://provider.example.test/install',
             requiredPermissionsLabel: 'Read messages, Send messages',
@@ -774,7 +772,6 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
       kind: 'ready',
       supportedTransports: ['socket'],
       recommendedTransport: 'socket',
-      recommendedMaximumObservationAgeMs: 30 * 86_400_000,
       setupGuidance: {
         externalUrl: 'https://provider.example.test/install',
         requiredPermissionsLabel: 'Read messages, Send messages',
@@ -1253,7 +1250,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: selectedCredentialRef,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).rejects.toThrow('simulated response loss after Account write commit');
 
     const rejoined = await createConversationConnectionForInvocation({
@@ -1261,7 +1257,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: selectedCredentialRef,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context);
     expect(rejoined).toMatchObject({ kind: 'rejoined' });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(4);
@@ -1436,7 +1431,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'cancel-after-setup' },
       credentialRef: selectedCredentialRef,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).rejects.toMatchObject({ code: 'channels_connection_create_cancelled' });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
     expect(collection.batch).not.toHaveBeenCalled();
@@ -1491,7 +1485,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: selectedCredentialRef,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).rejects.toMatchObject({ code: 'channels_connection_credential_mismatch' });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledOnce();
     expect(collection.rows.size).toBe(1);
@@ -1574,7 +1567,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: null,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).resolves.toMatchObject({ kind: 'created' });
     expect(collection.rows.size).toBe(3);
     if (sourceOperation === 'setup') {
@@ -1644,7 +1636,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: null,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).rejects.toBe(hostRoutingDenial);
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(collection.rows.size).toBe(1);
@@ -1704,7 +1695,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: null,
       selectedTransport,
-      maximumObservationAgeMs: 60_000,
     }, context);
     if (selectedTransport === 'socket') {
       await expect(creating).resolves.toMatchObject({ kind: 'created' });
@@ -1787,7 +1777,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
       providerSetupInput: { source: 'create' },
       credentialRef: null,
       selectedTransport: 'socket',
-      maximumObservationAgeMs: 60_000,
     }, context)).resolves.toMatchObject({ kind: 'created' });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(collection.batch).toHaveBeenCalledOnce();
@@ -2469,7 +2458,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
           revision: 5,
           value: {
             ...connectionValue,
-            payload: { ...connectionValue.payload, configurationRevision: 5, maximumObservationAgeMs: 120_000 },
+            payload: { ...connectionValue.payload, configurationRevision: 5, },
           },
         });
         return {
@@ -2509,7 +2498,7 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).toHaveBeenCalledTimes(2);
     expect(collection.batch).not.toHaveBeenCalled();
     expect(collection.rows.get(connectionId)?.value.payload).toMatchObject({
-      configurationRevision: 5, maximumObservationAgeMs: 120_000, authorityEpoch: 4,
+      configurationRevision: 5, authorityEpoch: 4,
     });
   });
 
@@ -2590,7 +2579,6 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
               configurationRevision: 5,
               enabled: false,
               authorityEpoch: 5,
-              maximumObservationAgeMs: 120_000,
             },
           },
         });
@@ -2636,7 +2624,6 @@ describe('transferConversationConnectionForInvocation targeted provider selectio
         payload: {
           enabled: false,
           authorityEpoch: 5,
-          maximumObservationAgeMs: 120_000,
           transportOrigin: getConversationConnectionTransportOrigin(oldExecutionOrigin),
         },
       },
@@ -2931,7 +2918,6 @@ it('disables with one generation advance and no provider stop effect', async () 
       connectionId,
       expectedRevision: 4,
       enabled: false,
-      maximumObservationAgeMs: 60_000,
     }, context)).resolves.toEqual({
       kind: 'updated',
       connectionId,
@@ -2977,18 +2963,17 @@ describe('retestConversationConnectionForInvocation', () => {
         supportedTransports: ['socket'], recommendedTransport: 'socket',
         overlapSafety: 'safe', replayContinuity: 'none',
         outboundTextLimit: { maximum: 65_536, unit: 'unicodeCodePoints' },
-        recommendedMaximumObservationAgeMs: 30 * 86_400_000,
       }),
     };
   }
 
-  it('refreshes native delivery capability and provider freshness on an old retained connection without replacing user policy', async () => {
+  it('refreshes native delivery capability on an old retained connection without replacing enabled policy', async () => {
     const collection = createMutableConnectionStateCollection();
     const connectionId = 'legacy-native-limit';
     const initial = createCurrentConversationConnectionFixture({
       configurationRevision: 4,
       connectionId, authority: retestPersistedAuthority,
-      transport: { kind: 'socket' }, maximumObservationAgeMs: 60_000,
+      transport: { kind: 'socket' },
       providerReadiness: null,
     });
     const { outboundTextLimit: _obsoleteLimit, ...legacyPayload } = initial.payload;
@@ -3019,8 +3004,7 @@ describe('retestConversationConnectionForInvocation', () => {
     }, context)).resolves.toMatchObject({ kind: 'ready' });
     expect(collection.rows.get(connectionId)?.value.payload).toMatchObject({
       outboundTextLimit: { maximum: 65_536, unit: 'unicodeCodePoints' },
-      recommendedMaximumObservationAgeMs: 30 * 86_400_000,
-      maximumObservationAgeMs: 60_000, authorityEpoch: 4,
+      authorityEpoch: 4,
       providerConfig: { opaque: true },
     });
     await expect(retestConversationConnectionForInvocation({
@@ -3029,15 +3013,15 @@ describe('retestConversationConnectionForInvocation', () => {
     expect(collection.rows.get(connectionId)?.revision).toBe(5);
   });
 
-  it('removes superseded optional capabilities when the current provider declares no native limit or freshness recommendation', async () => {
+  it('removes a superseded native delivery limit when the current provider declares none', async () => {
     const collection = createMutableConnectionStateCollection();
     const connectionId = 'formerly-bounded';
     const initial = createCurrentConversationConnectionFixture({ connectionId, authority: retestPersistedAuthority,
       providerReadiness: null, transport: { kind: 'socket' } });
     collection.rows.set(connectionId, { rowId: connectionId, revision: 1,
-      value: { ...initial, payload: { ...initial.payload, recommendedMaximumObservationAgeMs: 86_400_000 } } });
+      value: initial });
     const setup = retestSetupExecution();
-    const { outboundTextLimit: _oldLimit, recommendedMaximumObservationAgeMs: _oldRecommendation, ...unbounded } = setup.result;
+    const { outboundTextLimit: _oldLimit, ...unbounded } = setup.result;
     const context = invocationContext({ stateCollection: collection,
       targetedContributions: targetedContributionsFixture({
         contributorImmutableGenerationId: providerSelection.contributor.sourceCustody.immutableGenerationId,
@@ -3053,8 +3037,7 @@ describe('retestConversationConnectionForInvocation', () => {
       .resolves.toMatchObject({ kind: 'ready', revision: 2 });
     const payload = collection.rows.get(connectionId)?.value.payload;
     expect(payload).not.toHaveProperty('outboundTextLimit');
-    expect(payload).not.toHaveProperty('recommendedMaximumObservationAgeMs');
-    expect(payload).toMatchObject({ maximumObservationAgeMs: initial.payload.maximumObservationAgeMs, authorityEpoch: 4 });
+    expect(payload).toMatchObject({ authorityEpoch: 4 });
   });
 
   /** One attention-carrying saved connection plus the Account boundary it lives in. */
@@ -4003,7 +3986,6 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
       failNextConverge: false,
       unavailableNextConverge: false,
       requireApproval: false,
-      beforeConvergeResult: undefined as (() => Promise<void>) | undefined,
       /** Retained row revision observed at each endpoint call, in order. */
       observedRevisions: [] as Array<number | undefined>,
       convergeInputs: [] as unknown[],
@@ -4011,9 +3993,6 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
     const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
       state.observedRevisions.push(input.collection.rows.get(input.connectionId)?.revision);
       if (actionId === 'plugin.webhook.endpoint.convergeTarget') {
-        const beforeResult = state.beforeConvergeResult;
-        state.beforeConvergeResult = undefined;
-        await beforeResult?.();
         if (state.requireApproval) return {
           kind: 'approval_request_created', artifactId: 'webhook-target-approval',
           actionId: 'plugin.webhook.endpoint.convergeTarget',
@@ -4282,18 +4261,9 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
   it('shows a policy-deferred endpoint move as blocked and never creates automatic duplicate approvals', async () => {
     const fixture = pushTransferFixture('connection-transfer-approval-deferred');
     fixture.endpoint.state.requireApproval = true;
-    let concurrentEditApplied = false;
-    fixture.endpoint.state.beforeConvergeResult = async () => {
-      const edited = await updateConversationConnectionForInvocation({
-        connectionId: fixture.input.connectionId, expectedRevision: 5,
-        enabled: true, maximumObservationAgeMs: 120_000,
-      }, fixture.context);
-      concurrentEditApplied = edited.kind === 'updated';
-    };
     await expect(transferConversationConnectionForInvocation(fixture.input, fixture.context)).resolves.toMatchObject({
       kind: 'transferred', authorityEpoch: 5,
     });
-    expect(concurrentEditApplied).toBe(true);
     vi.useFakeTimers();
     const generation = new AbortController();
     const collection = { ...fixture.collection, watch: () => ({ dispose() {} }) };

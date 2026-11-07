@@ -29,7 +29,6 @@ import {
   ConversationBindingReadResultV1Schema,
   type ConversationPairingReadInputV1,
   type ConversationPairingReadResultV1,
-  DEFAULT_CONVERSATION_OBSERVATION_AGE_MS,
   ConversationSessionProjectionNoticeDismissResultV1Schema,
   isConversationConnectionCreateSelectableTransportV1,
   conversationConnectionWebhookSourceInstanceIdV1,
@@ -1889,13 +1888,11 @@ async function findExistingConnection(input: Readonly<{
 function providerDeclaredConnectionCapabilities(setup: ConversationProviderSetupResultV1) {
   return {
     ...(setup.outboundTextLimit === undefined ? {} : { outboundTextLimit: setup.outboundTextLimit }),
-    ...(setup.recommendedMaximumObservationAgeMs === undefined
-      ? {} : { recommendedMaximumObservationAgeMs: setup.recommendedMaximumObservationAgeMs }),
   };
 }
 
 function withProviderDeclaredConnectionCapabilities(payload: JsonRecord, setup: ConversationProviderSetupResultV1): JsonRecord {
-  const { outboundTextLimit: _oldLimit, recommendedMaximumObservationAgeMs: _oldFreshness, ...retained } = payload;
+  const { outboundTextLimit: _oldLimit, ...retained } = payload;
   return { ...retained, ...providerDeclaredConnectionCapabilities(setup) };
 }
 
@@ -1973,7 +1970,6 @@ function connectionRows(input: Readonly<{
         : { reason: 'providerHistoryUnavailable', reportedAt: input.now },
       providerReadiness: null,
       pollFailure: null,
-      maximumObservationAgeMs: input.createInput.maximumObservationAgeMs,
     },
   } satisfies JsonRecord;
   const reservation = {
@@ -2464,13 +2460,11 @@ export async function updateConversationConnectionForInvocation(
     connectionId: updateInput.connectionId,
     expectedRevision: updateInput.expectedRevision,
     operation: 'channels_connection_update',
-    transition: (current, now) => transitionConversationConnection({
+    transition: (current) => transitionConversationConnection({
       current,
       requested: {
         enabled: updateInput.enabled,
-        maximumObservationAgeMs: updateInput.maximumObservationAgeMs,
       },
-      now,
     }),
   }, context);
 }
@@ -4104,7 +4098,7 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
   assertProviderExecutionOrigin({ provider, executionOrigin: nativeSetup.executionOrigin, operation: 'setup' });
   if (request.credentialRef !== undefined && !pluginJsonValuesEqual(request.credentialRef, setup.credentialRef)) throw pluginError('channels_pr_link_credential_mismatch', 'The provider did not authenticate the exact configured credential.');
   if (request.expectedRepositoryId !== undefined && setup.providerConnectionKey !== `${native.repositoryConnectionKeyPrefix}${request.expectedRepositoryId}`) throw pluginError('channels_pr_link_repository_mismatch', 'The authenticated repository does not match the immutable source identity.');
-  const createInput: ConversationConnectionCreateInputV1 = { providerSelection, providerSetupInput: { repository: request.pullRequest.repository, credentialRef: setup.credentialRef }, credentialRef: setup.credentialRef, selectedTransport: 'checkpointedPull', maximumObservationAgeMs: setup.recommendedMaximumObservationAgeMs ?? DEFAULT_CONVERSATION_OBSERVATION_AGE_MS };
+  const createInput: ConversationConnectionCreateInputV1 = { providerSelection, providerSetupInput: { repository: request.pullRequest.repository, credentialRef: setup.credentialRef }, credentialRef: setup.credentialRef, selectedTransport: 'checkpointedPull' };
   const connectionIdForTest = createConnectionId();
   const prepared = await runProviderConnectionTest({ context, setupInput: createInput, provider, connectionIdForTest,
     prepared: { kind: 'ready', setup, transportOrigin: nativeSetup.executionOrigin } });
@@ -4948,7 +4942,6 @@ function transferConnectionValue(input: Readonly<{
   const {
     pairingDeepLinkTemplate: _oldPairingDeepLinkTemplate,
     outboundTextLimit: _oldOutboundTextLimit,
-    recommendedMaximumObservationAgeMs: _oldRecommendedFreshness,
     // The replacement provider re-authenticates its own shared-endpoint
     // delivery truth. Retaining the predecessor's would leave the surface and
     // the binding writer deciding from a capability nothing proved.
