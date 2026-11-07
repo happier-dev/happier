@@ -302,32 +302,7 @@ export async function resolveServerProfileHomeIdentityId(profileId: string): Pro
   }
 }
 
-/** Establishes the saved profile's Home binding from its authenticated connection,
- * including URL-only profiles provisioned without interactive enrollment. */
-export async function refreshServerProfileHomeConnectionDescriptor(params: Readonly<{
-  profileId: string;
-  serverUrl: string;
-  token: string;
-  signal?: AbortSignal;
-}>): Promise<'unavailable' | 'updated' | 'unchanged' | 'stale'> {
-  const profile = await getServerProfile(params.profileId);
-  const [{ observeServerFeaturesSnapshot }, { resolveAuthenticatedExactHomeConnectionDescriptorObservation }] = await Promise.all([
-    import('@/features/serverFeaturesClient'),
-    import('@/auth/terminalAuthEnrollmentClient'),
-  ]);
-  const snapshot = await observeServerFeaturesSnapshot({
-    serverUrl: params.serverUrl, token: params.token, signal: params.signal,
-  });
-  const observation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({
-    snapshot,
-    expectedHomeServerIdentityId: profile.homeConnectionDescriptor?.homeServerIdentityId
-      ?? (snapshot.status === 'ready' ? snapshot.features.capabilities.serverIdentity.serverIdentityId ?? '' : ''),
-  });
-  if (observation.kind !== 'available') return 'unavailable';
-  return (await adoptServerProfileHomeConnectionDescriptor({
-    descriptor: observation.descriptor, expectedProfileId: profile.id, observation: 'exact',
-  })).outcome;
-}
+export { refreshServerProfileHomeConnectionDescriptor } from './profileObservation';
 
 function findProfileIdByComparableUrl(
   servers: Record<string, any>,
@@ -605,7 +580,11 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     }
 
     const identityMatchId = identityMatches[0]?.[0] ?? null;
-    if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId) {
+    // An exact observation may discover the Home already saved by an earlier
+    // env-only invocation. Reuse that owner without moving credential scopes.
+    // Advisory observations cannot bind a different selected profile.
+    if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId
+      && opts.observation !== 'exact') {
       throw new ServerProfileIdentityMismatchError(
         `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
       );
