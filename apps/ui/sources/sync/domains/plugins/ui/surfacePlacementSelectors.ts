@@ -5,10 +5,11 @@ import type {
     PluginUiTargetKindV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiDestinationReferenceV1Schema, isPluginUiInlineSurfaceBindingForSurfaceV1 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type {
     PluginUiProjectionModel,
+    PluginUiPhysicalSurfacePlacementProjection,
     PluginUiInlineSurfacePlacementProjection,
     PluginUiSurfacePlacementProjection,
 } from './projection';
@@ -42,6 +43,18 @@ export function selectPluginDestinationSurfacePlacements(
     return sortedPlacements(Object.values(model.surfacePlacementsById).filter(
         isPluginUiDestinationSurfacePlacementProjection,
     ));
+}
+
+/** Resource recognition belongs to the declaring view, independently of its host slot. */
+export function selectRenderablePluginResourceLinkPlacements(
+    model: PluginUiProjectionModel,
+    policyContext?: PluginUiPolicyEvaluationContext,
+): readonly PluginUiPhysicalSurfacePlacementProjection[] {
+    return sortedPlacements(Object.values(model.surfacePlacementsById).filter((entry) => (
+        (entry.resourceLinks?.length ?? 0) > 0
+        && entry.availability.state === 'available'
+        && canRenderPluginUiProjectionEntry(entry, policyContext)
+    )));
 }
 
 /**

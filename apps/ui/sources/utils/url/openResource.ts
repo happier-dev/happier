@@ -29,14 +29,18 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
   const scopedProjection = context.projection === undefined ? context.navigation.projection : context.projection;
   const projection = scopedProjection === undefined ? readCurrentAppShellPluginUiProjection() : scopedProjection;
   if (!projection) return external();
-  const handlerTargetKind = context.navigation.targetKind === 'session' ? 'session' : 'app';
-  const matches = selectRenderablePluginResourceLinkPlacements(projection)
-    .filter(placement => placement.binding.targetKind === handlerTargetKind)
+  const resourcePlacements = selectRenderablePluginResourceLinkPlacements(projection);
+  const matchesFor = (targetKind: 'session' | 'app') => resourcePlacements
+    .filter(placement => placement.binding.targetKind === targetKind)
     .flatMap(placement => (placement.resourceLinks ?? []).flatMap(link => {
       if (kind !== undefined && link.kind !== kind) return [];
       const match = new RegExp(link.urlPattern).exec(url);
       return match?.[0] === url ? [{ pluginId: placement.pluginId, ...link }] : [];
     }));
+  // A Session handler wins; otherwise the enclosing navigation owner can
+  // open the app destination offered by this same resource catalog.
+  const sessionMatches = context.navigation.targetKind === 'session' ? matchesFor('session') : [];
+  const matches = sessionMatches.length > 0 ? sessionMatches : matchesFor('app');
   // Contributions offer a handler; declaration order never appoints a winner.
   if (matches.length !== 1) return external();
   const match = matches[0]!;

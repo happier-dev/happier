@@ -29,6 +29,7 @@ import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/
 import { resolvePluginSurfaceDestinationDisabledReason } from './pluginSurfaceDestinations';
 import type {
     PluginUiDestinationProjection,
+    PluginUiProjectionModel,
     PluginUiSettingsPageProjection,
     PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
@@ -156,7 +157,10 @@ export type PluginSurfaceDestinationOpenSurfaceHandlerInput = Readonly<{
 export type PluginSurfaceDestinationNavigationBindingInput = Omit<
     PluginSurfaceDestinationOpenSurfaceHandlerInput,
     'handlers' | 'windowHandlers'
->;
+> & Readonly<{
+    /** The current catalog owned by this navigation scope, including resource handlers. */
+    projection?: PluginUiProjectionModel | null;
+}>;
 
 type PluginSurfaceDestinationPlacementOwner = {
     [Container in PluginSurfacePlacementContainer]: Readonly<{
@@ -185,6 +189,7 @@ export type PluginSurfaceDestinationNavigationBinding = Readonly<{
      * target and omit `openSurface` when it does not match.
      */
     readonly targetKind: PluginUiTargetKindV1;
+    readonly projection?: PluginUiProjectionModel | null;
     openSurface: PluginSurfaceOpenHandler;
     /**
      * Existing route/pane/details/settings owners register their exact
@@ -270,8 +275,7 @@ export function resolvePluginSurfaceDestinationOpen(input: Omit<
         && input.accountLifetime?.isCurrent() === true;
     const disabledReason = resolvePluginSurfaceDestinationDisabledReason(placement, input.policyContext);
     if (disabledReason) {
-        return unavailable(disabledReason === 'policy_deferred'
-            ? 'plugin_surface_open_destination_policy_unavailable' : disabledReason);
+        return unavailable(disabledReason);
     }
     if (placement.availability.state !== 'available' && !routeOnly) {
         return unavailable(placement.availability.reason);
@@ -464,9 +468,10 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
     };
 
     // A scope host keeps one binding identity while its facts change, so the
-    // target is read at access time from the same reader the resolver uses.
+    // target and catalog are read from the same current facts as the resolver.
     return Object.freeze({
         get targetKind() { return readInput().targetKind; },
+        get projection() { return readInput().projection; },
         openSurface,
         registerOwner,
     });
@@ -554,7 +559,7 @@ export type PluginSurfacePaneLaunchStore = PluginSurfaceLaunchInputStore<PluginS
 
 /** Host-private identity; launch JSON never affects a pane selection or key. */
 export function buildPluginSurfacePaneLaunchKey(input: Readonly<{
-    container: PluginSurfacePaneLaunch['container'];
+    container: PluginSurfacePaneLaunch['container'] | 'appPage';
     destination: PluginUiDestinationReferenceV1;
     instanceKey?: PluginUiInstanceKeyV1;
 }>): string {

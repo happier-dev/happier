@@ -1,4 +1,5 @@
 import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 /** Read the raw path before URL can erase traversal segments. */
 export function parsePluginProjectPageRoutePath(href: string): Readonly<{
@@ -25,19 +26,62 @@ export function parsePluginProjectPageRoutePath(href: string): Readonly<{
 
 export const PLUGIN_APP_PAGE_ROUTE_PREFIX = '/plugins';
 
+/** Exact app-page address before URL parsing can normalize away invalid path segments. */
+export function parsePluginAppPageRoutePath(href: string): Readonly<{
+    pluginId: string; localId: string; subPath: string;
+}> | null {
+    const path = href.split(/[?#]/, 1)[0] ?? '';
+    const match = /^\/plugins\/([^/]+)\/([^/]+)(?:\/(.*))?\/?$/.exec(path);
+    if (!match) return null;
+    try {
+        const pluginId = decodeURIComponent(match[1]!);
+        const localId = decodeURIComponent(match[2]!);
+        if (!PluginUiDestinationReferenceV1Schema.safeParse({ pluginId, localId }).success) return null;
+        if ([pluginId, localId].some(value => /[/\\]/u.test(value) || value === '.' || value === '..')) return null;
+        const decoded = (match[3] ?? '').replace(/\/$/, '').split('/').map(segment => decodeURIComponent(segment));
+        if (decoded.some(segment => /[/\\]/u.test(segment))) return null;
+        const subPath = normalizePluginUiSubPathV1(decoded.join('/'));
+        return subPath === null ? null : { pluginId, localId, subPath };
+    } catch { return null; }
+}
+
 export type PluginPageTarget = Readonly<{ kind: 'app' }> | Readonly<{
     kind: 'project';
     workspaceRefId: string;
     serverId?: string | null;
     rawWorktreeId?: string | null;
     rawActiveRootPath?: string | null;
-}>;
+}> | Readonly<{ kind: 'machine'; serverId: string; machineId: string }>;
 
 export function pluginPageTargetKey(target: PluginPageTarget): string {
+    if (target.kind === 'machine') return JSON.stringify(['machine', target.serverId, target.machineId]);
     return target.kind === 'app' ? 'app' : JSON.stringify([
         'project', target.serverId ?? null, target.workspaceRefId,
         target.rawWorktreeId ?? null, target.rawActiveRootPath ?? null,
     ]);
+}
+
+/** Machine plugin destinations share the existing Machine page and its selection query. */
+export function buildPluginMachinePageRoutePath(input: Readonly<{
+    serverId: string; machineId: string; pluginId: string; localId: string; subPath?: string;
+}>): string {
+    const subPath = normalizePluginUiSubPathV1(input.subPath ?? '');
+    if (subPath === null) throw new Error('plugin_surface_open_sub_path_invalid');
+    // The Machine page's one tab encoder, so a link and an in-place tab switch never drift.
+    return machinePageHref({ door: 'rail', target: input, tab: {
+        id: 'plugin', pluginId: input.pluginId, localId: input.localId, ...(subPath ? { pluginPath: subPath } : {}),
+    } });
+}
+
+/** One target-aware route builder also owns navigation to a page's local location. */
+export function buildPluginPageRoutePath(input: PluginPageTarget & Readonly<{
+    pluginId: string; localId: string; subPath?: string;
+}>): string {
+    switch (input.kind) {
+        case 'app': return buildPluginAppPageRoutePath(input);
+        case 'project': return buildPluginProjectPageRoutePath(input);
+        case 'machine': return buildPluginMachinePageRoutePath(input);
+    }
 }
 
 export function buildPluginProjectPageRoutePath(input: Readonly<{
