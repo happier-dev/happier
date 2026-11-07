@@ -169,15 +169,13 @@ EOF
     return 1
   }
   # Every unresolved scan or transition problem blocks admission, regardless of
-  # path or file type. Known races may request the existing fresh-scan recovery.
+  # path or file type. Cached problems may request the existing fresh rescan.
   for scan_counts in "$s_alpha_scan" "$s_beta_scan" "$s_alpha_trans" "$s_beta_trans"; do
     case "$scan_counts" in ''|*[!0-9/]*|/*|*/|*/*/*) return 1 ;; esac
     case "$scan_counts" in */*) ;; *) return 1 ;; esac
   done
   expected_transition_count=$(( ${s_alpha_trans%/*} + ${s_beta_trans%/*} ))
   expected_scan_count=$(( ${s_alpha_scan%/*} + ${s_beta_scan%/*} ))
-  scan_errors=''
-  transition_errors=''
   problem_details=''
   blocking_scan_count=0
   blocking_transition_count=0
@@ -206,41 +204,23 @@ EOF
 }$problem_path: $problem_error"
       if [ "$problem_index" -le "$expected_transition_count" ]; then
         blocking_transition_count=$((blocking_transition_count + 1))
-        transition_errors="${transition_errors}${transition_errors:+
-}$problem_error"
       else
         blocking_scan_count=$((blocking_scan_count + 1))
-        scan_errors="${scan_errors}${scan_errors:+
-}$problem_error"
       fi
     done <<EOF
 $problem_lines
 EOF
   fi
-  sync_fact_transientScanProblems=0
   if [ "${s_alpha_scan#*/}" != 0 ] || [ "${s_beta_scan#*/}" != 0 ]; then
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization has excluded scan problems" >&2
     return 1
   fi
-  if [ "$blocking_scan_count" -gt 0 ]; then
-    if ! classify_transient_mutagen_scan_errors "$scan_errors"; then
-      printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name synchronization has unsafe scan problems: $problem_details" >&2
-      return 1
-    fi
-    sync_fact_transientScanProblems=1
-  fi
-  sync_fact_transientTransitionProblems=0
   if [ "${s_alpha_trans#*/}" != 0 ] || [ "${s_beta_trans#*/}" != 0 ]; then
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization has excluded transition problems" >&2
     return 1
   fi
-  if [ "$blocking_transition_count" -gt 0 ]; then
-    if ! classify_transient_mutagen_transition_errors "$transition_errors"; then
-      printf '%s\n' "HSTACK_SYNC_PROBLEM: $session_name synchronization has unsafe transition problems: $problem_details" >&2
-      return 1
-    fi
-    sync_fact_transientTransitionProblems=1
-  fi
+  sync_fact_transitionProblems=0
+  if [ "$blocking_transition_count" -gt 0 ]; then sync_fact_transitionProblems=1; fi
   sync_fact_watching=0; [ "$s_status" != Watching ] || sync_fact_watching=1
   sync_fact_noWatch=0
   if [ "$s_alpha_watch" = WatchModeNoWatch ] && [ "$s_beta_watch" = WatchModeNoWatch ]; then sync_fact_noWatch=1; fi
@@ -278,8 +258,8 @@ flush_and_check_sync() {
   }
   trap 'cancel_control_flush' HUP INT TERM
   # Mutagen acknowledges the cycle triggered after this request, even when
-  # later alpha changes have already started another cycle. A classified
-  # filesystem race gets one fresh rescan; do not wait for a quiet source.
+  # later alpha changes have already started another cycle. Reported problems
+  # get one fresh rescan; Mutagen may retain a removed path's scan error.
   # Remaining problems settle with their path.
   # Progress stays diagnostic; stdout belongs to health records or payloads.
   "$control_path" -- "$@" >&2 &
@@ -291,7 +271,7 @@ flush_and_check_sync() {
     check_sync_session_clean "$session_name"
     status=$?
     if [ "$status" -eq 2 ]; then
-      printf '%s\n' "hstack-dev-target-control: $session_name requesting one fresh scan after transient filesystem churn" >&2
+      printf '%s\n' "hstack-dev-target-control: $session_name requesting one fresh scan after reported synchronization problems" >&2
       "$control_path" -- "$@" >&2 &
       control_child=$!
       wait "$control_child"

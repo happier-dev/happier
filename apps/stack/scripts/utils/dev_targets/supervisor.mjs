@@ -852,7 +852,9 @@ export async function startStackDevTargets(
         if (syncProject.unhealthyTargets?.has(target.name)) {
           beginPhase('sync');
           const syncStatus = await inspectSync({ target, stackBaseDir: syncStackBaseDir, env: infraEnv });
-          if (syncStatus.state !== 'ready' && syncStatus.state !== 'synchronizing' && syncStatus.state !== 'needs-flush') {
+          if (syncStatus.recovery === 'rescan') {
+            await flushSync({ target, env: mutagenEnv }, { runProcess });
+          } else if (syncStatus.state !== 'ready' && syncStatus.state !== 'synchronizing' && syncStatus.state !== 'needs-flush') {
             throw new Error(
               `[dev-targets] ${target.name} independent synchronization is ${syncStatus.state}`,
             );

@@ -98,7 +98,7 @@ async function waitForExit(child) {
   });
 }
 
-test('dispatch recovery rescans transient scan problems and rejects persistent or unsafe problems', {
+test('dispatch recovery rescans reported problems and rejects persistent or malformed problems', {
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-rescan-'));
@@ -135,18 +135,19 @@ test('dispatch recovery rescans transient scan problems and rejects persistent o
     : ['--sync-check', 'happier-linux'], {
     env: { ...env, PROBLEM_MODE: mode, SCAN_ERROR: error }, encoding: 'utf8',
   });
-  for (const mode of ['transition', 'conflict']) {
+  for (const mode of ['conflict']) {
     assert.notEqual(recover(mode).status, 0);
     await assert.rejects(readFile(flushed), { code: 'ENOENT' });
   }
   for (const [mode, error] of [
-    ['transient', 'unable to open file: permission denied'],
-    ['mixed', 'unable to open file: permission denied'],
     ['excluded', 'hashed size mismatch: 1 != 2'],
     ['transient', 'hashed size mismatch: 1 != 2\npermission denied'],
   ]) {
     assert.notEqual(recover(mode, error).status, 0);
     await assert.rejects(readFile(flushed), { code: 'ENOENT' });
+  }
+  for (const mode of ['transition', 'mixed']) {
+    assert.equal(recover(mode, 'unable to open file: permission denied').status, 0);
   }
   const transient = recover('transient');
   assert.equal(transient.status, 0, transient.stderr);
@@ -167,7 +168,7 @@ test('dispatch recovery rescans transient scan problems and rejects persistent o
   assert.equal(await readFile(flushed, 'utf8'), 'cyclecycle', 'a scan race during the causal flush gets the existing fresh retry');
 });
 
-test('the causal barrier retries known transient transition problems once and requires clean final evidence', {
+test('the causal barrier rescans transition problems once and requires clean final evidence', {
   skip: process.platform === 'win32',
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-transition-recovery-'));
@@ -198,7 +199,8 @@ test('the causal barrier retries known transient transition problems once and re
   const errors = ['unable to validate existing file: modification detected',
     'unable to walk to parent path: leaf name does not exist or has incorrect casing',
     'unable to set staged file permissions: chmod /tmp/staged: no such file or directory',
-    'unable to relocate staged file: file exists'];
+    'unable to relocate staged file: file exists',
+    'unable to set staged file permissions: permission denied'];
   const inspect = (error, excludedTransitionProblems = 0) => parseMutagenSyncList(JSON.stringify([{
     name: 'happier-linux', paused: false, status: 'watching', successfulCycles: 2,
     alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true,
@@ -222,7 +224,7 @@ test('the causal barrier retries known transient transition problems once and re
   assert.notEqual(run('persistent', errors[0], true).status, 0);
   assert.equal(await readFile(marker, 'utf8'), 'cyclecycle', 'persistent problems cannot cause an unbounded retry');
   await rm(marker);
-  for (const [mode, error] of [['persistent', 'unable to set staged file permissions: permission denied'], ['excluded', errors[0]], ['persistent', `${errors[0]}\npermission denied`]]) {
+  for (const [mode, error] of [['excluded', errors[0]], ['persistent', `${errors[0]}\npermission denied`]]) {
     assert.equal(inspect(error, mode === 'excluded' ? 1 : 0).recovery, undefined);
     assert.notEqual(run(mode, error).status, 0);
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
@@ -501,7 +503,7 @@ test('failed and canceled flushes cannot satisfy queued demand, and later reques
   }
 });
 
-test('a waiter joining a successful flush still rejects fresh session problems', {
+test('a waiter joining a successful flush rescans newly reported session problems', {
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-join-health-'));
@@ -565,11 +567,10 @@ test('a waiter joining a successful flush still rejects fresh session problems',
   await writeFile(lockRelease, '');
   await lockResult;
   const results = await Promise.all([first.result, second.result]);
-  assert.deepEqual(results.map(({ code }) => code).sort(), [0, 1]);
-  assert.match(results.find(({ code }) => code === 1).stderr, /transition problems/u);
-  assert.equal(await readFile(flushLog, 'utf8'), 'flush\n', 'both pre-start demands share one cycle');
+  assert.deepEqual(results.map(({ code }) => code).sort(), [0, 0]);
+  assert.equal(await readFile(flushLog, 'utf8'), 'flush\nflush\n', 'a newly reported problem requires a fresh cycle before the waiter admits');
   assert.equal((await launch().result).code, 0, 'a new request must recover with another flush');
-  assert.equal(await readFile(flushLog, 'utf8'), 'flush\nflush\n');
+  assert.equal(await readFile(flushLog, 'utf8'), 'flush\nflush\nflush\n');
 });
 
 test('paused sync sessions report their project without inspecting absent endpoint state or flushing', {

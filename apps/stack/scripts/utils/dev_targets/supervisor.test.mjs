@@ -2662,7 +2662,8 @@ test('dev target supervisor borrows an existing producer project and leaves it r
   }
 });
 
-test('dev target supervisor borrows independent synchronization without mutating its lifecycle', async () => {
+for (const stale of [false, true]) {
+test(`dev target supervisor borrows independent synchronization without mutating its lifecycle: stale=${stale}`, async t => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-independent-sync-'));
   const stackBaseDir = join(root, 'stack');
   const projectFile = join(stackBaseDir, 'mutagen', 'mutagen.yml');
@@ -2675,6 +2676,11 @@ test('dev target supervisor borrows independent synchronization without mutating
     cliHomeDir: '/home/dev/.happier/linux',
   };
   const calls = [];
+  const syncOutput = () => JSON.stringify([{ name: 'happier-linux', paused: false, status: 'watching', successfulCycles: 1,
+    alpha: { connected: true, scanned: true,
+      scanProblems: stale && !calls.some(call => call.kind === 'run' && call.command === 'mutagen' && call.args[1] === 'flush')
+        ? [{ path: 'source/removed-link', error: 'invalid symbolic link: target is absolute' }] : [] },
+    beta: { connected: true, scanned: true } }]);
   try {
     await mkdir(join(stackBaseDir, 'mutagen'), { recursive: true });
     await writeFile(
@@ -2704,12 +2710,13 @@ test('dev target supervisor borrows independent synchronization without mutating
       },
       {
         runDependencyBootstrap: successfulDependencyBootstrap,
+        inspectSync: options => inspectDevTargetSync(options, { runCaptureResult: async () => ({ ok: true, out: syncOutput() }) }),
         runProcess: async ({ command, args }) => {
           calls.push({ kind: 'run', command, args });
           return {
             code: 0,
             ...(command === 'mutagen' && args[0] === 'sync' && args[1] === 'list'
-              ? { out: JSON.stringify([{ name: 'happier-linux', paused: false, status: 'watching', successfulCycles: 1, alpha: { connected: true, scanned: true }, beta: { connected: true, scanned: true } }]) }
+              ? { out: syncOutput() }
               : {}),
           };
         },
@@ -2722,10 +2729,12 @@ test('dev target supervisor borrows independent synchronization without mutating
       },
     );
 
+    t.after(() => controller.close());
     const mutagenLifecycleActions = calls
       .filter((call) => call.kind === 'run' && call.command === 'mutagen')
       .flatMap((call) => call.args.filter((arg) => ['start', 'resume', 'pause', 'terminate'].includes(arg)));
     assert.deepEqual(mutagenLifecycleActions, []);
+    if (stale) assert.equal(calls.filter(call => call.kind === 'run' && call.command === 'mutagen' && call.args[1] === 'flush').length, 1);
     await controller.close();
     assert.deepEqual(
       calls
@@ -2738,6 +2747,7 @@ test('dev target supervisor borrows independent synchronization without mutating
     await rm(root, { recursive: true, force: true });
   }
 });
+}
 
 test('dev target supervisor borrows an all-target independent project when only a subset runs services', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-dev-target-independent-sync-subset-'));

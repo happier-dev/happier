@@ -248,7 +248,7 @@ test('Mutagen list parsing rejects nonterminal scan and transition problems incl
   ]) {
     const result = parseMutagenSyncList(base(problem), 'happier-mac');
     assert.equal(result.state, 'unhealthy', JSON.stringify(problem));
-    assert.equal(result.recovery, undefined, JSON.stringify(problem));
+    assert.equal(result.recovery, /"error"/.test(JSON.stringify(problem)) ? 'rescan' : undefined, JSON.stringify(problem));
   }
 
   const excludedAlone = parseMutagenSyncList(base({
@@ -294,7 +294,7 @@ test('Mutagen project scan and transition problems block and name changing data 
   }
 });
 
-test('Mutagen scan races recover before the first cycle but never mask unsafe scan evidence', () => {
+test('Mutagen problems request a fresh scan before the first cycle while malformed and excluded evidence stays unavailable', () => {
   const race = { path: 'source.ts', error: 'hashed size mismatch: 847308 != 28672' };
   for (const cycles of [0, 7]) {
     const session = {
@@ -304,16 +304,20 @@ test('Mutagen scan races recover before the first cycle but never mask unsafe sc
     };
     const inspect = value => parseMutagenSyncList(JSON.stringify([value]), session.name);
     assert.equal(inspect(session).recovery, 'rescan');
-    for (const unsafe of [
+    for (const stale of [
       { ...session.alpha, scanProblems: [race, { path: 'secret', error: 'permission denied' }] },
-      { ...session.alpha, excludedScanProblems: 1 },
       { ...session.alpha, scanProblems: [{ path: 'source.ts', error: 'modified during scan' }] },
       { ...session.alpha, scanProblems: [{ path: 'source.ts', error: 'hashed size mismatch: invalid' }] },
+      { ...session.alpha, scanProblems: [{ path: 'removed-link', error: 'invalid symbolic link: target is absolute' }] },
+    ]) assert.equal(inspect({ ...session, alpha: stale }).recovery, 'rescan');
+    for (const unsafe of [
+      { ...session.alpha, excludedScanProblems: 1 },
       { ...session.alpha, scanProblems: [{ path: 'source.ts' }] },
+      { ...session.alpha, scanProblems: [{ path: 'source.ts', error: 'permission denied\nmalformed' }] },
     ]) assert.equal(inspect({ ...session, alpha: unsafe }).recovery, undefined);
     const transition = { path: 'source.ts', error: 'unable to validate existing file: modification detected' };
     assert.equal(inspect({ ...session, beta: { ...session.beta, transitionProblems: [transition] } }).recovery, 'rescan');
-    assert.equal(inspect({ ...session, beta: { ...session.beta, scanProblems: [{ path: 'secret', error: 'permission denied' }], transitionProblems: [transition] } }).recovery, undefined);
+    assert.equal(inspect({ ...session, beta: { ...session.beta, scanProblems: [{ path: 'secret', error: 'permission denied' }], transitionProblems: [transition] } }).recovery, 'rescan');
   }
 });
 

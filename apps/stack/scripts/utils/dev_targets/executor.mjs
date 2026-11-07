@@ -175,7 +175,7 @@ async function flushDevTarget(
         { runCaptureResult: runCaptureResultImpl },
       );
       if (postFlushStatus.recovery === 'rescan' && !recoveryUsed) {
-        console.error(`[dev-targets] ${target.name} retrying transient problems through one fresh flush`);
+        console.error(`[dev-targets] ${target.name} rescanning reported problems through one fresh flush`);
         continue;
       }
       assertReadySyncStatus(postFlushStatus, { targetName: target.name });

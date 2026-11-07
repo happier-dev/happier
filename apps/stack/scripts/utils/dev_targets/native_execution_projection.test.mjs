@@ -230,15 +230,15 @@ test('native sync readiness artifact executes the same canonical first-cycle and
 }, () => {
   const artifact = new URL('./native_sync_readiness.sh', import.meta.url);
   assert.equal(readFileSync(artifact, 'utf8'), renderNativeSyncReadinessPolicy());
-  const clean = { watching: true, noWatch: true, scanned: false, cyclesValid: true, completed: false, scanProblems: false, transientScanProblems: false, transientTransitionProblems: false };
+  const clean = { watching: true, noWatch: true, scanned: false, cyclesValid: true, completed: false, scanProblems: false, transitionProblems: false };
   const cases = [
     clean,
     { ...clean, noWatch: false },
     { ...clean, watching: false },
     { ...clean, cyclesValid: false },
     { ...clean, scanProblems: true },
-    { ...clean, scanProblems: true, transientScanProblems: true },
-    { ...clean, scanProblems: true, transientTransitionProblems: true },
+    { ...clean, transitionProblems: true },
+    { ...clean, scanProblems: true, transitionProblems: true },
     { ...clean, scanned: true, completed: true, scanProblems: true },
     { ...clean, scanned: true, completed: true },
     { ...clean, scanned: true, completed: true, watching: false },

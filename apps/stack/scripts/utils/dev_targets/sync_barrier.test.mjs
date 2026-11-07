@@ -9,6 +9,41 @@ import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 
 const control = resolve(import.meta.dirname, '../../../bin/hstack-dev-target-control');
 
+for (const family of ['scan', 'transition']) {
+  for (const persistent of [false, true]) {
+    test(`stale ${family} problems reach one fresh rescan: persistent=${persistent}`, { skip: process.platform === 'win32' }, async t => {
+      const fixture = await createTempFixture(t, { prefix: 'hstack-stale-sync-' });
+      const dataDir = fixture.path('mutagen/data');
+      t.after(() => rm(`/tmp/happier-sync-control-${process.getuid()}${dirname(dataDir)}`, { recursive: true, force: true }));
+      const { binDir } = writeFakeBin({ root: fixture.root, name: 'mutagen', content: `#!/bin/sh
+case "$2" in
+  flush) printf 'cycle\\n' >> "$SYNC_FIXTURE/cycles" ;;
+  list)
+    scan=0/0; transition=0/0
+    if [ "$SYNC_PERSISTENT" = 1 ] || [ ! -e "$SYNC_FIXTURE/cycles" ]; then
+      ${family}=1/0
+    fi
+    printf '%s|Watching|false|true|1|%s|%s|true|1|0/0|0/0|active|2|ok|0|0\\n' "$3" "$scan" "$transition"
+    if [ "$scan/$transition" != 0/0/0/0 ]; then
+      printf 'source/removed-link|invalid symbolic link: target is absolute\\n'
+    fi
+    ;;
+esac
+` });
+      const env = { ...process.env, PATH: `${binDir}:/usr/bin:/bin`, DBUS_SESSION_BUS_ADDRESS: '', MUTAGEN_DATA_DIRECTORY: dataDir,
+        SYNC_FIXTURE: fixture.root, SYNC_PERSISTENT: persistent ? '1' : '0' };
+      const candidate = spawnSync('/bin/sh', [control, '--sync-check', 'happier-stale'], { env, encoding: 'utf8' });
+      assert.equal(candidate.status, 0, candidate.stderr);
+      await assert.rejects(readFile(fixture.path('cycles')), { code: 'ENOENT' });
+      const result = spawnSync('/bin/sh', [control, '--sync-flush', 'happier-stale', '--', 'mutagen', 'sync', 'flush', 'happier-stale'], { env, encoding: 'utf8' });
+      assert.equal(result.status, persistent ? 1 : 0, result.stderr);
+      assert.equal(result.stdout, '');
+      assert.equal(await readFile(fixture.path('cycles'), 'utf8'), persistent ? 'cycle\ncycle\n' : 'cycle\n', 'one causal flush and at most one fresh rescan');
+      if (persistent) assert.match(result.stderr, /HSTACK_SYNC_PROBLEM:.*source\/removed-link/);
+    });
+  }
+}
+
 for (const problem of [null, 'hashed size mismatch: 12 != 13', 'permission denied']) {
   test(`causal flush settles during alpha churn: ${problem ?? 'completed transfer'}`, { skip: process.platform === 'win32' }, async t => {
     const fixture = await createTempFixture(t, { prefix: 'hstack-sync-barrier-' });
@@ -41,7 +76,7 @@ exit 0
     assert.equal(result.error, undefined, `barrier must settle after the acknowledged cycle: ${result.error?.code}`);
     assert.equal(result.status, problem ? 1 : 0, result.stderr);
     assert.equal(result.stdout, '', 'synchronization must preserve the payload output stream');
-    assert.equal(await readFile(fixture.path('cycles'), 'utf8'), 'cycle\n', 'later alpha churn must not restart the caller’s cycle');
+    assert.equal(await readFile(fixture.path('cycles'), 'utf8'), problem ? 'cycle\ncycle\n' : 'cycle\n', 'only a reported problem may request one fresh rescan');
     assert.equal(await readFile(fixture.path('mirror'), 'utf8'), 'requested source\n');
     if (problem) assert.match(result.stderr, /HSTACK_SYNC_PROBLEM:.*source\/churn\.mjs/);
   });

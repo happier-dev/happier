@@ -140,19 +140,29 @@ test('explicit sync rescans scan-only problems through the existing flush before
   assert.equal(result.state, 'ready');
 });
 
-test('explicit sync rejects genuine scan failures before attempting a flush', async () => {
+test('explicit sync rescans stale scan errors and still refuses persistent errors on Windows', async t => {
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+  t.after(() => Object.defineProperty(process, 'platform', originalPlatformDescriptor));
   const initial = readyListResult();
   const sessions = JSON.parse(initial.out);
-  sessions[0].alpha.scanProblems = [{ path: 'source.ts', error: 'permission denied' }];
+  sessions[0].alpha.scanProblems = [{ path: 'source/removed-link', error: 'invalid symbolic link: target is absolute' }];
   initial.out = JSON.stringify(sessions);
-  let flushed = false;
-  await assert.rejects(syncDevTarget({ target, stackBaseDir: '/tmp/stack', env: {} }, {
-    runCaptureResult: async ({ args }) => {
-      if (args.includes('flush')) flushed = true;
-      return initial;
-    },
-  }), /permission denied/);
-  assert.equal(flushed, false);
+  for (const persistent of [false, true]) {
+    let flushes = 0;
+    const sync = () => syncDevTarget({ target, stackBaseDir: '/tmp/stack', env: {} }, {
+      runCaptureResult: async ({ args }) => {
+        if (args.includes('flush')) {
+          flushes += 1;
+          return { ok: true, exitCode: 0, out: '', err: '' };
+        }
+        return persistent || flushes === 0 ? initial : readyListResult();
+      },
+    });
+    if (persistent) await assert.rejects(sync, /source\/removed-link.*invalid symbolic link/);
+    else assert.equal((await sync()).state, 'ready');
+    assert.equal(flushes, persistent ? 2 : 1, 'one causal flush and at most one fresh rescan');
+  }
 });
 
 test('explicit sync recovers a staged relocation collision through the existing flush', async () => {
@@ -580,7 +590,7 @@ test('the Windows adapter inspects fresh post-flush state and blocks a transitio
     /transition|synchronization is unhealthy/i,
   );
   assert.equal(sshLaunched, false, 'no SSH dispatch after a problem-bearing post-flush inspection');
-  assert.equal(listCalls, 2, 'the Windows adapter performs the fresh post-flush inspection');
+  assert.equal(listCalls, 3, 'the Windows adapter re-evaluates after its one fresh rescan');
   for (const problemFamily of ['transitionProblems', 'scanProblems']) {
     for (const persistent of [false, true]) {
       let flushes = 0;
