@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol';
+import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 
 import { renderScreen } from '@/dev/testkit';
 import { setPreferredLanguageFromSettings, t } from '@/text';
@@ -613,7 +613,7 @@ describe('TranscriptEventRow', () => {
         expect(serialized).not.toContain('provider_account_adoption_mismatch)');
     });
 
-    it('falls back safely for future switch attempt diagnostics with an error code', async () => {
+    it.each(['hot_apply_failed', 'live_hot_auth_failed'])('presents switch failure recovery without exposing raw codes (%s)', async (errorCode) => {
         const screen = await renderScreen(
             <TranscriptEventRow
                 event={{
@@ -622,14 +622,17 @@ describe('TranscriptEventRow', () => {
                     action: 'hot_applied',
                     outcome: 'failed',
                     outcomeAction: 'none',
-                    errorCode: 'live_hot_auth_failed',
+                    errorCode,
                 }}
             />,
         );
 
         const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
-        expect(serialized).toContain('Authentication could not be switched for this session. (live_hot_auth_failed)');
+        expect(serialized).toContain(t(errorCode === 'hot_apply_failed'
+            ? 'connectedServices.authSwitch.errors.hotApplyFailed'
+            : 'connectedServices.authSwitch.switchFailed'));
+        expect(serialized).not.toContain(`(${errorCode})`);
         expect(serialized).not.toContain(t('message.unknownEvent'));
     });
 

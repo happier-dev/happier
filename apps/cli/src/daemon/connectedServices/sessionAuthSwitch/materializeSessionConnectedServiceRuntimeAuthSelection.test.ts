@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import axios from 'axios';
 import { accountSettingsParse, buildConnectedServiceCredentialRecord, type ConnectedServiceBindingsV2, QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SessionConnectedServiceAuthApplyGenerationRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 
 const io = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io }));
@@ -94,7 +95,7 @@ afterAll(async () => await runtimeFixture?.dispose());
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); io.mockReset(); });
-  it.each(['accepted', 'refused', 'unverified'] as const)('preserves the runner adoption result through an exhausted-account switch (%s)', async (outcome) => {
+  it.each(['accepted', 'refused', 'invalid', 'unverified'] as const)('preserves the runner adoption result through an exhausted-account switch (%s)', async (outcome) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-account-switch-transport-'));
     const sessionId = 'c1234567890123456789012345';
     try {
@@ -130,6 +131,14 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
         expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
         expect(payload).toMatchObject({ method: `${sessionId}:session.connectedServiceAuth.applyGeneration` });
+        if (!payload || typeof payload !== 'object' || !('params' in payload)) throw new Error('Missing fixture RPC parameters');
+        const request = SessionConnectedServiceAuthApplyGenerationRequestV1Schema.safeParse(payload.params);
+        if (!request.success) {
+          expect(request.error.issues.map(issue => issue.path)).toEqual([['reason']]);
+          return { ok: true, result: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } };
+        }
+        expect(request.data.reason).toBe('manual');
+        if (outcome === 'invalid') return { ok: true, result: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } };
         if (outcome === 'refused') return { ok: true, result: { ok: false, errorCode: 'credential_revision_superseded', error: 'credential_revision_superseded' } };
         activeProviderAccount = 'provider-healthy';
         return { ok: true, result: { ok: true, appliedVia: 'direct_live_hot_auth', activeAccountId: activeProviderAccount,
@@ -169,6 +178,11 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       } else if (outcome === 'refused') {
         expect(result).toMatchObject({ ok: false, errorCode: 'credential_revision_superseded', diagnostics: {
           serviceResultsByServiceId: { [CODEX_SERVICE_KEY]: { status: 'failed', errorCode: 'credential_revision_superseded' } },
+        } });
+        expect(activeProviderAccount).toBe('provider-exhausted');
+      } else if (outcome === 'invalid') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'hot_apply_failed', diagnostics: {
+          serviceResultsByServiceId: { [CODEX_SERVICE_KEY]: { status: 'failed', errorCode: 'invalid_parameters' } },
         } });
         expect(activeProviderAccount).toBe('provider-exhausted');
       } else {

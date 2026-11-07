@@ -1,5 +1,6 @@
 import { ConnectedServiceCredentialRecordV1Schema, ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { SessionConnectedServiceAuthApplyGenerationRequestV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 
 import type { ConnectedServiceRuntimeAuthTargetInput } from './types';
 
@@ -120,7 +121,7 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
       }
       return await applyAuthGenerationSource({
         serviceId: selectedServiceId,
-        ...(applyReason ? { reason: applyReason } : {}),
+        reason: applyReason ?? 'diagnostic',
         expected: {
           ...(selection.activeProfileId ?? selection.profileId
             ? { profileId: selection.activeProfileId ?? selection.profileId }
@@ -134,7 +135,7 @@ export function projectConnectedServiceRuntimeAuthTargetInput(input: Readonly<{
           ...(selection.credentialRevision ? { credentialRevision: selection.credentialRevision } : {}),
           selection,
         },
-      });
+      } satisfies SessionConnectedServiceAuthApplyGenerationRequestV1);
     }
     : undefined;
   const client = readRecord(sourceSelection.client);

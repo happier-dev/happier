@@ -16,10 +16,13 @@ import type {
 } from '../accountTransitions/acceptedConnectedServiceAccountVerification';
 import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/projectRuntimeAuthTargetInput';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import type { ConnectedServiceRuntimeTarget } from '../runtimeRegistry/target';
+import { isRetryableConnectedServiceCredentialApplyFailure } from '../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 
 type HotApplyResult =
   | Readonly<{
       ok: true;
+      groupApplicationTarget?: ConnectedServiceRuntimeTarget;
       verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
     }>
   | Readonly<{
@@ -28,6 +31,7 @@ type HotApplyResult =
         | 'hot_apply_unavailable'
         | 'hot_apply_failed'
         | 'hot_apply_restart_required'
+        | 'credential_revision_missing'
         | 'credential_revision_superseded';
       serviceId?: ConnectedAccountServiceKey;
       serviceResultsByServiceId?: Readonly<Record<string, SessionConnectedServiceAuthSwitchServiceResult>>;
@@ -142,9 +146,11 @@ function readAcceptedVerificationFromHotApplyResult(
 function readHotApplyFailureErrorCode(
   result: Readonly<Record<string, unknown>>,
 ): Exclude<HotApplyResult, Readonly<{ ok: true }>>['errorCode'] {
+  for (const code of [result.reason, result.errorCode]) {
+    if (isRetryableConnectedServiceCredentialApplyFailure(code)) return code;
+  }
   if (
     result.status === 'superseded_after_apply'
-    || result.reason === 'credential_revision_superseded'
     || result.reason === 'shared_generation_application_superseded'
   ) {
     return 'credential_revision_superseded';
@@ -156,7 +162,6 @@ function readHotApplyFailureErrorCode(
 
 export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
   runtimeRegistry: ConnectedServiceRuntimeRegistry;
-  isSessionCurrent?: (sessionId: string) => Promise<boolean>;
   resolveRuntimeAuthAdapter?: (agentId: CatalogAgentId) => Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
   validateGroupMutationCurrentness?: (input: Readonly<{
     serviceId: ConnectedAccountServiceKey;
@@ -175,14 +180,6 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
     serviceIds?: ReadonlySet<ConnectedAccountServiceKey>;
     runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedAccountServiceKey, unknown>;
   }>): Promise<HotApplyResult> {
-    const isCurrent = async () => {
-      if (!deps?.isSessionCurrent) return true;
-      const sessionId = input.tracked.happySessionId;
-      if (!sessionId) return false;
-      try { return await deps.isSessionCurrent(sessionId); }
-      catch { return false; }
-    };
-    if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed' };
     const agentId = resolveTrackedSessionCatalogAgentId(input.tracked);
     if (!agentId) return { ok: false, errorCode: 'hot_apply_unavailable' };
     const adapter = await resolveRuntimeAuthAdapter(agentId);
@@ -197,6 +194,7 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
       });
     const serviceResultsByServiceId: Record<string, SessionConnectedServiceAuthSwitchServiceResult> = {};
     const acceptedVerificationsByServiceId: Record<string, AcceptedConnectedServiceAccountVerification> = {};
+    let groupApplicationTarget: ConnectedServiceRuntimeTarget | undefined;
 
     for (const [index, { serviceId, binding }] of targetBindings.entries()) {
       const materializedSelection = input.runtimeAuthSelectionsByServiceId?.get(serviceId);
@@ -206,7 +204,7 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
         materializedSelectionRecord?.credentialRevision,
       );
       const validateCurrentBeforeMutation = async () => {
-        if (!await isCurrent()) return { current: false as const, reason: 'requester_session_not_current' };
+        const applicationTarget = groupApplicationTarget ?? deps.runtimeRegistry.getByPid(input.tracked.pid);
         if (binding.selection === 'group') {
           const groupId = readString(materializedSelectionRecord?.groupId) ?? readString(binding.groupId);
           const profileId = readString(materializedSelectionRecord?.activeProfileId)
@@ -224,7 +222,13 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
         // This callback is admitted immediately before native-file or live
         // SDK auth mutation. Keep process/Run custody, but no longer claim
         // its old accepted binding is applied until success registration.
-        deps.runtimeRegistry.updateTarget({ pid: input.tracked.pid, connectedServicesBindingsRaw: null });
+        if (binding.selection === 'group' && applicationTarget) {
+          const withdrawn = deps.runtimeRegistry.withdrawSessionGroupApplicationBindings(applicationTarget);
+          if (!withdrawn) return { current: false as const, reason: 'credential_revision_superseded' };
+          groupApplicationTarget = withdrawn;
+        } else {
+          deps.runtimeRegistry.updateTarget({ pid: input.tracked.pid, connectedServicesBindingsRaw: null });
+        }
         return { current: true as const };
       };
       const request = projectConnectedServiceRuntimeAuthTargetInput({
@@ -241,12 +245,15 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
         },
         validateCurrentBeforeMutation,
       });
-      if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed', serviceId };
       const result = await adapter.hotApply(request);
-      if (!await isCurrent()) return { ok: false, errorCode: 'hot_apply_failed', serviceId };
       if (!resultApplied(result)) {
         const errorCode = readHotApplyFailureErrorCode(result);
-        serviceResultsByServiceId[serviceId] = { status: 'failed', errorCode };
+        serviceResultsByServiceId[serviceId] = {
+          status: 'failed',
+          errorCode: errorCode === 'hot_apply_failed'
+            ? readString(result.reason) ?? readString(result.errorCode) ?? errorCode
+            : errorCode,
+        };
         for (const remaining of targetBindings.slice(index + 1)) {
           serviceResultsByServiceId[remaining.serviceId] = { status: 'not_attempted' };
         }
@@ -266,6 +273,7 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
 
     return {
       ok: true,
+      ...(groupApplicationTarget ? { groupApplicationTarget } : {}),
       ...(Object.keys(acceptedVerificationsByServiceId).length > 0
         ? { verificationByServiceId: acceptedVerificationsByServiceId }
         : {}),

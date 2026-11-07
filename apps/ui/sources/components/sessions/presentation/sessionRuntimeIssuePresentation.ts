@@ -9,13 +9,59 @@ import {
 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 
 import { presentSessionAgentAuthRequired } from './sessionAgentAuthRequiredPresentation';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 import { teamCredentialReconnectPresentation } from '@/components/settings/teams/credentials/sourceHealthPresentation';
 import { resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
+
+function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
+    errorCode: string | undefined,
+): TranslationKey {
+    switch (errorCode) {
+        case 'provider_state_sharing_required':
+            return 'connectedServices.authSwitch.errors.providerStateSharingRequired';
+        case 'group_generation_conflict':
+            return 'connectedServices.authSwitch.errors.groupGenerationConflict';
+        case 'not_group_selection':
+            return 'connectedServices.authSwitch.errors.notGroupSelection';
+        case 'connected_service_required':
+            return 'connectedServices.authSwitch.errors.connectedServiceRequired';
+        case 'profile_action_required':
+            return 'connectedServices.authSwitch.errors.profileActionRequired';
+        case 'provider_state_sharing_unavailable':
+            return 'connectedServices.authSwitch.errors.providerStateSharingUnavailable';
+        case 'profile_disconnected':
+            return 'connectedServices.authSwitch.errors.profileDisconnected';
+        case 'profile_missing':
+            return 'connectedServices.authSwitch.errors.profileMissing';
+        case 'group_missing':
+            return 'connectedServices.authSwitch.errors.groupMissing';
+        case 'metadata_update_failed':
+            return 'connectedServices.authSwitch.errors.metadataUpdateFailed';
+        case 'restart_failed':
+            return 'connectedServices.authSwitch.errors.restartFailed';
+        case 'hot_apply_failed':
+            return 'connectedServices.authSwitch.errors.hotApplyFailed';
+        case 'provider_account_adoption_mismatch':
+        case 'post_switch_verification_failed':
+            return 'connectedServices.authSwitch.switchFailed';
+        case 'agent_mismatch':
+            return 'connectedServices.authSwitch.errors.agentMismatch';
+        case 'session_not_found':
+            return 'connectedServices.authSwitch.errors.sessionNotFound';
+        case 'unsupported_service':
+            return 'connectedServices.authSwitch.errors.unsupportedService';
+        default:
+            return 'connectedServices.authSwitch.switchFailed';
+    }
+}
+
+export function presentSessionAuthSwitchFailure(errorCode: string | undefined): string {
+    return t(resolveSessionConnectedServiceAuthSwitchErrorMessageKey(errorCode));
+}
 
 function isTeamCredentialRefusal(code: string): code is ProviderBrokerAdmissionFailureCodeV1 {
     return ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(code).success;

@@ -8,16 +8,24 @@ import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../runtimeAuth/
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
 
 describe('createSessionConnectedServiceAuthHotApply', () => {
-  it('keeps pending X readable, invalidates only at auth effects, and preserves retained child custody', async () => {
+  it.each(['profile', 'group'] as const)('keeps applied %s truth when a later Home currentness read fails', async (selection) => {
     const serviceId = 'happier.agent.codex/openai-codex';
     const registry = new ConnectedServiceRuntimeRegistry();
     const previous = { v: 2 as const, bindingsByServiceId: {
-      [serviceId]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'old' },
+      [serviceId]: selection === 'group'
+        ? { source: 'connected' as const, selection, profileId: 'old', groupId: 'pool' }
+        : { source: 'connected' as const, selection, profileId: 'old' },
     } };
     const next = { v: 2 as const, bindingsByServiceId: {
-      [serviceId]: { source: 'connected' as const, selection: 'profile' as const, profileId: 'next' },
+      [serviceId]: selection === 'group'
+        ? { source: 'connected' as const, selection, profileId: 'next', groupId: 'pool' }
+        : { source: 'connected' as const, selection, profileId: 'next' },
+    } };
+    const appliedPool = { v: 2 as const, bindingsByServiceId: {
+      [serviceId]: { source: 'connected' as const, selection: 'group' as const, groupId: 'pool' },
     } };
     registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: previous });
+    const recipient = registry.getByPid(123)!;
     // Registration adds a `bindings` convenience projection; stored Run custody
     // consists of the canonical target fields rather than that wrapper's identity.
     const { bindings: _registeredBindings, ...retainedChild } = registry.registerRunTarget({ runKey: 'retained-child', pid: 123,
@@ -33,9 +41,10 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     const sdkEntered = new Promise<void>((resolve) => { enteredSdkEffect = resolve; });
     const fileEntered = new Promise<void>((resolve) => { enteredFileEffect = resolve; });
     let nativeFiles: Readonly<Record<string, Uint8Array>> = {};
+    let nativeApplied = false;
     // Only the live SDK RPC, native filesystem, and Account-currentness IO are boundaries.
     const nativeHome = { readFiles: async () => nativeFiles, replaceFiles: async (files: Readonly<Record<string, Uint8Array>>) => {
-      enteredFileEffect(); await fileEffect; nativeFiles = files;
+      enteredFileEffect(); await fileEffect; nativeFiles = files; nativeApplied = true;
     } };
     const applyConnectedServiceAuthGeneration = async () => {
       enteredSdkEffect(); await sdkEffect; return { ok: true };
@@ -52,17 +61,26 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
           runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter() },
       },
     });
-    const apply = createSessionConnectedServiceAuthHotApply({
-      runtimeRegistry: registry,
-      isSessionCurrent: async () => { await admission; return true; },
-      resolveRuntimeAuthAdapter: async () => await projected.getConnectedServiceRuntimeAuthAdapter?.() ?? null,
+    const readHomeCurrentness = vi.fn(async () => {
+      await admission;
+      if (nativeApplied) throw new Error('Home unavailable after native auth changed');
+      return true;
     });
+    const dependencies = {
+      runtimeRegistry: registry,
+      isSessionCurrent: readHomeCurrentness,
+      resolveRuntimeAuthAdapter: async () => await projected.getConnectedServiceRuntimeAuthAdapter?.() ?? null,
+      validateGroupMutationCurrentness: async () => ({ current: true as const }),
+    };
+    const apply = createSessionConnectedServiceAuthHotApply(dependencies);
     const transition = apply({
       tracked: { startedBy: 'daemon', happySessionId: 'parent', pid: 123,
         spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } },
       normalizedBindings: next,
       runtimeAuthSelectionsByServiceId: new Map([[serviceId, {
         serviceId, profileId: 'next', nativeHome, applyConnectedServiceAuthGeneration,
+        ...(selection === 'group' ? { groupId: 'pool', activeProfileId: 'next', groupGeneration: 7,
+          credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' } : {}),
         credential: buildConnectedServiceCredentialRecord({ now: 1, serviceId: 'openai-codex', profileId: 'next', kind: 'oauth',
           oauth: { accessToken: 'access-placeholder', refreshToken: 'refresh-placeholder', idToken: null,
             scope: null, tokenType: 'Bearer', providerAccountId: 'account-next', providerEmail: null } }),
@@ -70,18 +88,29 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     });
     const read = () => registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'parent', agentId: 'codex' });
     try {
-      expect(read()).toEqual({ status: 'applied', connectedServices: previous });
+      expect(read()).toEqual({ status: 'applied', connectedServices: selection === 'group' ? appliedPool : previous });
       admit(); await sdkEntered;
       expect(read()).toEqual({ status: 'unavailable' });
       expect(registry.getRunTargetByRunKey('retained-child')).toEqual(retainedChild);
       completeSdkEffect(); await fileEntered;
       expect(read()).toEqual({ status: 'unavailable' });
-      completeFileEffect(); await expect(transition).resolves.toMatchObject({ ok: true });
+      completeFileEffect();
+      const result = await transition;
+      expect(result).toMatchObject({ ok: true });
+      expect(readHomeCurrentness).not.toHaveBeenCalled();
       expect(read()).toEqual({ status: 'unavailable' });
       // Only the existing authoritative success registration restores applied proof.
-      registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: next });
-      expect(read()).toEqual({ status: 'applied', connectedServices: next });
+      registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: next },
+        result.ok && result.groupApplicationTarget ? { groupApplicationTarget: result.groupApplicationTarget } : undefined);
+      expect(read()).toEqual({ status: 'applied', connectedServices: selection === 'group' ? appliedPool : next });
+      // An owned group application keeps its recipient across success registration.
+      expect(registry.resolveExactSessionGroupApplicationTarget(recipient))
+        .toBe(selection === 'group' ? registry.getByPid(123) : null);
       expect(registry.getRunTargetByRunKey('retained-child')).toEqual(retainedChild);
+      // An unrelated registration must not inherit that application lineage.
+      registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: next,
+        sessionDirectory: '/unrelated-registration' });
+      expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBeNull();
     } finally {
       admit(); completeSdkEffect(); completeFileEffect(); await transition;
     }
@@ -415,7 +444,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       errorCode: 'hot_apply_failed',
       serviceId: 'happier.agent.codex/openai-codex',
       serviceResultsByServiceId: {
-        'happier.agent.codex/openai-codex': { status: 'failed', errorCode: 'hot_apply_failed' },
+        'happier.agent.codex/openai-codex': { status: 'failed', errorCode: 'not_ready' },
       },
     });
   });
@@ -647,7 +676,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
       serviceId: 'happier.agent.claude/claude-subscription',
       serviceResultsByServiceId: {
         'happier.agent.codex/openai-codex': { status: 'applied' },
-        'happier.agent.claude/claude-subscription': { status: 'failed', errorCode: 'hot_apply_failed' },
+        'happier.agent.claude/claude-subscription': { status: 'failed', errorCode: 'not_ready' },
       },
     });
 

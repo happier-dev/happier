@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
+import { presentSessionAuthSwitchFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     isTerminalComposerDraftBlockedEvent,
@@ -51,12 +52,33 @@ import { followInputNeedsYou } from '@/sync/domains/session/input/hostAuthoredIn
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EVENT_ICON_SIZE = 18;
 // Derived, not chosen: the spinner replaces the glyph in the same slot, so it must paint the same
 // amount of ink. It was 20 against an 18pt glyph, i.e. larger than the checkmark it settles into.
 const EVENT_SPINNER_SIZE = iconMatchedSpinnerSize(EVENT_ICON_SIZE);
 export const EVENT_ICON_CONTAINER_SIZE = 20;
+
+/**
+ * A quiet one-line event in the transcript's event column (a Voice conversation continuing on another
+ * device, a Voice call ending): glyph and words in the event row's slot and type, no card.
+ */
+export function TranscriptEventLine(props: Readonly<{
+    icon: IconName;
+    testID?: string;
+    /** Renders the words in the event row's text style (a caller may need its own Find highlighting). */
+    renderText: (textStyle: typeof styles.lineText) => React.ReactNode;
+}>) {
+    const { theme } = useUnistyles();
+    return <View testID={props.testID} style={[styles.container, styles.row]}>
+        {/* The glyph steps down with the meta-size words, on the event column's axis. */}
+        <View style={[styles.iconContainer, styles.lineIconContainer]}>
+            <Icon name={props.icon} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+        </View>
+        <View style={styles.textColumn}>{props.renderText(styles.lineText)}</View>
+    </View>;
+}
 
 /** One presenter shared by original Follow inputs and their WorkerUpdate cards. */
 export function TranscriptHostWakeNotice(props: Readonly<{ count: number }>) {
@@ -140,17 +162,16 @@ function CapabilityNoticeLink(props: Readonly<{ notice: CapabilityNoticePresenta
     const { theme } = useUnistyles();
     const router = useRouter();
     return (
-        <Pressable
+        <HappierPressable
             testID="transcript-event-capability-notice-open"
             accessibilityRole="link"
             accessibilityLabel={props.notice.linkLabel}
             onPress={() => router.push(props.notice.href as never)}
-            hitSlop={8}
             style={({ pressed }) => [styles.noticeLink, { opacity: pressed ? motionTokens.press.opacitySubtle : 1 }]}
         >
             <Text style={[styles.detailText, { color: theme.colors.text.secondary }]}>{props.notice.linkLabel}</Text>
             <Icon name="caret-right" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
-        </Pressable>
+        </HappierPressable>
     );
 }
 
@@ -233,13 +254,9 @@ function formatQuotaResetTime(timestampMs: number): string {
 function formatConnectedServiceSwitchAttemptFailureText(event: Extract<AgentEvent, { type: 'connected-service-account-switch-attempt' }>): string {
     const diagnostic = 'diagnostic' in event ? event.diagnostic : undefined;
     const diagnosticPresentation = resolveConnectedServiceUxDiagnosticPresentation(diagnostic);
-    const text = diagnosticPresentation
+    return diagnosticPresentation
         ? t(diagnosticPresentation.statusKey)
-        : t('connectedServices.authSwitch.switchFailed');
-    if (diagnosticPresentation) return text;
-    return typeof event.errorCode === 'string' && event.errorCode.trim().length > 0
-        ? `${text} (${event.errorCode.trim()})`
-        : text;
+        : presentSessionAuthSwitchFailure(event.errorCode);
 }
 
 function formatConnectedServiceSwitchAttemptSuccessText(event: Extract<AgentEvent, { type: 'connected-service-account-switch-attempt' }>): string {
@@ -427,6 +444,8 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     noticeState?: string;
     /** Several queued updates from one source read as this one notice: how many it stands for. */
     noticeCount?: number;
+    /** What follows the notice in its text column: a recovery the row's owner presents (a refused turn's next step). */
+    footer?: React.ReactNode;
 }) {
     const { theme } = useUnistyles();
     const needsConnectedLabel = props.event.type === 'connected-service-account-switch';
@@ -673,7 +692,8 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
                             {detailText}
                         </Text>
                     ) : null}
-                    {capabilityNotice ? <CapabilityNoticeLink notice={capabilityNotice} /> : null}
+                    {capabilityNotice && props.navigationEnabled !== false ? <CapabilityNoticeLink notice={capabilityNotice} /> : null}
+                    {props.footer}
                     {showTerminalComposerClearAction ? (
                         <TerminalComposerClearEventAction
                             event={props.event}
@@ -723,6 +743,15 @@ const styles = StyleSheet.create((theme) => ({
     text: {
         color: theme.colors.text.secondary,
         ...Typography.variant('label'),
+        flexShrink: 1,
+    },
+    lineIconContainer: {
+        alignSelf: 'stretch',
+    },
+    // A quiet event line reads at meta size in tertiary ink, under the conversation it annotates.
+    lineText: {
+        color: theme.colors.text.tertiary,
+        ...Typography.variant('meta'),
         flexShrink: 1,
     },
     stopMarkerText: {

@@ -325,7 +325,7 @@ const clientState = vi.hoisted(() => {
       if (method === 'model/list') {
         return { data: [{ id: 'gpt-5.4', name: 'GPT-5.4', isDefault: true }] };
       }
-      if (method === 'thread/realtime/start' || method === 'thread/realtime/stop') {
+      if (method === 'thread/realtime/start' || method === 'thread/realtime/stop' || method === 'thread/realtime/appendText') {
         return {};
       }
       if (method === 'turn/start') {
@@ -468,7 +468,7 @@ type CodexTestLogger = Readonly<{
 type CodexTestRuntimeAuthRefresh = (request: unknown) => Promise<unknown> | unknown;
 type CodexTestContextOverrides = Readonly<{
   logger?: CodexTestLogger;
-  runtimeFetch?: HttpService;
+  runtimeFetch?: Pick<HttpService, 'request'>;
   writeStateField?: (request: unknown) => Promise<void>;
   auth?: Readonly<{ services: Readonly<{ refreshRuntimeAuth: CodexTestRuntimeAuthRefresh }> }>;
   sessions?: Readonly<{
@@ -499,7 +499,7 @@ function createCodexTestContextFixture(params: Readonly<{
   };
   // The app-server client is mocked in this test file; no process method is reached.
   const exec = Object.freeze({}) as unknown as ExecService;
-  const runtimeFetch: HttpService = {
+  const runtimeFetch: Pick<HttpService, 'request'> = {
     request: vi.fn(async () => ({
       status: 200,
       finalUrl: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
@@ -1262,9 +1262,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   ])('publishes the native failure fact for %s and admits a distinct next turn in the same session', async (
     _caseName, codexErrorInfo, message, expectedCode,
   ) => {
-    const core = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const core = createRuntime();
     const runtime = createCodexNativeAppServerSessionRuntime(core, 'session-1');
     const events: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => events.push(event));
@@ -1475,9 +1473,9 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         agentId: 'codex',
         agentTurnId: 'turn-1',
         sanitizedPreview: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
+        failureCause: { phase: 'turn', failureReason: 'usage_limit' },
       },
     });
-    expect(events.filter(event => event.kind === 'backend-error')).toHaveLength(0);
     expect(logger.debug).toHaveBeenCalledWith(
       'Codex app-server background turn completion failed',
       {
@@ -1637,9 +1635,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('ignores official error notifications correlated to another thread or turn', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => events.push(event));
 
@@ -1769,10 +1765,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     expect(secondFailedTurn?.turnId).not.toBe(firstFailedTurn?.turnId);
   });
 
-  it('commits a late final assistant item before completing the turn', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '10' },
-    });
+  it('commits the native final assistant item before completing the turn', async () => {
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => {
       events.push(event);
@@ -1780,7 +1774,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
     await runtime.send({ v: 1, text: 'late final prompt' });
     const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
-    emitNotification('turn/completed', completedTurn('turn-1'));
     emitNotification('item/completed', {
       threadId: 'thread-1',
       turnId: 'turn-1',
@@ -1791,6 +1784,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         text: 'Late final answer',
       },
     });
+    emitNotification('turn/completed', completedTurn('turn-1'));
 
     await completion;
 
@@ -1809,11 +1803,9 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     ['turn-started first', false],
     ['assistant stream first', true],
   ])(
-    'hands off a terminal-settling turn to an immediate provider-started successor (%s)',
+    'adopts an immediate provider-started successor after native completion (%s)',
     async (_notificationOrder, streamBeforeTurnStarted) => {
-      const runtime = createRuntime({
-        processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '25' },
-      });
+      const runtime = createRuntime();
       const events: CodexAppServerEvent[] = [];
       runtime.events.subscribe((event) => {
         events.push(event);
@@ -1881,9 +1873,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   );
 
   it('adopts same-thread stream activity when a native turn starts after the predecessor settled', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => {
       events.push(event);
@@ -2021,7 +2011,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await runtime.dispose();
   });
 
-  it('accepts a correlated raw-only late tool result without reviving the settled turn', async () => {
+  it('settles native completion immediately and retains late tool outcomes across a successor turn', async () => {
     const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe(event => events.push(event));
@@ -2029,8 +2019,13 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     emitNotification('rawResponseItem/completed', { threadId: 'thread-1', turnId: 'turn-1', item: {
       type: 'function_call', call_id: 'late-raw-call', name: 'exec_command', arguments: '{"cmd":"pwd"}',
     } });
+    emitNotification('item/started', { threadId: 'thread-1', turnId: 'turn-1', item: {
+      type: 'commandExecution', id: 'late-typed-call', command: 'exit 1',
+    } });
     emitNotification('turn/completed', completedTurn('turn-1'));
+    expect(events.filter(event => event.kind === 'turn-complete')).toHaveLength(1);
     await waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    await runtime.send({ text: 'continue independently' }, { turnId: 'host-turn-2' });
     const late = { threadId: 'thread-1', turnId: 'turn-1', item: {
       type: 'function_call_output', call_id: 'late-raw-call', output: '{"stdout":"/workspace"}',
     } };
@@ -2038,11 +2033,23 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     emitNotification('rawResponseItem/completed', { ...late, item: { ...late.item, call_id: 'unknown-call' } });
     emitNotification('rawResponseItem/completed', late);
     emitNotification('rawResponseItem/completed', late);
+    const lateFailure = { threadId: 'thread-1', turnId: 'turn-1', item: {
+      type: 'commandExecution', id: 'late-typed-call', command: 'exit 1',
+      status: 'failed', aggregatedOutput: 'command failed', exitCode: 1, durationMs: 120,
+    } };
+    emitNotification('item/completed', lateFailure);
+    emitNotification('item/completed', lateFailure);
     expect(events.filter(event => event.kind === 'tool-result')).toEqual([
       expect.objectContaining({ turnId: 'host-turn-1', toolCallId: 'late-raw-call', output: { stdout: '/workspace' } }),
+      expect.objectContaining({ turnId: 'host-turn-1', toolCallId: 'late-typed-call', isError: true,
+        output: expect.objectContaining({ stdout: 'command failed', exitCode: 1, durationMs: 120 }) }),
     ]);
-    expect(events.filter(event => event.kind === 'turn-start')).toHaveLength(1);
+    expect(events.filter(event => event.kind === 'turn-start')).toHaveLength(2);
     expect(events.filter(event => event.kind === 'turn-complete')).toHaveLength(1);
+    expect(runtime.isTurnInFlight()).toBe(true);
+    emitNotification('turn/completed', completedTurn('turn-2'));
+    await waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    expect(events.filter(event => event.kind === 'turn-complete')).toHaveLength(2);
     expect(runtime.isTurnInFlight()).toBe(false);
     await runtime.dispose();
   });
@@ -2428,9 +2435,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('ignores completed notifications when no Codex turn is pending', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '100' },
-    });
+    const runtime = createRuntime();
 
     await runtime.send({ v: 1, text: 'first prompt' });
     const firstCompletion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
@@ -2448,9 +2453,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('ignores an unknown mismatched terminal id until the owned provider turn completes', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => {
       events.push(event);
@@ -2484,9 +2487,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('does not let a terminal id claim a pending turn before turn start is acknowledged', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     clientState.deferTurnStartForPrompt('delayed provider turn');
 
     const send = runtime.send(
@@ -2514,9 +2515,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it.each(['completed', 'interrupted'] as const)('publishes the settled %s provider turn checkpoint without requiring a host transcript sequence', async (status) => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => {
       events.push(event);
@@ -2546,9 +2545,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('reconciles native rollback against the live app-server thread rather than local turn state', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     await runtime.send({ v: 1, text: 'completed before uncertain rollback' }, {
       turnId: 'host-turn-1',
       userMessageSeq: 7,
@@ -3884,9 +3881,17 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         await writeFile(join(codexHome, 'auth.json'), JSON.stringify({ tokens: {
           access_token: 'current-access', account_id: 'acct_current',
         } }));
+        const { createCodexNativeEventFixture } = await import('./client.test-support.js');
+        const nativeReceipts = createCodexNativeEventFixture();
         return { request: clientState.request, notify: clientState.notify,
+          onNativeEvent: nativeReceipts.onNativeEvent,
           registerRequestHandler: clientState.registerRequestHandler,
-          registerNotificationHandler: clientState.registerNotificationHandler,
+          registerNotificationHandler(method, handler) {
+            return clientState.registerNotificationHandler(method, (params) => {
+              nativeReceipts.publish(method, params);
+              return handler(params);
+            });
+          },
           onExit: clientState.onExit, dispose: async () => undefined };
       });
       const runtime = asConnectedServiceAuthRuntime(createRuntime({
@@ -4000,7 +4005,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('applies connected-service auth through the running app-server client and refreshes later with the new selection', async () => {
+  it('applies connected-service auth through the running app-server client after an idle usage-limit failure and refreshes the new selection', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-live-auth-'));
     const refreshRequests: unknown[] = [];
     let returnPendingAttemptOnce = true;
@@ -4041,6 +4046,11 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         },
       }));
       const credential = buildConnectedCodexCredential('target');
+      await runtime.send({ v: 1, text: 'exhausted account turn' }, { turnId: 'exhausted-turn' });
+      emitNotification('turn/completed', failedUsageLimitTurn('turn-1'));
+      await expect(waitForCodexAppServerRuntimeTurnCompletion(runtime)).rejects.toMatchObject({
+        runtimeAuthClassification: { kind: 'usage_limit' },
+      });
       const selection = {
         kind: 'group',
         serviceId: 'openai-codex',
@@ -4051,7 +4061,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       };
 
       const appliedAuth = await runtime.runtimeAuth.apply({
-        serviceId: 'openai-codex',
+        serviceId: 'happier.agent.codex/openai-codex',
         reason: 'usage_limit',
         expected: {
           profileId: 'target',
@@ -4093,6 +4103,11 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           chatgptAccountId: 'acct_target',
         },
       });
+      await runtime.send({ v: 1, text: 'healthy account turn' }, { turnId: 'healthy-turn' });
+      emitNotification('turn/completed', completedTurn('turn-2'));
+      await expect(waitForCodexAppServerRuntimeTurnCompletion(runtime)).resolves.toBeUndefined();
+      await expect(runtime.runtimeAuth.readIdentity({ serviceId: 'happier.agent.codex/openai-codex' }))
+        .resolves.toMatchObject({ ok: true, identity: { providerAccountId: 'acct_target' }, runtime: { inProviderTurn: false } });
       await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
         .rejects.toMatchObject({ code: 'ENOENT' });
 
@@ -5384,9 +5399,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
   it('releases a waiting steer without invoking the provider when the turn settles before its id is actionable', async () => {
     clientState.deferTurnStartForPrompt('provider id absent');
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
 
     const originalSend = runtime.send({ v: 1, text: 'provider id absent' });
     await waitForRequestCount('turn/start', 1);
@@ -5409,9 +5422,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
   it('does not steer a turn that becomes terminal in the same event window that reveals its provider id', async () => {
     clientState.deferTurnStartForPrompt('provider id and terminal together');
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
 
     const originalSend = runtime.send({ v: 1, text: 'provider id and terminal together' });
     await waitForRequestCount('turn/start', 1);
@@ -5488,9 +5499,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('cancels the exact provider-started successor through the native adapter', async () => {
-    const core = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const core = createRuntime();
     const runtime = createCodexNativeAppServerSessionRuntime(core, 'session-1');
     const events: AgentSessionRuntimeEvent[] = [];
     runtime.watch((event) => events.push(event));
@@ -5578,8 +5587,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     clientState.rejectNextInterruptAsAlreadyCompleted();
     clientState.resolveDeferredTurnStart('turn-cancelled-late');
     await send.catch(() => undefined);
-    await new Promise((resolve) => setTimeout(resolve, 75));
-
     emitNotification('item/started', {
       threadId: 'thread-1',
       turnId: 'turn-cancelled-late',
@@ -5592,7 +5599,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         threadId: 'thread-1',
         turnId: 'turn-cancelled-late',
       })
-    ))).toHaveLength(2);
+    ))).toHaveLength(1);
     expect(clientState.requests).toContainEqual({
       method: 'turn/interrupt',
       params: {
@@ -5609,18 +5616,14 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await runtime.dispose();
   });
 
-  it('reconciles cancellation with a provider completion already in the local settling window', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '1000' },
-    });
+  it('keeps native completion terminal when cancellation follows it', async () => {
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => events.push(event));
 
     await runtime.send({ v: 1, text: 'provider completes before interrupt' });
     emitNotification('turn/completed', completedTurn('turn-1'));
-    clientState.rejectNextInterruptAsAlreadyCompleted();
-
-    await expect(runtime.cancel()).resolves.toEqual({ status: 'cancelled' });
+    await expect(runtime.cancel()).resolves.toEqual({ status: 'not_running' });
     await waitForCodexAppServerRuntimeTurnCompletion(runtime);
 
     expect(events.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
@@ -5628,9 +5631,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('waits for a provider completion delivered after the provider reports no active turn to interrupt', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => events.push(event));
 
@@ -5650,9 +5651,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('accepts exact provider terminal proof when the interrupt response is lost', async () => {
-    const runtime = createRuntime({
-      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
-    });
+    const runtime = createRuntime();
 
     await runtime.send({ v: 1, text: 'interrupt acknowledgement is lost' });
     clientState.rejectNextInterruptWith(new Error('turn/interrupt response timed out'));
@@ -5669,7 +5668,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     expect(runtime.isTurnInFlight()).toBe(false);
   });
 
-  it('retries interruption when the provider turn has started but is not yet interruptible', async () => {
+  it('retains cancellation custody without polling while native terminal delivery is pending', async () => {
     const runtime = createRuntime();
     const events: CodexAppServerEvent[] = [];
     runtime.events.subscribe((event) => events.push(event));
@@ -5677,16 +5676,48 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await runtime.send({ v: 1, text: 'provider start registration races interruption' });
     clientState.rejectNextInterruptAsAlreadyCompleted();
 
-    const cancel = runtime.cancel();
-    await new Promise((resolve) => setTimeout(resolve, 75));
-    expect(clientState.requests.filter((request) => request.method === 'turn/interrupt')).toHaveLength(2);
-    emitNotification('turn/interrupted', {
-      threadId: 'thread-1',
-      turn: { id: 'turn-1', status: 'interrupted' },
-    });
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const cancel = runtime.cancel().finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(1_001);
+      expect(clientState.requests.filter((request) => request.method === 'turn/interrupt')).toHaveLength(1);
+      expect(settled).toBe(false);
+      emitNotification('turn/interrupted', {
+        threadId: 'thread-1',
+        turn: { id: 'turn-1', status: 'interrupted' },
+      });
 
-    await expect(cancel).resolves.toEqual({ status: 'cancelled' });
-    expect(events.filter((event) => event.kind === 'turn-cancelled')).toHaveLength(1);
+      await expect(cancel).resolves.toEqual({ status: 'cancelled' });
+      expect(events.filter((event) => event.kind === 'turn-cancelled')).toHaveLength(1);
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps native custody unknown when the interrupt and terminal receipt remain unobserved', async () => {
+    const runtime = createRuntime({ processEnv: { HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000' } });
+    const events: CodexAppServerEvent[] = [];
+    runtime.events.subscribe(event => events.push(event));
+    await runtime.send({ text: 'interrupt delivery is unknown' });
+    const failure = new Error('turn/interrupt response was lost');
+    clientState.rejectNextInterruptWith(failure);
+    vi.useFakeTimers();
+    try {
+      const rejection = expect(runtime.cancel()).rejects.toBe(failure);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await rejection;
+      expect(clientState.requests.filter(request => request.method === 'turn/interrupt')).toHaveLength(1);
+      expect(runtime.isTurnInFlight()).toBe(true);
+      expect(events.filter(event => event.kind === 'turn-cancelled' || event.kind === 'turn-complete')).toEqual([]);
+      emitNotification('turn/completed', completedTurn('turn-1'));
+      await waitForCodexAppServerRuntimeTurnCompletion(runtime);
+      expect(runtime.isTurnInFlight()).toBe(false);
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('propagates a send failure before provider acceptance', async () => {

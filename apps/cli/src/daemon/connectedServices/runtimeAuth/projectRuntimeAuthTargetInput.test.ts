@@ -1,5 +1,6 @@
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { SessionConnectedServiceAuthApplyGenerationRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 
 import { projectConnectedServiceRuntimeAuthTargetInput } from './projectRuntimeAuthTargetInput';
 
@@ -25,7 +26,10 @@ describe('projectConnectedServiceRuntimeAuthTargetInput', () => {
       readFiles: vi.fn(async () => ({})),
       replaceFiles: vi.fn(async () => undefined),
     };
-    const applyConnectedServiceAuthGeneration = vi.fn(async () => ({ ok: true }));
+    const applyConnectedServiceAuthGeneration = vi.fn(async (request: unknown) => {
+      SessionConnectedServiceAuthApplyGenerationRequestV1Schema.parse(request);
+      return { ok: true };
+    });
     const providerRequest = vi.fn(async () => ({ account: 'team-account' }));
     const request = projectConnectedServiceRuntimeAuthTargetInput({
       agentId: 'claude',

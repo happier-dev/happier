@@ -16,6 +16,10 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+export function isCodexConnectedServiceId(value: unknown): boolean {
+  return value === 'openai-codex' || value === CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY;
+}
+
 export type CodexConnectedServiceAuthGenerationRequest = Readonly<{
   serviceId: 'openai-codex';
   credential: OauthCredentialRecord;
@@ -39,8 +43,7 @@ function readCodexOauthCredentialRecord(value: unknown): OauthCredentialRecord |
 
 export function readCodexConnectedServiceRefreshSelection(value: unknown): CodexConnectedServiceRefreshSelection | null {
   const record = readRecord(value);
-  if (!record || (record.serviceId !== 'openai-codex'
-    && record.serviceId !== CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY)) return null;
+  if (!record || !isCodexConnectedServiceId(record.serviceId)) return null;
   const kind = readString(record.kind);
   if (kind === 'profile') {
     const profileId = readString(record.profileId);
@@ -104,7 +107,7 @@ export function normalizeCodexConnectedServiceAuthGenerationRequest(
   value: unknown,
 ): CodexConnectedServiceAuthGenerationRequest | null {
   const record = readRecord(value);
-  if (record?.serviceId !== 'openai-codex') return null;
+  if (!record || !isCodexConnectedServiceId(record.serviceId)) return null;
   const generation = readRecord(record.authGeneration);
   const credential = readCodexOauthCredentialRecord(generation?.credential);
   if (!generation || !credential) return null;
