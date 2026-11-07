@@ -35,7 +35,7 @@ describe('derivePoolUsage', () => {
             { accountId: 'spare', enabled: true, credentialStatus: 'needs_reauth', meters: null },
             { accountId: 'off', enabled: false, credentialStatus: 'connected', meters: [weekly(90, 30 * MIN)], isStale: true },
         ] });
-        expect(usage.room).toEqual({ withRoom: 0, total: 5, reporting: 1, unreported: 1 });
+        expect(usage.room).toEqual({ withRoom: 0, total: 5, reporting: 2, unreported: 0 });
         expect(usage.memberByAccountId).toMatchObject({
             work: { health: 'error', credentialStatus: 'connected', isStale: false },
             lab: { health: 'error', credentialStatus: 'connected', isStale: true },
@@ -44,19 +44,32 @@ describe('derivePoolUsage', () => {
         });
         expect(usage.memberByAccountId.personal).toMatchObject({ room: 'unknown', lowestRemainingPct: null });
     });
-    it('keeps stale last-known windows without claiming live room, a switch ranking or a recovery time', () => {
+    // ORCH r1107r: aging/revalidation must retain settled capacity, not turn it into "not reported".
+    it('keeps reported capacity through freshness expiry without claiming a current recovery time', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
             { accountId: 'stale-room', enabled: true, credentialStatus: 'connected', isStale: true, meters: [weekly(75, 30 * MIN)] },
             { accountId: 'stale-waiting', enabled: true, credentialStatus: 'connected', isStale: true, meters: [weekly(0, 60 * MIN)] },
         ] });
-        expect(usage.room).toEqual({ withRoom: 0, total: 2, reporting: 0, unreported: 2 });
+        expect(usage.room).toEqual({ withRoom: 1, total: 2, reporting: 2, unreported: 0 });
         expect(usage.windows).toEqual([expect.objectContaining({ remainingPct: 38, reportingCount: 2 })]);
         expect(usage.memberByAccountId).toMatchObject({
-            'stale-room': { room: 'unknown', lowestRemainingPct: null, meters: [expect.objectContaining({ remainingPct: 75 })] },
-            'stale-waiting': { room: 'unknown', lowestRemainingPct: null, meters: [expect.objectContaining({ remainingPct: 0 })] },
+            'stale-room': { room: 'room', lowestRemainingPct: 75, meters: [expect.objectContaining({ remainingPct: 75 })] },
+            'stale-waiting': { room: 'waiting', lowestRemainingPct: 0, meters: [expect.objectContaining({ remainingPct: 0 })] },
         });
         expect(usage.firstBack).toBeNull();
         expect(usage.memberByAccountId['stale-room']).toMatchObject({ health: 'attention', isStale: true });
+    });
+    it('keeps the five-member summary settled as readings age independently and then refresh', () => {
+        const members = [68, 0, 0, 0, 96].map((pct, index) => ({
+            accountId: String(index), enabled: true, credentialStatus: 'connected', meters: [fiveHour(pct, 90 * MIN)],
+        }));
+        for (const staleCount of [0, 2, 4, 5, 0]) {
+            const usage = derivePoolUsage({ now: NOW, members: members.map((member, index) => ({
+                ...member, isStale: index < staleCount,
+            })) });
+            expect(usage.room).toEqual({ withRoom: 2, total: 5, reporting: 5, unreported: 0 });
+            expect(usage.firstBack).toBeNull();
+        }
     });
     it('excludes signed-out members from pool capacity while retaining exhausted connected members and their reset', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
@@ -129,7 +142,7 @@ describe('derivePoolUsage', () => {
             { accountId: 'work', enabled: true, credentialStatus: 'connected', meters: [fiveHour(0, 90 * MIN)] },
             { accountId: 'backup', enabled: true, credentialStatus: 'connected', isStale, meters },
         ] });
-        expect(usage.room.withRoom).toBe(0);
+        expect(usage.room.withRoom).toBe(isStale && meters?.[0]?.remainingPct === 86 ? 1 : 0);
         expect(usage.firstBack).toBeNull();
     });
 

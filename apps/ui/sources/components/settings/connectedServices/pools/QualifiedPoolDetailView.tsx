@@ -576,7 +576,9 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
     // "As of" is when the pool was last read; a member whose own reading is old says so on its row,
     // and the section says it is behind only when every reading it averages is old.
     const lastRead = enabledSnapshots.length > 0 ? Math.max(...enabledSnapshots.map((snapshot) => snapshot.fetchedAt)) : null;
-    const sharedRead = lastRead !== null && enabledSnapshots.every((snapshot) => snapshot.fetchedAt === lastRead);
+    const sharedRead = lastRead !== null && enabledSnapshots.every((snapshot) => (
+        formatAsOfTime(snapshot.fetchedAt, now) === formatAsOfTime(lastRead, now)
+    ));
     const allStale = enabledSnapshots.length > 0 && enabledMembers
         .filter((member) => countedSnapshotByAccountId[member.ref.accountId] != null)
         .every((member) => usage.memberByAccountId[member.ref.accountId]?.isStale);
@@ -838,7 +840,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const autoOff = member.state.autoDisabledReason === 'model_not_entitled';
                             const note: PoolMemberNote | null = autoOff
                                 ? { icon: 'info', text: t('connectedServicesPool.autoOffModel') }
-                                : member.enabled && snapshot && memberState?.isStale && !(sharedRead && allStale)
+                                : member.enabled && snapshot && memberState?.isStale && !sharedRead
                                     ? { icon: 'clock', text: t('connectedServicesPool.checkedAt', { time: formatAsOfTime(snapshot.fetchedAt, now) }) }
                                     : null;
                             const memberUsage: PoolMemberUsage = !member.enabled

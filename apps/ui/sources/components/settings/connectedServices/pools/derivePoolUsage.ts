@@ -8,7 +8,7 @@ import { selectComparableConnectedServiceQuotaMeters } from '@/sync/domains/conn
 import { deriveAccountHealth, type AccountHealth } from '@/sync/domains/connectedServices/deriveAccountHealth';
 import { parseDisplayableCredentialHealthStatus } from '@/sync/domains/connectedServices/parseDisplayableCredentialHealthStatus';
 
-/** Whether a member can take a turn now, from its own reported limits. */
+/** Capacity from the member's last reported limits; freshness is carried separately. */
 export type PoolMemberRoom = 'room' | 'waiting' | 'unknown';
 
 export type PoolMemberUsageInput = Readonly<{
@@ -20,7 +20,7 @@ export type PoolMemberUsageInput = Readonly<{
     meters: ReadonlyArray<ConnectedServiceQuotaMeterV1> | null;
 }>;
 
-/** Current availability and last-known readings, decided together for every pool consumer. */
+/** Last reported capacity, freshness and readings, decided together for every pool consumer. */
 export type PoolMemberUsageState = Readonly<{
     credentialStatus: ReturnType<typeof parseDisplayableCredentialHealthStatus>;
     health: AccountHealth;
@@ -114,7 +114,8 @@ export function derivePoolUsage(input: Readonly<{
         const credentialUsable = isConnectedServiceCredentialHealthStatusUsable(
             normalizeConnectedServiceCredentialHealthStatus(member.credentialStatus),
         );
-        const room: PoolMemberRoom = readings.length === 0 || member.isStale || !credentialUsable
+        // A freshness deadline does not withdraw a settled reading during revalidation.
+        const room: PoolMemberRoom = readings.length === 0 || !credentialUsable
             ? 'unknown'
             : readings.some((reading) => reading.exhausted) ? 'waiting' : 'room';
         const credentialStatus = parseDisplayableCredentialHealthStatus(member.credentialStatus);
@@ -133,13 +134,13 @@ export function derivePoolUsage(input: Readonly<{
         memberByAccountId[member.accountId] = state;
         if (!member.enabled || !credentialUsable) continue;
         // Missing or stale usage cannot establish that this member is currently waiting.
-        if (state.room !== 'waiting') allWaiting = false;
+        if (state.room !== 'waiting' || state.isStale) allWaiting = false;
         if (state.room === 'unknown') {
             unreported += 1;
         } else {
             reporting += 1;
         }
-        // Old readings remain useful windows, but cannot establish who has room now or is back first.
+        // Capacity and windows retain the same settled facts; freshness qualifies their presentation.
         if (state.room === 'room') withRoom += 1;
         if (state.room === 'waiting') {
             // Back when its last exhausted window resets.

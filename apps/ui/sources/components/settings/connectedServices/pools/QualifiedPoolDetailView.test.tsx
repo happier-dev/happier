@@ -762,7 +762,7 @@ describe('QualifiedPoolDetailView', () => {
         const { screen } = await renderPoolDetail({}, {
             memberQuotaByAccountId: quota({
                 work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { fetchedAt: NOW - 20 * MIN }),
-                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: NOW - 20 * MIN }),
+                backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }], { fetchedAt: NOW - 20 * MIN + 1000 }),
             }),
         });
         for (const width of [1440, 390]) {
@@ -774,7 +774,7 @@ describe('QualifiedPoolDetailView', () => {
         }
     });
 
-    it('keeps availability unknown as the active reading ages during a refresh, then accepts fresh room', async () => {
+    it('keeps settled capacity as the active reading ages during a refresh, then accepts fresh room', async () => {
         const memberQuotaByAccountId = quota({
             work: snapshot('work', [{ id: '5h', label: 'Session', left: 86, resetsInMs: 90 * MIN }], { staleAfterMs: 2 * MIN }),
             backup: snapshot('backup', [{ id: '5h', label: 'Session', left: 0, resetsInMs: 30 * MIN }]),
@@ -784,10 +784,11 @@ describe('QualifiedPoolDetailView', () => {
         expect(screen.getTextContent()).toContain('connectedServicesPool.roomCount(count=1,total=2)');
         await screen.update(<QualifiedPoolDetailView {...currentProps} now={NOW + 2 * MIN}
             memberQuotaByAccountId={{ ...memberQuotaByAccountId, work: { ...memberQuotaByAccountId.work!, loading: true } }} />);
-        expect(screen.getTextContent()).toContain('connectedServicesPool.notReported(count=1)');
+        expect(screen.getTextContent()).toContain('connectedServicesPool.roomCount(count=1,total=2)');
+        expect(screen.getTextContent()).not.toContain('connectedServicesPool.notReported');
         expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
         expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 86 })] });
-        expect(memberRow(screen, 'work').note?.icon).toBe('clock');
+        expect(memberRow(screen, 'work').note).toBeNull();
         expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
         await screen.update(<QualifiedPoolDetailView {...currentProps} group={group} now={NOW + 2 * MIN}
             memberQuotaByAccountId={quota({ ...Object.fromEntries(Object.entries(memberQuotaByAccountId).map(([id, entry]) => [id, entry.snapshot])),
