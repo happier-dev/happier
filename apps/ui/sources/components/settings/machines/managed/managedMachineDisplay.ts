@@ -184,3 +184,9 @@ export function countryFlag(countryCode: string | undefined): string {
     ...[...code].map((letter) => 0x1f1e6 + letter.charCodeAt(0) - 65),
   );
 }
+
+/** A retained resource's native identity as its provider names it, one `key: value` fact per line. */
+export function nativeIdentityLines(value: unknown): string[] {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return [JSON.stringify(value)];
+    return Object.entries(value).map(([key, entry]) => `${key}: ${typeof entry === 'string' ? entry : JSON.stringify(entry)}`);
+}

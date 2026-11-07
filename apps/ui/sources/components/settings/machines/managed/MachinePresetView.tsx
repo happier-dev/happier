@@ -21,6 +21,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
+import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { findPresetLastSavedFacts } from './managedPresetHistory';
@@ -114,7 +115,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const openConfiguration = (edit: boolean) => {
         if (!visibleCreation) return;
         const contribution = buildQualifiedPluginContributionKey(visibleCreation.launch.provider);
-        navigate(`/settings/machines/add/${encodeURIComponent(contribution)}?serverId=${encodeURIComponent(props.serverId)}&presetId=${encodeURIComponent(visibleCreation.id)}${edit ? '&presetOnly=true' : ''}`);
+        navigate(buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: contribution, presetId: visibleCreation.id,
+            ...(edit ? { presetOnly: true } : {}) }));
     };
     const runMutation = async (mutation: () => ReturnType<typeof detail.archiveOrRestore>) => {
         if (!canManage || busy) return;

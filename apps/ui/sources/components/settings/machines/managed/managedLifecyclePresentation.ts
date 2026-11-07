@@ -196,13 +196,14 @@ export function describeManagedLifecycleState(
     case 'notCreated':
       return { ...present('neutral', { detail: t('managedMachines.inspect.notCreated') }, ['remove']),
         word: t('managedMachines.inspect.notCreated') };
+    // An ended resource can't come back; creating another is its own step through the configurator.
     case 'absent':
       return { ...present('neutral', { detail: t('managedPower.resourceAbsent') }, [
-        'remove',
+        'remove', 'createAnother',
       ]), word: t('managedPower.ended') };
     case 'expired':
       return { ...present('neutral', { detail: t('managedPower.expired') }, [
-        'remove',
+        'remove', 'createAnother',
       ]), word: t('managedPower.ended') };
     case 'volumeLost':
       return present('warning', { cause: t('managedPower.volumeLost') }, [

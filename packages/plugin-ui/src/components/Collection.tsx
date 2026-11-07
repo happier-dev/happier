@@ -270,6 +270,12 @@ export type CollectionAnatomy<Item> = Readonly<{
   accessibilityLabel: (item: Item) => string;
   accessibilityHint?: (item: Item) => string | undefined;
   testID?: (item: Item) => string;
+  /**
+   * The title column's narrowest readable width at normal text size, for a table whose titles are short codes
+   * (a size, a version) so its comparison columns are not dropped for room the titles never use. Omitted, a title
+   * keeps the room a sentence needs.
+   */
+  titleMinWidth?: number;
   /** Column titles for the table header, one per slot the anatomy declares. */
   columnTitles: Readonly<{ title: string; where?: string; reason?: string; signal?: string; agent?: string; age?: string; titleMeta?: string }>;
 }>;
@@ -786,7 +792,7 @@ function resolveColumns<Item>(
   const declared: ResolvedColumn<Item>[] = [{
     key: 'title',
     title: anatomy.columnTitles.title,
-    minWidth: TABLE.titleMinWidth * textScale,
+    minWidth: (anatomy.titleMinWidth ?? TABLE.titleMinWidth) * textScale,
     priority: Number.POSITIVE_INFINITY,
     flex: true,
     align: 'start',

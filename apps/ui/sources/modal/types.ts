@@ -47,7 +47,8 @@ export interface ConfirmModalConfig extends BaseModalConfig {
     type: 'confirm';
     title: string;
     message?: string;
-    messageParagraphs?: readonly Readonly<{ text: string; irreversible?: boolean }>[];
+    /** A paragraph may end with one quiet link to where its subject can be checked (a provider console). */
+    messageParagraphs?: readonly Readonly<{ text: string; irreversible?: boolean; link?: Readonly<{ label: string; onPress: () => void }> }>[];
     cancelText?: string;
     confirmText?: string;
     destructive?: boolean;

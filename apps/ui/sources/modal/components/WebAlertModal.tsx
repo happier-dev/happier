@@ -6,6 +6,7 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { ModalChoiceRow } from './card/ModalChoiceRow';
 import { ModalCommands } from './ModalCommands';
@@ -38,6 +39,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     message: {
         textAlign: 'center',
         color: theme.colors.text.primary,
+        marginTop: theme.space.s4,
+    },
+    link: {
+        alignSelf: 'center',
         marginTop: theme.space.s4,
     },
     irreversibleText: {
@@ -108,12 +113,17 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                         {config.title}
                     </Text>
                     {isConfirm && config.messageParagraphs ? config.messageParagraphs.map((paragraph, index) => (
-                        <Text key={index} variant="body" emphasis={paragraph.irreversible ? 'semiBold' : undefined} style={[
-                            styles.message,
-                            paragraph.irreversible ? styles.irreversibleText : null,
-                        ]}>
-                            {paragraph.text}
-                        </Text>
+                        <React.Fragment key={index}>
+                            <Text variant="body" emphasis={paragraph.irreversible ? 'semiBold' : undefined} style={[
+                                styles.message,
+                                paragraph.irreversible ? styles.irreversibleText : null,
+                            ]}>
+                                {paragraph.text}
+                            </Text>
+                            {paragraph.link ? <View style={styles.link}>
+                                <TextLinkButton label={paragraph.link.label} onPress={paragraph.link.onPress} />
+                            </View> : null}
+                        </React.Fragment>
                     )) : config.message ? (
                         <Text variant="body" style={styles.message}>
                             {config.message}

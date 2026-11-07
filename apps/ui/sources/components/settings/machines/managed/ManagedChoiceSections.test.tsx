@@ -108,6 +108,26 @@ describe('managed size comparison', () => {
     expect(screen.getTextContent()).toContain(t('common.unknown'));
     await screen.unmount();
   });
+  it('keeps the per-hour and per-month comparison columns beside the specifications in the desktop configurator (lab m-config/A)', async () => {
+    const { t } = await import('@/text');
+    // The solo configurator's form column at 1440 is about 575px beside its receipt.
+    const priced = [
+      { id: 'cx22', name: 'cx22', cpu: '2', memory: '4 GiB', disk: '40 GiB', spec: 'cx22', hourly: '€0.0060', monthly: '€3.79' },
+      { id: 'cx52', name: 'cx52', cpu: '16', memory: '32 GiB', disk: '320 GiB', spec: 'cx52', hourly: '€0.0577', monthly: '€36.39' },
+    ];
+    const screen = await renderScreen(<ManagedSizeTable sizes={priced} value="cx22" onChange={vi.fn()} testID="sizes" />);
+    await act(async () => {
+      invokeTestInstanceHandler(screen.findByTestId('sizes:stage'), 'onLayout', {
+        nativeEvent: { layout: { x: 0, y: 0, width: 575, height: 600 } },
+      });
+    });
+    const text = screen.getTextContent();
+    expect(text).toContain(t('managedMachines.config.columns.perHour'));
+    expect(text).toContain(t('managedMachines.config.columns.perMonth'));
+    expect(text).toContain('€36.39');
+    expect(text).toContain('320 GiB');
+    await screen.unmount();
+  });
   it('keeps what the chosen local size leaves this computer beneath the table instead of dropping it', async () => {
     const { ManagedSizeTable } = await import('./ManagedChoiceSections');
     const phone = await renderScreen(

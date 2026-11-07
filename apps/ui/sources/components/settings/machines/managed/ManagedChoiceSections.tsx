@@ -37,6 +37,14 @@ import {
 const keyOfSize = (size: ManagedSizeOption) => size.id;
 const NOOP_OPEN = () => undefined;
 const NUMBER_COLUMN_MIN_WIDTH_PX = 64;
+/** Size names are short codes ("cpx31", "Medium"): the rate columns keep the room a sentence title would take (lab m-config/A). */
+const SIZE_TITLE_MIN_WIDTH_PX = 120;
+/**
+ * The rates outrank the single choice's reason column (Collection's `reason` slot, priority 5): where both don't
+ * fit beside the receipt, the comparison keeps its prices; an unavailable size stays unselectable and names its
+ * reason to assistive technology.
+ */
+const RATE_COLUMN_PRIORITY = 6;
 
 /** Specifications stay together as the last comparison column to yield to the narrow list. */
 export const ManagedSizeTable = React.memo(function ManagedSizeTable(
@@ -79,7 +87,7 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
           'hourly',
           t('managedMachines.config.columns.perHour'),
           (size) => size.hourly ?? t('common.unknown'),
-          5,
+          RATE_COLUMN_PRIORITY + 1,
         ),
       );
     if (hasMonthly)
@@ -88,7 +96,7 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
           'monthly',
           t('managedMachines.config.columns.perMonth'),
           (size) => size.monthly ?? t('common.unknown'),
-          1,
+          RATE_COLUMN_PRIORITY,
         ),
       );
     if (hasHeadroom)
@@ -112,6 +120,7 @@ export const ManagedSizeTable = React.memo(function ManagedSizeTable(
           .filter(Boolean)
           .join(', '),
       testID: (size) => `${props.testID}:${size.id}`,
+      titleMinWidth: SIZE_TITLE_MIN_WIDTH_PX,
       columnTitles: { title: t('managedMachines.config.columns.size') },
     };
   }, [

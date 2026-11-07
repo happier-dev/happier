@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 import type { IModal } from '@/modal';
@@ -14,7 +14,7 @@ const canceledHetzner: ManagedResourceDependencyV1 = {
   controller: null,
   provider: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' },
   allocation: 'may-exist',
-  recovery: { kind: 'native_acquisition_unconfirmed' },
+  recovery: { reference: 'cmw0pjiad007vmc0nsrva3cr7', reason: 'native_acquisition_unconfirmed' },
   cleanup: { disposition: 'pending', reason: 'creation_canceled' },
 } as unknown as ManagedResourceDependencyV1;
 
@@ -55,8 +55,7 @@ describe('reviewManagedResourceRemoval', () => {
 
     const shown = [calls[0]!.message ?? '', ...calls[0]!.paragraphs].join('\n');
     expect(shown).not.toContain('{');
-    expect(shown).not.toContain(canceledHetzner.managedId);
-    expect(calls[0]!.paragraphs).toEqual([
+    expect(calls[0]!.paragraphs.slice(0, 2)).toEqual([
       t('managedCleanup.removalReview'),
       `${t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'VM' })} · ${t('managedMachines.creation.canceledCleanup')}`,
     ]);
@@ -69,6 +68,28 @@ describe('reviewManagedResourceRemoval', () => {
         responsibility: 'manual',
       },
     ]);
+  });
+
+  it('tells two resources of the same provider apart by their tag, native identity, controller and console (G-C01)', async () => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const controllerMachine = createMachineFixture({ id: 'nldw3' });
+    storage.setState({ machineListByServerId: { srv: [{ ...controllerMachine, metadata: { ...controllerMachine.metadata!, displayName: 'NLDW3' } }] } });
+    const bound = (managedId: string, server: string): ManagedResourceDependencyV1 => ({ managedId, homeId: 'srv_home', custodianAccountId: 'acct_c',
+      intentRevision: 2, controller: { machineId: 'nldw3', installationId: 'inst' }, provider: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' },
+      allocation: 'bound', resource: { contributionRef: { pluginId: 'happier.machine.hetzner', localId: 'hetzner' }, schemaVersion: 1, value: { serverId: server } },
+      recovery: { reference: managedId, reason: 'cleanup_unconfirmed', consoleUrl: `https://console.hetzner.cloud/servers/${server}` },
+      cleanup: { disposition: 'unavailable', reason: 'provider_unavailable' } } as ManagedResourceDependencyV1);
+    const confirm = vi.fn(async (..._args: Parameters<IModal['confirm']>) => true);
+    await reviewManagedResourceRemoval([bound('managed-a', '1001'), bound('managed-b', '1002')], { confirm });
+    const paragraphs = confirm.mock.calls[0]![2]!.messageParagraphs!;
+    const text = paragraphs.map(paragraph => paragraph.text).join('\n');
+    for (const fact of ['managed-a', 'managed-b', 'serverId: 1001', 'serverId: 1002', t('managedMachines.detail.happierTag')]) expect(text).toContain(fact);
+    expect(text).toContain('NLDW3');
+    expect(text).not.toContain('{');
+    const links = paragraphs.flatMap(paragraph => paragraph.link ? [paragraph.link] : []);
+    expect(links).toHaveLength(2);
+    expect(links.every(link => link.label === t('managedMachines.actions.openProvider', { provider: 'Hetzner' }))).toBe(true);
   });
 
   it('returns null when the person keeps the connection', async () => {

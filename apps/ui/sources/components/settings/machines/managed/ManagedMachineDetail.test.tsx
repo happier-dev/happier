@@ -619,6 +619,39 @@ describe('managed Machine detail', () => {
         expect(screen.findByTestId('managed-machine.ended-record')).not.toBeNull();
         await screen.unmount();
     });
+    it('offers Create another on an ended resource, opening its configurator made like the same preset and controller (lab m-life/L#4)', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-ended-another.test', scope: 'tab' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_ended_another');
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        const provider = { pluginId: 'custom.provisioner', localId: 'native' };
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const launch = { provider, schemaVersion: 1, name: 'Finite sandbox', choices: {} };
+        const machine: ManagedMachineV1 = { id: 'ended-another', homeId: 'srv_managed_ended_another', custodianAccountId: 'owner',
+            preset: { id: 'preset-sandbox', revision: 2 }, launch, controller, allocation: 'confirmed-absent', creationState: 'active',
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 5, availability: 'absent' } };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: controller.machineId,
+            installationId: controller.installationId, updatedAt: Date.now() })] } });
+        setRuntimeFetch(async input => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (url.pathname === '/v1/machines/managed/actions/get') return Response.json(machine);
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
+            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
+        await flushHookEffects({ cycles: 30 });
+        const createAnother = screen.findByTestId('managed-machine.progress:createAnother');
+        expect(createAnother).not.toBeNull();
+        await act(async () => { createAnother!.props.onPress(); });
+        const { buildManagedMachineConfigurationRoute } = await import('./managedMachineConfigurationRoute');
+        expect((await import('expo-router')).router.push).toHaveBeenCalledWith(buildManagedMachineConfigurationRoute({
+            serverId, provisioner: 'custom.provisioner/native', controller, presetId: 'preset-sandbox' }));
+        await screen.unmount();
+    });
     it.each(['provider', 'credential', 'credential-many'] as const)('offers the canonical %s recovery from current native facts without installation retry', async removed => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-missing-${removed}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_missing_${removed}`);

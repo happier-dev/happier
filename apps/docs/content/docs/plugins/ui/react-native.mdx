@@ -1608,6 +1608,11 @@ function connectionAnatomy(inspect: (id: string) => void): CollectionAnatomy<Con
 }
 ```
 
+In a table, columns that do not fit drop by width, lowest `priority` first, and
+the title keeps the room a sentence needs. When titles are short codes, such as a
+size or a version, set `titleMinWidth` in 0.3 development so the comparison
+columns keep that room. The title still takes whatever width is left.
+
 A custom `List.Item` whose children contain controls can use
 `contentBesidePressable` for the same sibling structure. Its content sits above
 the row target; a custom control wrapper must opt into pointer events with

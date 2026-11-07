@@ -17,6 +17,7 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from './ManagedMachineStateRow';
+import { nativeIdentityLines } from './managedMachineDisplay';
 import { canRetryManagedInstallation, currentManagedCreationOperation, describeManagedInstallationFailure, isManagedCreationStateRowVisible, managedCreationSetup, managedCreationState, readManagedInstallationPrompt, type ManagedCreationContext } from './managedCreationPresentation';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
@@ -122,7 +123,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         accessoryLayout={staleRead ? 'adaptive' : undefined}
         rightElement={staleRead ? <RoundButton title={t('common.retry')} display="inverted" size="small"
                 testID="managed-machine.observation-retry" onPress={staleRead.retry} />
-            : stateRowChecks || failureChecks || !checkNow ? undefined
+            : stateRowChecks || failureChecks || !checkNow || machine.enrolledMachineId && !failure ? undefined
             : <RoundButton title={t('managedMachines.inspect.checkNow')} display="inverted" size="small"
                 loading={props.checking === true} testID="managed-machine.observation-check" onPress={checkNow} />} /> : null;
     const installationRetry = canRetryInstallation && props.handlers?.reinstall ?
@@ -188,7 +189,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery">
             {machine.resource ? <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}
                 testID="managed-machine.recovery-native" accessoryLayout="stacked" rightElement={
-                    <Text selectable style={styles.identity}>{describeNativeIdentity(machine.resource.value)}</Text>
+                    <Text selectable style={styles.identity}>{nativeIdentityLines(machine.resource.value).join('\n')}</Text>
                 } /> : null}
             {machine.recovery ? <Item title={t(machine.recovery.reference === machine.id ? 'managedMachines.detail.happierTag' : 'managedMachines.detail.recoveryReference')} mode="info" showChevron={false}
                 testID="managed-machine.recovery-tag" accessoryLayout="stacked" rightElement={
@@ -232,11 +233,6 @@ const QUIET_UNDER_OPERATION: ReadonlySet<ManagedLifecycleState['kind']> = new Se
 const STATE_FROM_OPERATION: ReadonlySet<ManagedLifecycleState['kind']> = new Set(['busy', 'draining', 'activityUnknown']);
 
 /** A flat native value reads as one fact per line; anything nested keeps its JSON on that line. */
-function describeNativeIdentity(value: unknown): string {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return JSON.stringify(value);
-    return Object.entries(value).map(([key, entry]) => `${key}: ${typeof entry === 'string' ? entry : JSON.stringify(entry)}`).join('\n');
-}
-
 const styles = StyleSheet.create(theme => ({
     identity: { ...Typography.mono(), ...happierPageTextMetrics('meta'), color: theme.colors.text.secondary },
 }));

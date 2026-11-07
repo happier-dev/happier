@@ -58,6 +58,8 @@ import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSecti
 import { ManagedMachineKeepControl, type ManagedMachineKeepControlProps } from './ManagedMachineKeepControl';
 import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
+import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { MachineDeleteAudience } from '@/components/sharing/machines/MachineDeleteAudience';
 import { projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
@@ -761,6 +763,11 @@ export function ManagedMachineSections(props: SectionProps) {
                 fireAndForget(openExternalUrl(recoveryConsoleUrl), { tag: 'ManagedMachineSections.openConsole' });
             } } : {}),
             ...(canRemove ? { remove: reviewRemoval } : {}),
+            // An ended resource's lifecycle offers Create another: the same configurator, made like its preset on its controller.
+            ...(props.current && props.binding?.isCurrent() === true && canManage ? { createAnother: () => router.push(
+                buildManagedMachineConfigurationRoute({ serverId: props.serverId, provisioner: buildQualifiedPluginContributionKey(machine.launch.provider),
+                    ...(machine.controller ? { controller: machine.controller } : {}),
+                    ...(machine.preset ? { presetId: machine.preset.id } : {}) }) as never) } : {}),
             ...(canMutate && currentControllerAvailable && machine.creationState === 'active'
                 && machine.submittedNativeEffect?.intent === 'delete' ? { tryAgain: reviewDependencies } : {}),
             ...(canMutate && props.binding?.accountId === machine.custodianAccountId ? {
