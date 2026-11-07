@@ -127,11 +127,13 @@ provenance, and its active Domain; caller-supplied URL text is not authority.
 The typed preview state is the existing PR Overview's input through the shared
 executor; the page does not derive readiness or filter an Environment inventory.
 
-Preview templates are private Environment content. Save them through the ordinary
-mode-aware Artifact authoring path, then `deployments.environments.update` with
-the final content reference. A Team Environment additionally needs the existing
-Artifact admin grant to that Team. The template is not a Home metadata patch,
-and this flow adds no Action or content-update proof.
+Preview templates are private Environment content. Save through the existing
+`deployments.environments.update` Action with `patch.previewTemplate` (or `null`
+to remove it). The Environment content owner prepares the mode-aware internal
+Artifact and its existing Team audience, then publishes the final reference under
+the existing authored-input proof. Generic Artifact creation refuses this internal
+kind. The full input digest binds the template; the metadata digest preserves the
+remaining patch while the private operand is removed before Home storage.
 
 ## Runtime overview
 - **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
@@ -419,6 +421,9 @@ and Environment names. The shared guided starter carries the page's watched subj
 into the existing plugin setup; health setup still requires its native health form.
 For the automatic failed-deploy habit, the Environment reference and its controller
 prefill the same setup owner, without exposing raw payload or watcher controls.
+Guided review and saved trigger rows share the Event summary presenter. An Event
+without a display label uses its declared, localized title; unavailable declaration
+metadata stays generic rather than exposing the Event identifier.
 `workflow.trigger.list({ automationId, triggerId })`
 opens that exact Event's retained private definition through the Account-mode
 owner; ordinary list responses keep private configuration closed. Observation-only

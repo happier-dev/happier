@@ -154,6 +154,7 @@ export const SubjectTriggersSection = React.memo(
             anchorRef={opening.anchor}
             onRequestClose={close}
             subjectName={props.subjectName}
+            subject={props.subject}
             initialProject={project}
             starter={opening.starter}
             deploymentEnvironment={props.deploymentEnvironment}

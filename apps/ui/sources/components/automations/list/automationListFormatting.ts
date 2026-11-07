@@ -69,7 +69,7 @@ export function formatAutomationTriggerLabel(trigger: AutomationTriggerListItem)
         case 'schedule':
             return formatAutomationScheduleLabel({ schedule: trigger.schedule });
         case 'pluginEvent':
-            return t('automations.list.event', { eventId: trigger.eventRef.localId });
+            return formatTriggerSummary(trigger);
         case 'sessionLifecycle':
             return [
                 formatAutomationSessionLifecycleEventSetLabel(trigger.events),

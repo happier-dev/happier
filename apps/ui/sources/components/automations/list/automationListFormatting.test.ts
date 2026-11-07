@@ -10,7 +10,7 @@ import {
     AutomationTriggerListItemSchema,
 } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 
-import { setPreferredLanguageFromSettings } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import {
     formatAutomationNextRun,
     formatAutomationRunCauseLabel,
@@ -48,7 +48,7 @@ describe('formatAutomationTriggerLabel', () => {
         expect(new Set(labels).size).toBe(labels.length);
     });
 
-    it('labels a Plugin Event from its safe event reference without reading private source content', () => {
+    it('keeps an unavailable Plugin Event declaration generic without reading private source content', () => {
         const trigger = AutomationTriggerListItemSchema.parse({
             id: 'trigger-event-1',
             revision: 3,
@@ -63,12 +63,13 @@ describe('formatAutomationTriggerLabel', () => {
             sourceStatus: null,
             sourceCatalogStatus: null,
         });
-        expect(formatAutomationTriggerLabel(trigger)).toBe('Event: pull-request-opened-v1');
+        expect(formatAutomationTriggerLabel(trigger)).toBe(t('workflows.triggers.kind.pluginEvent'));
         expect(formatAutomationTriggerStatusLabel(trigger)).toBe('Waiting for the first report');
     });
 
-    it('formats trigger and next-run labels through the active locale', () => {
+    it('formats trigger and next-run labels through the active locale', async () => {
         setPreferredLanguageFromSettings('es');
+        await preloadTranslations();
         vi.spyOn(Date.prototype, 'toLocaleString').mockReturnValue('fecha-localizada');
 
         expect(formatAutomationScheduleLabel({
@@ -90,7 +91,7 @@ describe('formatAutomationTriggerLabel', () => {
             observation: { kind: 'checkpointedPull', watcher: null },
             sourceStatus: null,
             sourceCatalogStatus: null,
-        }))).toBe('Evento: issue-opened-v1');
+        }))).toBe(t('workflows.triggers.kind.pluginEvent'));
         expect(formatAutomationNextRun(null)).toBe('Sin próxima ejecución');
         expect(formatAutomationNextRun(1_700_000_000_000)).toBe('Próxima: fecha-localizada');
     });
@@ -231,8 +232,9 @@ describe('formatAutomationRunStateLabel', () => {
         }
     });
 
-    it('resolves every Run state through the active locale', () => {
+    it('resolves every Run state through the active locale', async () => {
         setPreferredLanguageFromSettings('es');
+        await preloadTranslations();
 
         const labels = AutomationRunStateV3Schema.options.map((state) => formatAutomationRunStateLabel({ state }));
 

@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol';
+import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FloatingOverlay, FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
@@ -53,6 +55,7 @@ export function resolvePluginEventEditorProjectionMachineId(params: Readonly<{
     observation: PluginEventEditorObservationPlacement | null;
     authoringMachineId: string | null;
     resolvedEndpointMachineId?: string | null;
+    selectedWatcherMachineId?: string | null;
 }>): string | null {
     if (
         params.observation?.kind === 'checkpointedPull'
@@ -63,7 +66,7 @@ export function resolvePluginEventEditorProjectionMachineId(params: Readonly<{
     if (params.observation?.kind === 'durablePush') {
         return params.observation.endpointMaterializationRef?.machineId ?? params.resolvedEndpointMachineId ?? null;
     }
-    return params.authoringMachineId;
+    return params.selectedWatcherMachineId ?? params.authoringMachineId;
 }
 
 export function resolvePluginEventAutomationEditorCompletion(
@@ -109,6 +112,7 @@ export function InlinePluginEventEditor(props: Readonly<{
     onComplete: PluginEventEditorCompletion;
     onCancel: () => void;
     maxHeight?: number;
+    guidedPreset?: boolean;
 }>) {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const complete = React.useCallback(async () => {
@@ -119,18 +123,18 @@ export function InlinePluginEventEditor(props: Readonly<{
             footer={<View style={styles.footer}>
                 <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
                     title={t('common.cancel')} onPress={props.onCancel} />
-                <RoundButton
+                {!props.guidedPreset ? <RoundButton
                     testID="automation-plugin-event-done"
                     title={t('common.done')}
                     size="small"
                     onPress={props.model.createDraft ? () => { void complete(); } : undefined}
                     disabled={!props.model.createDraft}
-                />
+                /> : null}
             </View>}>
-            {insideSheet ? <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} /></View>
+            {insideSheet ? <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
                 : <ListPresentationProvider value="page"><ItemGroup surface="none" title={t('workflows.triggers.popover.configureEvent')}>
                     <ListPresentationProvider value="grouped">
-                        <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} /></View>
+                        <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
                     </ListPresentationProvider>
                 </ItemGroup></ListPresentationProvider>}
         </FloatingOverlay>
@@ -150,6 +154,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    guidedPreset?: boolean;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
@@ -181,11 +186,15 @@ export function PluginEventAutomationEditor(props: Readonly<{
         resolvedEndpointMachineId: endpointPlacement !== null && endpointPlacement.seed === currentSeed
             && endpointPlacement.lifetime === accountLifetime && accountLifetime?.isCurrent()
             ? endpointPlacement.machineId : null,
+        selectedWatcherMachineId: endpointPlacement !== null && endpointPlacement.seed === currentSeed
+            && endpointPlacement.lifetime === accountLifetime && accountLifetime?.isCurrent()
+            ? endpointPlacement.machineId : null,
     });
     const projection = useDaemonMergedProjectionInputs({
         machineId,
         serverId: props.serverId,
         enabled: Boolean(machineId),
+        sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
     });
     const model = usePluginEventAutomationComposer({
         machineId,
@@ -195,18 +204,30 @@ export function PluginEventAutomationEditor(props: Readonly<{
         initialEditSeed: currentSeed,
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
+        guidedPreset: props.guidedPreset,
     });
+    const completedGuidedDraft = React.useRef<PluginEventAutomationComposerModel['createDraft']>(null);
     React.useEffect(() => {
-        // Reuse the composer's existing endpoint read; execution placement is never a fallback.
-        setEndpointPlacement(model.seededObservationMachineId && accountLifetime?.isCurrent()
-            ? { seed: currentSeed, lifetime: accountLifetime, machineId: model.seededObservationMachineId } : null);
-    }, [accountLifetime, currentSeed, model.seededObservationMachineId]);
+        if (!props.guidedPreset || !model.createDraft || completedGuidedDraft.current === model.createDraft) return;
+        completedGuidedDraft.current = model.createDraft;
+        void completePluginEventAutomationEditor(model, props.onComplete);
+    }, [model, props.guidedPreset, props.onComplete]);
+    React.useEffect(() => {
+        // A new Event loads its catalog only after explicit watcher selection.
+        // Saved endpoint placement still belongs to the existing endpoint reader.
+        const selectedMachineId = currentObservation === null
+            ? model.selectedWatcherOrigin ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null
+            : model.seededObservationMachineId;
+        setEndpointPlacement(selectedMachineId && accountLifetime?.isCurrent()
+            ? { seed: currentSeed, lifetime: accountLifetime, machineId: selectedMachineId } : null);
+    }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin]);
     return (
         <InlinePluginEventEditor
             model={model}
             onComplete={props.onComplete}
             onCancel={props.onCancel}
             maxHeight={props.maxHeight}
+            guidedPreset={props.guidedPreset}
         />
     );
 }

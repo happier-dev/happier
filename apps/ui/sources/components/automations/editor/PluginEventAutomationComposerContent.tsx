@@ -1,15 +1,20 @@
-import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
-import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
-import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { getPluginExecutionOriginCandidateOrigin, getPluginExecutionOriginCandidateVersion } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
+import type { PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
+import { resolvePluginExecutionOriginReasonDetail as originReasonDetail } from '@/sync/domains/surfaces/copy';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
 import { Text } from '@/components/ui/text/Text';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -31,6 +36,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
+    guidedPreset?: boolean;
 }>;
 
 /** The controls draw at the WCAG 2.2 pointer floor under every pointer; a finger reaches past it through `HappierPressable`'s hit area. */
@@ -117,18 +123,27 @@ function useEventComposerPickerDisclosure(params: Readonly<{
     return { pickerTriggerRef, notePickerCollapsed, notePickerTriggerPressed };
 }
 
-function watcherKey(params: Readonly<{
-    machineId: string;
-    materializationId: string;
-}>): string {
-    return `${params.machineId}:${params.materializationId}`;
+function watcherKey(origin: PluginMachineExecutionOriginV1): string {
+    return 'materializationRef' in origin ? `${origin.materializationRef.machineId}:${origin.materializationRef.materializationId}`
+        : JSON.stringify(origin);
 }
 
-function watcherDisplayLabel(params: Readonly<{
-    machineId: string;
-    materializationId: string;
-}>): string {
-    return `${params.machineId} / ${params.materializationId}`;
+function watcherDisplayLabel(origin: PluginMachineExecutionOriginV1): string {
+    const ref = getPluginMachineExecutionOriginRef(origin);
+    return `${ref.machineId} / ${'materializationRef' in origin ? origin.materializationRef.materializationId : ref.pluginId}`;
+}
+
+/** Why a watcher cannot observe the selected Event, in the Machines picker's words. */
+function watcherFailureDetail(failure: PluginEventAutomationWatcherFailure): string {
+    return failure.reason === 'observer_binding_unavailable'
+        ? t('automations.form.trigger.watcherCannotObserve')
+        : originReasonDetail(failure.reason);
+}
+
+/** A settings remedy is named by the page it opens, as the settings rail names it. */
+function settingsRemedy(path: string): Readonly<{ id: string; path: string; title: string }> {
+    const page = flattenSettingsPageCatalog(SETTINGS_PAGE_CATALOG).find((node) => node.route === path);
+    return { id: page?.id ?? path, path, title: page?.titleKey ? t(page.titleKey) : t('modals.openSettings') };
 }
 
 function EventPluginBrand(props: Readonly<{
@@ -154,9 +169,8 @@ function EventPluginBrand(props: Readonly<{
         isCurrent: props.presentation.isCurrent,
     });
     return brand ? (
-        <InstalledPluginBrandMark
+        <HappierBrandMark
             brand={brand}
-            pluginId={props.presentation.installedPackage?.id}
             externallyLabelled
             size="small"
             testID={props.testID}
@@ -213,13 +227,18 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const selectedEventAvailability = selectedEvent
         ? props.model.getPluginPresentation(selectedEvent).availability
         : null;
+    // Index producer-supplied facts without deriving eligibility again. Full
+    // origins keep equal Machine ids on different Homes distinct.
+    const watcherFailureByOrigin = React.useMemo(() => new Map((props.model.watcherFailures ?? []).map(failure => [
+        createCanonicalJsonSigningInput(failure.origin), failure,
+    ])), [props.model.watcherFailures]);
     const selectedWatcherCurrent = selectedWatcher === null
         ? null
-        : props.model.watcherCandidates.some((candidate) => (
-            isPluginMachineExecutionOriginCandidateSelectable(candidate)
-            && candidate.materialization.serverIdentityId === selectedWatcher.serverIdentityId
-            && arePluginMachineMaterializationRefsEqual(candidate.materialization, selectedWatcher.materializationRef)
-        ));
+        : props.model.watcherCandidates.some((candidate) => {
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            return arePluginMachineExecutionOriginsEqual(origin, selectedWatcher)
+                && !watcherFailureByOrigin.has(createCanonicalJsonSigningInput(origin));
+        });
     const eventOptionByKey = React.useMemo(() => new Map(props.model.eligibleEvents.map((event) => {
         const presentation = props.model.getPluginPresentation(event);
         return [presentation.eventKey, event] as const;
@@ -227,29 +246,29 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const eventSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
         () => props.model.eligibleEvents.map((event) => {
             const plugin = props.model.getPluginPresentation(event);
+            const presentation = props.model.getEventPresentation(event);
             return {
                 id: plugin.eventKey,
                 testID: `automation-event-option-${event.event.id}`,
-                label: event.event.title,
-                subtitle: [event.event.id, plugin.displayName, event.event.description].filter(Boolean).join(' · '),
-                subtitleContent: <View>
-                    <Text style={styles.optionDescription}>{[event.event.description, plugin.displayName].filter(Boolean).join(' · ')}</Text>
-                    <Text style={styles.eventIdentity} numberOfLines={1} ellipsizeMode="middle">{event.event.id}</Text>
-                </View>,
-                accessibilityLabel: `${event.event.title}, ${event.event.id}, ${plugin.displayName}`,
+                label: presentation.title,
+                subtitle: [presentation.description, plugin.displayName].filter(Boolean).join(' · '),
+                subtitleLines: 2,
+                // The descriptor name leads; the raw Event id stays findable by search.
+                searchText: event.event.id,
+                exactSearchText: event.event.id,
+                accessibilityLabel: `${presentation.title}, ${plugin.displayName}`,
                 icon: (
                     <EventPluginBrand
                         presentation={plugin}
                         testID={`automation-event-plugin-brand-${event.event.id}`}
                     />
                 ),
-                rightAccessory: plugin.availability === 'available'
-                    ? t('settingsPlugins.eventAutomationComposer.available')
-                    : t('common.unavailable'),
+                // Healthy is quiet: only a source that cannot be chosen says so.
+                ...(plugin.availability === 'available' ? {} : { rightAccessory: t('common.unavailable') }),
                 disabled: plugin.availability !== 'available',
             };
         }),
-        [props.model.eligibleEvents, props.model.getPluginPresentation],
+        [props.model.eligibleEvents, props.model.getPluginPresentation, props.model.getEventPresentation],
     );
     const eventSelectionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-events',
@@ -264,7 +283,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
     }), [eventSelectionOptions]);
     const watcherOptionByKey = React.useMemo(
         () => new Map(props.model.watcherCandidates.map((candidate) => [
-            watcherKey(candidate.materialization),
+            watcherKey(getPluginExecutionOriginCandidateOrigin(candidate)),
             candidate,
         ])),
         [props.model.watcherCandidates],
@@ -273,17 +292,32 @@ export function PluginEventAutomationComposerContent(props: Props) {
         [props.model.watcherCandidates]);
     const watcherSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
         () => props.model.watcherCandidates.map((candidate) => {
-            const key = watcherKey(candidate.materialization);
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            const key = watcherKey(origin);
+            const version = getPluginExecutionOriginCandidateVersion(candidate);
+            const failure = watcherFailureByOrigin.get(createCanonicalJsonSigningInput(origin)) ?? null;
             return {
                 id: key,
                 testID: `automation-event-watcher-option-${key}`,
-                label: watcherDisplayLabel(candidate.materialization),
-                subtitle: candidate.materialization.version,
-                disabled: !isPluginMachineExecutionOriginCandidateSelectable(candidate),
+                label: watcherDisplayLabel(origin),
+                // The Machines picker's own reason words, ahead of the version they qualify.
+                subtitle: failure ? `${watcherFailureDetail(failure)} · ${version}` : version,
+                subtitleLines: failure ? 2 : 1,
+                disabled: failure !== null,
             };
         }),
-        [props.model.watcherCandidates],
+        [props.model.watcherCandidates, watcherFailureByOrigin],
     );
+    // An unavailable row cannot carry its own control (a disabled row disables its secondary
+    // actions), so the settings pages that fix them follow the list, once per page. A transient
+    // failure recovers on the pushed machine state and earns no control.
+    const watcherSettingsRemedies = React.useMemo(() => {
+        const paths = new Set<string>();
+        for (const failure of watcherFailureByOrigin.values()) {
+            if (failure.remediation.kind === 'openSettings') paths.add(failure.remediation.path);
+        }
+        return [...paths].map(settingsRemedy);
+    }, [watcherFailureByOrigin]);
     const watcherSelectionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-event-watchers',
         inputPlaceholder: chooseObservationPlacement,
@@ -337,12 +371,24 @@ export function PluginEventAutomationComposerContent(props: Props) {
         ? props.model.webhookEndpoint
         : null;
 
+    if (props.guidedPreset) {
+        return <View testID="automation-event-composer" style={styles.section}>
+            {selectedEvent ? <Text style={styles.fieldLabel}>{props.model.getEventPresentation(selectedEvent).title}</Text> : null}
+            <Text style={styles.unavailableText}>{t(sourceUnavailable || props.model.eventCatalogStatus === 'unavailable'
+                ? 'automations.form.trigger.sourceUnavailable' : 'common.loading')}</Text>
+            {sourceUnavailable ? <RoundButton title={t('common.retry')} size="small"
+                disabled={sourceSetupDisabled} onPress={props.model.configureSource} /> : null}
+        </View>;
+    }
+
     return (
         <View testID="automation-event-composer" style={styles.section}>
                 <View style={styles.eventFields}>
                     {props.model.eventCatalogStatus !== 'ready' ? (
                         <Text style={styles.unavailableText}>
-                            {t('automations.form.trigger.eventCatalogUnavailable')}
+                            {t(props.model.eventCatalogStatus === 'loading'
+                                ? 'automations.form.trigger.eventCatalogLoading'
+                                : 'automations.form.trigger.eventCatalogUnavailable')}
                         </Text>
                     ) : (
                         <>
@@ -359,7 +405,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                 style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
                             >
                                 <Text numberOfLines={1} style={styles.selectTriggerText}>
-                                    {selectedEvent?.event.title ?? t('automations.form.trigger.chooseEvent')}
+                                    {selectedEvent ? props.model.getEventPresentation(selectedEvent).title : t('automations.form.trigger.chooseEvent')}
                                 </Text>
                                 <Icon
                                     name={eventPickerOpen ? 'caret-up' : 'caret-down'}
@@ -400,6 +446,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                         </>
                     )}
                             {(props.model.eventCatalogStatus === 'ready' && selectedEvent)
+                                || watcherPickerOpen
                                 || (props.model.pendingEventRef && props.model.watcherCandidates.length > 0) ? (
                                 <>
                                     <Text style={styles.fieldLabel}>{observationPlacementTitle}</Text>
@@ -417,7 +464,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     >
                                         <Text numberOfLines={1} style={styles.selectTriggerText}>
                                             {selectedWatcher
-                                                ? watcherDisplayLabel(selectedWatcher.materializationRef)
+                                                ? watcherDisplayLabel(selectedWatcher)
                                                 : chooseObservationPlacement}
                                         </Text>
                                         <Icon
@@ -429,14 +476,14 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     {watcherPickerOpen ? (
                                         <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
                                             <PluginPresentedExecutionOriginProjectionDemand
-                                                key={selectedEvent?.event.identity.pluginId}
+                                                key={selectedEvent?.event.identity.pluginId ?? props.model.pendingEventRef?.pluginId}
                                                 targets={watcherProjectionTargets}
                                             />
                                             <SelectionList
                                                 rootStep={watcherSelectionStep}
                                                 listAccessibilityLabel={observationPlacementTitle}
                                                 selectedOptionId={selectedWatcher
-                                                    ? watcherKey(selectedWatcher.materializationRef)
+                                                    ? watcherKey(selectedWatcher)
                                                     : null}
                                                 onSelect={(key) => {
                                                     const candidate = watcherOptionByKey.get(key);
@@ -456,6 +503,26 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                 testID="automation-event-watcher-selection-list"
                                                 inputTestID="automation-event-watcher-search"
                                             />
+                                            {watcherSettingsRemedies.length > 0 ? (
+                                                <View testID="automation-event-watcher-remedies" style={styles.watcherRemedies}>
+                                                    <Text style={styles.optionDescription}>
+                                                        {t('automations.form.trigger.fixUnavailableWatchers')}
+                                                    </Text>
+                                                    <View style={styles.watcherRemedyActions}>
+                                                        {watcherSettingsRemedies.map((remedy) => (
+                                                            <RoundButton
+                                                                key={remedy.id}
+                                                                testID={`automation-event-watcher-remedy-${remedy.id}`}
+                                                                size="mini"
+                                                                display="secondary"
+                                                                title={remedy.title}
+                                                                trailing={<Icon name="caret-right" size={12} color={theme.colors.text.secondary} />}
+                                                                onPress={() => router.push(remedy.path as never)}
+                                                            />
+                                                        ))}
+                                                    </View>
+                                                </View>
+                                            ) : null}
                                         </View>
                                     ) : null}
 
@@ -566,7 +633,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         selectable
                                                         style={styles.webhookEndpointValue}
                                                     >
-                                                        {watcherDisplayLabel(selectedWatcher.materializationRef)}
+                                                        {watcherDisplayLabel(selectedWatcher)}
                                                     </Text>
                                                 </>
                                             ) : null}
@@ -944,6 +1011,23 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
         padding: theme.space.s4,
     },
+    watcherRemedies: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s8,
+        borderTopWidth: 1,
+        borderTopColor: theme.colors.border.default,
+        paddingHorizontal: theme.space.s12,
+        paddingTop: theme.space.s8,
+        paddingBottom: theme.space.s4,
+    },
+    watcherRemedyActions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: theme.space.s6,
+    },
     optionRow: {
         minHeight: minimumInteractiveTargetSize,
         minWidth: minimumInteractiveTargetSize,
@@ -974,11 +1058,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     optionDescription: {
         ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-    },
-    eventIdentity: {
-        ...Typography.variant('meta'),
-        ...Typography.mono(),
         color: theme.colors.text.secondary,
     },
     availableText: {

@@ -5,13 +5,14 @@ import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { z } from 'zod/mini';
 import { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
-import { readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { t } from '@/text';
 
-import { formatTriggerSummary } from './formatTriggerSummary';
 import { buildSimpleScheduleCron } from './triggerSchedule';
+import type { TriggerSubject } from './accountTriggerRows';
 import {
   NOTIFY_ME_ACTION_ID,
   buildTriggerDefinition,
@@ -70,11 +71,37 @@ export function guidedApprovalProfileId(draft: GuidedAutomationDraft): string {
 
 export type GuidedStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
 
-const MACHINE_SERVICES_PLUGIN_ID = 'happier.machine.services';
-const STARTER_EVENT: Readonly<Partial<Record<GuidedStarter, string>>> = {
-  healthFailed: 'health-check-failed',
-  deploymentFailed: 'deployment-failed',
+const STARTER_EVENT: Readonly<Partial<Record<GuidedStarter, PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+  healthFailed: { pluginId: 'happier.machine.services', localId: 'health-check-failed' },
+  deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
 };
+
+/** The page supplies its subject; the existing contributed setup owns configuring the source. */
+export function guidedStarterEventSeed(
+  starter: GuidedStarter | null,
+  params: Readonly<{
+    subject?: TriggerSubject;
+    deploymentEnvironment?: DeploymentEnvironmentRefV1;
+    controllerMachineId?: string;
+  }>,
+): PluginUiOpenAutomationEventRequestV1 | undefined {
+  const eventRef = starter ? STARTER_EVENT[starter] : undefined;
+  if (!eventRef) return undefined;
+  const observer = params.controllerMachineId ? { monitoringMachineId: params.controllerMachineId } : {};
+  if (starter === 'deploymentFailed' && params.deploymentEnvironment) {
+    const { serverId, environmentId } = params.deploymentEnvironment;
+    return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
+  }
+  if (starter === 'healthFailed' && params.subject?.kind === 'environment') {
+    return { eventRef, ...observer, setupInput: { v: 1,
+      subject: { kind: 'environment', environmentId: params.subject.environmentId } } };
+  }
+  if (starter === 'healthFailed' && params.subject?.kind === 'service') {
+    return { eventRef, setupInput: { v: 1, subject: { kind: 'machineService',
+      machineId: params.subject.machineId, serviceId: params.subject.serviceId } } };
+  }
+  return undefined;
+}
 
 export function guidedStarterDraft(
   starter: GuidedStarter | null,
@@ -98,15 +125,15 @@ export function guidedStarterDraft(
       },
     };
   }
-  const localId = starter ? STARTER_EVENT[starter] : undefined;
+  const eventRef = starter ? STARTER_EVENT[starter] : undefined;
   return {
     ...base,
     mode: 'propose',
-    when: localId
+    when: eventRef
       ? {
           kind: 'pluginEvent',
           value: null,
-          eventRef: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId },
+          eventRef,
         }
       : createDefaultWhen('schedule'),
   };
@@ -224,42 +251,19 @@ export function buildGuidedAutomationReadBack(
     approvalSettings?: Parameters<typeof readApprovalProfileV1>[0];
   }>,
 ): GuidedAutomationReadBack | null {
-  const request = buildGuidedAutomationRequest(draft, params);
-  if (!request) return null;
+  // Reviewing an already configured wake source does not require choosing its future Agent.
+  // The write owner still refuses an incomplete workflow at Create.
+  const trigger = buildTriggerDefinition({ when: draft.when, enabled: true, sessionId: null });
+  if (!trigger) return null;
   return {
-    wake: request.trigger,
-    project: request.project,
+    wake: trigger,
+    project: params.project,
     deploymentEnvironment: params.deploymentEnvironment ?? null,
     controller: params.controller ?? null,
-    pendingObservation: request.trigger.kind === 'pluginEvent' && 'sourceConfig' in request.trigger
-      ? readDeploymentReceiptEventPendingObservationV1(request.trigger.sourceConfig) : null,
+    pendingObservation: trigger.kind === 'pluginEvent' && 'sourceConfig' in trigger
+      ? readDeploymentReceiptEventPendingObservationV1(trigger.sourceConfig) : null,
     approval: params.approvalSettings === undefined ? null
-      : readApprovalProfileV1(params.approvalSettings, request.approvalProfileId),
+      : readApprovalProfileV1(params.approvalSettings, guidedApprovalProfileId(draft)),
     disclosure: { inbox: true, channelIds: draft.channels },
   };
-}
-
-/** "When API health check fails on eadc, an agent investigates and asks you before changing anything. You'll get an Inbox item." */
-export function describeGuidedAutomation(
-  draft: GuidedAutomationDraft,
-  params: Readonly<{ subjectName: string; channelLabels: readonly string[] }>,
-): string {
-  const subject = params.subjectName;
-  const trigger = buildTriggerDefinition({ when: draft.when, enabled: true, sessionId: null });
-  const when =
-    draft.when.kind === 'pluginEvent'
-      ? t('workflows.triggers.guided.readBack.whenEvent', {
-          event: draft.when.value?.displayLabel?.trim() || t('workflows.triggers.kind.pluginEvent'),
-          subject,
-        })
-      : t('workflows.triggers.guided.readBack.whenSchedule', {
-          schedule: trigger ? formatTriggerSummary(trigger) : t('workflows.triggers.summary.schedule'),
-          subject,
-        });
-  const then = t(`workflows.triggers.guided.readBack.${draft.mode}`, { when });
-  const tell =
-    params.channelLabels.length === 0
-      ? t('workflows.triggers.guided.readBack.tellInbox')
-      : t('workflows.triggers.guided.readBack.tellChannels', { channels: params.channelLabels.join(', ') });
-  return `${then} ${tell}`;
 }

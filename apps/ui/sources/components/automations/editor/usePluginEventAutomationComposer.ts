@@ -3,10 +3,13 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { type PluginMachineMaterializationExecutionOriginV1, arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { readEligibleEventPresentation, type EligibleEventPresentation } from './pluginEventAutomationEventPresentation';
+import { type PluginMachineExecutionOriginV1, arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { validateAutomationEventFilterAgainstPayloadSchemaV1 } from '@happier-dev/protocol/automations/event';
 
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -14,11 +17,16 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     buildPluginMachineExecutionOriginCandidates,
-    composePluginMachineExecutionOriginV1,
+    buildPluginMachineSourceExecutionOriginCandidates,
+    combinePluginMachineExecutionOriginCandidates,
+    getPluginExecutionOriginCandidateOrigin,
     isPluginMachineExecutionOriginCandidateSelectable,
-    type PluginMachineExecutionOriginCandidateV1,
+    type PluginExecutionOriginCandidateV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
+    type PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import {
     useActivePluginAccountAvailabilityReader,
@@ -59,6 +67,14 @@ import {
     type PluginEventAutomationSetupFailure,
 } from './pluginEventAutomationSetup';
 
+const submitGuidedSetupForm: NonNullable<
+    Parameters<typeof configurePluginEventAutomationSetup>[0]['present']
+> = ({ form }) => {
+    void form.submit().then(result => {
+        if (result.kind !== 'settled' || !result.outcome.ok) form.cancel();
+    }).catch(() => form.cancel());
+};
+
 export type PluginEventAutomationComposerSourceStatus =
     | 'idle'
     | 'settingUp'
@@ -90,12 +106,18 @@ export type PluginEventAutomationPluginPresentation = Readonly<{
 
 export type PluginEventAutomationComposerModel = Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
-    eventCatalogStatus: 'ready' | 'unavailable';
+    eventCatalogStatus: 'loading' | 'ready' | 'unavailable';
     selectedEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
+    /** Qualified intent only; never an admitted Event descriptor. */
+    pendingEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     selectEvent: (event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => void;
     getPluginPresentation: (
         event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
     ) => PluginEventAutomationPluginPresentation;
+    /** The Event's localized name and description from the catalog descriptors. */
+    getEventPresentation: (
+        event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+    ) => EligibleEventPresentation;
     sourceStatus: PluginEventAutomationComposerSourceStatus;
     sourceFailure: PluginEventAutomationSetupFailure | null;
     sourceDisplayLabel: string | null;
@@ -126,9 +148,11 @@ export type PluginEventAutomationComposerModel = Readonly<{
      */
     refreshWebhookEndpoint: (() => void) | null;
     webhookEndpointRefreshing: boolean;
-    watcherCandidates: readonly PluginMachineExecutionOriginCandidateV1[];
-    selectedWatcherOrigin: PluginMachineMaterializationExecutionOriginV1 | null;
-    selectWatcher: (candidate: PluginMachineExecutionOriginCandidateV1) => void;
+    watcherCandidates: readonly PluginExecutionOriginCandidateV1[];
+    /** Sole row failure/remedy facts. Consumers match origin; they never re-derive from candidates. */
+    watcherFailures?: readonly (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[];
+    selectedWatcherOrigin: PluginMachineExecutionOriginV1 | null;
+    selectWatcher: (candidate: PluginExecutionOriginCandidateV1) => void;
     payloadBrowser: PluginEventAutomationPayloadBrowser;
     filterClauses: readonly PluginEventAutomationFilterClauseDraft[];
     addFilterClause: () => void;
@@ -244,6 +268,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     initialEditSeed?: PluginEventAutomationEditSeed | null;
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    /** The guided caller has already bound every setup operand. */
+    guidedPreset?: boolean;
 }>): PluginEventAutomationComposerModel {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const { executeValue: executeWebhookAction } = useMountedActionExecution(accountLifetime?.scope);
@@ -312,12 +338,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // would destroy an already-disclosed ONE-TIME secret — and, on an edit,
     // permanently strand the form, because the seed effect latches on
     // `appliedEditSeedKeyRef` and cannot restore what it erased.
+    const [selectedWatcherOrigin, setSelectedWatcherOrigin] = React.useState<PluginMachineExecutionOriginV1 | null>(null);
     const [configuredSourceAccount, setConfiguredSourceAccount] = React.useState(accountLifetime);
     if (configuredSourceAccount !== accountLifetime) {
         setConfiguredSourceAccount(accountLifetime);
+        setSelectedWatcherOrigin(null);
         eraseConfiguredSource();
     }
-    const [selectedWatcherOrigin, setSelectedWatcherOrigin] = React.useState<PluginMachineMaterializationExecutionOriginV1 | null>(null);
     const [filterClauses, setFilterClauses] = React.useState<readonly PluginEventAutomationFilterClauseDraft[]>([]);
     const nextFilterClauseIdRef = React.useRef(0);
     const [maximumObservationAgeMsText, setMaximumObservationAgeMsText] = React.useState('');
@@ -362,7 +389,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const
-        : 'unavailable' as const;
+        : params.projectionPhase === 'loading' ? 'loading' as const : 'unavailable' as const;
     const presentationStateRef = React.useRef<PluginEventAutomationPresentationState | null>(null);
     presentationStateRef.current = {
         projectionPhase: params.projectionPhase,
@@ -402,24 +429,50 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         });
     }, []);
 
+    const localizeEventText = usePluginLocalizedTextResolver({
+        projection: params.projectionPhase === 'ready' ? params.projectionInputs?.pluginUiProjection ?? null : null,
+    });
+    const getEventPresentation = React.useCallback(
+        (event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => readEligibleEventPresentation(event, localizeEventText),
+        [localizeEventText],
+    );
+
     const materializationAdmission = React.useMemo(
         () => availabilityReader?.readMaterializations() ?? null,
         [availabilityReader],
     );
-    const watcherCandidates = React.useMemo(() => buildPluginMachineExecutionOriginCandidates({
-        pluginId: selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? '',
+    const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
+    const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
+    const suppliedWatcherFacts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
+    const watcherCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
+        pluginId: watcherPluginId,
         materializations: materializationAdmission?.kind === 'available'
             ? materializationAdmission.materializations
             : [],
         machineSnapshots,
         classifyRelease,
-    }), [
+        machineRejections: suppliedWatcherFacts.machineRejections,
+    }), buildPluginMachineSourceExecutionOriginCandidates({ pluginId: watcherPluginId,
+        sources: suppliedWatcherFacts.sourceCandidates, machineSnapshots })), [
         classifyRelease,
         initialEditSeed?.eventRef.pluginId,
+        initialEventRef?.pluginId,
         machineSnapshots,
         materializationAdmission,
         selectedEvent?.event.identity.pluginId,
+        suppliedWatcherFacts,
+        watcherPluginId,
     ]);
+    const { watcherFailures, selectableWatchers } = React.useMemo(() => {
+        const watcherFailures: (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[] = [];
+        const selectableWatchers: PluginExecutionOriginCandidateV1[] = [];
+        for (const candidate of watcherCandidates) {
+            const failure = readPluginEventAutomationWatcherFailure(candidate, selectedEvent);
+            if (failure) watcherFailures.push({ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) });
+            else selectableWatchers.push(candidate);
+        }
+        return { watcherFailures, selectableWatchers };
+    }, [selectedEvent, watcherCandidates]);
 
     const payloadBrowser = React.useMemo(
         () => buildPluginEventAutomationPayloadBrowser(selectedEvent?.event.payloadSchema),
@@ -514,14 +567,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, []);
 
-    const chooseEvent = React.useCallback((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => {
+    const chooseEvent = React.useCallback((event: DaemonContributionRegistryProjectionAutomationEligibleEventV1, preserveWatcher = false) => {
         const current = eligibleEvents.find((candidate) => sameEligibleEvent(candidate, event)) ?? null;
         if (!current) return;
         setSelectedEvent(current);
         setConfiguredSetup(null);
         setSourceStatus('idle');
         setSourceFailure(null);
-        setSelectedWatcherOrigin(null);
+        if (!preserveWatcher) setSelectedWatcherOrigin(null);
         setFilterClauses([]);
         setObservationTransportState('checkpointedPull');
         setWebhookEndpoint(null);
@@ -539,39 +592,45 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (matches.length !== 1) return;
         appliedActivityIntentRef.current = true;
         // Selecting intent does not configure a source or supply admission/currentness witnesses.
-        if (selectedEventRef.current === null) chooseEvent(matches[0]);
+        if (selectedEventRef.current === null) chooseEvent(matches[0], true);
     }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId]);
 
-    const selectWatcher = React.useCallback((candidate: PluginMachineExecutionOriginCandidateV1) => {
+    const selectWatcher = React.useCallback((candidate: PluginExecutionOriginCandidateV1) => {
         const selected = selectedEventRef.current;
+        const pluginId = selected?.event.identity.pluginId ?? initialEventPluginId;
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
         if (
-            !selected
-            || candidate.materialization.pluginId !== selected.event.identity.pluginId
-            || !isPluginMachineExecutionOriginCandidateSelectable(candidate)
+            !pluginId || (!selected && !initialEventLocalId)
+            || accountLifetime?.isCurrent() !== true
+            || getPluginMachineExecutionOriginRef(origin).pluginId !== pluginId
+            || !selectableWatchers.some(value => arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(value), origin))
         ) {
-            return;
+            return false;
         }
-        setSelectedWatcherOrigin(composePluginMachineExecutionOriginV1(candidate.materialization));
+        const facts = readWatcherFacts();
+        if (!resolveFreshPluginMachineExecutionOrigin({ pluginId, origin, reader: availabilityReader, classifyRelease,
+            sourceCandidates: facts.sourceCandidates, machineRejections: facts.machineRejections })) return false;
+        setSelectedWatcherOrigin(origin);
         setConfiguredSetup(null);
         setSourceStatus('idle');
         setSourceFailure(null);
         setWebhookEndpoint(null);
         advanceRevision();
-    }, []);
+        return true;
+    }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableWatchers]);
 
     const appliedWatcherSeed = React.useRef(false);
     React.useEffect(() => {
         const seed = params.initialSetupSeed;
-        if (!seed?.monitoringMachineId || !selectedEvent || initialEditSeed || appliedWatcherSeed.current || selectedWatcherOrigin
-            || !arePluginContributionIdentitiesEqual(seed.eventRef, selectedEvent.event.identity)) return;
-        const candidates = watcherCandidates.filter(candidate =>
-            candidate.materialization.machineId === seed.monitoringMachineId
-            && isPluginMachineExecutionOriginCandidateSelectable(candidate));
-        if (candidates.length === 1) {
-            selectWatcher(candidates[0]!);
-            appliedWatcherSeed.current = true;
-        }
-    }, [initialEditSeed, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin, selectWatcher, watcherCandidates]);
+        const eventRef = selectedEvent?.event.identity ?? initialEventRef;
+        if (!seed?.monitoringMachineId || !eventRef || initialEditSeed || appliedWatcherSeed.current || selectedWatcherOrigin
+            || !arePluginContributionIdentitiesEqual(seed.eventRef, eventRef)) return;
+        const machineId = (candidate: PluginExecutionOriginCandidateV1) =>
+            getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId;
+        const candidates = selectableWatchers.filter(candidate => machineId(candidate) === seed.monitoringMachineId);
+        if (candidates.length !== 1) return;
+        if (selectWatcher(candidates[0]!)) appliedWatcherSeed.current = true;
+    }, [initialEditSeed, initialEventRef, params.initialSetupSeed, selectedEvent, selectedWatcherOrigin, selectWatcher, selectableWatchers]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
         const event = selectedEventRef.current;
@@ -581,8 +640,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             origin: selectedWatcherOrigin,
             reader: availabilityReader,
             classifyRelease,
+            sourceCandidates: readWatcherFacts().sourceCandidates,
+            machineRejections: readWatcherFacts().machineRejections,
         });
-    }, [availabilityReader, classifyRelease, selectedWatcherOrigin]);
+    }, [availabilityReader, classifyRelease, selectedWatcherOrigin, readWatcherFacts]);
 
     const appliedEditSeedKeyRef = React.useRef<string | null>(null);
     const editSeedKey = initialEditSeed
@@ -609,11 +670,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // a caller that rebuilds the seed on every render cannot turn this into a
     // request storm against the endpoint owner.
     const seededPushEndpointId = initialEditSeed?.observation.kind === 'durablePush'
-        ? initialEditSeed.observation.webhookEndpointId
-        : null;
+        ? initialEditSeed.observation.webhookEndpointId : null;
     const seededPushRoutingSourceInstanceId = initialEditSeed?.observation.kind === 'durablePush'
-        ? initialEditSeed.observation.webhookRoutingSourceInstanceId
-        : null;
+        ? initialEditSeed.observation.webhookRoutingSourceInstanceId : null;
     const seededPushPluginId = initialEditSeed?.eventRef.pluginId ?? null;
     React.useEffect(() => {
         if (
@@ -679,10 +738,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         const watcher = event && seededMaterializationRef
             ? watcherCandidates.find((candidate) => (
                 isPluginMachineExecutionOriginCandidateSelectable(candidate)
-                && arePluginMachineMaterializationRefsEqual(candidate.materialization, seededMaterializationRef)
+                && (() => {
+                    const observer = resolvePluginEventAutomationObserverMaterialization(event, getPluginExecutionOriginCandidateOrigin(candidate));
+                    return observer !== null && arePluginMachineMaterializationRefsEqual(observer, seededMaterializationRef);
+                })()
             )) ?? null
             : null;
-        const watcherOrigin = watcher ? composePluginMachineExecutionOriginV1(watcher.materialization) : null;
+        const watcherOrigin = watcher ? getPluginExecutionOriginCandidateOrigin(watcher) : null;
         const authoringDraft = event && watcherOrigin
             ? createPluginEventAutomationAuthoringDraft({
                 eligibleEvent: event,
@@ -753,9 +815,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             params.machineId,
             params.serverId,
             selectedEventPresentationKey,
-            selectedWatcherOrigin?.materializationRef.machineId,
-            selectedWatcherOrigin?.materializationRef.materializationId,
-            selectedWatcherOrigin?.serverIdentityId,
+            selectedWatcherOrigin,
         ],
     );
     React.useEffect(() => () => setupScope.abort(), [setupScope]);
@@ -802,6 +862,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 eligibleEvent: currentEvent,
                 ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
                     ? { initialSetupSeed: params.initialSetupSeed } : {}),
+                ...(params.guidedPreset ? { present: submitGuidedSetupForm } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
@@ -813,6 +874,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                     machineId: target.machineId,
                     serverId: target.serverId,
                     staleMs: 0,
+                    sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
                 }),
             });
             if (
@@ -837,7 +899,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setConfiguredSetup(configured.draft);
             setWebhookEndpoint(configured.webhookEndpoint);
             setSourceStatus('configured');
-            setSourceFailure(null);
+            setSourceFailure(configured.webhookEndpointUnavailable
+                ? { code: 'webhook_endpoint_unavailable', reason: 'webhook_endpoint_unavailable' } : null);
             advanceRevision();
         })();
     }, [
@@ -852,7 +915,17 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         resolveExecutionOrigin,
         setupScope,
         params.initialSetupSeed,
+        params.guidedPreset,
     ]);
+
+    const configuredGuidedPreset = React.useRef(false);
+    React.useEffect(() => {
+        if (!params.guidedPreset || !params.initialSetupSeed || initialEditSeed || configuredGuidedPreset.current
+            || eventCatalogStatus !== 'ready' || !selectedEvent || !selectedWatcherOrigin || sourceStatus !== 'idle') return;
+        configuredGuidedPreset.current = true;
+        configureSource();
+    }, [configureSource, eventCatalogStatus, initialEditSeed, params.guidedPreset, params.initialSetupSeed,
+        selectedEvent, selectedWatcherOrigin, sourceStatus]);
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;
     const webhookEndpointPluginId = configuredSetup?.draft.eventRef.pluginId ?? null;
@@ -965,8 +1038,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         eligibleEvents,
         eventCatalogStatus,
         selectedEvent,
+        pendingEventRef: !selectedEvent && !initialEditSeed && initialEventPluginId && initialEventLocalId
+            && accountLifetime?.isCurrent() === true
+            ? { pluginId: initialEventPluginId, localId: initialEventLocalId } : null,
         selectEvent: chooseEvent,
         getPluginPresentation,
+        getEventPresentation,
         sourceStatus,
         sourceFailure,
         sourceDisplayLabel,
@@ -980,6 +1057,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         refreshWebhookEndpoint: webhookEndpointId === null ? null : refreshWebhookEndpoint,
         webhookEndpointRefreshing,
         watcherCandidates,
+        watcherFailures,
         selectedWatcherOrigin,
         selectWatcher,
         payloadBrowser,
@@ -1004,6 +1082,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         createDraft,
         effectiveObservationTransport,
         eraseConfiguredSource,
+        getEventPresentation,
         setObservationTransport,
         webhookEndpoint,
         seededWebhookBinding,
@@ -1022,6 +1101,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         removeFilterClause,
         selectWatcher,
         selectedEvent,
+        accountLifetime,
+        initialEditSeed,
+        initialEventLocalId,
+        initialEventPluginId,
         selectedWatcherOrigin,
         sourceDisplayLabel,
         sourceInstanceId,
@@ -1031,5 +1114,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setFilterClauseOperator,
         setFilterClauseValueText,
         watcherCandidates,
+        watcherFailures,
     ]);
 }

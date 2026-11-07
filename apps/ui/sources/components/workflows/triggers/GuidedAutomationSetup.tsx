@@ -2,6 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { resolvePluginEventEditorProjectionMachineId } from '@/components/automations/editor/PluginEventAutomationEditor';
 
 import {
   RoundButton,
@@ -20,16 +23,21 @@ import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { sync } from '@/sync/sync';
+import { useMachine, useSetting, useSettingsReady } from '@/sync/store/hooks';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { t } from '@/text';
+import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
   GUIDED_LOOK_AT,
   GUIDED_THEN_MODES,
   buildGuidedAutomationRequest,
+  buildGuidedAutomationReadBack,
   guidedApprovalProfileId,
-  describeGuidedAutomation,
   guidedStarterDraft,
+  guidedStarterEventSeed,
   type GuidedAutomationDraft,
   type GuidedStarter,
 } from './guidedAutomation';
@@ -44,6 +52,8 @@ import {
 } from './TriggerPopover';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { useNotifyMeChannelOptions } from './useTriggerThenOptions';
+import { formatTriggerSummary } from './formatTriggerSummary';
+import type { TriggerSubject } from './accountTriggerRows';
 
 const STEPS = ['when', 'lookAt', 'then', 'tell', 'review'] as const;
 type Step = (typeof STEPS)[number];
@@ -51,7 +61,7 @@ const QUESTION_COUNT = 4;
 
 /**
  * "Set up an automation" (OPS-AUTOMATIONS-1102 D3): the four questions one at a time in the trigger
- * popover's frame, then the answers read back in one sentence before Create. It writes the same
+ * popover's frame, then the owner's configured facts read back before Create. It writes the same
  * `workflow.trigger.add` the New trigger popover writes; the answers live only in that trigger.
  */
 export function GuidedAutomationSetup(
@@ -60,8 +70,12 @@ export function GuidedAutomationSetup(
     onRequestClose: () => void;
     /** The page's own name for its subject ("eadc", "Production"), used in the prompt and the read-back. */
     subjectName: string;
+    subject?: TriggerSubject;
     initialProject: WorkflowProjectTargetV1;
     starter: GuidedStarter | null;
+    deploymentEnvironment?: DeploymentEnvironmentRefV1;
+    deploymentSourceName?: string;
+    controllerMachineId?: string;
   }>,
 ): React.ReactElement {
   const testID = 'guided-automation';
@@ -76,12 +90,39 @@ export function GuidedAutomationSetup(
   const [pending, setPending] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const channelOptions = useNotifyMeChannelOptions();
+  const approvalSettings = useSetting('actionsSettingsV1');
+  const settingsReady = useSettingsReady();
+  const controllerMachineId = resolvePluginEventEditorProjectionMachineId({
+    observation: draft.when.kind === 'pluginEvent' ? draft.when.value?.observationTransport ?? null : null,
+    authoringMachineId: props.controllerMachineId ?? props.initialProject.machineId,
+  });
+  const controllerMachine = useMachine(controllerMachineId ?? '', controllerMachineId !== null);
+  const initialEventSeed = React.useMemo(() => guidedStarterEventSeed(props.starter, {
+    subject: props.subject,
+    deploymentEnvironment: props.deploymentEnvironment,
+    controllerMachineId: props.controllerMachineId,
+  }), [props.starter, props.subject, props.deploymentEnvironment, props.controllerMachineId]);
   const change = (next: Partial<GuidedAutomationDraft>) =>
     setDraft((current) => ({ ...current, ...next }));
   const request = buildGuidedAutomationRequest(draft, {
     subjectName: props.subjectName,
     project,
   });
+  const readBack = buildGuidedAutomationReadBack(draft, {
+    subjectName: props.subjectName,
+    project,
+    deploymentEnvironment: props.deploymentEnvironment,
+    controller: controllerMachineId ? { machineId: controllerMachineId, online: controllerMachine ? isMachineOnline(controllerMachine) : null } : null,
+    ...(settingsReady ? { approvalSettings } : {}),
+  });
+  const eventCatalog = useDaemonMergedProjectionInputs({
+    machineId: controllerMachineId,
+    serverId: props.deploymentEnvironment?.serverId,
+    enabled: step === 'review' && draft.when.kind === 'pluginEvent',
+    load: false,
+    sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
+  });
+  const localizeEvent = usePluginLocalizedTextResolver({ projection: eventCatalog.inputs?.pluginUiProjection ?? null });
   const index = STEPS.indexOf(step);
   const answered =
     step === 'when'
@@ -91,10 +132,30 @@ export function GuidedAutomationSetup(
         : step === 'review'
             ? request !== null
             : true;
-  const channelLabels = draft.channels.map(
+  const channelLabels = (readBack?.disclosure.channelIds ?? []).map(
     (value) =>
       channelOptions.find((option) => option.value === value)?.label ?? value,
   );
+  const profile = readBack?.approval ? presentApprovalProfile(readBack.approval.profile) : null;
+  const readBackLines = readBack ? [
+    t(`workflows.triggers.guided.readBack.${draft.mode}`, { when: formatTriggerSummary(readBack.wake.kind === 'pluginEvent'
+      ? { ...readBack.wake, displayLabel: undefined } : readBack.wake, {
+        machineId: controllerMachineId, serverId: props.deploymentEnvironment?.serverId,
+        projection: eventCatalog.inputs, localize: localizeEvent,
+      }) }),
+    readBack.wake.kind === 'pluginEvent' && 'filter' in readBack.wake && readBack.wake.filter
+      ? JSON.stringify(readBack.wake.filter) : null,
+    props.subjectName,
+    readBack.deploymentEnvironment ? props.deploymentSourceName ?? t('common.loading') : null,
+    `${getMachineDisplayName(controllerMachine) ?? t('common.unavailable')} · ${readBack.controller?.online == null
+      ? t('common.unavailable') : readBack.controller?.online ? t('systemStatus.machine.online') : t('machines.widgets.body.common.offline')}`,
+    profile ? [profile.title, profile.subtitle].filter(Boolean).join(' · ') : t('common.loading'),
+    readBack.approval?.resolution.status === 'missing'
+      ? `${t('common.unavailable')} → ${profile?.title}` : null,
+    readBack.pendingObservation ? JSON.stringify({ pendingObservation: readBack.pendingObservation }) : null,
+    channelLabels.length ? t('workflows.triggers.guided.readBack.tellChannels', { channels: channelLabels.join(', ') })
+      : t('workflows.triggers.guided.tellInbox'),
+  ].filter(Boolean).join('\n') : t('common.loading');
 
   const create = () => {
     if (request === null || pending) return;
@@ -141,7 +202,9 @@ export function GuidedAutomationSetup(
             when={draft.when}
             onChange={(when) => change({ when: executable(when) })}
             machineId={project.machineId}
-            serverId={null}
+            serverId={props.deploymentEnvironment?.serverId ?? null}
+            initialEventSeed={initialEventSeed}
+            guidedPreset={props.starter === 'deploymentFailed' && Boolean(initialEventSeed?.monitoringMachineId)}
             editing
             onEditingChange={setEventEditing}
             editorMaxHeight={maxHeight}
@@ -304,10 +367,7 @@ export function GuidedAutomationSetup(
                         variant="reading"
                         style={styles.readBack}
                       >
-                        {describeGuidedAutomation(draft, {
-                          subjectName: props.subjectName,
-                          channelLabels,
-                        })}
+                        {readBackLines}
                       </Text>
                       <TriggerRunsOnRow
                         testID={`${testID}-runs-on`}
@@ -317,7 +377,6 @@ export function GuidedAutomationSetup(
                           'workflows.triggers.editor.runsOnAccountDescription',
                         )}
                       />
-                      {/* Who runs it sits with where it runs: the facts the read-back leaves out. */}
                       <PromptAgentRows
                         testID={testID}
                         then={{
@@ -332,7 +391,7 @@ export function GuidedAutomationSetup(
                             change({ selection: next.selection });
                         }}
                         machineId={project.machineId}
-                        serverId={null}
+                        serverId={props.deploymentEnvironment?.serverId ?? null}
                         directory={project.directory}
                       />
                     </>

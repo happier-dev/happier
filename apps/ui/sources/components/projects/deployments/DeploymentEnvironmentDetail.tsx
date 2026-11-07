@@ -118,6 +118,12 @@ import { useMachineServicesList } from '@/components/machines/services/useMachin
 import { showServiceCommandSheet } from '@/components/machines/services/command/ServiceCommandSheet';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
+import { DetailCompanionPane } from '@/components/appShell/panes/details/DetailsPaneSlot';
+import type { EnvironmentCompanionId } from '@/components/appShell/rightSidebar/detailNavigationItems';
+import { MachineServiceLogs } from '@/components/machines/services/MachineServiceLogs';
+import { SegmentedTabBar, SegmentedValueSelect } from '@/components/ui/navigation/SegmentedTabBar';
+import { DeploymentStepLogs } from './DeploymentStepLogs';
+import type { DeploymentReadLogs } from './useDeploymentStepLog';
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
@@ -164,6 +170,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       disposition?: Pick<ReturnType<typeof createDeploymentActions>, 'deleteEnvironment' | 'unlink' | 'teardown' | 'link'> | null;
       /** The Environment was deleted: the page leaves it. */
       onDeleted?: () => void;
+      /** The Action owner's masked stage-log reader for the Logs companion's Build view; absent where it cannot read. */
+      readLogs?: DeploymentReadLogs | null;
       /** The Action owner's `deployments.restart` for a service row's ⋯; absent where the page cannot write. */
       restart?: ReturnType<typeof createDeploymentActions>['restart'] | null;
       /** The Action owner's backup restore; absent where the page cannot write. */
@@ -253,10 +261,18 @@ export const DeploymentEnvironmentDetail = React.memo(
       props.destination ?? ownDestination;
     const onNavigate = props.onNavigate ?? setOwnDestination;
     const navigationScope = React.useMemo(() => ({ serverId: props.serverId, accountId: props.accountId }), [props.serverId, props.accountId]);
+    const logsOffered = detail !== null && (activeId !== null || (machineIds.length === 1 && runtime?.source.kind === 'host'));
     const navigation = useEnvironmentNavigation({ scope: navigationScope, environmentId: props.environmentId,
+      companions: logsOffered ? LOGS_COMPANION : NO_COMPANION,
       destination: props.destination ?? ownDestination, phone: props.phone,
       presented: props.demand.mounted && props.demand.visible && props.demand.focused, navigate: onNavigate });
     const executeNavigation = useMountedScopeActionCommand(navigationScope);
+    // The Logs companion keeps the service a row opened it for; its own field changes it after that.
+    const [logsService, setLogsService] = React.useState<string | null>(null);
+    const openLogs = useEventCallback((service: string) => {
+      setLogsService(service);
+      navigation.companion.open('logs');
+    });
     const selectPage = (id: string) => selectEnvironmentNavigationItem(executeNavigation, navigation.model, id);
     const openTab = (
       next: EnvironmentTab,
@@ -874,6 +890,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     restart={machineOnline === false ? null : props.restart ?? null}
                     review={review}
                     active={props.demand.mounted && props.demand.visible}
+                    onOpenLogs={logsOffered ? openLogs : null}
                   />
                   {props.lifetime ? (
                     <EnvironmentAdminLogin
@@ -987,6 +1004,19 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           )}
         </ItemList>
+        <EnvironmentLogsCompanion
+          open={navigation.companion.activeId === 'logs'}
+          onClose={navigation.companion.close}
+          services={services}
+          service={logsService}
+          serverId={props.serverId}
+          environmentId={props.environmentId}
+          machineId={machineIds.length === 1 && runtime?.source.kind === 'host' ? machineIds[0]! : null}
+          machineName={machineLabel}
+          machineNames={machineNames}
+          receipt={activeReceipt ?? null}
+          readLogs={props.readLogs ?? null}
+        />
         {props.phone && deployButton ? (
           <KeyboardStickyFooter>
             <PagePinnedBar>{deployButton}</PagePinnedBar>
@@ -1155,6 +1185,7 @@ const styles = StyleSheet.create((theme) => ({
   danger: { color: theme.colors.state.danger.textForeground },
   warning: { color: theme.colors.state.attention.textForeground },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s16 },
+  logsActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   rowMetaText: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   // The age column keeps one width so every row's duration lines up beside it.
   rowAge: { minWidth: theme.space.s48 + theme.space.s16, textAlign: 'right' },
@@ -1162,6 +1193,8 @@ const styles = StyleSheet.create((theme) => ({
 
 type DeploymentService = Readonly<{ name: string; reference: string | null }>;
 const NO_SERVICES: readonly DeploymentService[] = [];
+const LOGS_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze(['logs']);
+const NO_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze([]);
 
 /**
  * What the receipt runs: its Compose services in order. A pulled image keeps its name and tag (the digest
@@ -1628,6 +1661,8 @@ function EnvironmentServiceRows(
     restart: ReturnType<typeof createDeploymentActions>['restart'] | null;
     review: DeploymentReviewHandle;
     active: boolean;
+    /** Opens the Logs companion on this service (P11); null where it has nothing to show. */
+    onOpenLogs: ((service: string) => void) | null;
   }>,
 ) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId ?? '',
@@ -1650,6 +1685,7 @@ function EnvironmentServiceRows(
           restart={props.restart}
           review={props.review}
           onRestarted={list.refresh}
+          onOpenLogs={props.onOpenLogs}
         />
       ))}
     </>
@@ -1669,6 +1705,7 @@ function EnvironmentServiceRow(
     restart: ReturnType<typeof createDeploymentActions>['restart'] | null;
     review: DeploymentReviewHandle;
     onRestarted: () => Promise<void>;
+    onOpenLogs: ((service: string) => void) | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1708,10 +1745,13 @@ function EnvironmentServiceRow(
   const openOnMachine = row && machineId ? () => router.push(machinePageHref({
     door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services', page: 'service', service: row.serviceId },
   }) as never) : null;
+  const openLogs = props.onOpenLogs ? () => props.onOpenLogs?.(service.name) : null;
   const items = React.useMemo((): readonly DropdownMenuItem[] => {
-    const icon = (name: 'arrow-clockwise' | 'terminal' | 'hard-drives') =>
+    const icon = (name: 'arrow-clockwise' | 'terminal' | 'hard-drives' | 'list') =>
       <Icon name={name} size={16} color={theme.colors.text.secondary} />;
     return [
+      ...(openLogs ? [{ id: 'logs', testID: `project-deployments.environment.services.${service.name}.logs`,
+        title: t('projects.deployments.overviewStatus.logsTitle'), icon: icon('list') }] : []),
       ...(pressRestart ? [{ id: 'restart', testID: `project-deployments.environment.services.${service.name}.restart`,
         title: t('machineServices.control.restart'), icon: icon('arrow-clockwise') }] : []),
       ...(runCommand ? [{ id: 'command', testID: `project-deployments.environment.services.${service.name}.command`,
@@ -1722,7 +1762,7 @@ function EnvironmentServiceRow(
     ];
     // The menu's rows follow which operations exist, not the callbacks' identities.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(pressRestart), Boolean(runCommand), Boolean(openOnMachine), props.machineName, service.name, theme.colors.text.secondary]);
+  }, [Boolean(openLogs), Boolean(pressRestart), Boolean(runCommand), Boolean(openOnMachine), props.machineName, service.name, theme.colors.text.secondary]);
   const feedback = restartState === 'idle' || restartState === 'running' ? null : (
     <SurfaceStateCard
       testID={`project-deployments.environment.services.${service.name}.restart.${restartState}`}
@@ -1755,7 +1795,8 @@ function EnvironmentServiceRow(
             popoverPhonePresentation="sheet"
             popoverAccessibilityLabel={t('common.more')}
             onSelect={(id) => {
-              if (id === 'restart') pressRestart?.();
+              if (id === 'logs') openLogs?.();
+              else if (id === 'restart') pressRestart?.();
               else if (id === 'command') runCommand?.();
               else if (id === 'machine') openOnMachine?.();
             }}
@@ -1840,4 +1881,134 @@ function EnvironmentAdminLoginRow(props: Readonly<{ refId: string; scope: Server
       active
     />
   ) : null;
+}
+
+type EnvironmentLogsView = 'build' | 'runtime';
+
+/**
+ * The Logs companion (P11): beside the Environment on desktop, pushed on a phone, through the host companion pane.
+ * Build shows the serving receipt's own step logs (the receipt's viewer); Runtime shows the chosen service's
+ * native log through the Machine service log viewer. Nothing reads until it is open.
+ */
+function EnvironmentLogsCompanion(
+  props: Readonly<{
+    open: boolean;
+    onClose: () => void;
+    services: readonly DeploymentService[];
+    service: string | null;
+    serverId: string;
+    environmentId: string;
+    machineId: string | null;
+    machineName: string;
+    machineNames: Readonly<Record<string, string>>;
+    receipt: ReturnType<typeof useDeploymentReceipt>['snapshot']['value'];
+    readLogs: DeploymentReadLogs | null;
+  }>,
+) {
+  const runtimeAvailable = props.machineId !== null && props.services.length > 0;
+  const [view, setView] = React.useState<EnvironmentLogsView>(runtimeAvailable ? 'runtime' : 'build');
+  const [chosen, setChosen] = React.useState<string | null>(null);
+  // A row's Logs names its service; until the person picks another, the companion follows that row.
+  React.useEffect(() => { setChosen(null); if (props.service !== null && runtimeAvailable) setView('runtime'); },
+    [props.service, runtimeAvailable]);
+  const serviceName = chosen ?? props.service ?? props.services[0]?.name ?? null;
+  const shown = runtimeAvailable ? view : 'build';
+  const tabs = React.useMemo(() => [
+    { id: 'build' as const, label: t('projects.deployments.overviewStatus.logsBuild') },
+    { id: 'runtime' as const, label: t('projects.deployments.overviewStatus.logsRuntime'), disabled: !runtimeAvailable },
+  ], [runtimeAvailable]);
+  const serviceTabs = React.useMemo(() => props.services.map((service) => ({ id: service.name, label: service.name })),
+    [props.services]);
+  const actions = (
+    <View style={styles.logsActions}>
+      {shown === 'runtime' && serviceName && serviceTabs.length > 1 ? (
+        <SegmentedValueSelect
+          tabs={serviceTabs}
+          activeTabId={serviceName}
+          onSelectTab={setChosen}
+          disabled={false}
+          accessibilityLabel={t('projects.deployments.overviewStatus.logsService')}
+          testID="environment-logs.service"
+        />
+      ) : null}
+      <SegmentedTabBar<EnvironmentLogsView>
+        role="radiogroup"
+        segmentSizing="content"
+        compact
+        accessibilityLabel={t('projects.deployments.overviewStatus.logsTitle')}
+        testIDPrefix="environment-logs.view"
+        activeTabId={shown}
+        tabs={tabs}
+        onSelectTab={setView}
+      />
+    </View>
+  );
+  return (
+    <DetailCompanionPane
+      open={props.open}
+      title={t('projects.deployments.overviewStatus.logsTitle')}
+      {...(shown === 'runtime' && serviceName ? { subtitle: serviceName } : {})}
+      actions={actions}
+      onClose={props.onClose}
+      testID="environment-logs"
+    >
+      {!props.open ? null : shown === 'runtime' && props.machineId && serviceName ? (
+        <EnvironmentRuntimeLogs
+          serverId={props.serverId}
+          machineId={props.machineId}
+          machineName={props.machineName}
+          environmentId={props.environmentId}
+          service={serviceName}
+        />
+      ) : props.receipt ? (
+        <ItemList testID="environment-logs.build">
+          <DeploymentStepLogs
+            testID="environment-logs.build.steps"
+            title={t('projects.deployments.steps')}
+            machineName={props.receipt.content.machineResults[0]
+              ? props.machineNames[props.receipt.content.machineResults[0].machineId] ?? props.machineName : props.machineName}
+            machineNames={props.machineNames}
+            machineId={props.receipt.content.steps.length > 0 ? undefined : props.receipt.content.machineResults[0]?.machineId}
+            steps={props.receipt.content.steps.length > 0 ? props.receipt.content.steps : (props.receipt.content.machineResults[0]?.steps ?? [])}
+            facts={props.receipt.facts}
+            running={props.receipt.deployment.state === 'running' || props.receipt.deployment.state === 'queued'}
+            serverId={props.serverId}
+            readLogs={props.readLogs}
+            fileStem={`deploy-${props.receipt.deployment.id}`}
+          />
+        </ItemList>
+      ) : (
+        <SurfaceStateCard
+          testID="environment-logs.empty"
+          kind="empty"
+          title={t('projects.deployments.overviewStatus.logsEmpty')}
+          reason={t('projects.deployments.overviewStatus.logsNoBuild')}
+        />
+      )}
+    </DetailCompanionPane>
+  );
+}
+
+/** One service's runtime log from the Machine's admitted services list; read only while shown. */
+function EnvironmentRuntimeLogs(
+  props: Readonly<{ serverId: string; machineId: string; machineName: string; environmentId: string; service: string }>,
+) {
+  const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: true });
+  const row = list.rows?.find((candidate) => candidate.environmentId === props.environmentId
+    && candidate.deployment?.service.composeService === props.service) ?? null;
+  if (!row) {
+    return list.pending ? <PageLoadingRows testID="environment-logs.loading" /> : (
+      <SurfaceStateCard
+        testID="environment-logs.empty"
+        kind="empty"
+        title={t('projects.deployments.overviewStatus.logsEmpty')}
+      />
+    );
+  }
+  return (
+    <ItemList testID="environment-logs.runtime">
+      <MachineServiceLogs serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
+        service={row} active />
+    </ItemList>
+  );
 }

@@ -13,7 +13,6 @@ const { createDefaultWhen } = await import('./sessionTriggerForm');
 const {
   buildGuidedAutomationRequest,
   buildGuidedAutomationReadBack,
-  describeGuidedAutomation,
   guidedApprovalProfileId,
   guidedStarterDraft,
 } = await import('./guidedAutomation');
@@ -91,6 +90,9 @@ describe('guided automation (four questions)', () => {
       approval: { resolution: { status: 'missing', requestedId: 'deleted-profile', effectiveId: 'builtin:read-propose' } },
       disclosure: { inbox: true, channelIds: [] },
     });
+    const withoutAgent = { ...configured, selection: undefined };
+    expect(buildGuidedAutomationRequest(withoutAgent, facts)).toBeNull();
+    expect(buildGuidedAutomationReadBack(withoutAgent, facts)).toEqual(readBack);
     const notified = buildGuidedAutomationReadBack({ ...configured, channels: ['push'] }, facts);
     expect(notified?.wake).toEqual(readBack?.wake);
     expect(notified?.disclosure.channelIds).toEqual(['push']);
@@ -198,24 +200,6 @@ describe('guided automation (four questions)', () => {
         project,
       }),
     ).not.toBeNull();
-  });
-
-  it('reads the answers back from the same answers it writes: the event or schedule, the subject, the Then and the channels', () => {
-    const event = describeGuidedAutomation(
-      draft({ when: healthEvent, mode: 'propose' }),
-      { subjectName: 'eadc', channelLabels: [] },
-    );
-    expect(event).toContain('guided.readBack.propose');
-    expect(event).toContain('event=API health check');
-    expect(event).toContain('subject=eadc');
-    expect(event).toContain('guided.readBack.tellInbox');
-    const scheduled = describeGuidedAutomation(
-      draft({ mode: 'chain', channels: ['push'] }),
-      { subjectName: 'eadc', channelLabels: ['Push'] },
-    );
-    expect(scheduled).toContain('guided.readBack.chain');
-    expect(scheduled).toContain('summary.everyDayAt');
-    expect(scheduled).toContain('channels=Push');
   });
 
   it('opens a starter with its When and Then already answered', () => {
