@@ -3676,7 +3676,8 @@ class Sync {
             artifactListedOpenApprovals: {},
             artifactDiscussionAttentionEntries: {},
             artifactIncompleteInboxArtifacts: {},
-            artifactOpenWorkflowPublicationArtifacts: [],
+            artifactWorkflowPublicationArtifactsByRunId: {},
+            artifactUnclassifiedWorkflowPublicationArtifacts: {},
             artifactSkillRevisions: {},
             artifactInventoryUnreadyCount: 0,
             artifactsLoaded: false,
@@ -8249,6 +8250,10 @@ class Sync {
                           reason: 'transport-withdrawal',
                       });
                   }
+                  if (reason === 'socket-reconnect') {
+                      await this.refreshProjectAccountRows();
+                      if (!shouldContinue()) return;
+                  }
                   const sessionSystemRecordRefreshScope = getActiveServerAccountScope();
                   for (const repository of this.sessionSystemRecordRepositories.values()) {
                       repository.refreshObserved(
@@ -10028,7 +10033,7 @@ class Sync {
         return task;
     }
 
-    /** Reads the Account's project rows back after a write made elsewhere (a controller daemon's lifecycle Action). */
+    /** Complete Project census for explicit recovery and refresh. */
     public refreshProjectAccountRows = async () => {
         const scope = this.pendingSettingsScope;
         const needsInitialCensus = this.projectAccountRowsRuntime === null;
@@ -13427,10 +13432,13 @@ class Sync {
                             await runtime.refresh(key);
                             if (!shouldContinue() || !isAppliedTransportCurrent()) throw new Error('Authoring memory transport retired');
                         },
-                        refreshProjectAccountRows: async () => {
+                        materializeProjectAccountRows: async (keys) => {
                             if (!shouldContinue() || !isAppliedTransportCurrent()) throw new Error('Project row transport retired');
-                            await this.refreshProjectAccountRows();
+                            const owner = await this.ensureProjectAccountRowsRuntime();
                             if (!shouldContinue() || !isAppliedTransportCurrent()) throw new Error('Project row transport retired');
+                            const completed = await owner.refreshKeys(keys);
+                            if (!shouldContinue() || !isAppliedTransportCurrent()) throw new Error('Project row transport retired');
+                            return completed;
                         },
                         materializeSessionDraft: async (address, revision) => {
                             if (
@@ -13754,9 +13762,8 @@ class Sync {
                 const currentDemand = () => isCurrent()
                     && resolveSessionLiveConsumption(sessionId, serverId).isFullContentConsumer;
                 if (!currentDemand()) return;
-                // Visibility admission consumes the hydration owner's retained or
-                // ongoing transcript acquisition. Changes/reconnect reconciliation
-                // already invalidate that owner when Session facts advance.
+                // ACK hydration establishes the exact Home carrier; visibility
+                // then owns initial transcript acquisition and stale-region repair.
                 const authority = await captureServerRequestAuthorityForServerAccountScope({
                     serverId, activeRequest: this.requestViaConfiguredSocket,
                 });
@@ -13766,6 +13773,9 @@ class Sync {
                         hydrateMessages: false, includeTurnsProjection: true,
                         authority, scopeCurrentness: currentDemand });
                 } finally { await authority.release(); }
+                if (currentDemand() && areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {
+                    this.onSessionVisible(sessionId);
+                }
             })(), { tag: 'Sync.sessionConsumptionCatchUp' });
         }
     }
