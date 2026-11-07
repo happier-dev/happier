@@ -68,6 +68,8 @@ export type PlannedSessionTranscriptRepair = Readonly<{
     minSeq: number;
     messageIds: string[];
     messageSeqs?: Readonly<Record<string, number>>;
+    /** Committed row revisions (ms) named by every hint for that message; absent means unknown. */
+    messageUpdatedAts?: Readonly<Record<string, number>>;
 }>;
 
 export type ChangeCheckpointDecision =
@@ -520,13 +522,33 @@ export type SessionChangePlanningContext = Readonly<{
     afterCursor?: number;
 }>;
 
+/**
+ * A Session-only wake's explicit empty record set proves known row-only writes
+ * at publication. Without a feed cursor, only retained rows use exact placement.
+ */
+export function planSyncActionsFromHomeWake(
+    changes: ApiChangeEntry[],
+    rowOnly = false,
+    isSessionListMember?: (sessionId: string) => boolean,
+): PlannedChangeActions {
+    const knownRows = rowOnly && isSessionListMember && changes.length > 0
+        && changes.every(change => change.kind === 'session' && isSessionListMember(change.entityId));
+    return planSyncActionsFromChanges(changes, knownRows ? { isSessionListMember } : undefined);
+}
+
 export function planSyncActionsFromChanges(
     changes: ApiChangeEntry[],
     context?: SessionChangePlanningContext,
 ): PlannedChangeActions {
     const sessionIds = new Set<string>();
     const sessionRowRefreshIds = new Set<string>();
-    const sessionTranscriptRepairs = new Map<string, { minSeq: number; messageIds: Set<string>; messageSeqs: Record<string, number> }>();
+    const sessionTranscriptRepairs = new Map<string, {
+        minSeq: number;
+        messageIds: Set<string>;
+        messageSeqs: Record<string, number>;
+        // `null` once any hint for the message lacks its revision: that message keeps its read.
+        messageUpdatedAts: Map<string, number | null>;
+    }>();
     const sessionFolderAssignmentSessionIds = new Set<string>();
     const organizationAssignmentSessionIds = new Set<string>();
     const organizationFolderIds = new Set<string>();
@@ -659,18 +681,18 @@ export function planSyncActionsFromChanges(
                 sessionIds.add(change.entityId);
                 const updatedMessage = readSessionUpdatedMessageChangeHintV1(change);
                 if (updatedMessage) {
-                    const existing = sessionTranscriptRepairs.get(change.entityId);
-                    if (existing) {
-                        existing.minSeq = Math.min(existing.minSeq, updatedMessage.seq);
-                        existing.messageIds.add(updatedMessage.messageId);
-                        existing.messageSeqs[updatedMessage.messageId] = updatedMessage.seq;
-                    } else {
-                        sessionTranscriptRepairs.set(change.entityId, {
-                            minSeq: updatedMessage.seq,
-                            messageIds: new Set([updatedMessage.messageId]),
-                            messageSeqs: { [updatedMessage.messageId]: updatedMessage.seq },
-                        });
+                    let repair = sessionTranscriptRepairs.get(change.entityId);
+                    if (!repair) {
+                        repair = { minSeq: updatedMessage.seq, messageIds: new Set(), messageSeqs: {}, messageUpdatedAts: new Map() };
+                        sessionTranscriptRepairs.set(change.entityId, repair);
                     }
+                    repair.minSeq = Math.min(repair.minSeq, updatedMessage.seq);
+                    repair.messageIds.add(updatedMessage.messageId);
+                    repair.messageSeqs[updatedMessage.messageId] = updatedMessage.seq;
+                    const knownUpdatedAt = repair.messageUpdatedAts.get(updatedMessage.messageId);
+                    repair.messageUpdatedAts.set(updatedMessage.messageId,
+                        updatedMessage.updatedAt === undefined || knownUpdatedAt === null ? null
+                            : Math.max(knownUpdatedAt ?? updatedMessage.updatedAt, updatedMessage.updatedAt));
                 }
             }
             continue;
@@ -863,12 +885,17 @@ export function planSyncActionsFromChanges(
         sessionIdsToCatchUp: Array.from(sessionIds).sort(),
         sessionRowRefreshIds: invalidateSessions ? [] : Array.from(sessionRowRefreshIds).sort(),
         sessionTranscriptRepairs: Array.from(sessionTranscriptRepairs.entries())
-            .map(([sessionId, repair]) => ({
-                sessionId,
-                minSeq: repair.minSeq,
-                messageIds: Array.from(repair.messageIds).sort(),
-                messageSeqs: repair.messageSeqs,
-            }))
+            .map(([sessionId, repair]) => {
+                const messageUpdatedAts = Object.fromEntries([...repair.messageUpdatedAts]
+                    .filter((entry): entry is [string, number] => entry[1] !== null));
+                return {
+                    sessionId,
+                    minSeq: repair.minSeq,
+                    messageIds: Array.from(repair.messageIds).sort(),
+                    messageSeqs: repair.messageSeqs,
+                    ...(Object.keys(messageUpdatedAts).length > 0 ? { messageUpdatedAts } : {}),
+                };
+            })
             .sort((left, right) => left.sessionId.localeCompare(right.sessionId)),
         sessionFolderAssignmentSessionIds: Array.from(sessionFolderAssignmentSessionIds).sort(),
         sessionOrganization: organizationRefresh

@@ -356,7 +356,7 @@ export function readSessionTranscriptChangeHintV1(
 /** The server's existing advisory hint for a durable row revised at unchanged seq. */
 export function readSessionUpdatedMessageChangeHintV1(
   change: Readonly<{ kind: string; hint?: unknown }>,
-): Readonly<{ seq: number; messageId: string }> | null {
+): Readonly<{ seq: number; messageId: string; updatedAt?: number }> | null {
   if (change.kind !== 'session' && change.kind !== 'share') return null;
   const hint = change.hint;
   if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
@@ -364,7 +364,11 @@ export function readSessionUpdatedMessageChangeHintV1(
   const seq = record.updatedMessageSeq;
   const messageId = typeof record.updatedMessageId === 'string' ? record.updatedMessageId.trim() : '';
   if (typeof seq !== 'number' || !Number.isFinite(seq) || seq < 0 || !messageId) return null;
-  return { seq: Math.trunc(seq), messageId };
+  // The committed row revision (ms). Absent or malformed keeps the conservative read.
+  const updatedAt = record.updatedMessageUpdatedAt;
+  return typeof updatedAt === 'number' && Number.isSafeInteger(updatedAt) && updatedAt >= 0
+    ? { seq: Math.trunc(seq), messageId, updatedAt }
+    : { seq: Math.trunc(seq), messageId };
 }
 
 /**

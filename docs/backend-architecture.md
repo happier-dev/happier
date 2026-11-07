@@ -2,6 +2,16 @@
 
 This document describes the Happier backend structure as implemented in `apps/server`. It focuses on how the server is wired, how data flows through the system, and which subsystems handle which responsibilities.
 
+## Secondary Home row activity
+
+For a Session-only wake, the existing explicit empty `sessionSystemRecords` set
+proves that every coalesced publication passed the canonical strict row-hint
+classifier. The Home change planner uses that fact and retained secondary-Home
+membership to return exact row refresh ids; the secondary cache consumes those
+ids without refreshing Session head/active/attention or the Machine inventory.
+Unknown rows, absent proof, membership changes, mixed domains and reconnect
+retain the existing snapshot recovery. No additional wire fact is required.
+
 ## System overview
 
 ```mermaid

@@ -23,6 +23,7 @@ import {
     accountChangeKindsAffectWorkflowPluginSources,
     isWorkflowRunOnlyAccountChange,
     planSyncActionsFromChanges,
+    planSyncActionsFromHomeWake,
     plannedChangesAffectProfileCatalog,
     plannedChangesAffectSessionListQuery,
     plannedChangesAffectUsageQuery,
@@ -74,11 +75,14 @@ export type HomeAccountChangeEvent = Readonly<{
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     /**
      * Detailed focused-Home catch-up may publish the incumbent change planner's
-     * exact Session-list decision. Socket-only concurrent-Home wakes omit it and
-     * remain conservative. `'structural'` means only row-level Session writes: a
+     * exact Session-list decision. Secondary row-only wakes with retained membership
+     * use that same planner; other socket-only wakes remain conservative.
+     * `'structural'` means only row-level Session writes: a
      * corpus the ordinary list can answer is unaffected, a structural filter may move.
      */
     sessionListQueryAffects?: boolean | 'structural';
+    /** Exact rows admitted by the secondary wake planner; absent retains snapshot recovery. */
+    sessionRowRefreshIds?: readonly string[];
     /** With `'structural'`: the membership inputs those row writes can move. Absent stays conservative. */
     sessionListRowFacets?: SessionListRowMembershipFacets;
     /** Producer-selected readiness inputs; ordinary Session content is observed through admitted keys. */
@@ -383,10 +387,11 @@ export function publishHomeAccountChangeWake(
     serverId: string,
     wake: HomeAccountChangeWake,
     source: 'socket' | 'catch-up-pending',
+    isSessionListMember?: (sessionId: string) => boolean,
 ): HomeAccountChangeEvent {
     if (wake.t === 'account-change') return publishHomeAccountChangeForRouting(serverId, wake.entityIds, {
         source, changeKinds: wake.changeKinds, artifactKinds: wake.artifactKinds, sessionSystemRecords: wake.sessionSystemRecords,
-    });
+    }, isSessionListMember);
     // This synthetic row routes an admitted socket fact through the incumbent
     // planner only. It advances no cursor and is never checkpoint evidence.
     const planned = planSyncActionsFromChanges([{ kind: 'account', entityId: 'self', cursor: 0, changedAt: 0,
@@ -410,6 +415,7 @@ export function publishHomeAccountChangeForRouting(
     serverId: string,
     entityIds?: readonly string[],
     details?: HomeAccountChangeDetails,
+    isSessionListMember?: (sessionId: string) => boolean,
 ): HomeAccountChangeEvent {
     // Advance before any consumer can synchronously start its refresh. An adapter
     // listener would depend on insertion order and could join a pre-wake read.
@@ -446,15 +452,15 @@ export function publishHomeAccountChangeForRouting(
     const kindWakePlan = (details?.source === 'catch-up-pending' || details?.source === 'socket')
         && !unknownKinds && rawKinds?.length === 1 && rawKinds[0] !== 'account' && entityIds?.length
         // An Artifact wake's kind hints cover all of its ids; each id carries them as a feed row would.
-        ? planSyncActionsFromChanges(entityIds.map(entityId => ({ kind: rawKinds[0]!, entityId, cursor: 0, changedAt: 0,
-            ...(rawKinds[0] === 'artifact' && details?.artifactKinds !== undefined ? { hint: { artifactKinds: [...details.artifactKinds] } } : {}) }))) : null;
+        ? planSyncActionsFromHomeWake(entityIds.map(entityId => ({ kind: rawKinds[0]!, entityId, cursor: 0, changedAt: 0,
+            ...(rawKinds[0] === 'artifact' && details?.artifactKinds !== undefined ? { hint: { artifactKinds: [...details.artifactKinds] } } : {}) })), details?.sessionSystemRecords?.length === 0, isSessionListMember) : null;
     const routingPlan = scopedAccountPlan ?? (kindWakePlan?.unsupportedChanges.length === 0 ? kindWakePlan : null);
     const readinessWakePlan = accountWakePlan ?? kindWakePlan;
     const publicProfileAffects = details?.source === 'connected' || details?.source === 'snapshot'
         || (details?.publicProfileAffects ?? (unknownKinds || rawKinds === undefined
             || (rawKinds.includes('account') && (!accountWakePlan || accountWakePlan.invalidate.publicProfile))));
     const sessionListQueryAffects = details?.sessionListQueryAffects
-        ?? (scopedAccountPlan ? plannedChangesAffectSessionListQuery(scopedAccountPlan) : undefined);
+        ?? (routingPlan ? plannedChangesAffectSessionListQuery(routingPlan) : undefined);
     const profileCatalogAffects = details?.profileCatalogAffects
         ?? (routingPlan ? plannedChangesAffectProfileCatalog(routingPlan) : undefined);
     const accountSettingsAffects = details?.accountSettingsAffects ?? routingPlan?.invalidate.settings;
@@ -510,6 +516,8 @@ export function publishHomeAccountChangeForRouting(
         ...(!coarse && sessionListQueryAffects !== undefined
             ? { sessionListQueryAffects }
             : {}),
+        ...(!coarse && routingPlan?.sessionRowRefreshIds.length
+            ? { sessionRowRefreshIds: Object.freeze([...routingPlan.sessionRowRefreshIds]) } : {}),
         ...(!coarse && sessionListQueryAffects === 'structural' && details?.sessionListRowFacets
             ? { sessionListRowFacets: Object.freeze({ ...details.sessionListRowFacets }) }
             : {}),

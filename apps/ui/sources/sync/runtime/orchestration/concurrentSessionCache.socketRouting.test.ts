@@ -5,11 +5,22 @@ import * as routes from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { resolveScopedAccountEncryption } from '@/sync/encryption/scopedAccountEncryption';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
+import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
+import { SESSION_LIST_DOCUMENT_ADMISSION } from '@/sync/domains/session/sessionDocumentAdmission';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createFakeCryptoWorker } from '@/sync/encryption/nativeCryptoWorker/fakeCryptoWorker';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('socket.io-client', async (importOriginal) => (
+    await import('@/dev/testkit/harness/sessionOpsNetworkBoundary')
+).createSessionOpsSocketIoClientBoundary(importOriginal));
 
 const h = await createConcurrentCacheNetworkHarness('cache-routing');
 beforeEach(() => h.reset());
@@ -20,10 +31,334 @@ const rows = () => h.storage.getState().sessionListRowsByServerId[h.homeB.id];
 const machines = () => h.storage.getState().machineListByServerId[h.homeB.id];
 const route = (serverId = h.homeB.id, remoteMachineId = 'machine-b') => ({ serverId, remoteMachineId });
 
+function countMachineSnapshotEntries(calls: readonly (readonly unknown[])[]): number {
+    return calls.reduce((count, [entries]) => count + (Array.isArray(entries)
+        ? entries.filter(entry => Array.isArray(entry) && entry.length === 2
+            && entry[1] && typeof entry[1] === 'object' && 'metadataVersion' in entry[1] && 'daemonStateVersion' in entry[1]
+            && entry[0] === entry[1].id).length : 0), 0);
+}
+
+function createMachineReadMetadata(id: string): string {
+    return encodePlainMachineStoredContent({ ...createMachineFixture().metadata!, displayName: id });
+}
+
 describe('concurrent session cache socket routing', () => {
+    it.each(['active', 'secondary'] as const)('targets omitted metadata reads by visible demand and coalesces same-tick hints (%s Home)', async mode => {
+        const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+        const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+        const { readSessionRoleIdV1 } = await import('@happier-dev/protocol/prompts/roles/sessionRolesSnapshot');
+        const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+        const { retainVisibleSessionListSurfaces } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        const home = mode === 'active' ? h.homeA : h.homeB;
+        const homeRows = () => h.storage.getState().sessionListRowsByServerId[home.id];
+        const id = mode + '-metadata-hint';
+        const initial = createPlainSessionWithDisplayRecordFixture({ id, metadataVersion: 1, updatedAt: 1,
+            metadata: { name: 'Before', path: '/repo', host: 'host', machineId: 'machine-b' } });
+        const offscreen = createPlainSessionWithDisplayRecordFixture({ id: id + '-offscreen', metadataVersion: 1, updatedAt: 1,
+            metadata: { name: 'Offscreen', path: '/hidden', host: 'host' } });
+        h.setSessions(home, [initial, offscreen]);
+        h.setMachines(home, [h.machine(home)]);
+        h.setResponder(async input => {
+            const path = new URL(String(input)).pathname;
+            return path.endsWith('/messages') ? Response.json({ messages: [], hasMore: false })
+                : path.endsWith('/pending') ? Response.json({ pending: [], pendingVersion: 0 }) : null;
+        });
+        await h.startFocused();
+        // Foreground readiness precedes the background inventory. Settle its finite
+        // owner before measuring work caused by metadata, rather than bootstrap.
+        await getSyncSingleton().refreshSessions();
+        if (mode === 'secondary') { await h.start(); await h.refresh(); await h.ready(); }
+        let release = () => {};
+        let releaseVisible = () => {};
+        try {
+            releaseVisible = retainVisibleSessionListSurfaces([{ serverId: home.id, sessionId: id }]);
+            const documentReads = () => h.requests('/v2/sessions/read-batch');
+            const listReads = () => h.httpRequests.filter(request => ['/v2/sessions', '/v2/sessions/active',
+                '/v2/sessions/attention', '/v2/sessions/query'].includes(request.url.pathname)).length;
+            const before = documentReads().length;
+            const listsBefore = listReads();
+            const changed = createPlainSessionWithDisplayRecordFixture({ id, metadataVersion: 2, updatedAt: 2,
+                metadata: { name: 'After', path: '/new-repo', host: 'host', machineId: 'machine-b',
+                    work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, notes: '', sessionRoles: {} } } } });
+            h.setSessions(home, [changed, offscreen]);
+            h.socket(home).trigger('update', UpdateContainerSchema.parse({ id: 'metadata-hint', seq: 2, createdAt: 2,
+                body: { t: 'update-session', id, metadataDocument: 'omitted', metadataLayoutVersion: 1, metadataVersion: 2 } }));
+            await vi.waitFor(() => expect(homeRows()?.[id]?.metadata?.name).toBe('After'));
+            expect(homeRows()?.[id]?.metadata?.path).toBe('/new-repo');
+            expect(h.storage.getState().sessions[id]).toBeUndefined();
+            expect(documentReads().slice(before).map(request => JSON.parse(String(request.init?.body)).sessionIds)).toEqual([[id]]);
+            expect(listReads()).toBe(listsBefore);
 
+            const latest = createPlainSessionWithDisplayRecordFixture({ id, metadataVersion: 5, updatedAt: 5,
+                metadata: { name: 'After burst', path: '/new-repo', host: 'host', machineId: 'machine-b',
+                    work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, notes: '', sessionRoles: {} } } } });
+            h.setSessions(home, [latest, offscreen]);
+            const beforeBurst = documentReads().length;
+            for (const version of [3, 4, 5]) h.socket(home).trigger('update', UpdateContainerSchema.parse({
+                id: 'metadata-hint-' + version, seq: version, createdAt: version,
+                body: { t: 'update-session', id, metadataDocument: 'omitted', metadataLayoutVersion: 1, metadataVersion: version },
+            }));
+            await vi.waitFor(() => expect(homeRows()?.[id]?.metadata?.name).toBe('After burst'));
+            expect(documentReads().slice(beforeBurst).map(request => JSON.parse(String(request.init?.body)).sessionIds)).toEqual([[id]]);
+            expect(listReads()).toBe(listsBefore);
 
+            const changedOffscreen = createPlainSessionWithDisplayRecordFixture({ id: offscreen.id, metadataVersion: 2, updatedAt: 6,
+                metadata: { name: 'Shown later', path: '/hidden', host: 'host' } });
+            h.setSessions(home, [latest, changedOffscreen]);
+            const beforeHidden = documentReads().length;
+            h.socket(home).trigger('update', UpdateContainerSchema.parse({ id: 'offscreen-hint', seq: 6, createdAt: 6,
+                body: { t: 'update-session', id: offscreen.id, metadataDocument: 'omitted', metadataLayoutVersion: 1, metadataVersion: 2 } }));
+            // Metadata-only offscreen patches use the existing activity coalescer.
+            await vi.waitFor(() => expect(homeRows()?.[offscreen.id]?.[SESSION_LIST_DOCUMENT_ADMISSION]?.observedMetadataVersion).toBe(2), {
+                timeout: loadSyncTuning().activityUpdateDebounceMs + 1_000,
+            });
+            expect(h.storage.getState().sessions[offscreen.id]).toBeUndefined();
+            expect(documentReads()).toHaveLength(beforeHidden);
+            expect(listReads()).toBe(listsBefore);
+            releaseVisible();
+            releaseVisible = retainVisibleSessionListSurfaces([{ serverId: home.id, sessionId: offscreen.id }]);
+            await getSyncSingleton().hydrateSessionListRows([{ serverId: home.id, sessionId: offscreen.id }]);
+            expect(homeRows()?.[offscreen.id]?.metadata?.name).toBe('Shown later');
+            expect(documentReads().slice(beforeHidden).map(request => JSON.parse(String(request.init?.body)).sessionIds)).toEqual([[offscreen.id]]);
+            expect(listReads()).toBe(listsBefore);
+            releaseVisible();
+            release = registerSessionRealtimeTranscriptConsumer(id, home.id);
+            await vi.waitFor(() => expect(h.storage.getState().sessions[id]?.metadataVersion).toBe(5));
+            expect(readSessionRoleIdV1(readSessionOwnerMetadataView(h.storage.getState().sessions[id]!))).toBe('orchestrator');
+            expect(documentReads().length).toBeGreaterThan(before);
+        } finally { release(); releaseVisible(); }
+    });
 
+    it('pushes a changed role into an open secondary Home Session without a page reload or inventory read', async () => {
+        const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+        const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+        const { readSessionRoleIdV1 } = await import('@happier-dev/protocol/prompts/roles/sessionRolesSnapshot');
+        const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+        const id = 'secondary-role-change';
+        const initial = h.session({ id, seq: 1, metadataVersion: 1,
+            metadata: { path: '/repo', host: 'host', machineId: 'machine-b' } });
+        const unrelated = Array.from({ length: 1000 }, (_, index) => h.session({ id: `role-unrelated-${index}` }));
+        h.setSessions(h.homeB, [initial, ...unrelated]);
+        h.setMachines(h.homeB, [h.machine(h.homeB, 'machine-b')]);
+        h.setResponder(async input => {
+            const path = new URL(String(input)).pathname;
+            return path.endsWith('/messages') ? Response.json({ messages: [], hasMore: false })
+                : path.endsWith('/pending') ? Response.json({ pending: [], pendingVersion: 0 }) : null;
+        });
+        await h.start();
+        // Await the finite inventory owner before the harness's short readiness
+        // assertion; this scale-shaped setup can outlast its polling window.
+        await h.refresh();
+        await h.ready();
+        const release = registerSessionRealtimeTranscriptConsumer(id, h.homeB.id);
+        const role = () => readSessionRoleIdV1(readSessionOwnerMetadataView(h.storage.getState().sessions[id]!));
+        try {
+            await vi.waitFor(() => expect(h.storage.getState().sessions[id]?.serverId).toBe(h.homeB.id));
+            expect(role()).toBeNull();
+            const inventoryReads = h.requests('/v2/sessions').length;
+            const retained = rows()?.['role-unrelated-999'];
+            expect(retained).toBeDefined();
+            const changed = h.session({ id, seq: 1, metadataVersion: 2, updatedAt: 2,
+                metadata: { path: '/repo', host: 'host', machineId: 'machine-b', work: {
+                    sessionRolesV1: { roleId: 'orchestrator', overrides: {}, notes: '', sessionRoles: {} },
+                } } });
+            h.setSessions(h.homeB, [changed, ...unrelated]);
+            h.socket().trigger('update', UpdateContainerSchema.parse({ id: 'role-written', seq: 2, createdAt: 2,
+                body: { t: 'update-session', id, metadataLayoutVersion: 1,
+                    metadata: { version: changed.metadataVersion, value: changed.metadata },
+                    ownerMetadata: { value: changed.ownerMetadata },
+                } }));
+            await vi.waitFor(() => expect(role()).toBe('orchestrator'));
+            expect(h.requests('/v2/sessions')).toHaveLength(inventoryReads);
+            expect(rows()?.['role-unrelated-999']).toBe(retained);
+            const cleared = h.session({ id, seq: 1, metadataVersion: 3, updatedAt: 3,
+                metadata: { path: '/repo', host: 'host', machineId: 'machine-b' } });
+            h.setSessions(h.homeB, [cleared, ...unrelated]);
+            h.socket().trigger('update', UpdateContainerSchema.parse({ id: 'role-cleared', seq: 3, createdAt: 3,
+                body: { t: 'update-session', id, metadataLayoutVersion: 1,
+                    metadata: { version: cleared.metadataVersion, value: cleared.metadata },
+                    ownerMetadata: { value: cleared.ownerMetadata },
+                } }));
+            await vi.waitFor(() => expect(role()).toBeNull());
+            expect(h.requests('/v2/sessions')).toHaveLength(inventoryReads);
+            expect(rows()?.['role-unrelated-999']).toBe(retained);
+        } finally { release(); }
+    });
+
+    it('refreshes a named Machine push without re-reading the fleet census', async () => {
+        const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
+        let fleet = Array.from({ length: 137 }, (_, index) => h.machine(h.homeB, `machine-${index}`));
+        h.setMachines(h.homeB, fleet);
+        h.setSessions(h.homeB, [h.session({ id: 'session-b', seq: 1 })]);
+        let refuseSelection = false;
+        h.setResponder(async (input, init) => {
+            if (new URL(String(input)).pathname !== '/v1/machines/read-batch') return null;
+            if (refuseSelection) return Response.json({ results: [] });
+            return createMachineReadBatchResponseFixture(JSON.parse(String(init?.body)), id => fleet.find(row => row.id === id) ?? null);
+        });
+        await h.start(); await h.ready();
+        const census = h.requests('/v1/machines').length;
+        const untouched = machines()?.find(machine => machine.id === 'machine-136');
+        // Count actual fleet-map constructions through the secondary composition,
+        // not a cheap getMachineSnapshot fixture injected into syncMachines.
+        const snapshots = vi.spyOn(Object, 'fromEntries');
+        fleet = fleet.map(row => row.id === 'machine-0' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } : row);
+        h.setMachines(h.homeB, fleet);
+        h.socket().trigger('update', UpdateContainerSchema.parse({ id: 'machine-change', seq: 1, createdAt: 1,
+            body: { t: 'account-change', changeKinds: ['machine'], entityIds: ['machine-0'] } }));
+        await vi.waitFor(() => expect(machines()?.find(machine => machine.id === 'machine-0')?.daemonStateVersion).toBe(fleet[0]!.daemonStateVersion));
+        expect(h.requests('/v1/machines')).toHaveLength(census);
+        expect(h.requests('/v1/machines/read-batch').map(request => JSON.parse(String(request.init?.body)).machineIds)).toEqual([['machine-0']]);
+        expect(machines()).toHaveLength(137);
+        expect(machines()?.find(machine => machine.id === 'machine-136')).toBe(untouched);
+        const snapshotEntries = countMachineSnapshotEntries(snapshots.mock.calls);
+        snapshots.mockRestore();
+        expect(snapshotEntries).toBe(0);
+        // A failed exact response must retain its demand for the next real
+        // push. Reverting to full-list refresh would hide that lost selection.
+        refuseSelection = true;
+        fleet = fleet.map(row => row.id === 'machine-1' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } : row);
+        h.setMachines(h.homeB, fleet);
+        h.socket().trigger('update', UpdateContainerSchema.parse({ id: 'machine-failed', seq: 2, createdAt: 2,
+            body: { t: 'account-change', changeKinds: ['machine'], entityIds: ['machine-1'] } }));
+        await vi.waitFor(() => expect(h.storage.getState().machineListStatusByServerId[h.homeB.id]).toBe('error'));
+        refuseSelection = false;
+        fleet = fleet.map(row => row.id === 'machine-2' ? { ...row, daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 } : row);
+        h.setMachines(h.homeB, fleet);
+        h.socket().trigger('update', UpdateContainerSchema.parse({ id: 'machine-recovered', seq: 3, createdAt: 3,
+            body: { t: 'account-change', changeKinds: ['machine'], entityIds: ['machine-2'] } }));
+        await vi.waitFor(() => expect(machines()?.find(machine => machine.id === 'machine-2')?.daemonStateVersion).toBe(fleet[2]!.daemonStateVersion));
+        expect(machines()?.find(machine => machine.id === 'machine-1')?.daemonStateVersion).toBe(fleet[1]!.daemonStateVersion);
+        expect(h.requests('/v1/machines')).toHaveLength(census);
+        const finalSelection = h.requests('/v1/machines/read-batch').at(-1);
+        expect(JSON.parse(String(finalSelection?.init?.body)).machineIds.sort()).toEqual(['machine-1', 'machine-2']);
+    });
+    it('hydrates the secondary fleet without constructing a fleet map for each currentness check', async () => {
+        const fleet = Array.from({ length: 137 }, (_, index) => h.machine(h.homeB, `snapshot-${index}`));
+        h.setMachines(h.homeB, fleet);
+        await h.start();
+        // Settle the finite startup refresh before readiness and cost measurement.
+        await h.refresh();
+        await h.ready();
+        const changed = fleet.map(row => ({ ...row, metadataVersion: row.metadataVersion + 1,
+            metadata: createMachineReadMetadata(row.id), daemonStateVersion: (row.daemonStateVersion ?? 0) + 1 }));
+        h.setMachines(h.homeB, changed);
+        const snapshots = vi.spyOn(Object, 'fromEntries');
+        try {
+            await h.refresh();
+            expect(machines()).toHaveLength(137);
+            expect(machines()?.every(row => row.metadataVersion === 2 && row.metadata?.displayName === row.id)).toBe(true);
+            expect(countMachineSnapshotEntries(snapshots.mock.calls)).toBe(0);
+        } finally { snapshots.mockRestore(); }
+
+        // The same keyed inventory must observe a real complete-census withdrawal.
+        h.setMachines(h.homeB, changed.slice(1));
+        await h.refresh();
+        expect(machines()).toHaveLength(136);
+        expect(machines()?.some(row => row.id === changed[0]!.id)).toBe(false);
+        expect(h.storage.getState().machineRecordsByServerId[h.homeB.id]?.[changed[0]!.id]).toBeUndefined();
+        for (const row of machines() ?? []) {
+            expect(h.storage.getState().machineRecordsByServerId[h.homeB.id]?.[row.id]).toBe(row);
+        }
+
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        h.setResponder(async input => {
+            if (new URL(String(input)).pathname !== '/v1/machines') return null;
+            const response = Response.json(changed.slice(1));
+            entered.resolve();
+            await release.promise;
+            return response;
+        });
+        const loading = h.refresh();
+        try {
+            await entered.promise;
+            h.storage.getState().applyMachines([createMachineFixture({ id: changed[1]!.id,
+                metadataVersion: 3, daemonStateVersion: 3, metadata: { ...createMachineFixture().metadata!, displayName: 'Newer' } })],
+                false, { sourceServerId: h.homeB.id });
+            const newer = machines()?.find(row => row.id === changed[1]!.id);
+            release.resolve();
+            await loading;
+            expect(machines()?.find(row => row.id === changed[1]!.id)).toBe(newer);
+            expect(newer?.metadata?.displayName).toBe('Newer');
+        } finally { release.resolve(); await loading; }
+    });
+    it('publishes secondary Machine names before held daemon content without resurrecting withdrawn or superseded rows', async () => {
+        const secret = new Uint8Array(32).fill(83);
+        const credentials = { token: h.homeB.token, secret: encodeBase64(secret, 'base64url') };
+        await h.network.addHome(h.homeB.serverUrl, h.homeB.accountId, { credentials, encryptionMode: 'e2ee' });
+        const writer = await Encryption.create(secret);
+        writer.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const fleet = await Promise.all(Array.from({ length: 137 }, async (_, index) => {
+            const id = `progressive-${index}`;
+            const key = new Uint8Array(32).fill(index + 1);
+            await writer.initializeMachines(new Map([[id, key]]));
+            const cipher = writer.getMachineEncryption(id)!;
+            const row = h.machine(h.homeB, id);
+            return { ...row, metadataVersion: 2, daemonStateVersion: 2,
+                metadata: await cipher.encryptMetadata({ ...createMachineFixture().metadata!, displayName: id }),
+                daemonState: await cipher.encryptDaemonState({ status: 'running', pid: index + 1 }),
+                dataEncryptionKey: encodeBase64(await writer.encryptEncryptionKey(key)),
+                access: { ...row.access!, resourceMode: 'e2ee' as const } };
+        }));
+        h.setMachines(h.homeB, fleet);
+        h.setResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
+            ? Response.json(createLegacyAccountEncryptionCurrentnessFixture({ secret })) : null);
+        const encryption = await resolveScopedAccountEncryption({ serverId: h.homeB.id, serverUrl: h.homeB.serverUrl, credentials });
+        if (!encryption) throw new Error('Expected the encrypted Home material owner');
+        const release = createDeferred<void>();
+        const daemonEntered = createDeferred<void>();
+        const worker = createFakeCryptoWorker();
+        // Native crypto is the boundary. The real encryption/context owners and
+        // secondary Home composition remain in the path under this held result.
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'require', minPayloadBytes: 0 }, worker: {
+            ...worker, decryptAesGcmJson: async request => {
+                const result = await worker.decryptAesGcmJson(request);
+                if (result.items.some(item => item && typeof item === 'object' && 'status' in item)) {
+                    daemonEntered.resolve();
+                    await release.promise;
+                }
+                return result;
+            },
+        } });
+        const snapshots = vi.spyOn(Object, 'fromEntries');
+        let loading: Promise<unknown> | undefined;
+        try {
+            await h.start();
+            loading = h.refresh();
+            await daemonEntered.promise;
+            // A native batch can contain the final metadata result alongside
+            // held daemon results. Completed metadata must still publish before
+            // that batch settles; full name coverage is checked after release.
+            await vi.waitFor(() => expect(machines()?.find(row => row.id === 'progressive-0')?.metadata?.displayName).toBe('progressive-0'));
+            expect(machines()?.find(row => row.id === 'progressive-1')?.metadata?.displayName).toBe('progressive-1');
+            expect(machines()?.every(row => row.daemonStateVersion === 0 && row.daemonState === null)).toBe(true);
+            const retained = machines()!.slice(1);
+            h.storage.getState().applyMachines(retained.map(row => row.id === 'progressive-1'
+                ? { ...row, metadataVersion: 3, daemonStateVersion: 3,
+                    metadata: { ...row.metadata!, displayName: 'Newer' }, daemonState: { status: 'running', pid: 999 },
+                    availability: { kind: 'available' as const } } : row),
+                true, { sourceServerId: h.homeB.id });
+            // Explicit Refresh can queue a successor behind the initial read.
+            // Its fresh census must reflect the same genuine withdrawal.
+            h.setMachines(h.homeB, fleet.slice(1));
+            const newer = machines()!.find(row => row.id === 'progressive-1');
+            release.resolve();
+            await loading;
+            expect(machines()?.some(row => row.id === 'progressive-0')).toBe(false);
+            expect(machines()?.find(row => row.id === 'progressive-1')).toBe(newer);
+            expect(newer?.metadata?.displayName).toBe('Newer');
+            expect(machines()?.filter(row => row.metadata?.displayName === row.id)).toHaveLength(135);
+            expect(machines()?.find(row => row.id === 'progressive-136')?.daemonState).toMatchObject({ pid: 137 });
+            expect(countMachineSnapshotEntries(snapshots.mock.calls)).toBe(0);
+        } finally {
+            release.resolve();
+            await loading;
+            snapshots.mockRestore();
+            encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        }
+    });
     it('consumes ongoing secondary Home bodies and stream checkpoints through the real Sync owner without hydrating foreign same-id transcripts', async () => {
         const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
         const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
@@ -146,7 +481,7 @@ describe('concurrent session cache socket routing', () => {
             } finally { await authority.release(); }
             expect(texts()).toContain('old Home text 10');
         } finally { releaseOld(); }
-        const { buildSessionMessageObservationFactsV1 } = await import('@happier-dev/protocol');
+        const { buildSessionMessageObservationFactsV1} = await import('@happier-dev/protocol/sessions');
         h.socket(h.homeC).trigger('update', { id: 'old-home-hidden-revision', seq: 21, createdAt: 21,
             body: { t: 'message-updated', sid: id, delivery: 'hint', message: buildSessionMessageObservationFactsV1({
                 ...record('old Home', 20), updatedAt: 21,
@@ -196,9 +531,7 @@ describe('concurrent session cache socket routing', () => {
         h.setResponder(async input => {
             const url = new URL(String(input));
             if (url.origin !== h.homeB.serverUrl) return null;
-            if (url.pathname === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-                recipientEnvelopeReadiness: { status: 'available' } });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createLegacyAccountEncryptionCurrentnessFixture({ secret }));
             if (url.pathname.endsWith('/messages')) {
                 const hold = heldRead;
                 heldRead = null;
@@ -233,7 +566,7 @@ describe('concurrent session cache socket routing', () => {
         expect(texts()).toContain('secondary text 10');
         expect(h.httpRequests.filter(request => request.url.pathname.endsWith('/messages')).every(request => request.url.origin === h.homeB.serverUrl)).toBe(true);
         const { registerSessionRealtimeTranscriptConsumer } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
-        const { buildSessionMessageObservationFactsV1 } = await import('@happier-dev/protocol');
+        const { buildSessionMessageObservationFactsV1} = await import('@happier-dev/protocol/sessions');
         const release = registerSessionRealtimeTranscriptConsumer(id, h.homeB.id);
         try {
             current = { ...current, updatedAt: 21, content: { t: 'encrypted', c: await cipher.encryptRaw({ role: 'user', content: { type: 'text', text: 'secondary revised text 20' } }) } };
@@ -282,12 +615,114 @@ describe('concurrent session cache socket routing', () => {
         } finally { hold.gate.resolve(); await pending; }
     });
 
+    it('refreshes retained secondary Home activity by exact row without Session or Machine census', async () => {
+        const id = 'retained-activity';
+        h.setSessions(h.homeB, [h.session({ id, seq: 1, updatedAt: 1 }),
+            ...Array.from({ length: 40 }, (_, index) => h.session({ id: `unrelated-${index}` }))]);
+        await h.start(); await h.ready();
+        const before = h.httpRequests.length;
+        vi.useFakeTimers();
+        try {
+            for (let seq = 2; seq <= 4; seq++) {
+                h.setSessions(h.homeB, [h.session({ id, seq, updatedAt: seq })]);
+                h.socket().trigger('update', { id: `activity-${seq}`, seq, createdAt: seq,
+                    body: { t: 'account-change', changeKinds: ['session'], entityIds: [id], sessionSystemRecords: [] } });
+                await vi.advanceTimersByTimeAsync(601);
+                await vi.waitFor(() => expect(rows()?.[id]?.seq).toBe(seq));
+                await h.ready();
+            }
+            const reads = h.httpRequests.slice(before);
+            expect(reads.filter(({ url }) => ['/v2/sessions', '/v2/sessions/active',
+                '/v2/sessions/attention', '/v1/machines', '/v1/machines/read-batch'].includes(url.pathname))).toHaveLength(0);
+            expect(reads.filter(({ url }) => url.pathname === '/v2/sessions/read-batch')
+                .flatMap(({ init }) => JSON.parse(String(init?.body)).sessionIds)).toEqual([id, id, id]);
+            expect(rows()?.['unrelated-39']).toBeDefined();
+            // A known id alone cannot exclude archive/access changes or legacy writers.
+            const beforeArchive = h.httpRequests.length;
+            h.setSessions(h.homeB, [h.session({ id, seq: 5, updatedAt: 5, archivedAt: 5 })]);
+            h.socket().trigger('update', { id: 'archive-known-row', seq: 5, createdAt: 5,
+                body: { t: 'account-change', changeKinds: ['session'], entityIds: [id] } });
+            await vi.advanceTimersByTimeAsync(601);
+            await h.ready();
+            expect(h.httpRequests.slice(beforeArchive).some(({ url }) => url.pathname === '/v2/sessions')).toBe(true);
+            expect(rows()?.[id]?.archivedAt).toBe(5);
+            for (const wake of [
+                { changeKinds: ['session'], entityIds: ['new-row'], sessionSystemRecords: [] },
+                { changeKinds: ['session', 'machine'], entityIds: ['new-row', 'machine-b'], sessionSystemRecords: [] },
+            ]) {
+                const beforeRecovery = h.httpRequests.length;
+                h.setSessions(h.homeB, [h.session({ id: 'new-row' })]);
+                h.socket().trigger('update', { id: 'conservative-recovery', seq: 6, createdAt: 6,
+                    body: { t: 'account-change', ...wake } });
+                await vi.advanceTimersByTimeAsync(601);
+                await h.ready();
+                expect(h.httpRequests.slice(beforeRecovery).some(({ url }) => url.pathname === '/v2/sessions')).toBe(true);
+                expect(rows()?.['new-row']).toBeDefined();
+            }
+        } finally { vi.useRealTimers(); }
+    });
 
+    it('reads secondary Home snapshots only for the committed domains that need them', async () => {
+        await h.start(); await h.ready();
+        const sessionReads = h.requests('/v2/sessions').length;
+        const machineReads = h.requests('/v1/machines').length;
+        let cursor = 0;
+        vi.useFakeTimers();
+        try {
+            const wake = async (changeKinds: string[] | undefined, entityIds = ['changed-resource']) => {
+                h.socket().trigger('update', { id: `secondary-demand-${++cursor}`, seq: cursor, createdAt: 1,
+                    body: { t: 'account-change', ...(changeKinds ? { changeKinds } : {}), entityIds } });
+                // Drain the incumbent 600ms socket refresh debounce, not a new product budget.
+                await vi.advanceTimersByTimeAsync(601);
+                await h.ready();
+            };
+            for (let arrival = 0; arrival < 12; arrival++) await wake(['artifact', 'savedSecretResource']);
+            for (let arrival = 0; arrival < 12; arrival++) await wake(['account'], [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1]);
+            expect(h.requests('/v2/sessions').length - sessionReads).toBe(0);
+            expect(h.requests('/v1/machines').length - machineReads).toBe(0);
+            await wake(['machine']);
+            expect(h.requests('/v2/sessions').length - sessionReads).toBe(0);
+            expect(h.requests('/v1/machines').length - machineReads).toBe(1);
+            let expectedSessionReads = 0;
+            h.setSessions(h.homeB, [h.session({ id: 'newly-visible-team-session' })]);
+            await wake(['account'], [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            expect(h.requests('/v2/sessions').length - sessionReads).toBe(++expectedSessionReads);
+            expect(rows()?.['newly-visible-team-session']).toBeDefined();
+            for (const kinds of [['session'], ['share'], ['account'], undefined, [], ['future-kind']]) {
+                await wake(kinds);
+                expect(h.requests('/v2/sessions').length - sessionReads).toBe(++expectedSessionReads);
+            }
+        } finally { vi.useRealTimers(); }
+    });
 
-
+    it('retains committed wake routing for readers of a secondary Home', async () => {
+        const { subscribeHomeAccountChange } = await import('./homeAccountChange');
+        const publications: Array<{ serverId: string; changeKinds?: readonly string[]; entityIds?: readonly string[] }> = [];
+        const release = subscribeHomeAccountChange(event => { publications.push(event); }, { includeCatchUpPending: true });
+        try {
+            await h.start(); await h.ready();
+            publications.length = 0;
+            h.socket().trigger('update', { id: 'secondary-committed-wake', seq: 1, createdAt: 1,
+                body: { t: 'account-change', changeKinds: ['session'], entityIds: ['session-b'] } });
+            expect(publications).toEqual([expect.objectContaining({
+                serverId: h.homeB.id, source: 'socket', changeKinds: ['session'], entityIds: ['session-b'],
+            })]);
+            const target = { sessionId: 'session-b', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' } };
+            h.socket().trigger('update', { id: 'secondary-record-wake', seq: 2, createdAt: 1,
+                body: { t: 'account-change', changeKinds: ['account'], entityIds: ['session-record:record-b'], sessionSystemRecords: [target] } });
+            expect(publications.at(-1)).toMatchObject({ serverId: h.homeB.id, source: 'socket', accountSettingsAffects: true,
+                changeKinds: ['account'], entityIds: ['session-record:record-b'], sessionSystemRecords: [target] });
+            for (const changeKinds of [['account'], ['future-kind'], [], undefined]) {
+                h.socket().trigger('update', { id: 'secondary-coarse-wake', seq: 2, createdAt: 1,
+                    body: { t: 'account-change', ...(changeKinds ? { changeKinds } : {}), entityIds: ['unrelated-id'] } });
+                expect(publications.at(-1)).toMatchObject({ serverId: h.homeB.id, source: 'socket', accountSettingsAffects: true });
+            }
+        } finally { release(); }
+    });
 
     it.each(['existing cipher', 'first cipher'] as const)(
         'does not let a retained credential replace the current scoped Account owner (%s)', async initialMaterial => {
+            let currentness = createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(41) });
             const original = initialMaterial === 'existing cipher'
                 ? { token: h.homeB.token, secret: encodeBase64(new Uint8Array(32).fill(41), 'base64url') }
                 : { token: h.homeB.token };
@@ -295,8 +730,7 @@ describe('concurrent session cache socket routing', () => {
                 credentials: original, encryptionMode: 'e2ee',
             });
             h.setResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
-                ? Response.json({ mode: 'e2ee', version: 1, signingKeyFingerprint: null,
-                    contentKeyFingerprint: null, updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' } })
+                ? Response.json(currentness)
                 : null);
             await h.start(); await h.ready();
             // Hold the existing reconciliation timer at the OS clock boundary.
@@ -307,6 +741,8 @@ describe('concurrent session cache socket routing', () => {
                     secret: encodeBase64(new Uint8Array(32).fill(42), 'base64url') };
                 expect(await h.TokenStorage.setCredentialsForServerUrl(h.homeB.serverUrl,
                     { serverId: h.homeB.id }, replacement)).toBe(true);
+                currentness = { ...createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(42) }),
+                    version: 2, updatedAt: 2 };
                 const current = await resolveScopedAccountEncryption({ serverId: h.homeB.id,
                     serverUrl: h.homeB.serverUrl, credentials: replacement });
                 if (!current) throw new Error('Expected replacement Account material');
@@ -344,6 +780,7 @@ describe('concurrent session cache socket routing', () => {
     });
 
     it('keeps shared encrypted content cold while retaining Account-owned names and demanded per-Home metadata', async () => {
+        const { createSessionDisplayCrypto } = await import('@/sync/encryption/sessionDisplayCrypto');
         // Observe the real owner so accidental content demand is visible at
         // every batch size, including batches below the Worker threshold.
         const decryptDataKeys = vi.spyOn(Encryption.prototype, 'decryptEncryptionKeys');
@@ -355,12 +792,20 @@ describe('concurrent session cache socket routing', () => {
         const encryptedRows = await Promise.all(Array.from({ length: 5 }, async (_, index) => {
             const id = 'encrypted-session-' + index;
             const key = new Uint8Array(32).fill(index + 1);
-            const row = h.session({ id, active: true, activeAt: 2, metadata: { path: '/repo', host: 'test', name: 'Encrypted ' + index } });
+            // 1056e008: unopened missing displays do not demand Session bodies.
+            const row = createPlainSessionWithDisplayRecordFixture({ id, active: true, activeAt: 2,
+                metadata: { path: '/repo', host: 'test', name: 'Encrypted ' + index } });
             if (row.ownerMetadata?.t !== 'plain') throw new Error('Expected a Plain fixture to seal');
+            const display = row.displayProjectionV1;
+            if (display?.shared.t !== 'plain' || display.owner?.t !== 'plain') throw new Error('Expected plain display fixtures to seal');
             await encryption.initializeSessions(new Map([[id, key]]));
             const cipher = encryption.getSessionEncryption(id);
             if (!cipher) throw new Error('Expected the Session fixture cipher');
+            const displayCrypto = createSessionDisplayCrypto({ sessionMode: 'e2ee', accountMode: 'e2ee',
+                credentials: { token: h.homeB.token, secret: encodeBase64(secret, 'base64url') }, sessionEncryption: cipher });
             return { ...row, encryptionMode: 'e2ee' as const,
+                displayProjectionV1: { ...display, shared: await displayCrypto.encodeSharedDisplay(display.shared.v.display),
+                    owner: displayCrypto.encodeOwnerDisplay(display.owner.v.display) },
                 metadata: await cipher.encryptRaw(JSON.parse(row.metadata)),
                 ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
                     ownerMetadata: row.ownerMetadata.v, randomBytes: length => new Uint8Array(length).fill(index + 3) }),
@@ -373,9 +818,8 @@ describe('concurrent session cache socket routing', () => {
             if (url.origin !== h.homeB.serverUrl) return null;
             const path = url.pathname;
             if (path === '/v2/sessions/read-batch') return null;
-            if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-                recipientEnvelopeReadiness: { status: 'available' } });
+            if (path === '/v1/account/encryption/currentness') return Response.json(
+                createLegacyAccountEncryptionCurrentnessFixture({ secret }));
             if (path === '/v2/sessions/active') return Response.json({ sessions: encryptedRows, nextCursor: null, hasNext: false });
             if (path.startsWith('/v2/sessions/')) {
                 const row = encryptedRows.find(row => row.id === decodeURIComponent(path.slice('/v2/sessions/'.length)));
@@ -434,9 +878,10 @@ describe('concurrent session cache socket routing', () => {
             expect(rows()).toBe(initialRows);
             for (const row of encryptedRows) expect(rows()?.[row.id]).toBe(initialRows?.[row.id]);
             expect(rows()?.['encrypted-session-4']?.metadata?.name).toBe('Encrypted 4');
-            // The harness's batch boundary splits each read-batch POST into its per-Session
-            // component reads before this recorder, so the demanded reads are visible here.
-            expect(h.requests('/v2/sessions/encrypted-session-0').map(request => request.url.origin))
+            // Observe the current compact-list boundary's actual demanded batch reads.
+            expect(h.requests('/v2/sessions/read-batch')
+                .filter(request => JSON.parse(String(request.init?.body)).sessionIds.includes('encrypted-session-0'))
+                .map(request => request.url.origin))
                 .toEqual([h.homeB.serverUrl, h.homeB.serverUrl]);
             expect(h.storage.getState().sessionListRowsByServerId[h.homeA.id]?.['encrypted-session-0']).toBeUndefined();
             expect(decryptDataKeys.mock.calls.flatMap(([values]) => values).length).toBe(0);
@@ -493,7 +938,9 @@ describe('concurrent session cache socket routing', () => {
     });
 
     it('keeps canonical rows stable without copying them into the concurrent Home cache', async () => {
-        h.setSessions(h.homeB, [h.session({ id: 'session-b', metadata: { path: '/repo', host: 'test', name: 'Secondary Session' } })]);
+        // Persisted display data is available without demand-only backfill (1056e008).
+        h.setSessions(h.homeB, [createPlainSessionWithDisplayRecordFixture({ id: 'session-b',
+            metadata: { path: '/repo', host: 'test', name: 'Secondary Session' } })]);
         await h.start(); await h.ready();
         const initialRows = h.storage.getState().sessionListRowsByServerId;
         const projection = h.storage.getState().concurrentSessionListCacheByServerId[h.homeB.id];
@@ -580,6 +1027,7 @@ describe('concurrent session cache socket routing', () => {
         await h.select([h.homeA.id, h.homeB.id]);
         await vi.waitFor(() => expect(h.storage.getState().concurrentSessionListCacheByServerId[h.homeC.id]).toBeUndefined());
         expect(h.storage.getState().machineListByServerId[h.homeC.id]).toBeUndefined();
+        expect(h.storage.getState().machineRecordsByServerId[h.homeC.id]).toBeUndefined();
         expect(h.isConcurrentOrdinarySessionListHome(h.homeB.id)).toBe(true);
     });
 
@@ -596,6 +1044,7 @@ describe('concurrent session cache socket routing', () => {
         await h.profiles.removeServerProfile(h.homeB.id);
         await vi.waitFor(() => expect(h.storage.getState().concurrentSessionListCacheByServerId[h.homeB.id]).toBeUndefined());
         expect(h.storage.getState().machineListByServerId[h.homeB.id]).toBeUndefined();
+        expect(h.storage.getState().machineRecordsByServerId[h.homeB.id]).toBeUndefined();
         expect(socket.socket.connected).toBe(false);
     });
 

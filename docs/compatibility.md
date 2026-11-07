@@ -2,6 +2,22 @@
 
 This document defines when Happier preserves old behavior across UI, CLI, daemon, server, installers, and persisted state. The goal is safe upgrades and mixed-version operation without turning undeployed implementation history into permanent compatibility debt.
 
+## Session row-only change wakes (unreleased 0.3)
+
+Secondary Home routing reuses the existing `sessionSystemRecords` fact. For a
+Session-only wake, an explicit empty array proves that every coalesced Session
+publication passed the canonical strict row-hint classifier. Unknown or
+membership-changing writes retain a Session record target. The Home change
+planner combines this existing proof with retained row membership to select
+exact row reads. Missing proof, mixed domains, unknown rows and recovery retain
+snapshot refreshes.
+
+This changes no envelope, wire epoch, capability gate or persistence format.
+Older publishers may omit the existing proof; new readers remain conservative.
+The inspected 0.2 frontier at `ead3f779118d6a3d17e167517a64660f9e2c2c0d` has
+no Account-change wake in `packages/protocol/src/updates.ts` (no local changes to
+that file), so this routing correction needs no released compatibility adapter.
+
 ## Browser view discovery push (unreleased 0.3)
 
 `daemon.browser.view.watch` is a new closed V1 request with the list request's

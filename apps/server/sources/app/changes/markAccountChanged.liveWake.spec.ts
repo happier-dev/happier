@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
+import type { Tx } from '@/storage/inTx';
 
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
 const txDbMocks = createDbMocks({
     account: ["update"],
     accountChange: ["upsert"],
+    session: ["findUnique"],
+    machine: ["findUnique"],
 } as const);
 
 const transaction = vi.fn(async <T>(
@@ -33,6 +36,41 @@ describe("markAccountChanged live wake", () => {
         ): Promise<T> => await fn(txDbMocks.db));
         txDbMocks.db.account.update.mockResolvedValue({ seq: 7 });
         txDbMocks.db.accountChange.upsert.mockResolvedValue({});
+        txDbMocks.db.session.findUnique.mockResolvedValue({ id: 'session-one' });
+        txDbMocks.db.machine.findUnique.mockResolvedValue({ id: 'machine-one' });
+    });
+
+    it('publishes row-only Session routing only when every coalesced Session write is row-only', async () => {
+        const emit = vi.fn();
+        eventRouter.setIo({ to: () => ({ emit, disconnectSockets: vi.fn() }) });
+        const { inTx } = await import('@/storage/inTx');
+        const { markAccountChanged } = await import('./markAccountChanged');
+        const publish = (tx: Tx, hint: unknown) => markAccountChanged(tx, {
+            accountId: 'account-1', kind: 'session', entityId: 'session-one', hint,
+        });
+        await inTx(tx => publish(tx, { runtimeActivityRevision: 1 }));
+        expect(UpdateContainerSchema.parse(emit.mock.calls[0][1]).body).toMatchObject({
+            t: 'account-change', changeKinds: ['session'], entityIds: ['session-one'], sessionSystemRecords: [],
+        });
+        for (const hints of [
+            [{ runtimeActivityRevision: 2 }, { archivedAt: 3 }],
+            [{ archivedAt: 3 }, { runtimeActivityRevision: 4 }],
+            [undefined, { runtimeActivityRevision: 5 }],
+        ]) {
+            emit.mockClear();
+            await inTx(async tx => { for (const hint of hints) await publish(tx, hint); });
+            expect(UpdateContainerSchema.parse(emit.mock.calls[0][1]).body).toMatchObject({
+                sessionSystemRecords: [{ sessionId: 'session-one' }],
+            });
+        }
+        emit.mockClear();
+        await inTx(async tx => {
+            await publish(tx, { runtimeActivityRevision: 6 });
+            await markAccountChanged(tx, { accountId: 'account-1', kind: 'machine', entityId: 'machine-one' });
+        });
+        expect(UpdateContainerSchema.parse(emit.mock.calls[0][1]).body).toMatchObject({
+            changeKinds: ['session', 'machine'], sessionSystemRecords: [],
+        });
     });
 
     afterEach(() => {

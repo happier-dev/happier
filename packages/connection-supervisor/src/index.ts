@@ -1,7 +1,7 @@
 export { createManagedConnectionSupervisor } from './createManagedConnectionSupervisor.js';
 export { createManagedEndpointSupervisor } from './createManagedEndpointSupervisor.js';
 export { computeManagedConnectionBackoffMs } from './reconnectBackoff.js';
-export { deriveManagedConnectionReason } from './managedConnectionEvents.js';
+export { deriveManagedConnectionReason, isRetryOfKnownFailure } from './managedConnectionEvents.js';
 export { DEFAULT_MANAGED_CONNECTION_POLICY } from './defaultManagedConnectionPolicy.js';
 export {
   buildRetryLaterProbeResultFromResponse,

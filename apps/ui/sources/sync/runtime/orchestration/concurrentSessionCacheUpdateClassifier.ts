@@ -1,5 +1,8 @@
+import type { HomeAccountChangeEvent } from './homeAccountChange';
+import { accountChangeKindsAffectSessionSnapshots } from './changesPlanner';
+import { isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
+
 const CONCURRENT_SESSION_CACHE_REFRESH_UPDATE_TYPES = new Set([
-    'account-change',
     'new-session',
     'pending-changed',
     'update-session',
@@ -10,7 +13,7 @@ const CONCURRENT_MACHINE_CACHE_REFRESH_UPDATE_TYPES = new Set([
     'update-machine',
 ]);
 
-export type ConcurrentSessionCacheUpdateImpact = 'machines' | 'snapshot' | 'message' | 'delete' | 'archive' | null;
+export type ConcurrentSessionCacheUpdateImpact = 'machines' | 'snapshot' | 'rows' | 'message' | 'delete' | 'archive' | null;
 
 function readConcurrentUpdateType(raw: unknown): string | null {
     if (!raw || typeof raw !== 'object') {
@@ -30,8 +33,15 @@ export function shouldRefreshConcurrentSessionCacheForUpdate(raw: unknown): bool
     return classifyConcurrentSessionCacheUpdate(raw) !== null;
 }
 
-export function classifyConcurrentSessionCacheUpdate(raw: unknown): ConcurrentSessionCacheUpdateImpact {
+export function classifyConcurrentSessionCacheUpdate(raw: unknown, accountEvent?: HomeAccountChangeEvent): ConcurrentSessionCacheUpdateImpact {
     const updateType = readConcurrentUpdateType(raw);
+    if (updateType === 'account-change') {
+        if (accountEvent?.sessionRowRefreshIds?.length) return 'rows';
+        const sessionSnapshotsAffect = accountEvent?.sessionListQueryAffects
+            ?? accountChangeKindsAffectSessionSnapshots(accountEvent?.changeKinds);
+        if (sessionSnapshotsAffect) return 'snapshot';
+        return accountEvent?.changeKinds?.some(isMachineProjectionChangeKindV1) ? 'machines' : null;
+    }
     if (updateType !== null && CONCURRENT_MACHINE_CACHE_REFRESH_UPDATE_TYPES.has(updateType)) return 'machines';
     if (updateType === 'new-message' || updateType === 'message-updated') return 'message';
     if (updateType === 'delete-session' || updateType === 'session-share-revoked') return 'delete';
@@ -43,5 +53,5 @@ export function classifyConcurrentSessionCacheUpdate(raw: unknown): ConcurrentSe
 
 export function isAccountChangeUpdate(raw: unknown): boolean {
     const type = readConcurrentUpdateType(raw);
-    return type === 'update-account' || type === 'account-change';
+    return type === 'update-account' || type === 'account-change' || type === 'account-settings-changed';
 }
