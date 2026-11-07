@@ -176,6 +176,8 @@ function installSessionCreationTransport(events?: string[], agentMissing = false
   });
   const read = readiness.get.getMockImplementation()!;
   readiness.get.mockImplementation(async (url: string) => {
+    if (url.endsWith('/v1/account/encryption')) return { status: 200,
+      data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
     if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine: {
       id: 'machine-1', revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1,
       operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2] } },
@@ -708,7 +710,7 @@ describe('workflow Session step executor', () => {
           bodyVersion: Number(artifact.bodyVersion) + 1 });
       }
       const tamperedStartup = 'tamper' in testCase
-        ? expect(pending).rejects.toMatchObject({ code: 'workflow_session_startup_unavailable' }) : undefined;
+        ? expect(pending).rejects.toMatchObject({ code: 'agent_cli_missing' }) : undefined;
       const decision = await executor.execute('approval.request.decide', { artifactId: first, decision: 'approve' }, {
         surface: 'ui', authority: 'present_user', serverId: 'server-1', serverIdentityId: 'server-1', runtimeAccountId: 'account-1',
       });
@@ -724,7 +726,10 @@ describe('workflow Session step executor', () => {
       await expect(pending).rejects.toMatchObject({ code: 'agent_cli_not_ready',
         runtimeIssueV1: { code: 'agent_cli_not_ready', failureCause: { retryable: false } } });
       expect(launches).toHaveLength(0);
-      expect(operations.store.list({ accountId: 'account-1', machineId }).items[0]).toMatchObject({ state: 'failed',
+      const startup = operations.store.list({ accountId: 'account-1', machineId }).items.find(
+        operation => operation.requestId === `workflow:profile:${testCase.name}`);
+      expect(startup).toBeDefined();
+      expect(operations.store.get({ accountId: 'account-1', machineId }, startup!.operationId)).toMatchObject({ state: 'failed',
         result: { type: 'error', code: 'agent_cli_not_ready', agentId: expect.any(String), retryable: false } });
       return;
     }
@@ -855,12 +860,13 @@ describe('workflow Session step executor', () => {
     });
     await expect(startup).rejects.toMatchObject(miswired
       ? { message: 'workflow_invocation_fact_conflict' }
-      : { code, ...(code === 'currentness_unavailable' ? { message: expect.stringContaining('timeout') } : {}) });
+      : { code });
     expect(launches).toBe(miswired ? 0 : 1);
     expect(observedBeforeLaunch).toBe(!miswired);
     if (miswired) expect(observations).toEqual([]);
     else expect(observations.at(-1)).toMatchObject({ operationId: 'original-refusal', state: 'failed',
-      error: { errorCode: code, ...(code === 'currentness_unavailable' ? { error: expect.stringContaining('timeout') } : {}) } });
+      error: { errorCode: code === 'DAEMON_RPC_UNAVAILABLE' ? code : 'spawn_failed' },
+      ...(code === 'DAEMON_RPC_UNAVAILABLE' ? {} : { result: { type: 'error', code: 'spawn_failed', launchError: { code } } }) });
     expect(operations.store.list(scope).items[0]).toMatchObject({ operationId: 'original-refusal', state: 'failed' });
   });
 
@@ -2372,7 +2378,7 @@ describe('workflow Session step executor', () => {
     [undefined, false],
     [undefined, undefined],
     ['integrated', true],
-  ] as const)('prepares identical ordinary and Workflow launch facts while preserving frozen Workflow selections (terminal=%s, memory=%s)', async (terminalMode, memoryEnabled) => {
+  ] as const)('preserves ordinary launch preparation and frozen Workflow selections (terminal=%s, memory=%s)', async (terminalMode, memoryEnabled) => {
     const launches = installSessionCreationTransport();
     const credentials = { token: 'token', encryption: null };
     const launch = SessionSpawnNewInputV2Schema.parse({
@@ -2422,7 +2428,13 @@ describe('workflow Session step executor', () => {
           environmentVariables: { TMUX_SESSION_NAME: 'profile-terminal' } })).toEqual({ requested: 'plain' });
       }
     }
-    expect(workflow!.sessionCreationCorrespondence?.recipe).toEqual(ordinary!.sessionCreationCorrespondence?.recipe);
+    const { approvalProfileId: ordinaryApproval, ...ordinaryRecipe } = ordinary!.sessionCreationCorrespondence!.recipe;
+    const { approvalProfileId: workflowApproval, ...workflowRecipe } = workflow!.sessionCreationCorrespondence!.recipe;
+    // The ordinary Action resolves approval policy; this native frozen launch has no approval selection.
+    // Required Workflow approval is exercised through its Action host in the readiness matrix above.
+    expect(ordinaryApproval).toBeNull();
+    expect(workflowApproval).toBeUndefined();
+    expect(workflowRecipe).toEqual(ordinaryRecipe);
   });
 
   it('keeps the accepted model participant launch intact through run-step creation', async () => {

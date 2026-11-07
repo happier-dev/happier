@@ -8,7 +8,7 @@ import type { WorkflowSessionStartup } from './sessionStepExecutor';
 import { WorkflowSessionCompositionError } from './workflowConversation';
 export { deriveWorkflowSessionCreationTag } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { prepareRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { readRetainedWorkflowSessionStartupFailure, rethrowWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
+import { readRetainedWorkflowSessionStartupFailure, readWorkflowSessionStartupError, readWorkflowSessionStartupRefusal, rethrowWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -17,6 +17,8 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import { enrichCliActionApprovalContext } from '@/session/actions/enrichCliActionApprovalContext';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import { prepareSessionAgentReadiness } from '@/session/creation/prepareSessionAgentReadiness';
+import { resolveSessionCreationAgentTarget } from '@/session/creation/resolveSessionCreationAgentTarget';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import type { CurrentMachineInstallation } from '@/daemon/identity/currentMachineInstallation';
 
@@ -86,8 +88,7 @@ export async function runObservedWorkflowSessionStartup(
     // The original operation proves failure even when creation rejects before
     // returning an acceptance reply. Preserve its terminal fact for recovery.
     await input.onObservation?.(operation);
-    throw new WorkflowSessionCompositionError(operation.error?.errorCode ?? 'workflow_session_startup_unavailable',
-      operation.error?.error ?? 'workflow_session_startup_unavailable');
+    throw readWorkflowSessionStartupError(operation);
   };
   const abort = () => {
     if (address && classifyWorkflowAbort(signal) !== 'interrupted') void host.cancelOperation(address).catch(() => undefined);
@@ -190,7 +191,16 @@ export async function runObservedWorkflowSessionStartup(
               },
             }, {
               hostActionApprovalLifetime: { operationId, signal: operation.signal },
-              sessionSpawnNew: async () => {
+              sessionSpawnNew: async args => {
+                const selectedAgent = resolveSessionCreationAgentTarget(args.agentTarget);
+                if (!selectedAgent) return { type: 'error', code: 'target_unavailable', retryable: false };
+                const readiness = await prepareSessionAgentReadiness({
+                  machineId: host.machineId, serverId: host.serverId, agentId: selectedAgent.agentId,
+                  ...(args.agentTarget.definitionId === undefined ? {} : { definitionId: args.agentTarget.definitionId }),
+                  ...(args.agentInstallConsent === undefined ? {} : { consent: args.agentInstallConsent }),
+                  invoke: args.invokeAgentReadinessAction, signal: operation.signal,
+                });
+                if (readiness) return readiness.result;
                 const created = await create();
                 return { type: 'success', disposition: created.disposition, sessionId: created.sessionId,
                   executionTarget: { serverId: host.serverId, machineId: host.machineId },
@@ -205,8 +215,12 @@ export async function runObservedWorkflowSessionStartup(
               bypassActionInterception: true,
             });
             const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
-            if (!result.ok) throw new WorkflowSessionCompositionError(result.errorCode, result.error);
+            if (!result.ok) throw new WorkflowSessionCompositionError(result.errorCode);
             const created = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
+            if (created.success && created.data.type === 'error') {
+              try { await host.cleanupOnFailure(); } catch { /* Preserve the original startup refusal. */ }
+              return { ok: true, result: created.data };
+            }
             if (!created.success || created.data.type !== 'success') {
               throw new WorkflowSessionCompositionError('workflow_session_startup_unavailable');
             }
@@ -214,6 +228,8 @@ export async function runObservedWorkflowSessionStartup(
           } catch (error) {
             try { await host.cleanupOnFailure(); } catch { /* Preserve the original startup refusal. */ }
             if (operation.signal.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            const refusal = readWorkflowSessionStartupRefusal(error);
+            if (refusal) return { ok: true, result: refusal };
             rethrowWorkflowSessionStartupFailure(error, input.request.spawnNonce);
           }
         } });
@@ -239,9 +255,7 @@ export async function runObservedWorkflowSessionStartup(
         }
       }
       if (operation.state === 'cancelled') throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-      if (operation.state === 'failed') throw new WorkflowSessionCompositionError(
-        operation.error?.errorCode ?? 'workflow_session_startup_unavailable',
-        operation.error?.error ?? 'workflow_session_startup_unavailable');
+      if (operation.state === 'failed') throw readWorkflowSessionStartupError(operation);
       if (operation.state !== 'succeeded') throw Object.assign(new Error(operation.error?.error ?? 'workflow_session_startup_unavailable'), {
         code: operation.error?.errorCode ?? 'workflow_session_startup_unavailable',
       });

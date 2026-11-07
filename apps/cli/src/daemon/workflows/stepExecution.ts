@@ -30,7 +30,7 @@ export type WorkflowSessionInputObservation = (
   | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
 ) & Readonly<{ replyOutcome?: SessionMessageReplyOutcomeV1 }>;
 
-function workflowInputFailureKind(issue: SessionRuntimeIssueV1 | undefined): 'failed' | 'needs_attention' {
+export function workflowRuntimeFailureKind(issue: SessionRuntimeIssueV1 | undefined): 'failed' | 'needs_attention' {
   return issue?.source === 'usage_limit' ? 'needs_attention' : 'failed';
 }
 
@@ -65,7 +65,7 @@ export function classifyWorkflowSessionInputResult(
       ...(result.usage ? { usage: result.usage } : {}),
     };
     case 'failed': return {
-      kind: workflowInputFailureKind(result.runtimeIssueV1), code: 'session_input_failed', message: result.message,
+      kind: workflowRuntimeFailureKind(result.runtimeIssueV1), code: 'session_input_failed', message: result.message,
       ...reply,
       ...(result.runtimeIssueV1 ? { runtimeIssueV1: result.runtimeIssueV1 } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
@@ -218,7 +218,7 @@ export async function observeWorkflowDetachedExecutionRunInput(params: Readonly<
   if (turn.state === 'cancelled') return { kind: 'cancelled', code: 'execution_run_input_cancelled' };
   if (turn.state === 'failed') {
     return {
-      kind: workflowInputFailureKind(response.run.error?.runtimeIssueV1),
+      kind: workflowRuntimeFailureKind(response.run.error?.runtimeIssueV1),
       code: response.run.error?.code ?? 'execution_run_input_failed',
       ...(response.run.error?.message ? { message: response.run.error.message } : {}),
       ...(response.run.error?.runtimeIssueV1 ? { runtimeIssueV1: response.run.error.runtimeIssueV1 } : {}),

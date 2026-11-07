@@ -1,9 +1,52 @@
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionCompletionOperation } from '@happier-dev/protocol/actions/actionCompletion';
-import { SPAWN_SESSION_ERROR_CODES, SessionLaunchRetiredV1Schema } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES, SessionLaunchRetiredV1Schema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { WorkflowSessionCompositionError } from './workflowConversation';
+import { SessionSpawnNewActionResultV1Schema, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
+
+/** Retain the creator's existing typed projection, including its retry decision. */
+export function readWorkflowSessionStartupRefusal(error: unknown): Extract<SessionSpawnNewResultV1, { type: 'error' }> | undefined {
+  if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string'
+    || !('details' in error) || !error.details || typeof error.details !== 'object') return undefined;
+  const details = error.details;
+  const response = 'spawnResponse' in details ? details.spawnResponse : undefined;
+  const errorDetail = 'errorDetail' in details ? details.errorDetail
+    : response && typeof response === 'object' && 'errorDetail' in response ? response.errorDetail : undefined;
+  const detail = normalizeSpawnSessionErrorDetail(errorDetail);
+  // An unclassified failure does not prove launch retirement. Its original
+  // internal error, including nonce/transport uncertainty, must remain intact.
+  if (!detail || detail.kind === 'launch_retired') return undefined;
+  const originalCode = response && typeof response === 'object' && 'errorCode' in response
+    && typeof response.errorCode === 'string' ? response.errorCode : error.code;
+  return projectSessionSpawnFailure({ errorCode: originalCode, errorMessage: error.message, errorDetail: detail,
+    ...('agentId' in details ? { agentId: details.agentId } : {}) });
+}
+
+/** Native classification stays at its producer; Workflow carries only non-content recovery facts. */
+function workflowSessionStartupRefusalError(
+  refusal: Extract<SessionSpawnNewResultV1, { type: 'error' }>, occurredAt: number,
+): WorkflowSessionCompositionError {
+  const launch = 'launchError' in refusal ? refusal.launchError : undefined;
+  const code = launch?.code ?? ('providerError' in refusal ? refusal.providerError?.code : undefined) ?? refusal.code;
+  const failureCause = { phase: 'client_start' as const, failureReason: 'unknown' as const,
+    code, retryable: refusal.retryable, ...launch?.failureCause };
+  const runtimeIssueV1 = projectSessionRuntimeIssueMetadataV1({ v: 1, scope: 'primary_session', status: 'failed',
+    code, source: failureCause.failureReason === 'usage_limit' ? 'usage_limit' : 'unknown', occurredAt, failureCause,
+    ...('agentId' in refusal && refusal.agentId ? { agentId: refusal.agentId } : {}) });
+  return new WorkflowSessionCompositionError(code, code, undefined, undefined, runtimeIssueV1);
+}
+
+/** Both live observation and cold recovery consume the original operation's typed result. */
+export function readWorkflowSessionStartupError(operation: ActionOperationSnapshotV1): WorkflowSessionCompositionError {
+  const result = SessionSpawnNewActionResultV1Schema.safeParse(operation.result);
+  if (result.success && result.data.type === 'error') {
+    return workflowSessionStartupRefusalError(result.data, operation.settledAt ?? operation.createdAt);
+  }
+  return new WorkflowSessionCompositionError(operation.error?.errorCode ?? 'workflow_session_startup_unavailable');
+}
 
 /** Only the creator's typed response settles a definite startup refusal. */
 export function rethrowWorkflowSessionStartupFailure(error: unknown, spawnNonce?: string): never {
@@ -14,17 +57,11 @@ export function rethrowWorkflowSessionStartupFailure(error: unknown, spawnNonce?
     const retired = SessionLaunchRetiredV1Schema.safeParse('errorDetail' in details ? details.errorDetail
       : response && typeof response === 'object' && 'errorDetail' in response ? response.errorDetail : undefined);
     if (retired.success && retired.data.spawnNonce === spawnNonce) {
-      throw new WorkflowSessionCompositionError(error.code, error.message, undefined, retired.data);
-    }
-    // Project the creator's redacted native cause before the strict Action
-    // operation retains it; Workflow's existing sink carries code and message.
-    const failure = projectSessionSpawnFailure({ errorCode: error.code, errorMessage: error.message,
-      errorDetail: 'errorDetail' in details ? details.errorDetail
-        : response && typeof response === 'object' && 'errorDetail' in response ? response.errorDetail : undefined });
-    if (failure.code === 'spawn_failed' && failure.launchError && failure.launchError.code !== error.code) {
-      throw new WorkflowSessionCompositionError(failure.launchError.code, failure.launchError.message);
+      throw new WorkflowSessionCompositionError(error.code, error.code, undefined, retired.data);
     }
   }
+  const refusal = readWorkflowSessionStartupRefusal(error);
+  if (refusal) throw workflowSessionStartupRefusalError(refusal, Date.now());
   // Transport loss and nonce observation remain unresolved; a definite daemon
   // refusal retains its code through the Workflow's existing failure presenter.
   if (error instanceof Error && 'code' in error && 'details' in error
@@ -32,7 +69,7 @@ export function rethrowWorkflowSessionStartupFailure(error: unknown, spawnNonce?
     const response = error.details;
     if (response && typeof response === 'object' && 'type' in response && response.type === 'error'
       && 'errorCode' in response && response.errorCode === error.code) {
-      throw new WorkflowSessionCompositionError(error.code, error.message);
+      throw new WorkflowSessionCompositionError(error.code);
     }
   }
   throw error;

@@ -5,12 +5,13 @@ import type {
 } from '@happier-dev/protocol/workflows';
 import type { WorkflowConversationUnavailableDetailsV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { SessionLaunchRetiredV1 } from '@happier-dev/protocol/spawnSession';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { logger } from '@/ui/logger';
 export { workflowBodyOwnsConversation } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 
 export class WorkflowSessionCompositionError extends Error {
   constructor(readonly code: string, message = code, readonly details?: WorkflowConversationUnavailableDetailsV1,
-    readonly launchFailure?: SessionLaunchRetiredV1) {
+    readonly launchFailure?: SessionLaunchRetiredV1, readonly runtimeIssueV1?: SessionRuntimeIssueV1) {
     super(message);
     if (details) logger.infoFile(JSON.stringify({ event: 'workflow_conversation_refused', errorCode: code, ...details }));
   }

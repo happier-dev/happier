@@ -51,6 +51,7 @@ import {
   classifyWorkflowSessionInputResult,
   enqueueWorkflowSessionInput,
   observeWorkflowSessionInputResult,
+  workflowRuntimeFailureKind,
 } from './stepExecution';
 import { resolveWorkflowConversationSelection, WorkflowSessionCompositionError, type WorkflowConversationBinding } from './workflowConversation';
 export { WorkflowSessionCompositionError } from './workflowConversation';
@@ -831,7 +832,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (error instanceof WorkflowSessionCompositionError && (error.code === 'approval_required' || error.code === 'approval_unavailable')) {
         return { kind: 'needs_attention', code: error.code };
       }
-      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code,
+      if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
+        ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
         ...(error.details ? { reasonDetails: error.details } : {}),
         ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;
@@ -882,7 +884,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (error instanceof WorkflowSessionCompositionError && (error.code === 'approval_required' || error.code === 'approval_unavailable')) {
         return { kind: 'needs_attention', code: error.code };
       }
-      if (error instanceof WorkflowSessionCompositionError) return { kind: 'failed', code: error.code,
+      if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
+        ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
         ...(error.details ? { reasonDetails: error.details } : {}),
         ...(error.message === error.code ? {} : { message: error.message }) };
       throw error;
