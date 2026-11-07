@@ -1,3 +1,5 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+
 import {
   ScmPullRequestCheckoutRequestSchema,
   ScmPullRequestCheckoutResponseSchema,
@@ -121,7 +123,7 @@ function defineScmActionSpec<
   TInput extends z.ZodMiniType,
   TOutput extends z.ZodMiniType,
 >(spec: ScmActionSpecDefinition<TId, TInput, TOutput>): ScmActionSpecDefinition<TId, TInput, TOutput> {
-  return spec;
+  return { executionPlacement: 'machine', ...spec };
 }
 
 const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {
@@ -140,7 +142,60 @@ function sessionScmExecutionPlacement(input: unknown): 'session' | 'machine' {
 }
 
 /** Core repository Actions reuse the backend's canonical request and result schemas. */
-const SCM_GIT_ACTION_SPECS_PREFIX = [
+const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
+  ScmActionSpecDefinition<'scm.suggestion.apply', typeof scm.ScmSuggestionApplyRequestSchema, typeof scm.ScmSuggestionApplyResponseSchema>,
+  ScmActionSpecDefinition<'scm.backend.describe', typeof scm.ScmBackendDescribeRequestSchema, typeof scm.ScmBackendDescribeResponseSchema>,
+  ScmActionSpecDefinition<'scm.status.snapshot', typeof SessionScmStatusInputSchema, typeof scm.ScmStatusSnapshotResponseSchema>,
+  ScmActionSpecDefinition<'scm.worktrees.enrichment', typeof scm.ScmWorktreesEnrichmentRequestSchema, typeof scm.ScmWorktreesEnrichmentResponseSchema>,
+  ScmActionSpecDefinition<'scm.diff.file', typeof scm.ScmDiffFileActionRequestSchema, typeof scm.ScmDiffFileResponseSchema>,
+  ScmActionSpecDefinition<'scm.file.read', typeof scm.ScmFileAtRevisionRequestSchema, typeof scm.ScmFileReadResponseSchema>,
+  ScmActionSpecDefinition<'scm.blame.get', typeof scm.ScmBlameFileRequestSchema, typeof scm.ScmBlameFileResponseSchema>,
+  ScmActionSpecDefinition<'scm.diff.commit', typeof scm.ScmDiffCommitRequestSchema, typeof scm.ScmDiffCommitResponseSchema>,
+  ScmActionSpecDefinition<'scm.change.include', typeof scm.ScmChangeApplyRequestSchema, typeof scm.ScmChangeApplyResponseSchema>,
+  ScmActionSpecDefinition<'scm.change.exclude', typeof scm.ScmChangeApplyRequestSchema, typeof scm.ScmChangeApplyResponseSchema>,
+  ScmActionSpecDefinition<'scm.change.discard', typeof scm.ScmChangeDiscardRequestSchema, typeof scm.ScmChangeDiscardResponseSchema>,
+  ScmActionSpecDefinition<'scm.commit.create', typeof scm.ScmCommitCreateRequestSchema, typeof scm.ScmCommitCreateResponseSchema>,
+  ScmActionSpecDefinition<'scm.commit.resolveOutcome', typeof scm.ScmCommitResolveOutcomeRequestSchema, typeof scm.ScmCommitResolveOutcomeResponseSchema>,
+  ScmActionSpecDefinition<'scm.commit.undoLast', typeof scm.ScmCommitUndoLastRequestSchema, typeof scm.ScmCommitUndoLastResponseSchema>,
+  ScmActionSpecDefinition<'scm.commit.backout', typeof scm.ScmCommitBackoutRequestSchema, typeof scm.ScmCommitBackoutResponseSchema>,
+  ScmActionSpecDefinition<'scm.history.entries', ReturnType<typeof z.lazy<typeof ScmHistoryEntriesInputV1Schema>>, ReturnType<typeof z.lazy<typeof ScmHistoryEntriesResponseSchema>>>,
+  ScmActionSpecDefinition<'scm.log.list', typeof scm.ScmLogListRequestSchema, typeof scm.ScmLogListResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.list', typeof branches.ScmBranchListRequestSchema, typeof branches.ScmBranchListResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.create', typeof branches.ScmBranchCreateRequestSchema, typeof branches.ScmBranchCreateResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.checkout', typeof branches.ScmBranchCheckoutRequestSchema, typeof branches.ScmBranchCheckoutResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.merge', typeof scm.ScmBranchIntegrationRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.rebase', typeof scm.ScmBranchIntegrationRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.operation.continue', typeof scm.ScmBranchOperationControlRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.operation.skip', typeof scm.ScmBranchOperationControlRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.branch.operation.abort', typeof scm.ScmBranchOperationControlRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.conflict.acceptSide', typeof scm.ScmConflictAcceptSideRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.conflict.markResolved', typeof scm.ScmConflictMarkResolvedRequestSchema, typeof scm.ScmBranchIntegrationResponseSchema>,
+  ScmActionSpecDefinition<'scm.worktree.create', typeof worktrees.ScmWorktreeCreateRequestSchema, typeof worktrees.ScmWorktreeCreateResponseSchema>,
+  ScmActionSpecDefinition<'scm.worktree.remove', typeof worktrees.ScmWorktreeRemoveRequestSchema, typeof worktrees.ScmWorktreeRemoveResponseSchema>,
+  ScmActionSpecDefinition<'scm.worktree.prune', typeof worktrees.ScmWorktreePruneRequestSchema, typeof worktrees.ScmWorktreePruneResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.add', typeof scm.ScmRemoteAddRequestSchema, typeof scm.ScmRemoteManagementResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.setUrl', typeof scm.ScmRemoteSetUrlRequestSchema, typeof scm.ScmRemoteManagementResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.remove', typeof scm.ScmRemoteRemoveRequestSchema, typeof scm.ScmRemoteManagementResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.fetch', typeof scm.ScmRemoteRequestSchema, typeof scm.ScmRemoteResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.pull', typeof SessionScmPullInputSchema, typeof scm.ScmRemoteResponseSchema>,
+] = lazyActionSpecArray(() => [
+  defineScmActionSpec({
+    id: 'scm.suggestion.apply',
+    title: 'Apply review suggestions',
+    description: 'Apply commit-bound suggestions to the selected Session checkout without committing.',
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
+    executionPlacement: 'session',
+    workspaceWrite: true,
+    safety: 'danger',
+    approval: { result: 'required' },
+    approvalPolicy: { uiConfirmation: 'direct' },
+    sideEffectClass: 'write',
+    placements: [],
+    bindings: { rpcMethod: 'scm.suggestion.apply' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: scm.ScmSuggestionApplyRequestSchema,
+    outputSchema: scm.ScmSuggestionApplyResponseSchema,
+  }),
   defineScmActionSpec({
     id: 'scm.backend.describe', approval: {result: 'required'},
     title: 'Backend describe',
@@ -207,7 +262,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: 'scm.diff.file' },
-    surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'read',
     inputSchema: scm.ScmDiffFileActionRequestSchema,
     outputSchema: scm.ScmDiffFileResponseSchema,
@@ -887,9 +942,26 @@ const SCM_GIT_ACTION_SPECS_PREFIX = [
       ],
     },
   }),
-] as const;
+] as const);
 
-const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW = [
+const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
+  ScmActionSpecDefinition<'scm.remote.push', typeof scm.ScmRemoteRequestSchema, typeof scm.ScmRemoteResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.publish', typeof branches.ScmRemotePublishRequestSchema, typeof branches.ScmRemotePublishResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.list', typeof stash.ScmStashListRequestSchema, typeof stash.ScmStashListResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.show', typeof stash.ScmStashShowRequestSchema, typeof stash.ScmStashShowResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.create', typeof stash.ScmStashCreateRequestSchema, typeof stash.ScmStashCreateResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.apply', typeof stash.ScmStashApplyRequestSchema, typeof stash.ScmStashApplyResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.pop', typeof stash.ScmStashPopRequestSchema, typeof stash.ScmStashPopResponseSchema>,
+  ScmActionSpecDefinition<'scm.stash.drop', typeof stash.ScmStashDropRequestSchema, typeof stash.ScmStashDropResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.list', typeof ScmPullRequestListRequestSchema, typeof ScmPullRequestListResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.get', typeof SessionScmPullRequestGetInputSchema, typeof ScmPullRequestGetResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.openOrReuse', typeof ScmPullRequestOpenOrReuseRequestSchema, typeof ScmPullRequestOpenOrReuseResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.openCompose', typeof ScmPullRequestOpenComposeRequestSchema, typeof ScmPullRequestOpenComposeResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.checkout', typeof ScmPullRequestCheckoutRequestSchema, typeof ScmPullRequestCheckoutResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.prepareWorktree', typeof ScmPullRequestPrepareWorktreeRequestSchema, typeof ScmPullRequestPrepareWorktreeResponseSchema>,
+  ScmActionSpecDefinition<'scm.reviewWorkspace.materializePrepared', typeof ScmReviewWorkspaceMaterializePreparedRequestSchema, typeof ScmReviewWorkspaceMaterializePreparedResponseSchema>,
+  ScmActionSpecDefinition<'scm.pullRequest.runStacked', typeof ScmPullRequestRunStackedRequestSchema, typeof ScmPullRequestRunStackedResponseSchema>,
+] = lazyActionSpecArray(() => [
   defineScmActionSpec({
     id: 'scm.remote.push', approval: {result: 'required'},
     examples: { voice: { argsExample: '{"cwd":"/repo","remote":"origin"}' } },
@@ -1040,7 +1112,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW = [
     },
   }),
   defineScmActionSpec({
-    id: 'scm.stash.drop', approval: {result: 'required'},
+    id: 'scm.stash.drop', irreversible: true, approval: {result: 'required'},
     approvalPresentation: { summary: describeScmStashDropApprovalSummary },
     workspaceWrite: true,
     title: 'Delete stash',
@@ -1370,9 +1442,20 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW = [
       ],
     },
   }),
-] as const;
+] as const);
 
-const SCM_GIT_ACTION_SPECS_REPOSITORY = [
+const SCM_GIT_ACTION_SPECS_REPOSITORY: readonly [
+  ScmActionSpecDefinition<'scm.repository.clone', typeof ScmRepositoryCloneInputSchema, typeof ScmRepositoryCloneOutputSchema>,
+  ScmActionSpecDefinition<'scm.repository.init', typeof ScmRepositoryInitRequestSchema, typeof ScmRepositoryInitResponseSchema>,
+  ScmActionSpecDefinition<'scm.repository.removeIndexLock', typeof ScmRepositoryRemoveIndexLockRequestSchema, typeof ScmRepositoryRemoveIndexLockResponseSchema>,
+  ScmActionSpecDefinition<'scm.hostingRepository.resolveAddress', typeof ScmHostingRepositoryResolveAddressRequestV1Schema, typeof ScmHostingRepositoryResolveAddressResponseV1Schema>,
+  ScmActionSpecDefinition<'scm.hostingRepository.get', typeof ScmHostingRepositoryGetRequestV1Schema, typeof ScmHostingRepositoryGetResponseV1Schema>,
+  ScmActionSpecDefinition<'scm.hostingRepository.describePublishTargets', typeof ScmHostingRepositoryDescribePublishTargetsRequestSchema, typeof ScmHostingRepositoryDescribePublishTargetsResponseSchema>,
+  ScmActionSpecDefinition<'scm.hostingRepository.publish', typeof ScmHostingRepositoryPublishRequestSchema, typeof ScmHostingRepositoryPublishResponseSchema>,
+  ScmActionSpecDefinition<'scm.diffSummary.capture', typeof ScmComparisonCaptureInputSchema, typeof ScmComparisonCaptureOutputSchema>,
+  ScmActionSpecDefinition<'scm.diffSummary.draftPullRequest', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
+  ScmActionSpecDefinition<'scm.diffSummary.generate', typeof ScmDiffSummaryGenerateInputSchema, typeof ScmDiffSummaryGenerateOutputSchema>,
+] = lazyActionSpecArray(() => [
   defineScmActionSpec({
     id: 'scm.repository.clone', approval: {result: 'optional',flow: 'deferred'},
     workspaceWrite: true,
@@ -1722,7 +1805,7 @@ const SCM_GIT_ACTION_SPECS_REPOSITORY = [
       ],
     },
   }),
-] as const;
+] as const);
 
 const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   ScmActionSpecDefinition<'scm.diffSummary.result.list', typeof ScmDiffSummaryResultListInputSchema, typeof ScmDiffSummaryResultListResponseSchema>,
@@ -1741,7 +1824,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
   ScmActionSpecDefinition<'scm.diffSummary.refine', typeof ScmDiffSummaryRefineInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.addOutputs', typeof ScmDiffSummaryAddOutputsInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
   ScmActionSpecDefinition<'scm.diffSummary.discuss', typeof ScmDiffSummaryDiscussInputSchema, typeof ScmDiffSummaryResultResponseSchema>,
-] = [
+] = lazyActionSpecArray(() => [
   defineScmActionSpec({
     id: 'scm.diffSummary.result.list', approval: {result: 'required'}, title: 'List saved change explanations',
     description: 'Read permitted saved results, storage usage and available seven-day cost records from the selected machine.',
@@ -1999,7 +2082,7 @@ const SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS: readonly [
     ] },
   }),
 
-] as const;
+] as const);
 
 // Preserve exact Action/schema correlations without serializing one oversized tuple.
 export const SCM_GIT_ACTION_SPECS: readonly (
@@ -2007,8 +2090,8 @@ export const SCM_GIT_ACTION_SPECS: readonly (
   | (typeof SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW)[number]
   | (typeof SCM_GIT_ACTION_SPECS_REPOSITORY)[number]
   | (typeof SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS)[number]
-)[] = [...SCM_GIT_ACTION_SPECS_PREFIX, ...SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW,
-  ...SCM_GIT_ACTION_SPECS_REPOSITORY, ...SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS];
+)[] = lazyActionSpecArray(() => [...SCM_GIT_ACTION_SPECS_PREFIX, ...SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW,
+  ...SCM_GIT_ACTION_SPECS_REPOSITORY, ...SCM_DIFF_SUMMARY_RESULT_ACTION_SPECS]);
 
 /** A projection of the declaration owner, not a separate operation taxonomy. */
 export function getScmRpcSideEffectClass(method: string) {

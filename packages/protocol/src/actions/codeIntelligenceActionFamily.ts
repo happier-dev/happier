@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
 export { CODE_INTELLIGENCE_ACTION_IDS } from './codeIntelligenceActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -104,6 +105,7 @@ function mutationRpcBinding(kind: 'rename' | 'fileRename' | 'codeAction' | 'form
   };
 }
 const shared = {
+  executionPlacement: 'machine',
   approval: { result: 'required' }, safety: 'safe', sideEffectClass: 'read', placements: [],
   contextualDefaults: { machineId: 'current_session_machine', rootPath: 'current_session_root' },
   surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
@@ -206,7 +208,11 @@ const codeIntelligenceActionSpecs = [
     description: 'Apply one reviewed server code action, including a declared server command. Server edit requests share the guarded multi-file writer and retain partial results and Undo.' },
 ] as const satisfies readonly PreNormalizedActionSpec[];
 
-export const CODE_INTELLIGENCE_ACTION_SPECS = codeIntelligenceActionSpecs.map(spec => ({
+function createCodeIntelligenceActionSpecs() {
+  return codeIntelligenceActionSpecs.map(spec => ({
   ...spec,
   description: `${spec.description} Machine and root default to the calling session; supply both for another Machine or outside a session.`,
 }));
+}
+
+export const CODE_INTELLIGENCE_ACTION_SPECS: ReturnType<typeof createCodeIntelligenceActionSpecs> = lazyActionSpecArray(createCodeIntelligenceActionSpecs);

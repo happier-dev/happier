@@ -1,6 +1,8 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SessionModelTransitionResultV1Schema } from '../../../sessions/control/modelTransitionV1.js';
 import { SessionIdRequiredInputSchema, SessionTargetRequiredInputSchema } from '../common.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
+import { actionInputServerId } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { parseQualifiedPluginActionId } from '../../../plugins/actions/qualifiedActionId.js';
 import { SessionTargetV1Schema, SessionTargetPreviewV1Schema, withSessionTargetFanoutResultV1, type SessionTargetV1 } from '../../sessionTargetV1.js';
@@ -12,8 +14,8 @@ import { SessionModelMutationExpectedV1Schema, SessionModelSetResultV1Schema } f
 import { BotSetInputSchema, BotFaceSetInputSchema, BotFaceStyleSchema, BotFaceBodySchema, BotFacePaletteSchema } from '../../../sessions/identity/sessionBotV1.js';
 import { SessionTitleSetInputSchema, SessionStatusReasonSetInputSchema, SessionStatusReasonSetResultSchema, SessionToolCallsSetInputSchema, SessionMemorySetInputV1Schema, SessionVoicePreferenceSetInputV1Schema, SessionContextUpdateInputV1Schema, SessionInstructionsSetInputV1Schema } from '../../sessionStateFieldActions.js';
 import { z } from 'zod/mini';
-import { SetSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
 import { SessionSpaceMembershipSetInputV1Schema, SessionSpaceMembershipSetResultV1Schema } from '../../sessionSpaceMembership.js';
+import { SetSessionTagAssignmentsRequestSchema, PatchSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema } from '../../../sessions/organization/mutations.js';
 import { SESSION_LIST_AWARENESS_VIEW_V1, SESSION_LIST_SUMMARY_VIEW_V1, SessionListViewV1Schema, type SessionListViewV1 } from '../../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../../actionIds.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
@@ -26,6 +28,8 @@ import { TeamCredentialProviderModelSelectionV1Schema } from '../../../teams/cre
 import { SESSION_ARCHIVE_CLI_PROJECTION, SESSION_MODEL_SET_CLI_PROJECTION, SESSION_PERMISSION_MODE_SET_CLI_PROJECTION, SessionPermissionModeSetApplyTimingSchema, SESSION_STATUS_GET_CLI_PROJECTION, SESSION_TITLE_SET_CLI_PROJECTION, SESSION_UNARCHIVE_CLI_PROJECTION } from '../sessionCommandCli.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifier.js';
+import { SessionApprovalProfileSetInputV1Schema } from '../../sessionStateFieldActions.js';
+import { BOT_FACE_SHAPE_GEOMETRY_GUIDANCE } from '../../../sessions/identity/botFaceShapeValidation.js';
 
 export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
   { target: SessionTargetV1; actionId: string },
@@ -35,8 +39,10 @@ export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
   actionId: z.string().check(z.refine(id => ActionIdSchema.safeParse(id).success || parseQualifiedPluginActionId(id) !== null)),
 }));
 
+const SessionMemoryActionInputSchema = lazyZodSchema(() => z.extend(SessionMemorySetInputV1Schema, { sessionId: SessionTargetV1Schema }));
+const SessionContextActionInputSchema = lazyZodSchema(() => z.extend(SessionContextUpdateInputV1Schema, { sessionId: SessionTargetV1Schema }));
 const SessionDeleteInputSchema = lazyZodSchema(() => z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)) }));
-const BOT_FACE_SHAPE_AUTHORING_GUIDANCE = 'For requests such as "make me a cat", set shape: {v:1, fill:[closed path], mouth:[x,y,scale], stroke?:[[path,width]], cut?:[path or [path,width]], origin:"custom"}. Paths use M L C Q A Z (either case), finite numbers and the 0–100 source-coordinate convention; the Action centres the outline at x=45 without rescaling. Mouth only: no eyes. Mouth scale is 0.5–1.2 and stroke width is greater than 0 through 24. Shape wins over body, which remains the fallback.';
+const BOT_FACE_SHAPE_AUTHORING_GUIDANCE = `For "Surprise me", set shape: {generate:"surprise", seed:17}, choosing an integer seed for a fresh generated outline; this is distinct from the roster-identity face.seed. The Action saves the concrete outline from the shared seeded generator. For requests such as "make me a cat", set shape: {v:1, fill:[closed path], mouth:[x,y,scale], stroke?:[[path,width]], cut?:[path or [path,width]], origin:"custom"}. Paths use M L C Q A Z (either case), finite numbers and the 0–100 source-coordinate convention; the Action centres the outline at x=45 without rescaling. Mouth only: no eyes. Mouth scale is 0.5–1.2 and stroke width is greater than 0 through 24. ${BOT_FACE_SHAPE_GEOMETRY_GUIDANCE} Shape wins over body, which remains the fallback.`;
 
 export const SessionPermissionModeSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
@@ -108,7 +114,25 @@ export const SESSION_VIEW_INPUT_OPTIONS: ActionInputOption[] = SessionListViewV1
   label: SESSION_VIEW_INPUT_OPTION_LABELS[view],
 }));
 
-export const SESSION_STATE_ACTION_SPECS = Object.freeze([
+function createSessionStateActionSpecs() {
+  return Object.freeze([
+  {
+    id: 'session.approval_profile.set', approval: { result: 'none' }, approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp'] },
+    title: 'Set session approval profile',
+    description: 'Attach or detach a reusable Action approval profile against the reviewed Session metadata revision.',
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'session_approval_profile_set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { fields: [
+      { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'serverId', title: 'Home id', widget: 'text', required: true },
+      { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
+      { path: 'approvalProfileId', title: 'Approval profile id, or null to detach', widget: 'json', required: true },
+    ] },
+    inputSchema: SessionApprovalProfileSetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(SessionApprovalProfileSetInputV1Schema, input => input.serverId),
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'approval-profile', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'session.coordinator.enable', approvalPolicy: { uiConfirmation: 'direct' }, approval: { result: 'optional', flow: 'deferred' },
     title: 'Make coordinator',
@@ -174,6 +198,8 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     },
     outputSchema: StrictJsonValueSchema,
     inputSchema: SessionTitleSetInputSchema,
+    invocationServerIdForInput: actionInputServerId(SessionTitleSetInputSchema, input =>
+      typeof input.serverId === 'string' ? input.serverId : undefined),
     cli: SESSION_TITLE_SET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
@@ -218,7 +244,8 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
       { path: 'enabled', title: 'Use memory', widget: 'json', required: true },
     ] },
-    inputSchema: lazyZodSchema(() => z.extend(SessionMemorySetInputV1Schema, { sessionId: SessionTargetV1Schema })), outputSchema: StrictJsonValueSchema,
+    inputSchema: SessionMemoryActionInputSchema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(SessionMemoryActionInputSchema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'memory', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -234,6 +261,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
       { path: 'preference', title: 'Voice preference, or null to inherit', widget: 'json', required: true },
     ] },
     inputSchema: SessionVoicePreferenceSetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(SessionVoicePreferenceSetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'voice', 'preference', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -249,7 +277,8 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
       { path: 'intent', title: 'Context intent', widget: 'json', required: true },
     ] },
-    inputSchema: lazyZodSchema(() => z.extend(SessionContextUpdateInputV1Schema, { sessionId: SessionTargetV1Schema })), outputSchema: StrictJsonValueSchema,
+    inputSchema: SessionContextActionInputSchema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(SessionContextActionInputSchema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'context', 'update'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -265,6 +294,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
       { path: 'ref', title: 'Document reference', description: 'Set it to null to detach the document.', widget: 'json', required: true },
     ] },
     inputSchema: SessionInstructionsSetInputV1Schema, outputSchema: StrictJsonValueSchema,
+    invocationServerIdForInput: actionInputServerId(SessionInstructionsSetInputV1Schema, input => input.serverId),
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'instructions', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -284,7 +314,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'view', 'tools', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.permission_mode.set', approval: {result: 'none'},
+    id: 'session.permission_mode.set', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Set session permission mode',
     description: `Immediately update the permission intent (${SESSION_PERMISSION_INTENT_INPUTS.join('/')}) for the specified session. Compatible aliases are accepted. To apply a mode with the next prompt, use session.message.send with permissionModeOverride.`,
     safety: 'safe',
@@ -317,7 +347,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: SESSION_PERMISSION_MODE_SET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.model.set', approval: {result: 'none'},
+    id: 'session.model.set', executionPlacement: 'session', approval: {result: 'none'},
     title: 'Set session model',
     description: 'Set the model override for the specified session.',
     safety: 'safe',
@@ -348,7 +378,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: SESSION_MODEL_SET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.archive', approval: {result: 'none'},
+    id: 'session.archive', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Archive session',
     description: 'Archive the specified session, optionally also archiving its unarchived direct reports. Each report retains its own rights and approval requirements; results include partial outcomes.',
@@ -382,7 +412,6 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     id: 'session.delete', approval: {result: 'none'},
     hostReviewedChildren: (input: unknown) => [{ action: 'session.stop' as const, role: 'stop',
       input: { sessionId: (input as z.output<typeof SessionDeleteInputSchema>).sessionId } }],
-
     confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true,
     title: 'Delete session',
     description: 'Permanently delete a session. Its daemon removes managed folders through the durable deletion lifecycle.',
@@ -412,19 +441,21 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: { commands: [{ path: ['session', 'section', 'set'], positionals: ['sessionId', 'sectionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.tags.set', approval: {result: 'none'},
+    id: 'session.tags.set', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Assign session tags',
-    description: 'Replace a session’s tag assignments with existing organization tag ids; an empty list clears them.',
+    description: 'Replace assignments with tagIds (an empty list clears them), or change only addTagIds and removeTagIds while preserving other assignments.',
     safety: 'safe', sideEffectClass: 'external', placements: [],
     bindings: { mcpToolName: 'session_tags_set', voiceClientToolName: 'session_tags_set' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     serverTransport: { method: 'PUT', path: '/v2/session-organization/tag-assignments/:sessionId' },
-    inputSchema: lazyZodSchema(() => z.extend(SetSessionTagAssignmentsRequestSchema, { sessionId: SessionTargetV1Schema })),
+    inputSchema: lazyZodSchema(() => z.union([z.extend(SetSessionTagAssignmentsRequestSchema, { sessionId: SessionTargetV1Schema }), z.extend(PatchSessionTagAssignmentsRequestSchema, { sessionId: SessionTargetV1Schema })])),
     outputSchema: SetSessionTagAssignmentsResponseSchema,
     inputHints: { description: 'Choose the tags on a session.', title: 'Assign session tags', fields: [
       { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true },
-      { path: 'tagIds', title: 'Tag ids', widget: 'textarea', required: true },
+      { path: 'tagIds', title: 'Replacement tag ids', widget: 'textarea' },
+      { path: 'addTagIds', title: 'Tag ids to add', widget: 'textarea' },
+      { path: 'removeTagIds', title: 'Tag ids to remove', widget: 'textarea' },
     ] },
     cli: { commands: [{ path: ['session', 'tags', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
@@ -445,7 +476,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: { commands: [{ path: ['session', 'space-membership', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.unarchive', approval: {result: 'none'},
+    id: 'session.unarchive', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Unarchive session',
     description: 'Unarchive the specified session.',
@@ -489,7 +520,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'targets', 'resolve'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.status.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.status.get', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Get session status',
     description: 'Get summary status and the content-free Connected selection for a session. Use sessionId:"self" to read your own selection for reuse in child starts. Set includeAcceptedWorkspace:true to obtain result.acceptedWorkspace.checkout, the exact accepted checkout address for Project Actions such as projects.inspect. If absent, the accepted checkout identity is unavailable; do not infer it from the Session path. Optionally refresh live agent state or inspect current execution prerequisites.',
@@ -522,7 +553,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     cli: SESSION_STATUS_GET_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.work_state.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.work_state.get', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'Get session work state',
     description: 'Get the normalized current goal, task, and todo snapshot for a session.',
     safety: 'safe',
@@ -548,7 +579,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionIdRequiredInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.goal.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.goal.get', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Get session goal',
     description: 'Get the editable session goal when the provider supports native goals.',
@@ -576,7 +607,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionTargetRequiredInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.goal.set', approval: {result: 'none'},
+    id: 'session.goal.set', executionPlacement: 'session', approval: {result: 'none'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Set session goal',
     description: 'Set or update the native session goal.',
@@ -610,7 +641,7 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionGoalSetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.goal.clear', approval: {result: 'required'},
+    id: 'session.goal.clear', executionPlacement: 'session', approval: {result: 'required'},
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Clear session goal',
     description: 'Clear the native session goal.',
@@ -638,10 +669,14 @@ export const SESSION_STATE_ACTION_SPECS = Object.freeze([
     inputSchema: SessionTargetRequiredInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_STATE_ACTION_SPECS: ReturnType<typeof createSessionStateActionSpecs> = lazyActionSpecArray(createSessionStateActionSpecs);
 
 
 
-export const SESSION_MODEL_UNARM_ACTION_SPECS = Object.freeze([
+function createSessionModelUnarmActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.model.unarm', approval: {result: 'none'}, title: 'Cancel armed model switch',
     description: 'Restore the running Session’s applied route and model for the next message.',
@@ -654,4 +689,7 @@ export const SESSION_MODEL_UNARM_ACTION_SPECS = Object.freeze([
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'model', 'unarm'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_MODEL_UNARM_ACTION_SPECS: ReturnType<typeof createSessionModelUnarmActionSpecs> = lazyActionSpecArray(createSessionModelUnarmActionSpecs);
 

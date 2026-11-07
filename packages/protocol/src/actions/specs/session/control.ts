@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { RestartSessionRunnerResultV1Schema } from '../../../sessions/control/sessionRunnerRestartV1.js';
@@ -29,7 +30,8 @@ export const SessionTurnCancelInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: SessionTargetV1Schema,
 }));
 
-export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
+function createSessionLifetimeControlActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.compact', executionPlacement: 'session', approval: { result: 'none' },
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
@@ -203,9 +205,13 @@ export const SESSION_LIFETIME_CONTROL_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_LIFETIME_CONTROL_ACTION_SPECS: ReturnType<typeof createSessionLifetimeControlActionSpecs> = lazyActionSpecArray(createSessionLifetimeControlActionSpecs);
 
 
-export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
+function createSessionRecoveryActionSpecs() {
+  return Object.freeze([
   {
     id: 'session.read_state.set', approval: {result: 'none'},
     title: 'Mark a session read',
@@ -399,9 +405,49 @@ export const SESSION_RECOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: SessionUsageLimitConsumeResetCreditRequestV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_RECOVERY_ACTION_SPECS: ReturnType<typeof createSessionRecoveryActionSpecs> = lazyActionSpecArray(createSessionRecoveryActionSpecs);
 
 
-export const SESSION_PENDING_ACTION_SPECS = Object.freeze([
+export const SessionPendingSendNowInputSchema = lazyZodSchema(() => z.extend(SessionPendingDeliveryRecoveryInputV1Schema, {
+  deliveryIntent: z.enum(['steer_now', 'interrupt_and_send']),
+}));
+export const SessionPendingSendNowResultSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
+  z.strictObject({ type: z.literal('retry_scheduled') }),
+  z.strictObject({ type: z.literal('committed'), persistence: z.enum(['provider_direct', 'transcript_committed']),
+    providerAcceptancePending: z.optional(z.boolean()) }),
+]));
+
+function createSessionPendingActionSpecs() {
+  return Object.freeze([
+  {
+    id: 'session.pending.sendNow', approval: { result: 'required' }, title: 'Send queued message now',
+    description: 'Send or steer the exact retained Pending input without replacing its identity or content. Direct provider acceptance retains the existing legacy cleanup behavior.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client',
+    approvalPolicy: { uiConfirmation: 'direct' }, placements: ['pending_messages'],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'session_pending_send_now' },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'pending', 'send-now'], visibility: 'canonical' }] },
+    inputSchema: SessionPendingSendNowInputSchema, outputSchema: SessionPendingSendNowResultSchema,
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'localId', title: 'Pending message id', widget: 'text', required: true },
+      { path: 'deliveryIntent', title: 'Delivery intent', widget: 'select', required: true, options: [
+        { value: 'steer_now', label: 'Steer' }, { value: 'interrupt_and_send', label: 'Send now' }] }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'session.pending.requeue', approval: { result: 'required' }, title: 'Requeue discarded message',
+    description: 'Restore the exact discarded Pending identity through the Pending custody owner, without creating another input.',
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account',
+    approvalPolicy: { uiConfirmation: 'direct', rpcConfirmation: true }, placements: ['pending_messages'],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    bindings: { mcpToolName: 'session_pending_requeue', rpcMethod: 'session.pending.requeue' },
+    serverTransport: { method: 'POST', path: '/v2/sessions/:sessionId/pending/:localId/restore' },
+    cli: { acceptsServerId: true, commands: [{ path: ['session', 'pending', 'requeue'], visibility: 'canonical' }] },
+    inputSchema: SessionPendingDeliveryRecoveryInputV1Schema, outputSchema: SessionPendingDeliveryRecoveryResultV1Schema,
+    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+      { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'session.pending.action.set', approval: { result: 'required' }, title: 'Update queued message action',
     description: 'Change the requested action or explicitly resume the exact queued input through its existing pending owner.',
@@ -501,4 +547,7 @@ export const SESSION_PENDING_ACTION_SPECS = Object.freeze([
     inputSchema: PendingResetStartCancelInputV1Schema, outputSchema: PendingResetStartCancelResultV1Schema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_PENDING_ACTION_SPECS: ReturnType<typeof createSessionPendingActionSpecs> = lazyActionSpecArray(createSessionPendingActionSpecs);
 

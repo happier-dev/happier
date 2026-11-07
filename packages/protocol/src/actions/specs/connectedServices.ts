@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
@@ -14,13 +15,13 @@ const common = {
   cli: { commands: [], acceptsServerId: true },
 } satisfies Pick<PreNormalizedActionSpec, 'safety' | 'sideEffectClass' | 'requiredAuthority' | 'executionPlacement' | 'placements' | 'surfaces' | 'cli'>;
 const { cli: _cli, ...clientOnlyCommon } = common;
-const authentication = { ...common, executionPlacement: 'machine', sideEffectClass: 'external',
+const authentication = { ...common, sideEffectClass: 'external',
   surfaces: { ...common.surfaces, voice: true },
   approvalPolicy: { uiConfirmation: 'direct' },
   approvalResultCustody: 'live_only', projectObservationOutput: projectConnectedAccountAuthenticationObservation,
 } satisfies Partial<PreNormalizedActionSpec>;
-const authenticationMachineField = { path: 'machineId', title: 'Authentication machine', widget: 'text', required: true } as const;
-const authenticationAttemptFields = [authenticationMachineField, { path: 'attemptId', title: 'Exact authentication attempt', widget: 'text', required: true }] satisfies readonly ActionInputFieldHint[];
+const authenticationMachineField = { path: 'machineId', title: 'Native authentication machine', widget: 'text' } as const;
+const authenticationAttemptFields = [{ path: 'attemptId', title: 'Exact authentication attempt', widget: 'text', required: true }] satisfies readonly ActionInputFieldHint[];
 const memberFields = [
   { path: 'group', title: 'Qualified pool', widget: 'json', required: true },
   { path: 'expectedGeneration', title: 'Expected pool generation', widget: 'text', required: true },
@@ -28,7 +29,8 @@ const memberFields = [
   { path: 'connectedAccountId', title: 'Connected account id', widget: 'text', required: true },
   { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
 ] satisfies readonly ActionInputFieldHint[];
-export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
+function createConnectedServiceConfigurationActionSpecs() {
+  return [
   { ...common, id: 'connectedServices.accounts.credentials.save', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Save connected-account credentials', description: 'Create an Account credential from an explicitly declared direct manual mode without provider authentication or a Machine.',
     approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('fields'),
@@ -44,15 +46,19 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     bindings: { mcpToolName: 'connected_services_accounts_list' }, inputSchema: inputs['connectedServices.accounts.list'], outputSchema: outputs['connectedServices.accounts.list'],
     inputHints: { fields: [{ path: 'service', title: 'Qualified service', widget: 'json' }] } },
   { ...common, id: 'connectedServices.catalog.list', approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
-    title: 'List connected-service setup choices', description: 'Read admitted services, sign-in methods, gateway contributions and unavailable prerequisites without starting setup.',
-    bindings: { mcpToolName: 'connected_services_catalog_list' }, inputSchema: inputs['connectedServices.catalog.list'], outputSchema: outputs['connectedServices.catalog.list'], inputHints: { fields: [] } },
-  { ...authentication, id: 'connectedServices.authentication.beginConnect', approval: {result: 'required'}, title: 'Connect account', description: 'Begin the exact service authentication mode on this machine. Human OAuth, device and credential steps stay on their live continuation.',
+    title: 'List connected-service setup choices', description: 'Read admitted services, sign-in methods, gateway contributions and unavailable prerequisites without starting setup. Explicit refresh retries demanded projections; returned facts may still be loading.',
+    bindings: { mcpToolName: 'connected_services_catalog_list' }, inputSchema: inputs['connectedServices.catalog.list'], outputSchema: outputs['connectedServices.catalog.list'], inputHints: { fields: [
+      { path: 'refresh', title: 'Retry demanded projection reads', widget: 'boolean' },
+    ] } },
+  { ...authentication, id: 'connectedServices.authentication.beginConnect', approval: {result: 'required'}, title: 'Connect account', description: 'Begin the exact service authentication mode for this Account, with a Machine when the mode requires native execution. Human OAuth, device and credential steps stay on their live continuation.',
+    executionPlacementForInput: input => inputs['connectedServices.authentication.beginConnect'].parse(input).machineId ? 'machine' : 'account',
     bindings: { mcpToolName: 'connected_services_authentication_begin_connect', voiceClientToolName: 'connected_services_authentication_begin_connect' }, inputSchema: inputs['connectedServices.authentication.beginConnect'], outputSchema: outputs['connectedServices.authentication.beginConnect'], inputHints: { fields: [authenticationMachineField,
       { path: 'service', title: 'Qualified service', widget: 'json', required: true }, { path: 'modeId', title: 'Authentication mode', widget: 'text', required: true }, { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
-  { ...authentication, id: 'connectedServices.authentication.beginReconnect', approval: {result: 'required'}, title: 'Reconnect account', description: 'Begin reconnecting the exact qualified account through its daemon authentication owner.',
+  { ...authentication, id: 'connectedServices.authentication.beginReconnect', approval: {result: 'required'}, title: 'Reconnect account', description: 'Begin reconnecting the exact qualified account through its authentication owner, with a Machine when the mode requires native execution.',
+    executionPlacementForInput: input => inputs['connectedServices.authentication.beginReconnect'].parse(input).machineId ? 'machine' : 'account',
     bindings: { mcpToolName: 'connected_services_authentication_begin_reconnect', voiceClientToolName: 'connected_services_authentication_begin_reconnect' }, inputSchema: inputs['connectedServices.authentication.beginReconnect'], outputSchema: outputs['connectedServices.authentication.beginReconnect'], inputHints: { fields: [authenticationMachineField,
       { path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
-  { ...authentication, id: 'connectedServices.authentication.continueConnect', approval: {result: 'required'}, title: 'Continue account connection', description: 'Continue the exact existing attempt after its reviewed configuration changes.',
+  { ...authentication, id: 'connectedServices.authentication.continueConnect', safety: 'safe', approval: {result: 'none'}, title: 'Continue account connection', description: 'Continue the exact existing attempt after its reviewed configuration changes.',
     bindings: { mcpToolName: 'connected_services_authentication_continue_connect', voiceClientToolName: 'connected_services_authentication_continue_connect' }, inputSchema: inputs['connectedServices.authentication.continueConnect'], outputSchema: outputs['connectedServices.authentication.continueConnect'], inputHints: { fields: [...authenticationAttemptFields,
       { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
   { ...authentication, id: 'connectedServices.authentication.submitManual', approval: {result: 'required'}, title: 'Submit account credentials', description: 'Submit live-only credentials to the exact manual authentication attempt. Durable approvals and observations retain only the target.',
@@ -63,18 +69,18 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('completion'),
     bindings: { mcpToolName: 'connected_services_authentication_complete_oauth', voiceClientToolName: 'connected_services_authentication_complete_oauth' }, inputSchema: inputs['connectedServices.authentication.completeOAuth'], outputSchema: outputs['connectedServices.authentication.completeOAuth'], inputHints: { fields: [...authenticationAttemptFields,
       { path: 'completion', title: 'Live OAuth callback', widget: 'json', required: true }] } },
-  { ...authentication, id: 'connectedServices.authentication.pollDevice', approval: {result: 'required'}, title: 'Check device authentication', description: 'Poll the exact daemon-owned device authentication attempt after its human step.',
+  { ...authentication, id: 'connectedServices.authentication.pollDevice', safety: 'safe', approval: {result: 'none'}, title: 'Check device authentication', description: 'Poll the exact device authentication attempt after its human step.',
     bindings: { mcpToolName: 'connected_services_authentication_poll_device', voiceClientToolName: 'connected_services_authentication_poll_device' }, inputSchema: inputs['connectedServices.authentication.pollDevice'], outputSchema: outputs['connectedServices.authentication.pollDevice'], inputHints: { fields: authenticationAttemptFields } },
-  { ...authentication, id: 'connectedServices.authentication.resumeDevice', approval: {result: 'required'}, title: 'Resume device authentication', description: 'Resume the exact persisted device attempt through its existing daemon lifecycle.',
+  { ...authentication, id: 'connectedServices.authentication.resumeDevice', safety: 'safe', approval: {result: 'none'}, title: 'Resume device authentication', description: 'Resume the exact persisted device attempt through its existing lifecycle.',
     bindings: { mcpToolName: 'connected_services_authentication_resume_device', voiceClientToolName: 'connected_services_authentication_resume_device' }, inputSchema: inputs['connectedServices.authentication.resumeDevice'], outputSchema: outputs['connectedServices.authentication.resumeDevice'], inputHints: { fields: authenticationAttemptFields } },
-  { ...authentication, id: 'connectedServices.authentication.reconcile', approval: {result: 'required'}, title: 'Reconcile account authentication', description: 'Verify the outcome of the exact uncertain attempt through its provider-native reconciliation owner.',
+  { ...authentication, id: 'connectedServices.authentication.reconcile', safety: 'safe', approval: {result: 'none'}, title: 'Reconcile account authentication', description: 'Verify the outcome of the exact uncertain attempt through its provider-native reconciliation owner.',
     bindings: { mcpToolName: 'connected_services_authentication_reconcile', voiceClientToolName: 'connected_services_authentication_reconcile' }, inputSchema: inputs['connectedServices.authentication.reconcile'], outputSchema: outputs['connectedServices.authentication.reconcile'], inputHints: { fields: authenticationAttemptFields } },
-  { ...authentication, id: 'connectedServices.authentication.cancel', approval: {result: 'required'}, title: 'Cancel account authentication', description: 'Cancel and clean up only the exact daemon-owned authentication attempt.',
+  { ...authentication, id: 'connectedServices.authentication.cancel', safety: 'safe', approval: {result: 'none'}, title: 'Cancel account authentication', description: 'Cancel and clean up only the exact authentication attempt.',
     bindings: { mcpToolName: 'connected_services_authentication_cancel', voiceClientToolName: 'connected_services_authentication_cancel' }, inputSchema: inputs['connectedServices.authentication.cancel'], outputSchema: outputs['connectedServices.authentication.cancel'], inputHints: { fields: authenticationAttemptFields } },
   { ...authentication, id: 'connectedServices.authentication.read', approval: {result: 'required'}, safety: 'safe', sideEffectClass: 'read', title: 'Read account authentication', description: 'Read the exact attempt without starting another authentication flow. Human authorization details remain live-only.',
-    bindings: { mcpToolName: 'connected_services_authentication_read', voiceClientToolName: 'connected_services_authentication_read' }, inputSchema: inputs['connectedServices.authentication.read'], outputSchema: outputs['connectedServices.authentication.read'], inputHints: { fields: [...authenticationAttemptFields,
-      { path: 'restoreKind', title: 'Restore OAuth continuation', widget: 'text' }] } },
-  { ...common, id: 'connectedServices.authentication.pending.list', approval: {result: 'required'}, executionPlacement: 'machine', safety: 'safe', sideEffectClass: 'read', title: 'List pending account authentication', description: 'List resumable attempts for the exact qualified service on this machine without beginning or resuming them.',
+    bindings: { mcpToolName: 'connected_services_authentication_read', voiceClientToolName: 'connected_services_authentication_read' }, inputSchema: inputs['connectedServices.authentication.read'], outputSchema: outputs['connectedServices.authentication.read'], inputHints: { fields: authenticationAttemptFields } },
+  { ...common, id: 'connectedServices.authentication.pending.list', approval: {result: 'required'}, safety: 'safe', sideEffectClass: 'read', title: 'List pending account authentication', description: 'List resumable attempts for the exact qualified service in this Account, optionally filtered to a Machine, without beginning or resuming them.',
+    executionPlacementForInput: input => inputs['connectedServices.authentication.pending.list'].parse(input).machineId ? 'machine' : 'account',
     surfaces: { ...common.surfaces, voice: true },
     bindings: { mcpToolName: 'connected_services_authentication_pending_list', voiceClientToolName: 'connected_services_authentication_pending_list' }, inputSchema: inputs['connectedServices.authentication.pending.list'], outputSchema: outputs['connectedServices.authentication.pending.list'], inputHints: { fields: [authenticationMachineField,
       { path: 'service', title: 'Qualified service', widget: 'json', required: true }] } },
@@ -87,11 +93,11 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     ] } },
   { ...common, id: 'connectedServices.configuration.get', approval: {result: 'required'}, safety: 'safe', sideEffectClass: 'read', title: 'Read connected-service configuration',
     executionPlacementForInput: input => isConnectedServiceConfigurationMachineRequiredV1('connectedServices.configuration.get', input) ? 'machine' : 'account',
-    description: 'Read Account-owned service configuration, or an exact machine account or attempt, without credential disclosure.',
+    description: 'Read the exact service, account or attempt configuration without credential disclosure. Attempt routing follows its stored scope.',
     bindings: { mcpToolName: 'connected_services_configuration_get' }, inputSchema: inputs['connectedServices.configuration.get'],
     outputSchema: outputs['connectedServices.configuration.get'], inputHints: { fields: [
       { path: 'service', title: 'Qualified service', widget: 'json' }, { path: 'modeId', title: 'Authentication mode', widget: 'text' },
-      { path: 'machineId', title: 'Exact configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
+      { path: 'machineId', title: 'Native account configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
     ] } },
   { ...common, id: 'connectedServices.configuration.replace', approval: {result: 'required'}, approvalPolicy: {
     uiConfirmation: 'policy',
@@ -108,7 +114,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     bindings: { mcpToolName: 'connected_services_configuration_replace' }, inputSchema: inputs['connectedServices.configuration.replace'],
     outputSchema: outputs['connectedServices.configuration.replace'], inputHints: { fields: [
       { path: 'service', title: 'Qualified service', widget: 'json' }, { path: 'modeId', title: 'Authentication mode', widget: 'text' },
-      { path: 'machineId', title: 'Exact configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
+      { path: 'machineId', title: 'Native account configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
       { path: 'expectedRevision', title: 'Expected configuration revision', widget: 'text' }, { path: 'values', title: 'Configuration', widget: 'json', required: true },
       { path: 'secretValues', title: 'Secret replacements', widget: 'json', required: true },
     ] } },
@@ -210,3 +216,6 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
   { ...clientOnlyCommon, id: 'connectedServices.disclosure.set', approval: {result: 'required'}, safety: 'safe', title: 'Set Connected disclosure', description: 'Expand or collapse an exact connected account or pool member on this device only.', executionPlacement: 'client', surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, inputSchema: inputs['connectedServices.disclosure.set'], outputSchema: outputs['connectedServices.disclosure.set'], inputHints: { fields: [{ path: 'subject', title: 'Qualified disclosure subject', widget: 'json', required: true }, { path: 'collapsed', title: 'Collapsed', widget: 'boolean', required: true }] } },
   { ...clientOnlyCommon, id: 'connectedServices.disclosure.reset', approval: {result: 'required'}, safety: 'safe', title: 'Reset Connected disclosure', description: 'Restore the default disclosure for one connected account or pool member on this device only.', executionPlacement: 'client', surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, inputSchema: inputs['connectedServices.disclosure.reset'], outputSchema: outputs['connectedServices.disclosure.reset'], inputHints: { fields: [{ path: 'subject', title: 'Qualified disclosure subject', widget: 'json', required: true }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];
+}
+
+export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS: ReturnType<typeof createConnectedServiceConfigurationActionSpecs> = lazyActionSpecArray(createConnectedServiceConfigurationActionSpecs);

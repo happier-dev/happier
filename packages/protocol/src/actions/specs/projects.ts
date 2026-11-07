@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { OpenProjectInputV1Schema, OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectContextUpdateInputV1Schema, ProjectContextUpdateOutputV1Schema } from '../../projects/projectContextV1.js';
@@ -7,6 +8,7 @@ import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Sche
 import { z } from 'zod/mini';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+import { actionInputServerId } from './definition.js';
 
 
 export const PathsListRecentInputSchema = lazyZodSchema(() => z.looseObject({
@@ -31,9 +33,10 @@ export const ProjectsListInputSchema = lazyZodSchema(() => z.strictObject({
   includeHidden: z.optional(z.boolean()),
 }));
 
-export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
+function createProjectContextActionSpecs() {
+  return Object.freeze([
   {
-    id: 'paths.list_recent', approval: {result: 'required'},
+    id: 'paths.list_recent', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'List recent paths',
     sideEffectClass: 'read',
     description: 'List recent workspace directory handles (optionally filtered to a machine).',
@@ -75,6 +78,7 @@ export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
     // Project owners and the catalog share an import cycle.
     // Publish deferred carriers, not values captured during that import cycle.
     inputSchema: lazyZodSchema(() => ProjectContextUpdateInputV1Schema),
+    invocationServerIdForInput: actionInputServerId(lazyZodSchema(() => ProjectContextUpdateInputV1Schema), input => input.target.serverId),
     outputSchema: lazyZodSchema(() => ProjectContextUpdateOutputV1Schema),
     inputHints: { fields: [
       { path: 'target', title: 'Qualified Project', prompt: 'Which project?', widget: 'json', required: true },
@@ -83,8 +87,8 @@ export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'projects.organization.update', approval: {result: 'required'}, title: 'Update Project label',
-    description: 'Set or reset the private Project label at the reviewed organization row revision. A null label restores its baseline title; checkout labels and other organization fields are preserved.',
+    id: 'projects.organization.update', approval: {result: 'required'}, title: 'Update Project organization',
+    description: 'Set or reset the private Project label or one Saved Secret reference binding at the reviewed organization row revision. A null label restores its baseline title; a null binding reference removes that name. Secret values are never accepted, and other organization fields are preserved.',
     sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'projects_organization_update', voiceClientToolName: 'projects_organization_update' },
@@ -94,7 +98,8 @@ export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
     inputHints: { fields: [
       { path: 'projectRef', title: 'Qualified Project', prompt: 'Which project?', widget: 'json', required: true },
       { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
-      { path: 'label', title: 'Project label (null to reset)', widget: 'text', required: true },
+      { path: 'label', title: 'Project label (null to reset)', widget: 'text' },
+      { path: 'environmentBinding', title: 'Environment binding name and Saved Secret reference (null to remove)', widget: 'json' },
     ] },
   } satisfies PreNormalizedActionSpec,
   {
@@ -174,6 +179,7 @@ export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   {
     id: 'projects.open', approval: {result: 'required'},
+    originalExecution: { daemonIngressSurfaces: ['ui'] },
     operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'current' } },
     title: 'Open a project',
     description: 'Prepare the selected checkout on the exact Machine and return its browse address without starting an Agent. Setup requires separate approval; client focus is optional and requires a mounted client.',
@@ -200,4 +206,7 @@ export const PROJECT_CONTEXT_ACTION_SPECS = Object.freeze([
     examples: { voice: { argsExample: '{"serverId":"{{serverId}}","machineId":"{{machineId}}","source":{"kind":"folder","path":"/workspace/project"},"materialization":{"kind":"attach"}}' } },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const PROJECT_CONTEXT_ACTION_SPECS: ReturnType<typeof createProjectContextActionSpecs> = lazyActionSpecArray(createProjectContextActionSpecs);
 

@@ -1,3 +1,4 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SESSION_VIEW_INPUT_OPTIONS } from './state.js';
 import type { ActionSpecSurfaceBindings, PreNormalizedActionSpec } from '../definition.js';
 import { SessionStoredTranscriptRoleSchema, SessionTranscriptGetPublicInputSchema, SessionTranscriptGetExternalShareableInputV1Schema, SessionTranscriptGetInputSchema, SessionTranscriptGetExternalShareableResultV1Schema, SessionTranscriptGetResultSchema } from './transcript.js';
@@ -6,7 +7,7 @@ import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { z } from 'zod/mini';
 import { SessionListQueryV1Schema } from '../../../sessions/listing/query.js';
 import { QualifiedProjectKeyV1Schema } from '../../../workspaces/workspaceRefV1.js';
-import { SESSION_LIST_AWARENESS_VIEW_V1, SessionActivityActionResultV1Schema, SessionListActionResultV1Schema, SessionListViewV1Schema } from '../../../sessions/awareness/action.js';
+import { SESSION_LIST_AWARENESS_VIEW_V1, SessionActivityActionResultV1Schema, SessionActivityViewV1Schema, SessionListActionResultV1Schema, SessionListViewV1Schema } from '../../../sessions/awareness/action.js';
 import { type ConversationTurnOriginV1 } from '../../../messages/structured/conversationTurnOriginV1.js';
 import { SessionInputResultGetInputV1Schema, SessionInputResultGetResultV1Schema } from '../../../sessions/messages/sessionInputResultV1.js';
 import { SkillCatalogItemV1Schema, SkillCatalogV1Schema } from '../../../runtime/catalog/skills.js';
@@ -175,10 +176,10 @@ export const SessionListActionInputV1Schema = lazyZodSchema(() => z.strictObject
  */
 export const SessionActivityInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
-  view: z.optional(SessionListViewV1Schema),
+  view: z.optional(SessionActivityViewV1Schema),
   windowSeconds: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(86_400))),
 }).check(z.superRefine((value, ctx) => {
-  if (value.view === SESSION_LIST_AWARENESS_VIEW_V1 && value.windowSeconds !== undefined) {
+  if ((value.view === SESSION_LIST_AWARENESS_VIEW_V1 || value.view === 'recap') && value.windowSeconds !== undefined) {
     // `windowSeconds` only narrows the released retained-window message counts, and awareness has
     // no counts. Accepting both would silently ignore the window the caller asked for.
     ctx.addIssue({
@@ -198,9 +199,10 @@ export const SessionRecentMessagesInputSchema = lazyZodSchema(() => z.looseObjec
   maxCharsPerMessage: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(50_000)))),
 }));
 
-export const SESSION_READ_ACTION_SPECS = Object.freeze([
+function createSessionReadActionSpecs() {
+  return Object.freeze([
   {
-    id: 'session.vendor_plugin_catalog.list', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.vendor_plugin_catalog.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List session vendor plugins',
     description: 'List provider-owned vendor plugins available to the session.',
     safety: 'safe',
@@ -229,7 +231,7 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     inputSchema: SessionCatalogListInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.skill_catalog.list', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.skill_catalog.list', executionPlacement: 'session', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'List session skills',
     description: 'List provider-visible skills available to the session.',
     safety: 'safe',
@@ -258,7 +260,7 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     inputSchema: SessionCatalogListInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.history.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.history.get', executionPlacement: 'machine', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'Get session history',
     description: 'DEPRECATED: use session_events_get. Returns diagnostic session events with cleaner pagination.',
     safety: 'safe',
@@ -298,7 +300,7 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     inputSchema: SessionHistoryGetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.input.result.get', sideEffectClass: 'read', approval: { result: 'required' },
+    id: 'session.input.result.get', executionPlacement: 'session', sideEffectClass: 'read', approval: { result: 'required' },
     sessionTarget: { field: 'sessionId', cardinality: 'one' },
     title: 'Get Session input result',
     description: 'Read one original input’s host-proven native start and current result without waiting, or select projection: reply for its live Ask reply custody (including queued originals).',
@@ -372,7 +374,7 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     } satisfies ActionSpecSurfaceBindings,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.events.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.events.get', executionPlacement: 'machine', sideEffectClass: 'read', approval: {result: 'required'},
     title: 'Get session events',
     description: 'Inspect raw session events (tool calls, tool results, token counts, lifecycle, permission, stream, session events) for diagnostics. Use session_transcript_get for normal transcript reading.',
     safety: 'safe',
@@ -402,7 +404,7 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     inputSchema: SessionEventsGetInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.wait.idle', approval: {result: 'required'},
+    id: 'session.wait.idle', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Wait for session idle',
     description: 'Wait until the session becomes idle or the timeout elapses.',
     safety: 'safe',
@@ -439,11 +441,15 @@ export const SESSION_READ_ACTION_SPECS = Object.freeze([
     } satisfies ActionSpecSurfaceBindings,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_READ_ACTION_SPECS: ReturnType<typeof createSessionReadActionSpecs> = lazyActionSpecArray(createSessionReadActionSpecs);
 
 
-export const SESSION_DISCOVERY_ACTION_SPECS = Object.freeze([
+function createSessionDiscoveryActionSpecs() {
+  return Object.freeze([
   {
-    id: 'session.list', approval: {result: 'required'},
+    id: 'session.list', executionPlacement: 'account', approval: {result: 'required'},
     title: 'List sessions',
     sideEffectClass: 'read',
     description: 'List recent sessions the user can target.',
@@ -487,10 +493,10 @@ export const SESSION_DISCOVERY_ACTION_SPECS = Object.freeze([
     cli: SESSION_LIST_CLI_PROJECTION,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.activity.get', approval: {result: 'required'},
+    id: 'session.activity.get', executionPlacement: 'session', approval: {result: 'required'},
     title: 'Get session activity',
     sideEffectClass: 'read',
-    description: 'Get a short activity digest for a session without transcript content.',
+    description: 'Get a session activity digest, operational awareness, or its existing memory/delivered-update Recap (view: recap includes content).',
     safety: 'safe',
     placements: ['voice_panel'],
     bindings: { voiceClientToolName: 'getSessionActivity', mcpToolName: 'session_activity_get' },
@@ -515,9 +521,9 @@ export const SESSION_DISCOVERY_ACTION_SPECS = Object.freeze([
           // offers awareness here instead of a caller composing it from a local digest.
           path: 'view',
           title: 'View',
-          description: 'The released activity digest, or the canonical awareness projection.',
+          description: 'Activity summary, operational awareness, or the existing memory/delivered-update Recap.',
           widget: 'select',
-          options: SESSION_VIEW_INPUT_OPTIONS,
+          options: [...SESSION_VIEW_INPUT_OPTIONS, { value: 'recap', label: 'Recap' }],
         },
         { path: 'windowSeconds', title: 'Window seconds', widget: 'text' },
       ],
@@ -529,12 +535,13 @@ export const SESSION_DISCOVERY_ACTION_SPECS = Object.freeze([
       if (!parsed.success || parsed.data.sessionId !== sessionId) return null;
       return {
         sessionId,
+        ...(parsed.data.view !== undefined ? { view: parsed.data.view } : {}),
         ...(parsed.data.windowSeconds !== undefined ? { windowSeconds: parsed.data.windowSeconds } : {}),
       };
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.messages.recent.get', sideEffectClass: 'read', approval: {result: 'required'},
+    id: 'session.messages.recent.get', executionPlacement: 'machine', sideEffectClass: 'read', approval: {result: 'required'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
     title: 'Get recent messages',
     description: 'DEPRECATED: use session_transcript_get. Returns semantic transcript items with cleaner pagination.',
@@ -567,4 +574,7 @@ export const SESSION_DISCOVERY_ACTION_SPECS = Object.freeze([
     inputSchema: SessionRecentMessagesInputSchema,
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const SESSION_DISCOVERY_ACTION_SPECS: ReturnType<typeof createSessionDiscoveryActionSpecs> = lazyActionSpecArray(createSessionDiscoveryActionSpecs);
 
