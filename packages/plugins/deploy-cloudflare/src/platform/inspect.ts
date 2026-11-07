@@ -1,9 +1,9 @@
 import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionContext, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
+import type { PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { workersPrepare, workerPrepareInput } from './workersActions.js';
 import { pagesPrepare, pagesPrepareInput } from './pagesPrepare.js';
 
-import { targetOptionInputHints } from './targetOptions.js';
+import { targetOptionInputHints, targetProductInputHints } from './targetOptions.js';
 
 /** One discovered Connect / Check again Action; product handlers retain their own preparation. */
 export const inspect = {
@@ -25,3 +25,12 @@ export const inspect = {
       ? workersPrepare.run(input, context) : pagesPrepare.run(input, context);
   },
 } satisfies PluginActionDefinition;
+
+/** Each selected target supplies its product; preparation and provider reads retain their owners. */
+export const productInspectActions: Readonly<Record<'workers-inspect' | 'pages-inspect',
+  PluginActionDefinition<Extract<PluginActionDeclaration, { execution: { target: 'account' } }>>>> = {
+  'workers-inspect': { ...workersPrepare, title: 'Inspect the selected Cloudflare Worker',
+    surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], inputHints: targetProductInputHints('workers') },
+  'pages-inspect': { ...pagesPrepare, title: 'Inspect the selected Cloudflare Pages project',
+    surfaces: ['cli', 'plugin', 'ui', 'agent', 'mcp'], inputHints: targetProductInputHints('pages') },
+};

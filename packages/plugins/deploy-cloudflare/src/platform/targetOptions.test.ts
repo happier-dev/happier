@@ -10,6 +10,41 @@ const draft = { credentialRef, credentialPrincipal, product: 'pages', providerId
 const json = (result: unknown, result_info?: unknown) => ({ status: 200, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: true, result, ...(result_info ? { result_info } : {}) })) });
 
+it.each([
+  { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
+    expected: { value: 'worker-tag', label: 'selected-worker' }, endpoint: '/workers/scripts' },
+  { targetKind: 'cloudflare-pages', row: { id: 'pages-id', name: 'selected-pages' },
+    expected: { value: 'pages-id', label: 'selected-pages' }, endpoint: '/pages/projects' },
+])('a per-product $targetKind target exposes no product choice and discovers its own projects from an empty draft', async ({ targetKind, row, expected, endpoint }) => {
+  const target = entry.manifest.contributes.deploymentTargets.find(value => value.targetKind === targetKind);
+  if (!target || target.role !== 'runtime') throw new Error('Missing Cloudflare runtime target');
+  const inspect = entry.manifest.contributes.actions.find(action => action.id === target.actions.inspect);
+  const fields = inspect?.inputHints?.fields ?? [];
+  expect(fields.map(field => field.path)).not.toContain('product');
+  const project = fields.find(field => field.path === 'providerIdentity.providerResourceId');
+  if (!project?.inputType || !('localId' in project.inputType)) throw new Error('Missing project input type');
+  const typeId = project.inputType.localId;
+  const inputType = entry.manifest.contributes.inputTypes?.find(type => type.id === typeId);
+  const resourceRef = inputType?.options?.resource;
+  const resourceId = typeof resourceRef === 'string' ? resourceRef : resourceRef?.localId;
+  if (typeof resourceId !== 'string') throw new Error('Missing project options Resource');
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) { requests.push(request); return json([row]); } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const resource = kit.registration('resources', resourceId);
+    if (!resource) throw new Error('Missing project choices Resource');
+    const bytes = await resource.read(createTestResourceInvocationContext({
+      query: { draftInput: { credentialRef, credentialPrincipal: { ...credentialPrincipal, purpose: {
+        ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: target.actions.inspect } } },
+        providerIdentity: { providerAccountId: 'account' } }, fieldPath: project.path },
+      readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
+    expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
+      .toEqual({ options: [expected] });
+    expect(requests.map(request => new URL(request.url).pathname)).toEqual([`/client/v4/accounts/account${endpoint}`]);
+  } finally { await kit.dispose(); }
+});
+
 it('loads one requested Pages page through the registered global Resource and named Account Action, without prefetch or secret projection', async () => {
   const requests: HttpRequest[] = [];
   const http = createPluginHttpFixture({ async request(request) {

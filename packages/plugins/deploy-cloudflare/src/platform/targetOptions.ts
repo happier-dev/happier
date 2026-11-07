@@ -1,5 +1,5 @@
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
@@ -121,7 +121,7 @@ function draftProduct(draft: Readonly<Record<string, JsonValue>>): JsonValue | u
   return undefined;
 }
 
-export const targetOptions: PluginDynamicResourceRuntime = {
+function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceRuntime { return {
   async read(options) {
     options.signal.throwIfAborted();
     const query = options.query;
@@ -132,8 +132,8 @@ export const targetOptions: PluginDynamicResourceRuntime = {
     for (const key of ['credentialRef', 'credentialPrincipal', 'providerIdentity']) {
       if (draft[key] !== undefined) input[key] = draft[key];
     }
-    const product = draftProduct(draft);
-    if (product !== undefined) input.product = product;
+    const selectedProduct = product ?? draftProduct(draft);
+    if (selectedProduct !== undefined) input.product = selectedProduct;
     if (isObject(draft.providerEnvironment) && draft.providerEnvironment.scriptName !== undefined) {
       input.scriptName = draft.providerEnvironment.scriptName as JsonValue;
     }
@@ -144,18 +144,37 @@ export const targetOptions: PluginDynamicResourceRuntime = {
     return JSON.stringify(result.result);
   },
   observe() { return { dispose() {} }; },
-};
+}; }
+
+export const targetOptions = targetOptionsFor();
+const resource = { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global',
+  execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } } as const;
+export const targetOptionResources = {
+  'target-options': { ...resource, runtime: targetOptions },
+  'workers-target-options': { ...resource, runtime: targetOptionsFor('workers') },
+  'pages-target-options': { ...resource, runtime: targetOptionsFor('pages') },
+} satisfies NonNullable<DefinePluginInput['resources']>;
 
 const choiceSchema: PluginJsonSchema = { anyOf: [{ type: 'string' }, { type: 'object' }] };
 export const targetOptionInputTypes = {
   'target-choice': { title: 'Cloudflare target choice', semantic: 'cloudflare-target-choice',
     valueSchema: choiceSchema, options: { resource: 'target-options' } },
+  'workers-target-choice': { title: 'Cloudflare Workers choice', semantic: 'cloudflare-workers-choice',
+    valueSchema: choiceSchema, options: { resource: 'workers-target-options' } },
+  'pages-target-choice': { title: 'Cloudflare Pages choice', semantic: 'cloudflare-pages-choice',
+    valueSchema: choiceSchema, options: { resource: 'pages-target-options' } },
 } as const;
 export const targetOptionInputHints = { fields: [
-  ...([['product', 'Product'], ['providerIdentity.providerAccountId', 'Cloudflare Account'],
+  ...([['providerIdentity.providerAccountId', 'Cloudflare Account'],
     ['providerIdentity.providerResourceId', 'Project or Worker'], ['providerEnvironment', 'Environment'],
     ['preparedNative.projectName', 'Pages project name'], ['triggerUuid', 'Worker build trigger']] as const).map(([path, title]) => ({
       path, title, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
     })),
 ] } as const;
 export const targetProductSchema = product;
+
+export function targetProductInputHints(product: 'workers' | 'pages') {
+  return { fields: targetOptionInputHints.fields
+    .filter(field => product === 'workers' ? field.path !== 'preparedNative.projectName' : field.path !== 'triggerUuid')
+    .map(field => ({ ...field, inputType: { pluginId, localId: `${product}-target-choice` } })) };
+}

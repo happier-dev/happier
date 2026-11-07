@@ -6,7 +6,7 @@ import * as entry from '../index.js';
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
 const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
   credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
-    localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
+    localId: 'pages-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
   providerIdentity: { providerAccountId: 'account', providerResourceId: 'project-id', providerEnvironment: 'production' },
   providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'existing-pages' } };
 const repository = { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' };
@@ -24,9 +24,9 @@ it('adopts the exact existing Pages project, discloses native mode/build configu
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     const target = entry.manifest.contributes.deploymentTargets.find(value => value.targetKind === 'cloudflare-pages');
-    expect(target).toMatchObject({ actions: { inspect: 'targets-inspect-v1', link: 'pages-link', uploadDeploy: 'pages-upload', observe: 'pages-observe' } });
+    expect(target).toMatchObject({ actions: { inspect: 'pages-inspect', link: 'pages-link', uploadDeploy: 'pages-upload', observe: 'pages-observe' } });
     expect(target?.role === 'runtime' && target.actions).not.toHaveProperty('cancel');
-    const prepared = await kit.invokeAction('targets-inspect-v1', { ...preparation, repository });
+    const prepared = await kit.invokeAction('pages-inspect', { ...preparation, repository });
     expect(prepared).toMatchObject({ credentialPrincipal: preparation.credentialPrincipal,
       providerIdentity: preparation.providerIdentity, repositoryAccess: { status: 'needsGitAccess', repository },
       preparedNative: { projectName: 'existing-pages', pages: { projectMode: 'gitIntegration', productionBranch: 'main',
@@ -50,7 +50,7 @@ it('refuses a mismatched adopted project instead of selecting by display name or
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('targets-inspect-v1', { ...preparation, repository }))
+    await expect(kit.invokeAction('pages-inspect', { ...preparation, repository }))
       .rejects.toMatchObject({ code: 'provider_response_invalid' });
     expect(requests.map(request => request.method)).toEqual(['GET']);
   } finally { await kit.dispose(); }
@@ -63,6 +63,6 @@ it.each(['../../outside', '/outside', 'C:\\outside'])('refuses provider build ro
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
-    await expect(kit.invokeAction('targets-inspect-v1', { ...preparation, repository })).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    await expect(kit.invokeAction('pages-inspect', { ...preparation, repository })).rejects.toMatchObject({ code: 'provider_response_invalid' });
   } finally { await kit.dispose(); }
 });

@@ -5,12 +5,12 @@ import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import * as entry from '../index.js';
 
 it('contributes the executable Cloudflare Workers runtime through the real public manifest', () => {
-  expect(entry.manifest.contributes.actions.find(action => action.id === 'targets-inspect-v1'))
+  expect(entry.manifest.contributes.actions.find(action => action.id === 'workers-inspect'))
     .toMatchObject({ readOnly: true, dangerLevel: 'safe', surfaces: expect.arrayContaining(['ui', 'agent']) });
   expect(entry.manifest.contributes.actions.some(action => ['workers-prepare', 'pages-prepare'].includes(action.id))).toBe(false);
   expect(entry.manifest.contributes.deploymentTargets ?? []).toContainEqual(expect.objectContaining({
     role: 'runtime', targetKind: 'cloudflare-workers', actions: expect.objectContaining({
-      inspect: 'targets-inspect-v1', link: expect.any(String), deploy: expect.any(String), observe: expect.any(String), cancel: expect.any(String),
+      inspect: 'workers-inspect', link: expect.any(String), deploy: expect.any(String), observe: expect.any(String), cancel: expect.any(String),
     }),
   }));
 });
@@ -32,14 +32,14 @@ it('activates prepare/link and exact-SHA lifecycle roles using the captured cano
   const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
   const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
-      localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
+      localId: 'workers-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag, providerEnvironment: 'script:app' },
     providerEnvironment: { kind: 'script', scriptName: 'app' } };
   try {
     const input = { ...preparation, triggerUuid, repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
-    await expect(kit.invokeAction('targets-inspect-v1', { ...preparation, repository: input.repository })).rejects.toThrow();
+    await expect(kit.invokeAction('workers-inspect', { ...preparation, repository: input.repository })).rejects.toThrow();
     expect(requests).toHaveLength(0);
-    const prepared = await invoke('targets-inspect-v1', input);
+    const prepared = await invoke('workers-inspect', input);
     expect(prepared).toMatchObject({ credentialPrincipal: preparation.credentialPrincipal,
       providerIdentity: preparation.providerIdentity, repositoryAccess: { status: 'ready' },
       preparedNative: { projectName: 'app', triggerUuid } });
@@ -86,12 +86,12 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
   const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
   const preparation = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef,
     credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,
-      localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
+      localId: 'workers-inspect' }, purpose: 'deploy.manage' }, target: { kind: 'account', account: credentialRef } },
     providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag, providerEnvironment: 'selected' },
     providerEnvironment: { kind: 'preview', scriptName, previewName } };
   const input = { ...preparation, repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } };
   try {
-    const prepared = await invoke('targets-inspect-v1', input);
+    const prepared = await invoke('workers-inspect', input);
     expect(prepared).toMatchObject({ credentialPrincipal: preparation.credentialPrincipal,
       providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
         providerEnvironment: `preview:${JSON.stringify([scriptName, previewName])}` },
@@ -124,7 +124,7 @@ it('activates native Preview preparation and lifecycle on the existing Worker ta
     expect(requests).toHaveLength(beforeMissing);
     missing = true;
     await expect(invoke('workers-deploy', deploy)).rejects.toMatchObject({ code: 'deployment_unavailable' });
-    await expect(invoke('targets-inspect-v1', input)).rejects.toMatchObject({ code: 'deployment_unavailable' });
+    await expect(invoke('workers-inspect', input)).rejects.toMatchObject({ code: 'deployment_unavailable' });
     expect(requests.slice(beforeMissing).map(request => [request.method, request.url])).toEqual([
       ['POST', `${root}/builds/workers/${workerTag}/previews/${previewId}/builds`],
       ['GET', `${root}/workers/workers/${scriptName}/previews/review%2Fname`],

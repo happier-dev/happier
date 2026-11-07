@@ -12,8 +12,8 @@ import { workerActions, workerLinkSchema } from './platform/workersActions.js';
 import { pagesLink, pagesLinkSchema } from './platform/pagesPrepare.js';
 import { pagesLifecycleActions } from './platform/pagesDeploy.js';
 
-import { targetOptions, targetOptionsRead, targetOptionInputTypes } from './platform/targetOptions.js';
-import { inspect } from './platform/inspect.js';
+import { targetOptionResources, targetOptionsRead, targetOptionInputTypes } from './platform/targetOptions.js';
+import { inspect, productInspectActions } from './platform/inspect.js';
 
 const accountConfiguration = {
   scope: 'account', changeBehavior: 'reconnect', fields: [{ id: 'accountId', title: 'Account ID',
@@ -41,7 +41,7 @@ const tokenConfiguration = { ...accountConfiguration, fields: [...accountConfigu
     schema: { type: 'string', pattern: '^[a-fA-F0-9]{32}$' }, required: false, secret: false },
 ] } as const;
 
-type CloudflareActionDeclarations = typeof tunnelActions & typeof zoneActions & typeof selectionActions
+type CloudflareActionDeclarations = typeof productInspectActions & typeof tunnelActions & typeof zoneActions & typeof selectionActions
   & typeof workerActions & typeof pagesLifecycleActions & Readonly<{
     'target-options-read': typeof targetOptionsRead;
     'targets-inspect-v1': typeof inspect;
@@ -51,15 +51,15 @@ type CloudflareActionDeclarations = typeof tunnelActions & typeof zoneActions & 
 const actions: Readonly<{
   [TId in keyof CloudflareActionDeclarations]: PluginActionDefinition<
     Omit<CloudflareActionDeclarations[TId], 'run' | 'observeRead'>>;
-}> = { 'target-options-read': targetOptionsRead, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
+}> = { 'target-options-read': targetOptionsRead, ...productInspectActions, ...tunnelActions, ...zoneActions, ...selectionActions, ...workerActions, ...pagesLifecycleActions, 'targets-inspect-v1': inspect, 'pages-link': pagesLink } as const;
 
 const deploymentTargets = { workers: { role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
-    actions: { inspect: 'targets-inspect-v1', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel' } },
+    actions: { inspect: 'workers-inspect', link: 'workers-link', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel' } },
     pages: { role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
       description: 'Adopt an existing Pages project.',
       targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
-      actions: { inspect: 'targets-inspect-v1', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe' } } } as const;
+      actions: { inspect: 'pages-inspect', link: 'pages-link', deploy: 'pages-deploy', observe: 'pages-observe' } } } as const;
 
 export const definition: Pick<DefinePluginInput<typeof actions>,
   'version' | 'displayName' | 'entrypoints' | 'activation' | 'hostAccess' | 'inputTypes' | 'brand'
@@ -90,8 +90,7 @@ export const definition: Pick<DefinePluginInput<typeof actions>,
   inputTypes: targetOptionInputTypes,
   // Cloudflare's mark beside its name: Simple Icons 13.21.0 (CC0-1.0), brand orange #F38020.
   brand: { iconResourceId: 'brand-icon' },
-  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, 'target-options': { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global',
-    execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }, runtime: targetOptions } },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...targetOptionResources },
   actions,
   deploymentTargets,
   connectedAccountDescriptors: { [CLOUDFLARE_ACCOUNT_ID]: {

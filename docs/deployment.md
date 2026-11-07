@@ -13,6 +13,8 @@ In 0.3 development, Cloudflare Domain preparation and retirement accept the API'
 
 In 0.3 development, the Cloudflare plugin's read-only `cloudflare-named/selections-read` Action lists complete named tunnel selections for a connected Account and selected zone. It derives the Cloudflare Account ID from that connection and supplies its canonical connector image and version pin; callers can explicitly override those defaults. It reuses selected-zone validation without requiring Zone Read, and reports `connector_discovery_unavailable` rather than claiming the connector is running. Native execution verifies that connector; the route owner separately decides hostname-route and DNS ownership.
 
+In 0.3 development, choosing the Cloudflare Workers or Pages target fixes the product for its linking choices. Each target supplies its own inspect fields and choice Resource, reusing the existing preparation handlers and finite provider reader. The sheet asks for that product’s account, project and environment without another Product choice or Cloudflare-specific UI logic.
+
 Cloudflare Pages Direct Upload accepts the provider's `success: true` asset-upload
 and hash-registration acknowledgements without a `result` field. Data-bearing
 responses still require `result`. An explicit provider rejection remains
