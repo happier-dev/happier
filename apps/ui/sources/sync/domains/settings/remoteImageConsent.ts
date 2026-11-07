@@ -19,8 +19,3 @@ export const RemoteImageConsentV1Schema = z.catch(z.pipe(z.array(z.unknown()), z
 export function hasRemoteImageConsent(consent: RemoteImageConsentV1, workspaceCacheKey: string, filePath: string): boolean {
     return consent.some(([workspace, file]) => workspace === workspaceCacheKey && file === filePath);
 }
-
-export function addRemoteImageConsent(consent: RemoteImageConsentV1, workspaceCacheKey: string, filePath: string): RemoteImageConsentV1 {
-    if (!workspaceCacheKey || !filePath || hasRemoteImageConsent(consent, workspaceCacheKey, filePath)) return consent;
-    return [...consent, [workspaceCacheKey, filePath]];
-}

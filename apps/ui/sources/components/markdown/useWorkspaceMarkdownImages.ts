@@ -1,8 +1,8 @@
 import * as React from 'react';
 
-import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { addRemoteImageConsent, hasRemoteImageConsent } from '@/sync/domains/settings/remoteImageConsent';
+import { allowMarkdownRemoteImages, importMarkdownImageConsent, markdownImageConsentState } from '@/sync/domains/state/markdownImageConsentUiState';
+import { usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
 import { resolveWorkspaceFileReference, resolveWorkspaceMarkdownImage } from '@/utils/workspaceFileReferences/resolveWorkspaceFileReference';
@@ -25,16 +25,13 @@ export function useWorkspaceMarkdownImages(input: Readonly<{ scope?: WorkspaceSc
     const identityPath = React.useMemo(() => filePath
         ? resolvePathRelativeToRoot({ path: `${rootPath.replace(/[\\/]+$/, '')}/${filePath}`, root: rootPath })
         : null, [filePath, rootPath]);
-    const remoteLoaded = useLocalSetting('remoteImageConsentV1', consent => Boolean(workspaceCacheKey && identityPath
-        && hasRemoteImageConsent(consent, workspaceCacheKey, identityPath)));
+    const consentKey = React.useMemo(() => workspaceCacheKey && identityPath
+        ? importMarkdownImageConsent(workspaceCacheKey, identityPath, () => getStorage().getState().localSettings.remoteImageConsentV1)
+        : null, [workspaceCacheKey, identityPath]);
+    const remoteLoaded = usePersistentUiStateValue(markdownImageConsentState, consentKey) === true;
     const onLoadRemote = React.useCallback(() => {
-        if (!workspaceCacheKey || !identityPath) return;
-        const state = getStorage().getState();
-        const next = addRemoteImageConsent(state.localSettings.remoteImageConsentV1, workspaceCacheKey, identityPath);
-        if (next !== state.localSettings.remoteImageConsentV1) {
-            state.applyLocalSettings({ remoteImageConsentV1: next.map(([workspace, file]): [string, string] => [workspace, file]) }, { source: 'ui' });
-        }
-    }, [workspaceCacheKey, identityPath]);
+        if (consentKey) allowMarkdownRemoteImages(consentKey);
+    }, [consentKey]);
     const resolve = React.useCallback<MarkdownImageResolver['resolve']>(destination => filePath
         ? resolveWorkspaceMarkdownImage({ destination, workspacePath: rootPath, sourceFilePath: filePath })
         : { kind: 'blocked' }, [filePath, rootPath]);

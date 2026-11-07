@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
@@ -38,6 +38,7 @@ vi.mock(fs.nativeModulePath, () => ({ default: {
 vi.mock('expo-image', () => ({ Image: 'NativeImage' }));
 
 const markdown = '![Screen](./shot.png)\n\n![Second](./second.png)\n\n![Remote](https://remote.test/shot.png)';
+await prepareSessionFilesViewTestkit();
 
 async function waitForImage(screen: Awaited<ReturnType<typeof renderScreen>>, count = 1) {
     try {
@@ -59,7 +60,6 @@ describe('workspace Markdown entry points', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
     let transfer: ReturnType<typeof createSessionFileNativeTransferBoundary>;
     let fixtureId = 0;
-    beforeAll(prepareSessionFilesViewTestkit);
     beforeEach(async () => {
         transfer = createSessionFileNativeTransferBoundary();
         const rpc = (request: FileViewRpcRequest) => request.method === 'daemon.filesystem.readFile'
@@ -123,6 +123,7 @@ describe('workspace Markdown entry points', () => {
         ]));
         expect(screen.findAllByTestId('markdown-remote-images').length).toBeGreaterThan(0);
         expect(fixture.storage.getState().localSettings.remoteImageConsentV1).toEqual([]);
+        expect(screen.findAllByType('NativeImage').some(image => image.props.source.uri === 'https://remote.test/shot.png')).toBe(false);
         await act(async () => { screen.findAllByTestId('markdown-image-open')[0]!.props.onPress(); });
         expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
             chrome: expect.objectContaining({ kind: 'stage' }),
@@ -139,7 +140,7 @@ describe('workspace Markdown entry points', () => {
         await act(async () => { screen.findAllByTestId('markdown-load-remote-images')[0]!.props.onPress(); });
         await vi.waitFor(() => expect(screen.findAllByTestId('markdown-remote-images')).toHaveLength(0));
         expect(screen.findAllByType('NativeImage').some(image => image.props.source.uri === 'https://remote.test/shot.png')).toBe(true);
-        expect(fixture.storage.getState().localSettings.remoteImageConsentV1).toHaveLength(1);
+        expect(fixture.storage.getState().localSettings.remoteImageConsentV1).toEqual([]);
         expect(transfer.prepares).toHaveLength(2);
         await screen.unmount();
     });
@@ -149,7 +150,9 @@ describe('workspace Markdown entry points', () => {
         const { PluginUiPresentationHostProviderInternal } = await import('../../../../../packages/plugin-ui/src/presentationHost/context');
         const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
         const host = createPluginUiPrivatePresentationHost(undefined, { markdownWorkspace: {
-            target: kind === 'session' ? { kind, sessionId: fixture.session.id } : { kind, projectId: 'markdown-checkout' },
+            target: kind === 'session' ? { kind, sessionId: fixture.session.id } : { kind, projectKey: 'markdown-checkout', checkout: {
+                id: 'markdown-checkout', serverId: fixture.scope.serverId, machineId: fixture.scope.machineId, rootPath: fixture.scope.rootPath, createdAtMs: 1,
+            } },
             serverId: fixture.scope.serverId,
         } });
         const screen = await renderScreen(<PluginUiPresentationHostProviderInternal host={host}>
