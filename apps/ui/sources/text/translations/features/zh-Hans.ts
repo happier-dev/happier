@@ -6344,6 +6344,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 setupRowNone: "除 Happier 外未设置任何内容",
                 setupRowDrifted: "应用后已发生变化。请在“设置”中查看。",
                 setupRowChecking: "正在检查…",
+                setupRowUnknown: "配方、预设和工具",
                 description: ({ machine }) => `谁能在 ${machine} 上做什么、待安装的更新，以及是否需要重启。`,
                 updatesTitle: `更新`,
                 updatesDescription: `不想等待可以立即安装。重启始终是单独的一步。`,

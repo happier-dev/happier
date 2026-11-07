@@ -141,7 +141,7 @@ export const addFlowsTranslationsEnglish = { en: {
         moveToHome: ({ home }) => `Move it to ${home}`,
         keepOnOtherHome: 'Keep it where it is',
         sshLeadTask: ({ home }) => `A dev box, VM or cloud machine you can already reach with SSH. This machine connects to it, installs Happier and joins ${home}.`,
-        sshLeadCommand: ({ home }) => `A dev box, VM or cloud machine you can already reach with SSH. A browser can’t open SSH connections, so run the command on a machine that can reach it; it installs Happier and joins ${home}.`,
+        sshLeadCommand: ({ home }) => `A dev box, VM or cloud machine you can already reach with SSH. A browser can’t open that connection itself, so run the command on a machine that can reach it; it installs Happier and joins ${home}.`,
         setUpHost: ({ host }) => `Set up ${host}`,
         sshSavedNote: 'The host is saved to Remote hosts; passwords never are.',
         sshRunningTitle: ({ host }) => `Setting up ${host}`,

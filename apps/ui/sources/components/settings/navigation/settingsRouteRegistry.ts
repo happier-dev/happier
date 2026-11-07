@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Platform } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
 import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -12,6 +13,8 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { LEGACY_PROMPT_STACKS_ROUTE, PROMPTS_CONTEXT_ROUTE } from '@/components/settings/prompts/context/promptsContextNavigation';
 import { MACHINE_RETENTION_CATEGORIES_V1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
+import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
+import { readMachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
 
 type Translate = (key: TranslationKeyNoParams) => string;
 
@@ -97,14 +100,37 @@ function isMountedSettingsRoute(segments: readonly string[]): boolean {
  * route. Organizational segments with no screen of their own (a Team's Home segment, `pools`,
  * `github-apps`, a skill's `files`) are skipped, so back never lands on "Unmatched Route".
  */
-export function resolveSettingsRouteParentPathname(
+type SettingsParentRouteParams = Readonly<{
+    category?: string | string[];
+    source?: string | string[];
+    serverId?: string | string[];
+    topic?: string | string[];
+    fact?: string | string[];
+    edit?: string | string[];
+    path?: string | string[];
+}>;
+
+export function resolveSettingsRouteParentHref(
     pathname: string | null | undefined,
-    params?: Readonly<{ category?: string | string[]; source?: string | string[] }>,
+    params?: SettingsParentRouteParams,
 ): string | null {
     if (typeof pathname !== 'string') return null;
     const normalizedPathname = pathname.trim().replace(/\/+$/, '') || '/';
     if (normalizedPathname === '/settings') return null;
     if (!normalizedPathname.startsWith('/settings/')) return null;
+
+    // A phone opens a fact (or its editor) within the document's query-state pages.
+    // Keep the qualified document and topic when closing it; then close the topic to the index.
+    const memoryDocument = /^\/settings\/prompts\/memory\/([^/]+)$/.exec(normalizedPathname);
+    const first = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] : value;
+    const topic = first(params?.topic);
+    const hasFact = first(params?.fact) || first(params?.edit);
+    if (memoryDocument && (hasFact || topic)) {
+        return memoryDocumentHref({ artifactId: decodeURIComponent(memoryDocument[1]!) }, {
+            serverId: first(params?.serverId),
+            ...(hasFact && topic ? { topic } : {}),
+        });
+    }
 
     // Phone Defaults categories are pushed as query-state pages. Leaving one removes the
     // category first; leaving Defaults itself still returns to the Machines collection.
@@ -113,6 +139,9 @@ export function resolveSettingsRouteParentPathname(
         && (MACHINE_RETENTION_CATEGORIES_V1 as readonly string[]).includes(category ?? '')) {
         return normalizedPathname;
     }
+
+    // A phone pushes the chosen way to add a machine as Add a machine's query state: Back returns to the ways first.
+    if (normalizedPathname === '/settings/machines/add' && readMachineAddRoutePath(params?.path)) return normalizedPathname;
 
     // A phone pushes an open plugin source as the Sources page's query state: Back closes it to the list first.
     if (normalizedPathname === '/settings/plugins/sources' && params?.source !== undefined) return normalizedPathname;
@@ -134,6 +163,14 @@ export function resolveSettingsRouteParentPathname(
         if (isMountedSettingsRoute(ancestor)) return parentPathname;
     }
     return '/settings';
+}
+
+/** Path-only projection for chrome visibility and title lookup; navigation retains query state. */
+export function resolveSettingsRouteParentPathname(
+    pathname: string | null | undefined,
+    params?: SettingsParentRouteParams,
+): string | null {
+    return resolveSettingsRouteParentHref(pathname, params)?.split('?')[0] ?? null;
 }
 
 /**
@@ -164,16 +201,17 @@ export function shouldShowSettingsParentBackButton(params: Readonly<{
 export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: string | null; goToParent: () => void }> {
     const pathname = usePathname();
     const router = useRouter();
-    const params = useLocalSearchParams<{ settingsSearch?: string | string[]; category?: string | string[]; source?: string | string[] }>();
+    const params = useLocalSearchParams<SettingsParentRouteParams & { settingsSearch?: string | string[] }>();
     const searchOrigin = params[SETTINGS_SEARCH_RETURN_QUERY_PARAM];
-    const parentPathname = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentPathname(pathname, params);
+    const parentHref = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentHref(pathname, params);
+    const parentPathname = parentHref?.split('?')[0] ?? null;
     const goToParent = React.useCallback(() => {
-        if (!parentPathname) return;
-        const result = runGuardedNavigation(() => router.dismissTo(parentPathname as never));
+        if (!parentHref) return;
+        const result = runGuardedNavigation(() => router.dismissTo(parentHref as never));
         if (result !== true) {
             fireAndForget(result, { tag });
         }
-    }, [parentPathname, router, tag]);
+    }, [parentHref, router, tag]);
     return { parentPathname, goToParent };
 }
 
@@ -206,10 +244,9 @@ function SettingsParentBackButton({
             ...(parentLabel && parentTitleKey ? { label: parentLabel(parentTitleKey) } : {}),
         });
     }
-    return React.createElement(Pressable, {
+    return React.createElement(HappierPressable, {
         accessibilityLabel,
         accessibilityRole: 'button',
-        hitSlop: 8,
         onPress: goToParent,
         style: {
             alignItems: 'center',

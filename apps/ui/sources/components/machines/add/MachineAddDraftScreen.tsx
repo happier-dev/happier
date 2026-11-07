@@ -17,23 +17,16 @@ import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { MachineAddFormWithFlow } from './MachineAddForm';
-import { machineAddLeadsWithCreate, type MachineAddPathId } from './machineAddPaths';
+import { MachineAddFormWithFlow, machineAddWayTitle, useMachineAddPushesWays } from './MachineAddForm';
+import { machineAddLeadsWithCreate, readMachineAddRoutePath } from './machineAddPaths';
 import { readMachineAddDevice } from './useMachineAddPaths';
 import { useMachineAddFlow, useMachineAddFlowServerId } from './useMachineAddFlow';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
-const PATH_IDS: readonly MachineAddPathId[] = ['thisComputer', 'ssh', 'anotherComputer'];
-
-function readPath(value: string | string[] | undefined): MachineAddPathId | undefined {
-    const first = Array.isArray(value) ? value[0] : value;
-    return PATH_IDS.find((id) => id === first);
-}
-
 /**
  * Settings → Machines → the machine being added (lab `add-flows` M4/M5): the collection's draft, titled
- * "Add a machine" throughout (the typed host names the draft row, never the page), with the same form as Home's "Add a machine" block. A machine that joins
+ * "Add a machine" (the typed host names the draft row, never the page; a phone's pushed way takes that way's name), with the same form as Home's "Add a machine" block. A machine that joins
  * replaces the draft; Discard stops watching (a machine that joins later still shows up in the list).
  */
 export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen() {
@@ -49,11 +42,15 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // `?path=create` (Home's Machines widget, "Create one in the cloud") opens Create one, as its tab would. Without
     // a path, a phone or a browser opens on it too (58d §D2), unless a setup is already running from this draft.
     const pathParam = Array.isArray(params.path) ? params.path[0] : params.path;
+    const routePath = readMachineAddRoutePath(params.path);
+    const initialPath = routePath === 'create' ? undefined : routePath;
+    // A phone's pushed way is titled by it; Back (the settings registry's parent) returns to the ways.
+    const pushedWay = useMachineAddPushesWays() ? routePath : undefined;
     const initialCreating = pathParam === 'create' ? true
         : pathParam || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
         : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
-    const flow = useMachineAddFlow({ serverId, initialPath: readPath(params.path), initialCreating });
+    const flow = useMachineAddFlow({ serverId, initialPath, initialCreating });
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });
@@ -81,8 +78,8 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
         <ItemList keyboardShouldPersistTaps="handled">
             <PageHeader
                 testID="settings.machines.draft.header"
-                title={t('settingsOverview.addMachineTitle')}
-                description={canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
+                title={pushedWay ? machineAddWayTitle(pushedWay) : t('settingsOverview.addMachineTitle')}
+                description={pushedWay ? undefined : canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
                 meta={[{ key: 'home', icon: 'house', text: homeName ? t('addFlows.machineJoinsHome', { home: homeName }) : t('managedMachines.add.joinsThisHome') }]}
                 actions={(
                     <>
@@ -101,9 +98,9 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                         flow={flow}
                         layout="page"
                         testID="settings.machines.draft.form"
-                        initialPath={readPath(params.path)}
+                        initialPath={initialPath}
                         canCreate={canCreate}
-                        openedWay={pathParam === 'create' ? 'create' : readPath(params.path)}
+                        openedWay={routePath}
                         onOpenWay={openWay}
                         onClose={discard}
                         onStartSession={startSession}

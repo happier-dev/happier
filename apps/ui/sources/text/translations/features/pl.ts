@@ -6372,6 +6372,7 @@ const machineDetailPageTranslations = { pl: translated({
                 setupRowNone: "Poza Happier nic nie skonfigurowano",
                 setupRowDrifted: "Zmieniło się od zastosowania. Sprawdź w Konfiguracji.",
                 setupRowChecking: "Sprawdzanie…",
+                setupRowUnknown: "Przepisy, szablony i narzędzia",
                 description: ({ machine }) => `Kto co może na ${machine}, co czeka na aktualizację i czy trzeba go uruchomić ponownie.`,
                 updatesTitle: `Aktualizacje`,
                 updatesDescription: `Zainstaluj teraz, jeśli nie chcesz czekać. Ponowne uruchomienie to zawsze osobny krok.`,

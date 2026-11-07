@@ -6354,6 +6354,7 @@ const machineDetailPageTranslations = { ca: translated({
                 setupRowNone: "Res configurat a part de Happier",
                 setupRowDrifted: "Ha canviat des que es va aplicar. Revisa-ho a Configuració.",
                 setupRowChecking: "Comprovant…",
+                setupRowUnknown: "Receptes, plantilles i eines",
                 description: ({ machine }) => `Qui pot fer què a ${machine}, què hi ha pendent d'actualitzar i si cal reiniciar-lo.`,
                 updatesTitle: `Actualitzacions`,
                 updatesDescription: `Instal·la ara si no vols esperar. Reiniciar és sempre un pas a part.`,

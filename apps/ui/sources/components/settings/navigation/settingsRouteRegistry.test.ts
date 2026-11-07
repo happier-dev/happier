@@ -6,6 +6,7 @@ import {
     getSettingsStackScreenDefinitions,
     listSettingsRouteNames,
     resolveSettingsNestedRouteName,
+    resolveSettingsRouteParentHref,
     resolveSettingsRouteParentPathname,
     resolveSettingsRouteTitleKey,
 } from './settingsRouteRegistry';
@@ -82,7 +83,7 @@ describe('settingsRouteRegistry', () => {
         const rootScreens = new Set(listSettingsRootNavigatorScreens());
         const definitions = getSettingsStackScreenDefinitions(translate as never);
         expect(definitions.map(({ name }) => name).filter((name) => !rootScreens.has(name))).toEqual([]);
-        expect(definitions.find(({ name }) => name === 'prompts')?.options.headerTitle).toBe('settings.prompts');
+        expect(definitions.find(({ name }) => name === 'prompts')?.options.headerTitle).toBe('');
         // The Slot layout still resolves descendant titles and back targets from this same registry.
         expect(resolveSettingsRouteTitleKey('/settings/prompts/assets')).toBe('capabilities.skillsFound.title');
         expect(resolveSettingsRouteTitleKey('/settings/prompts/docs/doc-1')).toBe('promptLibrary.editPrompt');
@@ -132,6 +133,26 @@ describe('settingsRouteRegistry', () => {
             .toBe('/settings/plugins');
     });
 
+    it('returns from a Memory fact or topic to its own document before leaving the page', () => {
+        const pathname = '/settings/prompts/memory/document-1';
+        expect(resolveSettingsRouteParentPathname(pathname, { fact: 'fact-1', serverId: 'home-1' }))
+            .toBe(pathname);
+        expect(resolveSettingsRouteParentPathname(pathname, { topic: 'Workshop', serverId: 'home-1' }))
+            .toBe(pathname);
+        expect(resolveSettingsRouteParentPathname(pathname)).toBe('/settings/prompts');
+        expect(resolveSettingsRouteParentHref(pathname, { fact: 'fact-1', topic: 'Workshop', serverId: 'home-1' }))
+            .toBe(`${pathname}?serverId=home-1&topic=Workshop`);
+        expect(resolveSettingsRouteParentHref(pathname, { topic: 'Workshop', serverId: 'home-1' }))
+            .toBe(`${pathname}?serverId=home-1`);
+        expect(resolveSettingsRouteParentHref(pathname, { edit: 'fact-1', serverId: 'home-1' }))
+            .toBe(`${pathname}?serverId=home-1`);
+        expect(resolveSettingsRouteParentHref('/settings/prompts/memory/doc%2F1', {
+            fact: ['fact-1'], topic: ['Notes & plans'], serverId: ['home:1'],
+        })).toBe('/settings/prompts/memory/doc%2F1?serverId=home%3A1&topic=Notes%20%26%20plans');
+        expect(resolveSettingsRouteParentHref('/settings/prompts/docs/doc-1', { fact: 'fact-1' }))
+            .toBe('/settings/prompts/docs');
+    });
+
     it('returns from a machine-default category to Defaults before leaving the page', () => {
         for (const category of ['local', 'running-only', 'stopped-billed', 'unknown']) {
             expect(resolveSettingsRouteParentPathname('/settings/machines/defaults', { category }))
@@ -143,6 +164,14 @@ describe('settingsRouteRegistry', () => {
             .toBe('/settings/machines');
         expect(resolveSettingsRouteParentPathname('/settings/machines/add', { category: 'local' }))
             .toBe('/settings/machines');
+    });
+
+    it('returns from a phone-pushed way to Add a machine before leaving it', () => {
+        for (const path of ['thisComputer', 'ssh', 'anotherComputer', 'create']) {
+            expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path })).toBe('/settings/machines/add');
+        }
+        expect(resolveSettingsRouteParentPathname('/settings/machines/add')).toBe('/settings/machines');
+        expect(resolveSettingsRouteParentPathname('/settings/machines/add', { path: 'elsewhere' })).toBe('/settings/machines');
     });
 
     it('skips non-route identity collection segments when navigating Home administration', () => {
@@ -234,13 +263,14 @@ describe('settingsRouteRegistry', () => {
 
     it('keeps Provider detail headers and parent navigation in its nested navigator', () => {
         const root = getSettingsStackScreenDefinitions(translate as never);
-        expect(root.find((definition) => definition.name === 'providers')?.options.headerTitle).toBe('settingsProviders.title');
+        // The Providers root is self-headed (`headsItself`): the page owns its title, so the stack header title is empty.
+        expect(root.find((definition) => definition.name === 'providers')?.options.headerTitle).toBe('');
         const providers = getSettingsStackScreenDefinitions(translate as never, { navigator: 'providers' });
         expect(providers.map((definition) => definition.name)).toEqual([
             'index', '[connectionId]', '[connectionId]/models', 'new',
         ]);
         const models = providers.find((definition) => definition.name === '[connectionId]/models');
-        expect(models?.options.headerTitle).toBe('settingsProviders.models.manage');
+        expect(models?.options.headerTitle).toBe('');
         expect(typeof models?.options.headerLeft).toBe('function');
         expect(getSettingsStackScreenDefinitions(translate as never, { navigator: 'providers', isModalPresentation: true })
             .every((definition) => definition.options.headerShown === false)).toBe(true);
@@ -250,7 +280,7 @@ describe('settingsRouteRegistry', () => {
         const agents = getSettingsStackScreenDefinitions(translate as never, { navigator: 'agents' });
         expect(agents.map((definition) => definition.name)).toEqual(['index', '[agentId]', '[agentId]/models', 'custom/index', 'custom/[backendId]']);
         const models = agents.find((definition) => definition.name === '[agentId]/models');
-        expect(models?.options.headerTitle).toBe('settingsAgents.models');
+        expect(models?.options.headerTitle).toBe('');
         expect(typeof models?.options.headerLeft).toBe('function');
     });
 
@@ -259,7 +289,7 @@ describe('settingsRouteRegistry', () => {
             .find((definition) => definition.name === 'plugins/sources');
 
         expect(sourcesRoute).toBeDefined();
-        expect(sourcesRoute?.options.headerTitle).toBe('settingsPlugins.sourceAdministration.title');
+        expect(sourcesRoute?.options.headerTitle).toBe('');
     });
 
     it('keeps the Machines collection, its machine detail, setup and pool editors in one nested navigator', () => {
@@ -268,8 +298,8 @@ describe('settingsRouteRegistry', () => {
             'index', '[id]/index', '[id]/[page]', 'managed/[id]', 'add', 'add/[provisioner]', 'presets/new', 'presets/[presetId]',
             'this-computer', 'defaults', 'pools/[poolId]', 'pools/new',
         ]);
-        expect(machines.find((definition) => definition.name === 'pools/new')?.options.headerTitle).toBe('machinePools.add');
-        expect(machines.find((definition) => definition.name === 'pools/[poolId]')?.options.headerTitle).toBe('machinePools.title');
+        expect(machines.find((definition) => definition.name === 'pools/new')?.options.headerTitle).toBe('');
+        expect(machines.find((definition) => definition.name === 'pools/[poolId]')?.options.headerTitle).toBe('');
         const root = getSettingsStackScreenDefinitions(translate as never).map((definition) => definition.name);
         expect(root).toContain('machines');
         expect(root.filter((name) => name.startsWith('machines/'))).toEqual([]);
@@ -329,7 +359,7 @@ describe('settingsRouteRegistry', () => {
     it('keeps every Team destination in the Teams collection navigator', () => {
         const root = getSettingsStackScreenDefinitions(translate as never);
         const rootNames = root.map((definition) => definition.name);
-        expect(root.find((definition) => definition.name === 'teams')?.options.headerTitle).toBe('teams.title');
+        expect(root.find((definition) => definition.name === 'teams')?.options.headerTitle).toBe('');
         expect(rootNames.some((name) => name.startsWith('teams/'))).toBe(false);
 
         const teams = getSettingsStackScreenDefinitions(translate as never, { navigator: 'teams' });
@@ -357,7 +387,7 @@ describe('settingsRouteRegistry', () => {
             '[serverId]/[teamId]/credentials/[resourceId]/usage',
         ]));
         const members = teams.find((definition) => definition.name === '[serverId]/[teamId]/members/index');
-        expect(members?.options.headerTitle).toBe('teams.tabs.members');
+        expect(members?.options.headerTitle).toBe('');
         expect(typeof members?.options.headerLeft).toBe('function');
     });
 

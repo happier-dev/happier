@@ -140,6 +140,10 @@ describe('Add a machine on a phone', () => {
     await waitForHomeGovernance(() =>
       expect(byId(list, 'form.way.create').length).toBeGreaterThan(0),
     );
+    // Lab and spec order: the connection ways first, Create one last.
+    const wayIds = list.tree.findAll((node) => typeof node.props.testID === 'string' && /^form\.way\.[A-Za-z]+$/.test(node.props.testID))
+      .map((node) => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
+    expect(wayIds.at(-1)).toBe('form.way.create');
     // The list carries no pane under it: nothing is stacked.
     expect(byId(list, 'managed-picker')).toHaveLength(0);
     expect(byId(list, `${PANE}.ssh-sshHostInput`)).toHaveLength(0);
@@ -166,6 +170,8 @@ describe('Add a machine on a phone', () => {
     await waitForHomeGovernance(() =>
       expect(byId(pushed, `${PANE}.facts`).length).toBeGreaterThan(0),
     );
+    const { t } = await import('@/text');
+    expect(pushed.tree.findAll((node) => node.props.accessibilityRole === 'header' && node.props.children === t('addFlows.pathSshTitle'))).toHaveLength(0);
     expect(byId(pushed, 'form.way.create')).toHaveLength(0);
     expect(byId(pushed, 'managed-picker')).toHaveLength(0);
     await pushed.unmount();

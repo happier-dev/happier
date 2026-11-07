@@ -6381,6 +6381,7 @@ const machineDetailPageTranslations = { ru: translated({
                 setupRowNone: "Кроме Happier ничего не настроено",
                 setupRowDrifted: "Изменилось после применения. Проверьте в разделе «Настройка».",
                 setupRowChecking: "Проверка…",
+                setupRowUnknown: "Рецепты, шаблоны и инструменты",
                 description: ({ machine }) => `Кто что может делать на ${machine}, что ждёт обновления и нужен ли перезапуск.`,
                 updatesTitle: `Обновления`,
                 updatesDescription: `Установите сейчас, если не хотите ждать. Перезапуск — всегда отдельный шаг.`,

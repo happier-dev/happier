@@ -6349,6 +6349,7 @@ const machineDetailPageTranslations = { ja: translated({
                 setupRowNone: "Happier 以外は未設定",
                 setupRowDrifted: "適用後に変更されました。セットアップで確認してください。",
                 setupRowChecking: "確認中…",
+                setupRowUnknown: "レシピ、プリセット、ツール",
                 description: ({ machine }) => `${machine} で誰が何をできるか、待機中のアップデート、再起動が必要かどうか。`,
                 updatesTitle: `アップデート`,
                 updatesDescription: `待ちたくない場合は今すぐインストールできます。再起動は常に別のステップです。`,

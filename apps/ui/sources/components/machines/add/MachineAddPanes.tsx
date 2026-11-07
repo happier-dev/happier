@@ -18,11 +18,17 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 
 /** The pane's title and one-paragraph lead (what this way does, in the person's words). */
+const MachineAddPaneTitlesContext = React.createContext(true);
+
+/** Whether a pane names its way: off on a page that is already titled by it (a phone's pushed way). */
+export const MachineAddPaneTitles = MachineAddPaneTitlesContext.Provider;
+
 export function MachineAddPaneHeader(props: Readonly<{ title: string; lead: string; testID?: string }>) {
     const styles = stylesheet;
+    const titled = React.useContext(MachineAddPaneTitlesContext);
     return (
         <View testID={props.testID} style={styles.header}>
-            <Text accessibilityRole="header" style={styles.title}>{props.title}</Text>
+            {titled ? <Text accessibilityRole="header" style={styles.title}>{props.title}</Text> : null}
             <Text style={styles.lead}>{props.lead}</Text>
         </View>
     );

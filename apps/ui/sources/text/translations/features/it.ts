@@ -6354,6 +6354,7 @@ const machineDetailPageTranslations = { it: translated({
                 setupRowNone: "Nulla configurato oltre a Happier",
                 setupRowDrifted: "È cambiato da quando è stato applicato. Controllalo in Configurazione.",
                 setupRowChecking: "Controllo…",
+                setupRowUnknown: "Ricette, preset e strumenti",
                 description: ({ machine }) => `Chi può fare cosa su ${machine}, cosa è in attesa di aggiornamento e se serve un riavvio.`,
                 updatesTitle: `Aggiornamenti`,
                 updatesDescription: `Installa ora se non vuoi aspettare. Il riavvio è sempre un passaggio a parte.`,

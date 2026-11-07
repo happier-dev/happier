@@ -13,6 +13,7 @@ import { describeManagedCreation, isManagedMachineListArchived, managedMachineEn
 import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref } from '@/components/machines/page/machinePageHref';
+import type { MachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
 export { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref, type MachinePageTarget } from '@/components/machines/page/machinePageHref';
 
 export const MACHINES_THIS_COMPUTER_ROUTE = '/settings/machines/this-computer';
@@ -23,7 +24,7 @@ export const MACHINE_PRESETS_ROUTE = `${MACHINES_COLLECTION_ROOT}/presets`;
  * The ways the add-a-machine form offers (`useMachineAddPaths` decides which this device can run), plus
  * `create`: Create one (in the cloud), open from the start.
  */
-export type MachineAddRoutePath = 'thisComputer' | 'ssh' | 'anotherComputer' | 'create';
+export type { MachineAddRoutePath };
 
 /**
  * Add a machine: the Machines collection's draft (lab `add-flows` M4). `path` opens that way first when

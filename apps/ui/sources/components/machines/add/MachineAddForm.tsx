@@ -20,11 +20,12 @@ import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import { machineAddLeadsWithCreate, resolveMachineAddInitialPath, type MachineAddPathId } from './machineAddPaths';
+import { resolveMachineAddInitialPath, type MachineAddPathId, type MachineAddRoutePath } from './machineAddPaths';
 import { readMachineAddDevice } from './useMachineAddPaths';
 import {
     MachineAddFailureNotice,
     MachineAddPaneHeader,
+    MachineAddPaneTitles,
     MachineAddStepList,
     MachineArrivedCard,
     MachineNotSeeingNotice,
@@ -34,7 +35,7 @@ import { useMachineAddFlow } from './useMachineAddFlow';
 import { updateMachineAddFlowDraft, useMachineAddFlowDraftSelector } from './machineAddFlowStore';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { ThisComputerAgentsPane } from '@/components/machines/agents/ThisComputerAgentsPane';
-import { machineCollectionHref, type MachineAddRoutePath } from '@/components/settings/machines/collection/machineCollectionModel';
+import { machineCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
@@ -43,6 +44,21 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 export type MachineAddFormLayout = 'page' | 'panel';
+
+/** A way's short name: the bar's segment, the phone's row and the title of the page a phone pushes for it. */
+export function machineAddWayTitle(way: MachineAddRoutePath): string {
+    switch (way) {
+        case 'thisComputer': return t('addFlows.pathThisComputerTitle');
+        case 'ssh': return t('addFlows.pathSshChip');
+        case 'anotherComputer': return t('addFlows.pathAnotherTitle');
+        case 'create': return t('managedMachines.add.createPath');
+    }
+}
+
+/** At phone width the Add page lists the ways and pushes the chosen one as its own page. */
+export function useMachineAddPushesWays(): boolean {
+    return useDeviceType() === 'phone';
+}
 
 type Flow = ReturnType<typeof useMachineAddFlow>;
 
@@ -122,13 +138,13 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
     })), [flow.paths, theme.colors.text.secondary]);
     const active = flow.path ?? resolveMachineAddInitialPath(flow.paths, props.initialPath);
 
+    // Ways in follow the lab and spec order: the connection paths, then Create one (P-M7). A phone or a
+    // browser still opens on Create one (58d §D2); only its place in the order is fixed.
     const offerCreate = props.layout === 'page' && props.canCreate === true;
-    // A phone or a browser leads with Create one (58d §D2): it is the first way in on the bar.
-    const leadsWithCreate = offerCreate && machineAddLeadsWithCreate(readMachineAddDevice());
     const showCreate = offerCreate && (creating || paths.length === 0 || active === null);
     // A phone lists the ways in and pushes the chosen one full height; nothing stacks under the list.
     const { onOpenWay } = props;
-    const pushes = useDeviceType() === 'phone' && props.layout === 'page' && Boolean(onOpenWay);
+    const pushes = useMachineAddPushesWays() && props.layout === 'page' && Boolean(onOpenWay);
     const { choosePath } = flow;
     const setUpThisComputer = React.useCallback(() => {
         setCreating(false);
@@ -185,13 +201,16 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
         if (opened) {
             return (
                 <View testID={props.testID}>
-                    <MachineAddPane flow={flow} pathId={opened} onPage testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />
+                    {/* The pushed page is titled by its way, so the pane does not title itself again (lab add/sshp). */}
+                    <MachineAddPaneTitles value={false}>
+                        <MachineAddPane flow={flow} pathId={opened} onPage testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />
+                    </MachineAddPaneTitles>
                 </View>
             );
         }
-        const createWay = offerCreate ? [{ id: 'create' as const, title: t('managedMachines.add.createPath'), subtitle: t('managedMachines.add.createPathSubtitle'),
+        const createWay = offerCreate ? [{ id: 'create' as const, subtitle: t('managedMachines.add.createPathSubtitle'),
             glyph: <Icon name="cloud" size={17} color={theme.colors.text.secondary} /> }] : [];
-        const ways = [...(leadsWithCreate ? createWay : []), ...paths, ...(leadsWithCreate ? [] : createWay)];
+        const ways = [...paths, ...createWay];
         return (
             <View testID={props.testID}>
                 <ItemGroup>
@@ -200,7 +219,7 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
                             key={way.id}
                             testID={`${props.testID}.way.${way.id}`}
                             icon={way.glyph}
-                            title={way.title}
+                            title={machineAddWayTitle(way.id)}
                             subtitle={way.subtitle}
                             onPress={() => openWay(way.id)}
                         />
@@ -225,9 +244,8 @@ export function MachineAddFormWithFlow(props: MachineAddFormProps & Readonly<{ f
                 testIDPrefix={`${props.testID}.path`}
                 accessibilityLabel={t('settings.addMachine')}
                 tabs={[
-                    ...(leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
-                    ...paths.map((path) => ({ id: path.id, label: path.chipLabel ?? path.title })),
-                    ...(offerCreate && !leadsWithCreate ? [{ id: 'create' as const, label: t('managedMachines.add.createPath') }] : []),
+                    ...paths.map((path) => ({ id: path.id, label: machineAddWayTitle(path.id) })),
+                    ...(offerCreate ? [{ id: 'create' as const, label: machineAddWayTitle('create') }] : []),
                 ]}
                 activeTabId={showCreate || active === null ? 'create' : active}
                 onSelectTab={(next) => {

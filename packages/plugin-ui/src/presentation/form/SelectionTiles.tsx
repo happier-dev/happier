@@ -520,9 +520,14 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
     setWidth((current) => current === next ? current : next);
   }, []);
   // Every tile takes the same track, so a wrapped last row keeps the width of the rows above it
-  // (a lone tile never stretches across the grid). Before the first measure the tiles share the row.
+  // (a lone tile never stretches across the grid). Before the first measure the grid reserves the
+  // columns a page row fits (up to three, the visual grid's basis trick): a wrapped tile is held to
+  // one column instead of spanning the row, so the first layout does not move it.
   const trackStyle = useMemo((): ViewStyle | null => {
-    if (width <= 0) return null;
+    if (width <= 0) {
+      const columns = Math.max(1, Math.min(props.options.length, ACTION_PREMEASURE_COLUMNS));
+      return { flexBasis: `${100 / (columns + 1)}%`, maxWidth: `${100 / columns}%` };
+    }
     const columns = Math.max(1, Math.min(props.options.length, Math.floor((width + ACTION_GRID_GAP_PX) / (ACTION_TILE_MIN_WIDTH_PX + ACTION_GRID_GAP_PX))));
     return { width: Math.floor((width - ACTION_GRID_GAP_PX * (columns - 1)) / columns), flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
   }, [props.options.length, width]);
@@ -551,7 +556,8 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
                   ? props.renderGlyph({ glyph: { kind: 'icon', name: option.icon }, size: 20, color: props.colors.glyph })
                   : null)}
                 <View style={styles.actionHeadTitle}>
-                  {props.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 1 })}
+                  {/* A provider's name tells it apart ("Crabbox coordinator" beside its kind): it wraps, never truncates. */}
+                  {props.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 2 })}
                 </View>
                 {option.badge
                   ? props.renderText({ role: 'badge', text: option.badge, selected: false, compact: false, numberOfLines: 1 })
@@ -802,6 +808,8 @@ const VISUAL_FILL_PREVIEW_ASPECT_RATIO = 2.2;
 
 const ACTION_TILE_MIN_WIDTH_PX = 180;
 const ACTION_GRID_GAP_PX = 10;
+/** Columns a wide page row fits before its width is known (a phone recomposes these cards as rows). */
+const ACTION_PREMEASURE_COLUMNS = 3;
 
 /**
  * A choice tile's press target. Under a finger its hit area reaches past the drawn tile into the gap around
@@ -812,8 +820,9 @@ function SelectionTilePressable({ hitReach, style, children, ...rest }: Omit<Com
   hitReach: HappierHitReach;
   children: ReactNode;
 }>) {
+  const restingState = { pressed: false, hovered: false };
   const hitArea = useHappierHitArea({
-    restingStyle: () => (typeof style === 'function' ? style({ pressed: false }) : style),
+    restingStyle: () => (typeof style === 'function' ? style(restingState) : style),
     hitReach,
   });
   return (
@@ -947,7 +956,8 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       backgroundColor: colors.tileBackground,
       borderRadius: 12,
       borderWidth: 1,
-      overflow: 'hidden',
+      // Never clipping: a compact tile is shorter than its press target's hit area, which reaches past
+      // the frame into the gap (its preview clips itself).
     },
     // A cell of the sheet it sits on: the sheet owns the ground, the edge and the corners.
     sheetCell: {

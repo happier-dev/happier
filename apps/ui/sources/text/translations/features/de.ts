@@ -6346,6 +6346,7 @@ const machineDetailPageTranslations = { de: translated({
                 setupRowNone: "Außer Happier nichts eingerichtet",
                 setupRowDrifted: "Seit dem Anwenden geändert. Prüfe es unter Einrichtung.",
                 setupRowChecking: "Wird geprüft…",
+                setupRowUnknown: "Rezepte, Vorlagen und Werkzeuge",
                 description: ({ machine }) => `Wer was auf ${machine} darf, was auf ein Update wartet und ob ein Neustart nötig ist.`,
                 updatesTitle: `Updates`,
                 updatesDescription: `Installiere jetzt, wenn du nicht warten willst. Ein Neustart ist immer ein eigener Schritt.`,

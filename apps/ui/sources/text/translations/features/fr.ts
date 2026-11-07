@@ -6352,6 +6352,7 @@ const machineDetailPageTranslations = { fr: translated({
                 setupRowNone: "Rien de configuré en dehors de Happier",
                 setupRowDrifted: "Modifié depuis son application. Vérifiez-le dans Configuration.",
                 setupRowChecking: "Vérification…",
+                setupRowUnknown: "Recettes, préréglages et outils",
                 description: ({ machine }) => `Qui peut faire quoi sur ${machine}, ce qui attend une mise à jour, et s'il faut le redémarrer.`,
                 updatesTitle: `Mises à jour`,
                 updatesDescription: `Installez maintenant si vous ne voulez pas attendre. Le redémarrage est toujours une étape à part.`,

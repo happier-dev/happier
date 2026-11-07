@@ -2,6 +2,15 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { SetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 
 export type MachineAddPathId = 'thisComputer' | 'ssh' | 'anotherComputer';
+export const MACHINE_ADD_PATH_IDS = ['thisComputer', 'ssh', 'anotherComputer'] as const satisfies readonly MachineAddPathId[];
+/** The ways the Add page's `path` opens: the connection paths, then Create one (a phone pushes each as its own page). */
+export const MACHINE_ADD_ROUTE_PATHS = [...MACHINE_ADD_PATH_IDS, 'create'] as const;
+export type MachineAddRoutePath = (typeof MACHINE_ADD_ROUTE_PATHS)[number];
+
+export function readMachineAddRoutePath(value: string | string[] | undefined): MachineAddRoutePath | undefined {
+    const first = Array.isArray(value) ? value[0] : value;
+    return MACHINE_ADD_ROUTE_PATHS.find((path) => path === first);
+}
 /**
  * One way to add a machine. `connectedMachineId`: this computer is already a machine of the Home, so the
  * path answers "is this computer set up?" with the computer itself instead of a setup (lab agent-setup S1).

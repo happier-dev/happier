@@ -27,16 +27,16 @@ describe('Add machine Connect and Create entry', () => {
         await screen.unmount();
     });
 
-    it('opens on Create one in the cloud in a browser, Create first on the bar (58d §D2)', async () => {
+    it('opens on Create one in the cloud in a browser, with Create one last on the bar (58d §D2, P-M7 order)', async () => {
         const target = await harness.addHome({ name: 'Build', serverUrl: 'https://creation-on.example', serverIdentityId: 'srv_creation_on', accountId: 'owner' });
         harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
         const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
         const screen = await renderScreen(<MachineAddDraftScreen />);
         await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-picker').length).toBeGreaterThan(0));
-        // Create one is the first way in, beside the connection paths, not a second tab layer.
+        // Create one is a way in beside the connection paths, not a second tab layer; it ends the bar.
         const segmentIds = screen.tree.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('settings.machines.draft.form.path:'))
             .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
-        expect(segmentIds[0]).toBe('settings.machines.draft.form.path:create');
+        expect(segmentIds.at(-1)).toBe('settings.machines.draft.form.path:create');
         expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.mode:create')).toHaveLength(0);
         const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
         expect(readMachineAddFlowDraft().creating).toBe(true);

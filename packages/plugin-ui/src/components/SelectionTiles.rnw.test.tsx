@@ -7,6 +7,7 @@ import { ItemGroup, SelectionTiles, Text, type SelectionTilesOption } from './in
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { HappierSelectionTiles } from '../presentation/form/SelectionTiles.js';
 import { HappierPageSheet } from '../presentation/layout/PageSection.js';
+import { hitAreaClippingAncestors, readHitAreaReach } from '../presentation/interaction/hitArea.testSupport.js';
 import { HAPPIER_TYPE_SCALE, resolveHappierTypeScale, type HappierTypeRole } from '../presentation/text/typeScale.js';
 
 const ACTION_OPTIONS = [
@@ -139,6 +140,21 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('reserves the measured grid before its first layout, so a lone last tile never spans the row', () => {
+    const options = [...ACTION_OPTIONS, { id: 'lima', title: 'Lima', subtitle: 'A light Linux VM', testID: 'action:lima' }];
+    const mount = mountTiles(<HappierSelectionTiles variant="action" accessibilityLabel="Local" options={options}
+      onPress={() => {}} colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null}
+      renderOptionFooter={({ option }) => <Text>{`${option.id} checking`}</Text>} />);
+    try {
+      // Before any layout event: every tile, the wrapped fourth included, is held to one of three columns.
+      for (const id of ['phone', 'lima']) {
+        const tile = mount.container.querySelector<HTMLElement>(`[data-testid="action:${id}"]`)!;
+        expect(getComputedStyle(tile).maxWidth).toBe(getComputedStyle(mount.container.querySelector<HTMLElement>('[data-testid="action:phone"]')!).maxWidth);
+        expect(getComputedStyle(tile).maxWidth).not.toBe('');
+      }
+    } finally { mount.unmount(); }
+  });
+
   it.each(['standalone', 'grouped', 'footer'] as const)('retains action cards in the %s context', (context) => {
     const tiles = <HappierSelectionTiles variant="action" accessibilityLabel="Devices" options={ACTION_OPTIONS}
       onPress={() => {}} colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null}
@@ -182,6 +198,21 @@ describe('SelectionTiles', () => {
     expect(document.activeElement).toBe(list);
     mount.unmount();
   });
+  it('lets a finger reach a one-line compact tile past its drawn edge (the tile frame never clips it)', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: coarse)' || query === '(hover: none)' }));
+    const mount = mountTiles(<SelectionTiles density="compact" minimumColumns={2} maximumColumns={2} accessibilityLabel="Scope" testID="scope"
+      options={[{ id: 'mine', title: 'Mine' }, { id: 'team', title: 'Team' }]} value="mine" onChange={() => undefined} />);
+    try {
+      const tile = mount.container.querySelector<HTMLElement>('[data-testid="scope:mine"]')!;
+      // Drawn at the field height; the hit area reaches up and down to the finger target.
+      expect(readHitAreaReach(tile)?.top).toBeGreaterThan(0);
+      expect(hitAreaClippingAncestors(tile, mount.container)).toEqual([]);
+    } finally {
+      mount.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('presents author-supplied bare marks, badges and current option footers without losing choice semantics', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<SelectionTiles
