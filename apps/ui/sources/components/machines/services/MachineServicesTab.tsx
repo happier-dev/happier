@@ -203,7 +203,9 @@ function MachineServicesList(
   }, [machineId, router, serverId]);
   const anatomy = React.useMemo<CollectionAnatomy<ServicesListItem>>(
     () => ({
-      glyph: (item) => (
+      // An open Environment's services sit under its row on the title's edge without a mark of their own (lab
+      // `services/exec` list), so they read as its members rather than as siblings.
+      glyph: (item) => item.kind === 'service' && listItemGroup(item) === 'deployed' ? null : (
         <Icon
           name={item.kind === 'environment' ? 'rocket-launch' : machineServiceIcon(item.row)}
           size={ICON_SIZE.md}

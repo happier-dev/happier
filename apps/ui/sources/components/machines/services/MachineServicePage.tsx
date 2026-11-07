@@ -9,6 +9,7 @@ import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPr
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
@@ -298,14 +299,16 @@ function MachineServicePresent(props: Readonly<{
         // and again only when asked; the last figures stay while a new measurement reads.
         <ItemGroup title={t('machineServices.usage.title')} surface="none" testID="machine-service-usage">
           <FactStrip facts={usage} testID="machine-service-usage-facts" />
-          <SurfaceFreshnessLine
-            testID="machine-service-usage-measured"
-            glyph="clock"
-            reason={t('machineServices.usage.measured', {
-              time: formatWithCachedDateTimeFormatter(detail.measuredAt, undefined, MEASURED_FORMAT) })}
-            busy={measuring}
-            action={{ label: t('machineServices.usage.measure'), onPress: measure, testID: 'machine-service-measure' }}
-          />
+          {/* One quiet line under the figures (lab `services/usage`): when they were measured, and Measure again. */}
+          <View style={styles.measured} testID="machine-service-usage-measured">
+            <Icon name="clock" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {measuring ? t('machineServices.usage.measuring') : t('machineServices.usage.measured', {
+                time: formatWithCachedDateTimeFormatter(detail.measuredAt, undefined, MEASURED_FORMAT) })}
+            </Text>
+            <TextLinkButton testID="machine-service-measure" size="meta" tone="strong" disabled={measuring}
+              label={t('machineServices.usage.measure')} onPress={measure} />
+          </View>
         </ItemGroup>
       ) : null}
       <ItemGroup
@@ -473,6 +476,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   facts: {
     marginTop: theme.space.s16,
+  },
+  measured: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.space.s6,
+    marginTop: theme.space.s12,
   },
   since: {
     marginTop: theme.space.s12,
