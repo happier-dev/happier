@@ -12,6 +12,7 @@ import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transi
 import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode';
 import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { readUsageHistoryFailure } from './usageHistoryReadState';
 
 export type SessionInputEvidence = Readonly<{
     session: UsageSessionInput;
@@ -85,7 +86,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
 }> {
     type InputEntry = { sessionId: string; readTranscript: boolean; sourceReferenceKeys: Set<string>;
         basis: Readonly<{ storage: string; admitted?: string }>; needsAdmission: boolean;
-        value?: SessionInputEvidence; failure?: SessionPartsHttpError; read: Promise<SessionInputEvidence | null>;
+        value?: SessionInputEvidence; failure?: unknown; read: Promise<SessionInputEvidence | null>;
         listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence };
     const entries = new Map<string, Map<string, InputEntry>>();
     function* allEntries() { for (const group of entries.values()) yield* group.values(); }
@@ -230,7 +231,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             return value;
         }).catch(error => {
             if (group.get(key) === entry) {
-                if (error instanceof SessionPartsHttpError) {
+                if (error instanceof SessionPartsHttpError || !readUsageHistoryFailure(error).retryable) {
                     // A typed refusal settles this admission, including any
                     // summary published before a private page was refused.
                     entry.failure = error;
@@ -320,7 +321,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         read,
         readSelection,
         retryFailures(sourceReferenceKeys) {
-            for (const group of entries.values()) for (const [key, entry] of group) if (entry.failure
+            for (const group of entries.values()) for (const [key, entry] of group) if (entry.failure && readUsageHistoryFailure(entry.failure).retryable
                 && [...entry.sourceReferenceKeys].some(reference => sourceReferenceKeys.has(reference))) group.delete(key);
         },
         invalidateForHomeChange(event) {

@@ -2,6 +2,35 @@
 
 This document describes the Happier wire protocol as implemented in `apps/server`. The protocol is intentionally small: JSON over HTTP for reads/actions and Socket.IO for real-time sync. Persisted content uses explicit plain or encrypted domain representations; see `encryption.md` for mode, key-ownership, and encoding boundaries. For the full HTTP surface and auth flows, see `api.md`.
 
+## Personal Session and Project colours (0.3 development)
+
+Personal colours use the existing organization display envelope: `{ color }`, with
+either an accent key from `theme/accentColors.ts` or a normalized opaque hex colour.
+The UI domain owner is `sync/domains/session/organization/appearanceColor.ts`;
+Session overrides take precedence over workspace colours. Workspace displays merge
+name and colour without replacing the other field. In 0.3, Project names retain
+their separate Project Action owner; Project-header colours use the header's existing
+`legacyWorkspaceKey` and captured Home, not another Project-name writer.
+
+Session appearances use `PUT /v2/session-organization/appearances/:sessionId`;
+`display: null` clears the override. List snapshots request `includeSessionAppearances`.
+An actual requested snapshot without `sessionAppearances` marks that Home unsupported
+for Session appearance actions, without disabling workspace colours. Display sealing
+uses the captured Home's Account mode and preserves keyless plain Accounts. These are
+development data interfaces; this section makes no claim about rendered colour controls.
+
+For UI consumers, `components/sessions/shell/useSessionListViewState.tsx` exposes
+`setWorkspaceColor(workspaceKey, color, { serverId })` and
+`setSessionAppearance(sessionId, color, { serverId })` through the existing mutation
+error path. `hooks/session/useSessionAppearance.ts` exposes
+`useSessionAppearancesSupported`, `useSessionOwnAppearanceColor`,
+`useEffectiveSessionAppearanceColor`, and `useCustomSessionAppearanceColors`.
+Detailed picker subscriptions can be disabled with `{ enabled: false }`; custom
+colours are distinct values currently in use, not a chronological history.
+The evolved row owner is `sessionListRowViewModels.ts` rather than 0.2's
+`buildSessionListRowModel.ts`; both it and the Project-header model expose
+`appearanceColor` without deciding how to render it.
+
 ## Transport and versioning
 - HTTP API: JSON requests/responses on `/v1` and `/v2` routes.
 - WebSocket: Socket.IO server at path `/v1/updates` (transports: websocket, polling).
@@ -25,9 +54,12 @@ same explicit opt-out rather than inherit buffered compression behavior.
 
 The HTTP request owner retains read cancellation through response consumption,
 including captured Home/Account requests and read-only POST operations. Web reads
-use an inactivity window, reset when nonempty body chunks arrive, rather than a
-total transfer deadline. The default is the server peer-liveness window (15s ping
-interval plus 45s timeout); `EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS`
+use an inactivity window while waiting for headers or a nonempty body chunk,
+rather than a total transfer deadline. The timer stops between transport reads
+and at EOF; opening, projecting and persisting received data remain cancellable
+without counting consumer work as network inactivity. The default is the server
+peer-liveness window (15s ping interval plus 45s timeout);
+`EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS`
 can override it with a positive timer-safe millisecond value. Timeout activation
 is logged without request content or credentials.
 
@@ -110,6 +142,18 @@ without claiming encrypted detail has been decrypted; newer hydrated request
 flags can settle independently of newer metadata. Composer status observes the
 canonical pending flags so transcript-only settlement reaches a mounted composer.
 
+Cache-only socket updates in development source apply envelope timestamp/sequence
+ordering only to unversioned row fields. Independently ordered lifecycle and tuple
+facts reach the same merge owners used by detailed Sessions, even behind a newer
+row timestamp. Runtime Activity uses its revision, turn status its observation,
+and ready state its cursor. List patches and replacement snapshots derive unread
+from the accepted facts and current viewer semantics, including after rejecting
+older metadata. Missing transcript evidence cannot clear previously proven unread
+on its own; accepted read-cursor advances still take effect. The queue retains the envelope timestamp through patch pruning;
+removing an unchanged field must not remove its ordering evidence. Existing
+layout/privacy and document-admission rules remain authoritative. No wire fields
+or timeout-based retirement are added.
+
 The `session.list` Action keeps its default summary response. An explicit
 `view: 'awareness'` request requires a response carrying both `view: 'awareness'`
 and `projectionVersion: 1`; an unmarked response from a host that ignores the option
@@ -120,11 +164,44 @@ the query produces the operation-scoped `session_list_query_update_required` fai
 Filtered lists retain the server's ordinary and attention continuation fields
 separately, and a marked awareness result may carry both paired continuation families.
 
+In 0.3 development, exact Session query admission examines a response-sized
+candidate window per request, reusing the existing attention batch derived from
+the protocol's maximum response limit. Initial ordinary and attention reads each
+use one batch; a continuation can spend both batches on its single cursor family,
+preserving the initial request's total candidate budget. A page can contain fewer than `limit` rows, or
+none, while `hasNext` and `nextCursor` still identify unexamined candidates.
+Only an exhausted cursor proves completion. The cursor advances after the last
+examined candidate; when admitted rows overflow the output limit it advances
+after the last emitted row instead. Ordinary and supplemental attention keep
+their independent cursors. Existing cursor-driven readers remain valid; the
+progressive query controller continues short pages until its visible page fills
+or both cursors end. Opt-in Session list `Server-Timing` includes
+`happier_v2_sessions_candidates`, whose description reports examined candidates
+over their response-derived budget. Access and exact personal admission remain
+server-owned; continuation never admits an otherwise excluded Session.
+
 The development `SessionListQueryV1` accepts optional `folderIds` beside
 `tagIds`. Each selector matches any supplied id in the viewer's own assignments;
 supplying both combines them with AND. Folder selection is exact membership,
 not a descendant walk. An unknown id matches no assignment. Existing access,
 storage, audience, attention and cursor predicates still apply.
+
+UI clients re-read a mounted Session list only for gaps, membership or
+organization changes, unknown kinds, or a selection the row cannot decide. A
+row-level Session write (transcript, Agent state, readiness, read cursor,
+metadata or activity hint) on the focused Home is batch-read through the exact
+row owner, whether or not the row is loaded, and then placed in place. The row's
+`viewer.relevance.relevant`, `viewer.attention.needsAttention` and owner-or-direct
+relevance reasons are the Home's own `my_work`, `needs_my_attention` and ordinary
+corpus decisions (parity: `personal/listMembershipParity.sqlite.integration.spec.ts`).
+Lists that select only scope (`my_work` or `all_accessible`), storage, attention
+and liveness insert, move or remove the row by `meaningfulActivityAt` then id,
+descending. A row older than every loaded row stays with an unread page. Other
+selections keep the facet rule: the change planner names the inputs the hints can
+move (attention always, metadata for metadata versions, liveness for activity
+hints), and a fully read corpus re-reads only if it selects one of them. A row
+without a current viewer projection keeps the conservative re-read. Focused-Home
+Machine rows never re-read a Session list.
 
 In 0.3 development, a focused client ignores a Session-only advisory wake when
 every named Session already applied that exact Account cursor and the wake
@@ -185,15 +262,43 @@ These development contracts do not establish released availability.
 
 ## Session changes (0.3 development source)
 
+Current development servers advertise `capabilities.changes.cursorHeaderVersion: 1`.
+When that exact transport version is known for the requested Home, clients may send
+`GET /v2/changes?limit=...&sessionId=...` with
+`x-happier-changes-after: <nonnegative integer>` instead of the `after` query.
+The URL then stays stable as the cursor advances, allowing browsers to reuse
+their CORS preflight permission. Authorization still requires an initial
+preflight; browsers may expire that permission before the server's max-age.
+The server allows the header through CORS, echoes it in the response and exposes
+the echo to browser Fetch. Header clients reject an absent or mismatched echo
+before consuming a page or a `410` recovery cursor. Responses use
+`Cache-Control: no-store`; preflight permission caching never caches feed data.
+Conflicting header and query cursors return `400 invalid_params`.
+
+Missing, unknown or malformed support keeps the released query shape below;
+clients must not send a header cursor to an older Home. UI requests injected
+without a Home identity also retain query cursors. Protocol's
+`buildChangesReadRequest` is the common URL builder for UI, CLI, SDK and test clients;
+the CLI and SDK retain query cursors. Native HTTP does not preflight, and SDK
+readers do not acquire this Home capability or expose a cursor-header transport binding. This is
+an additive development wire extension with no new route or persisted format.
+This negotiates an equivalent request representation; it never gates change-feed
+availability and creates no feature id or Account preference.
+
 `GET /v2/changes?after=...&sessionId=...` filters the existing Account change
 page to `session` and `share` rows whose `entityId` is that exact Session.
-`nextCursor` is computed from the raw Account page, including when the filtered
-page is empty. Consumers must checkpoint that cursor rather than the last
-visible row. The existing retention/future-cursor and post-read retention checks
+The optional comma-separated `kinds` query selects canonical change kinds at the
+database query, intersecting with the exact Session selection when both are
+present. Empty or unknown kinds return `400 invalid_params`. Selected queries
+read only cursors above `after` and through the captured Account cursor. A full
+page advances to its last selected row; a short or empty page advances through
+that captured cursor, skipping unrelated activity. Consumers checkpoint
+`nextCursor` rather than the last visible row. Omitted selectors retain the
+ordinary Account feed. The existing retention/future-cursor and post-read retention checks
 still return `410 cursor-gone`, requiring a snapshot rebuild.
 
 `sessionAccessSessionId` remains the separate exact-access probe. Supplying it
-together with `sessionId` returns `400 invalid_params`; filtering does not create
+together with `sessionId` or `kinds` returns `400 invalid_params`; filtering does not create
 a second access or token-admission owner.
 
 ## WebSocket connection
@@ -270,6 +375,26 @@ Field names below match on-wire payloads.
   - `body`: `{ t: "update-session", id, metadata?, agentState? }`
   - `metadata`: `{ value, version }` or null
   - `agentState`: `{ value, version }` or null
+  - In 0.3 development, a layout-1 owner tuple write publishes only the parts it changed. `metadata` (shared,
+    which carries the tuple revision) is always present. `ownerMetadata` and `agentState` are present only when
+    this commit changed their stored bytes; an omitted part kept its version, so a reader that holds the
+    previous revision already has it, and a reader with a sequence gap recovers through its ordinary cursor
+    read. Writers re-send the exact retained owner envelope when no owner fact changed, and an Agent-state
+    write leaves the owner envelope out (≈18 KB of a ≈21 KB approval frame before this rule). Agent
+    transitions and Account-encryption migrations still publish the whole tuple. The UI owner reader
+    carries its retained owner read forward when a frame omits the envelope at exactly the next shared
+    revision (re-projected with the frame's shared metadata, so the owner view and shared revision
+    advance together). A revision gap, a present envelope or an unreadable input keeps the targeted
+    exact-Home owner re-read.
+  - In 0.3 development, a non-consuming UI socket admitted as the Session owner receives changed metadata as
+    `metadataDocument: "omitted"` with `metadataLayoutVersion` and `metadataVersion`.
+    This arm rejects both `metadata` and `ownerMetadata` documents. Status scalars
+    and the full `agentState` document retain their existing shape. Recipient sockets
+    keep full metadata because shared completion and Action-confirmation facts live there.
+    Newer observations refresh visible rows through the targeted display/read-batch owner,
+    and opened consumers through an exact-Home document read. Offscreen rows defer reads
+    until shown; metadata hints alone never trigger a whole-list reload. Structural or
+    unknown membership changes retain the list reconciliation path.
 
 - `delete-session`
   - `body`: `{ t: "delete-session", sid }`
@@ -307,6 +432,16 @@ Field names below match on-wire payloads.
 
 ### Session content consumption (0.3 development)
 
+Transcript reads with `projection=turns` or `projection=externalShareableV1`
+prepare predecessor turn-anchor scalars on demand. The server admits transcript
+access once, converts only that Session's version-zero rows in bounded,
+independently committed pages, then captures the transcript and publication
+facts in a read snapshot. Denied reads do not convert rows. Current writers
+publish anchors and their scalar projection together; repeated reads query only
+the remaining predecessor range. Server startup does no turn inventory scan,
+and interrupted conversion resumes on the next projected read. Existing
+per-row consistency checks still withhold inconsistent external snapshots.
+
 UI sockets with purpose `sync` or `concurrent-server-cache` replace their own current
 content demand through `session-consumption-replace`:
 `{ v: 1, liveSessionIds: string[], durableSessionIds: string[] }`. The response is
@@ -325,6 +460,31 @@ an active attempt. A refused or partial declaration logs a warning on either
 Home transport without changing connected status; demand changes and reconnects
 remain the re-declaration triggers.
 `ui-focus` and human-presence declarations retain their separate meanings.
+
+A live event is admitted once, not per event. A publisher socket reads its Session
+audience on its first event and holds it. A socket that declares no demand is decided
+on its first live event and holds that answer; a declaring UI socket holds its admitted
+demand. The committed Session access-change push, published across API nodes, retires
+all three: the next event rereads, and a credential that lost access stops receiving
+at that event. Grants, Team and Group changes, Account status, Session delete and the
+hosted boundary of transcript publication all reach this push. A UI consumer whose
+re-admission cannot read storage is disconnected, so reconnect re-admits it.
+
+The push is at-most-once across API nodes, so two other boundaries cover what it can
+miss. A publisher rereads its audience at each new segment (tick 1, or every
+checkpoint from a publisher that sends no tick), so a lost push costs at most the rest
+of that segment. Withdrawals that change only a credential's qualification, such as
+identity eligibility loss, identity unlink or a Home method policy change, publish no
+push: the next durable delivery that refuses a socket also withdraws that socket's
+demand and held answer for the Session.
+
+The same classifier selects `update-session` metadata delivery. Either consumption
+set admits full metadata; other UI sockets receive its layout/revision observation.
+Agent state remains fully delivered so request and control consumers keep their
+existing input. Observing a metadata revision does not open the document or advance
+its opened revision. It refreshes the compact list/display projection, while fresh
+full metadata is acquired through the existing exact-Home snapshot reader when
+live consumption is admitted, including for a retained Session carrier.
 
 After existing recipient/publication admission, each receiving API node uses the
 shared Protocol delivery classifier with its local socket's demand. Live consumers
@@ -403,6 +563,12 @@ section does not certify loaded-runtime or deployment validation.
 - `machine-update-state`
   - `{ machineId, daemonState, expectedVersion }`
   - Response: `{ result: "success", version, daemonState }` or `{ result: "version-mismatch", version, daemonState }`
+  - In 0.3 development source, an admitted request at the current version with
+    byte-identical stored state succeeds at that same version, without a content
+    write, Account change or liveness update. The daemon suppresses equal opened
+    projections before encoding; the server cannot compare the plaintext of
+    separately encrypted ciphertext. Changed state retains the version CAS and
+    publishes to the current Machine audience after commit.
 
 - `artifact-read`
   - `{ artifactId }`
@@ -433,13 +599,23 @@ section does not certify loaded-runtime or deployment validation.
     Machine availability, and internal failures remain retryable.
   - The CLI suppresses registration replay after an explicitly non-retryable,
     correlated rejection within the current relay connection. Each new connection
-    clears that suppression and submits the handler for fresh admission; explicit
-    handler replacement also clears it. Missing correlation or retry classification
-    retains ordinary retry behavior. Rejection logs contain only known method
-    names and bounded error labels, not arbitrary server response fields.
+    clears that suppression and submits each current method for receiver
+    registration. Replacing a local handler for an existing method preserves its
+    acknowledgement or rejection and emits no registration. Adding a method,
+    including removing and re-adding one, submits a new registration. Missing
+    correlation or retry classification retains ordinary retry behavior. Rejection
+    logs contain only known method names and bounded error labels, not arbitrary
+    server response fields.
 
 - `rpc-unregister`
   - `{ method }` -> server emits `rpc-unregistered`
+  - In 0.3 development source, Machine-room copies of registration events
+    describe effective UI handler availability. Duplicate registrations keep
+    their source-socket ACK without another Machine-room broadcast. A new UI
+    owner broadcasts availability only when the prior method room is proven
+    empty; withdrawal broadcasts loss only when no owner remains. A failed
+    census proves neither presence nor absence. Reconnecting Machine sockets
+    receive direct positive hydration without rebroadcasting to the Machine room.
 
 - `rpc-call`
   - `{ method, params }` -> callback `{ ok, result? | error? }`
@@ -513,6 +689,42 @@ Project-group intent uses its existing `workspaceKey` and merges only color,
 preserving its label and other display fields. Both need a connected signed-in
 client; they retain the existing display-envelope encryption and HTTP contracts.
 
+## Session organization appearances (0.3 development)
+
+The account-scoped organization owner stores per-session appearance separately
+from workspace/group labels. `PUT /v2/session-organization/appearances/:sessionId`
+accepts `{ display }`, returns `{ appearance: { sessionId, display, updatedAt } }`,
+and accepts `display: null` to delete the override idempotently. The display is an
+opaque organization content envelope matching the current Account encryption mode.
+Malformed bodies use the existing Fastify 400 `invalid-params` path; handler-level
+validation uses `invalid-session-appearance`. Inaccessible sessions return 404
+`Session not found`, and creating beyond 1,000 visible, unarchived appearances returns 409
+`session-appearance-limit-exceeded`. Existing rows remain updateable and clearable
+at that bound; archived sessions remain clearable through the existing access rule.
+Retained appearances for archived or inaccessible sessions do not consume quota.
+
+`GET /v2/session-organization?includeSessionAppearances=true` returns the optional
+`sessionAppearances` collection. Omission means it was not requested or the server
+does not support it. Reads use the existing authenticated visibility and current
+admission owners, including revalidation before disclosure. Unreadable or
+mode-mismatched appearance content follows the existing display projection:
+`display: null` with `displayState: { status: 'unavailable', reason }`. Readable
+entries retain the 0.2 shape; the existing current-content compatibility admission
+protects older strict readers from the unavailable projection.
+
+Mutations use the existing Account aggregate admission, checkpoint and change-feed
+owner with scope `sessionAppearances`. Repeating identical bytes or clearing a
+missing row publishes no change. Account/session foreign keys cascade deletion
+across PostgreSQL, SQLite and MySQL. The Account encryption-transition inventory,
+conversion, completeness check and replay matcher include appearances; clients
+must carry the optional `sessionAppearances` directive when rows exist.
+Appearance conversion includes every retained row, including archived Sessions;
+the existing aggregate Account conversion request-byte limit applies, not the
+1,000-visible-appearance write quota.
+
+Protocol exports retain their 0.2 names under `sessions/organization/appearances`.
+This describes unreleased 0.3 source; UI authoring and presentation belong to the
+separate UI port.
 
 ## Sequencing and concurrency
 - `UpdatePayload.seq` is the per-user update sequence (monotonic) used for sync ordering.
@@ -720,6 +932,22 @@ other private fields under `work`.
 Stored owner/shared reads recursively discard unknown extensions and validate known
 fields through the canonical stored-read projection. Creation, Actions and writes
 still use strict admission schemas. No separate Bot entity or runtime is introduced.
+
+The existing `projectSessionSummaryV1` owner includes the admitted marker and face
+in `session.list` and status summaries; unavailable metadata supplies neither.
+The face fields carry no completion result, Habit label or provenance. Face
+edits update the shared metadata tuple through the registered `display.botFace`
+field; they preserve the marker, creation facts, memory and execution state.
+Custom outline admission and centring use one shared face-authoring schema at
+face Action, template authoring/release and birth boundaries. A face Action may
+also request `shape: { generate: 'surprise', seed: <integer> }`; its shared Protocol
+generator resolves that request to a concrete outline before the metadata writer.
+Stored metadata and template readers carry the
+admitted outline without repeating geometry validation. The complete face Action
+input reuses the existing public Action request-byte bound; the metadata tuple
+continues to use the API server's complete HTTP request-body bound.
+Demotion retains the face for a later promotion. See [Actions](actions.md#session-bot-marker-development)
+for the mutation and Account-default contracts.
 
 In that development source, transcript visibility resolves an explicit Session
 `showToolCalls` choice first, then the Bot-hidden default, then the Account

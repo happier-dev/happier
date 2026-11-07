@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AbortController as NativeAbortController } from 'abort-controller';
+import { NativeAbortController, NativeResponse } from '@/dev/testkit/fixtures/reactNativeFetchPrimitives';
 import { createDeferred } from '@/dev/testkit';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -7,6 +7,12 @@ import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transi
 import { abortServerFetches, createServerFetchAtEndpoint, serverFetch } from './client';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { kvBulkGet } from '@/sync/api/account/apiKv';
+import { decodeBoundedJsonResponse } from '@/sync/api/capabilities/decodeBoundedJsonResponse';
+import { SERVER_PEER_LIVENESS_WINDOW_MS } from '@/sync/runtime/connectivity/serverReachabilityTuning';
+
+// React Native installs this non-streaming Response implementation. Expo's
+// transport supplies a separate streaming response, represented by Node below.
+const StreamingResponse = Response;
 
 const platform = vi.hoisted(() => ({ OS: 'web' }));
 vi.mock('react-native', async () => {
@@ -24,6 +30,109 @@ afterEach(() => {
 });
 
 describe('captured Home recovery read lifetime', () => {
+    it.each(['folding', 'delivered'] as const)('retains a fully sent large Usage response while %s without mistaking consumer work for network inactivity', async phase => {
+        vi.useFakeTimers();
+        // QA-R123-REPLAY: 33,561,217 decoded bytes. The HTTP owner
+        // transports opaque bytes; Usage opens and persists them in its consumer.
+        const bytes = new Uint8Array(33_561_217).fill(32);
+        const entered = createDeferred<void>();
+        const folded = createDeferred<void>();
+        let signal: AbortSignal | null | undefined;
+        setRuntimeFetch(async (url, init) => {
+            if (new URL(String(url)).pathname === '/v1/features') return Response.json({ ready: true });
+            signal = init?.signal;
+            return new StreamingResponse(new ReadableStream<Uint8Array>({
+                start(controller) {
+                    const rowBytes = Math.ceil(bytes.byteLength / 33);
+                    for (let offset = 0; offset < bytes.byteLength; offset += rowBytes) {
+                        controller.enqueue(bytes.subarray(offset, offset + rowBytes));
+                    }
+                    controller.close();
+                },
+            }), { headers: { 'content-type': 'application/x-ndjson' } });
+        });
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://usage-fold.example.test', credentials: null });
+        const pending = request('/v2/usage/session-evidence', { method: 'POST' }, { retry: 'none', recoveryRead: 'unbounded' }, async response => {
+            const reader = response.body!.getReader();
+            let received = 0;
+            try {
+                while (true) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    received += chunk.value.byteLength;
+                    if (phase === 'folding' && received === chunk.value.byteLength) {
+                        entered.resolve();
+                        await folded.promise;
+                    }
+                }
+                if (phase === 'delivered') { entered.resolve(); await folded.promise; }
+                return received;
+            } finally { reader.releaseLock(); }
+        }).then(value => ({ value }), (error: unknown) => ({ error }));
+        try {
+            await entered.promise;
+            // A later independent read is not a replacement for this admitted POST.
+            await expect(request('/v1/features', undefined, { retry: 'none' }, response => response.json()))
+                .resolves.toEqual({ ready: true });
+            await vi.advanceTimersByTimeAsync(SERVER_PEER_LIVENESS_WINDOW_MS + 1);
+            expect(signal?.aborted, 'local folding is not a stalled network read').toBe(false);
+            folded.resolve();
+            await expect(pending).resolves.toEqual({ value: bytes.byteLength });
+            expect(vi.getTimerCount()).toBe(0);
+        } finally { folded.resolve(); await pending; }
+    });
+
+    it.each(['decoder', 'borrower'] as const)('preserves native response bytes for a %s when the global Response cannot accept streams', async consumer => {
+        platform.OS = 'ios';
+        vi.stubGlobal('Response', NativeResponse);
+        const payload = { message: 'Hello 🌍 — café', enabled: true };
+        const encoded = new TextEncoder().encode(JSON.stringify(payload));
+        const entered = createDeferred<void>();
+        let finish!: () => void;
+        setRuntimeFetch(async () => new StreamingResponse(new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(encoded.subarray(0, 10));
+                finish = () => { controller.enqueue(encoded.subarray(10)); controller.close(); };
+                if (consumer === 'decoder') finish();
+                entered.resolve();
+            },
+        }), { headers: { 'content-type': 'application/json' } }));
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://native-response.example.test', credentials: null });
+        if (consumer === 'decoder') {
+            await expect(request('/v1/features', undefined, { retry: 'none' }, response => decodeBoundedJsonResponse(response, encoded.byteLength)))
+                .resolves.toEqual(payload);
+        } else {
+            let settled = false;
+            const pending = request('/v1/features', undefined, { retry: 'none' }).finally(() => { settled = true; });
+            await entered.promise;
+            await Promise.resolve();
+            expect(settled).toBe(false);
+            finish();
+            const response = await pending;
+            expect(response.bodyUsed).toBe(false);
+            const clone = response.clone();
+            await expect(response.json()).resolves.toEqual(payload);
+            expect(response.bodyUsed).toBe(true);
+            expect(() => response.clone()).toThrow(TypeError);
+            await expect(decodeBoundedJsonResponse(clone, encoded.byteLength)).resolves.toEqual(payload);
+        }
+    });
+
+    it('cancels an oversized native metadata body before waiting for the remaining bytes', async () => {
+        platform.OS = 'ios';
+        vi.stubGlobal('Response', NativeResponse);
+        const cancelled = createDeferred<void>();
+        const encoded = new TextEncoder().encode('{"value":"oversized"}');
+        setRuntimeFetch(async () => new StreamingResponse(new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(encoded); },
+            cancel() { cancelled.resolve(); },
+        })));
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://native-bounded.example.test', credentials: null });
+        await expect(request('/v1/features', undefined, { retry: 'none' }, response => decodeBoundedJsonResponse(response, encoded.byteLength - 1)))
+            .resolves.toBeNull();
+        await cancelled.promise;
+    });
+
     it('replaces a superseded InvalidateSync read immediately without backoff or consuming its failure budget', async () => {
         vi.useFakeTimers();
         const entered = createDeferred<void>();
@@ -58,17 +167,18 @@ describe('captured Home recovery read lifetime', () => {
         } finally { release?.(); sync.stop(); await pending.catch(() => {}); }
     });
 
-    it.each(['headers', 'body'] as const)('releases the real KV POST read during manual Retry at %s without a retry delay', async phase => {
+    it.each(['headers', 'body'] as const)('replaces the real KV POST read during manual Retry at %s without a retry delay', async phase => {
         await upsertAndActivateServer({ serverUrl: `https://kv-${phase}.example.test` });
         platform.OS = 'android';
         vi.stubGlobal('AbortController', NativeAbortController);
         vi.useFakeTimers();
         const entered = createDeferred<void>();
-        let heldSignal: AbortSignal | null | undefined;
+        const signals: Array<AbortSignal | null | undefined> = [];
         let release: (() => void) | undefined;
         setRuntimeFetch(async (url, init) => {
             if (new URL(String(url)).pathname !== '/v1/kv/bulk') return Response.json({ ok: true });
-            heldSignal = init?.signal;
+            signals.push(init?.signal);
+            if (signals.length > 1) return Response.json({ values: [] });
             entered.resolve();
             if (phase === 'headers') return await new Promise<Response>((resolve, reject) => {
                 release = () => resolve(Response.json({ values: [] }));
@@ -82,14 +192,14 @@ describe('captured Home recovery read lifetime', () => {
         });
         let settled = false;
         const pending = kvBulkGet({ token: 'kv-synthetic-token' }, ['todo.retry'])
-            .then(() => null, (error: unknown) => error).finally(() => { settled = true; });
+            .finally(() => { settled = true; });
         try {
             await entered.promise;
             abortServerFetches('manual-retry', { readOnly: true });
             await vi.advanceTimersByTimeAsync(0);
-            expect(heldSignal?.aborted).toBe(true);
+            expect(signals.map(signal => signal?.aborted)).toEqual([true, false]);
             expect(settled).toBe(true);
-            expect(await pending).toMatchObject({ name: 'ServerFetchReadSupersededError' });
+            expect(await pending).toEqual({ values: [] });
             expect(vi.getTimerCount()).toBe(0);
         } finally { release?.(); await pending; }
     });
@@ -151,11 +261,13 @@ describe('captured Home recovery read lifetime', () => {
         } finally { transfer.resolve(Response.json({ ok: true })); await pending; }
     });
 
-    it('allows a progressing web body to exceed the inactivity window', async () => {
+    it.each(['web', 'ios'])('allows a progressing %s body to exceed the inactivity window', async os => {
+        platform.OS = os;
+        if (os === 'ios') vi.stubGlobal('Response', NativeResponse);
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS', '50');
         vi.useFakeTimers();
         let body!: ReadableStreamDefaultController<Uint8Array>;
-        setRuntimeFetch(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } })));
+        setRuntimeFetch(async () => new StreamingResponse(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } })));
         const request = createServerFetchAtEndpoint({ endpointUrl: 'https://progress.example.test', credentials: null });
         const pending = request('/read', undefined, { retry: 'none' }, response => response.json());
         await vi.advanceTimersByTimeAsync(0);

@@ -7473,6 +7473,101 @@ describe('Usage compact fact publication', () => {
 
 
 describe('Usage projected batch settlement', () => {
+  it.each(['detail-forbidden', 'transcript-forbidden', 'unavailable-detail', 'transient-detail'] as const)(
+    'settles per-Session history coverage with its typed reason and retries only transient failure (%s)', async failure => {
+      const nowMs = Date.UTC(2026, 10, 6);
+      vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+      const id = 'classified-history-session';
+      let fail = true;
+      let transcriptReads = 0;
+      let detailReads = 0;
+      const captured = await context(request => {
+        if (request.path === '/v2/usage/query') return Response.json(value);
+        if (request.method === 'PUT' && request.path === `/v2/sessions/${id}/system-records`) return successfulUsageFactWrite(request.body);
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+        if (demand.query.includeTranscriptEvidence) transcriptReads++; else detailReads++;
+        const detail: UsageSessionEvidenceResponse['results'][number]['detail'] = fail && failure === 'detail-forbidden'
+          ? { status: 403, body: { error: 'forbidden' } }
+          : fail && failure === 'transient-detail' ? { status: 503, body: { error: 'unavailable' } }
+            : { status: 200, body: { session: { ...createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
+                createdAt: nowMs - 1000, updatedAt: nowMs - 100 }),
+              ...(fail && failure === 'unavailable-detail' ? { metadata: JSON.stringify([]) } : {}) } } };
+        return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id, detail,
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [] } },
+          ...(demand.query.includeTranscriptEvidence ? fail && failure === 'transcript-forbidden'
+            ? { messages: { status: 403, body: { error: 'forbidden' } } }
+            : { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+        }] } satisfies UsageSessionEvidenceResponse);
+      });
+      const query = normalizeUsageQuery({ period: { relative: '7days' }, includeWorkEvidence: false, includeComparison: false });
+      const { getUiUsageHistoryState } = await import('./usageQueryResource');
+      const { describeUsageHistoryRead } = await import('@/components/settings/usage/widgets/usageBodyKit');
+      const read = () => readUiUsageQueryBatch(captured, { queries: [query] });
+      await read();
+      const lasting = failure !== 'transient-detail';
+      const state = getUiUsageHistoryState(captured, query);
+      expect.soft(state).toMatchObject({ status: 'partial', errorCode: failure === 'unavailable-detail' ? 'metadata_unavailable'
+        : lasting ? 'forbidden' : 'http_error', progress: { ...(lasting ? { selected: 1 } : {}), failed: lasting ? 0 : 1, notRead: 0 } });
+      expect.soft(describeUsageHistoryRead(state)?.failed ?? false).toBe(!lasting);
+      const before = { detailReads, transcriptReads };
+      await read();
+      if (lasting) expect.soft({ detailReads, transcriptReads }, 'settled refusal does not reread unchanged Session input').toEqual(before);
+      fail = false;
+      publishHomeAccountChangeWake(captured.accountLifetime.scope.serverId,
+        { t: 'account-change', changeKinds: ['session'], entityIds: [id] }, 'socket');
+      await read();
+      expect(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'complete', progress: { failed: 0, notRead: 0 } });
+      expect(transcriptReads).toBeGreaterThan(before.transcriptReads);
+    });
+
+  it('keeps a failed history selection partial without inventing failed Sessions', async () => {
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) return Response.json({ error: 'unavailable' }, { status: 503 });
+      return undefined;
+    });
+    const query = normalizeUsageQuery({ period: { relative: '90days' }, includeWorkEvidence: false, includeComparison: false });
+    const { readUiUsageHistory } = await import('./usageQueryResource');
+    expect(await readUiUsageHistory(captured, { query })).toMatchObject({ status: 'partial',
+      errorCode: 'usage_session_evidence_read_failed', progress: { failed: 0 } });
+  });
+
+  it('counts one failed Session across two failed reads and removes it after a successful read', async () => {
+    const nowMs = Date.UTC(2026, 10, 6);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    const id = 'retry-distinct-session';
+    let failWrite = true;
+    let writeAttempts = 0;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.method === 'PUT' && request.path === `/v2/sessions/${id}/system-records`) {
+        writeAttempts++;
+        return failWrite ? Response.json({ error: 'storage_unavailable' }, { status: 503 })
+          : successfulUsageFactWrite(request.body);
+      }
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const demand = UsageSessionEvidenceRequestSchema.parse(request.body).requests[0]!;
+      return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1, active: false,
+          createdAt: nowMs - 1000, updatedAt: nowMs - 100 }) } },
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: [] } },
+        ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}),
+      }] } satisfies UsageSessionEvidenceResponse);
+    });
+    const query = normalizeUsageQuery({ period: { relative: '7days' }, includeWorkEvidence: false, includeComparison: false });
+    const { getUiUsageHistoryState } = await import('./usageQueryResource');
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await readUiUsageQueryBatch(captured, { queries: [query] });
+      expect(writeAttempts).toBe(attempt);
+      expect.soft(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'partial', progress: { failed: 1 } });
+    }
+    failWrite = false;
+    await readUiUsageQueryBatch(captured, { queries: [query] });
+    expect(writeAttempts).toBe(3);
+    expect(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'complete', progress: { failed: 0 } });
+  });
+
   it.each(['90days', '7days'] as const)('publishes %s conversion progress before a held sibling and keeps automatic failures non-actionable', async relative => {
     const nowMs = Date.UTC(2026, 10, 6);
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
@@ -7512,8 +7607,9 @@ describe('Usage projected batch settlement', () => {
         status: 'reading', progress: { completed: 1, notRead: 1 } });
       else expect(getUiUsageHistoryState(captured, query).progress.notRead).toBe(0);
     } finally { release.resolve(); await pending; }
+    // Preserve the transport's typed cause rather than the former generic read failure.
     expect(getUiUsageHistoryState(captured, query)).toMatchObject({ status: 'partial',
-      errorCode: 'usage_session_evidence_read_failed', progress: { completed: relative === '90days' ? 1 : 0,
+      errorCode: 'network_error', progress: { completed: relative === '90days' ? 1 : 0,
         notRead: relative === '90days' ? 1 : 0, failed: 1 } });
   });
 

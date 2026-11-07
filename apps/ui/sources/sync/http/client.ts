@@ -9,6 +9,7 @@ import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { classifyEndpointResponse } from '@/sync/runtime/connectivity/classifyEndpointResponse';
 import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
 import {
@@ -30,6 +31,7 @@ import { getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime'
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { normalizeRequestBodyHeaders } from './requestBodyHeaders';
 import { bindAccountEncryptionObservation, captureAccountEncryptionObservationForHome, matchesAccountEncryptionObservationCredentials, type AccountEncryptionObservationBinding } from './accountEncryptionObservationBinding';
+import { bufferReadLifetimeResponse, createReadLifetimeResponse } from './readLifetimeResponse';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -219,6 +221,8 @@ export class ServerFetchReadTimeoutError extends Error {
 }
 
 export class ServerFetchReadSupersededError extends Error {
+    // Action adapters preserve this existing cancellation code instead of presenting a failed read.
+    readonly code = 'cancelled';
     readonly retryable = false;
     constructor() {
         super('Server recovery read superseded by manual retry');
@@ -239,6 +243,17 @@ export async function withServerReadLifetime<T = Response>(
     const cancellation: InFlightFetch = { active: options.active === true, readOnly: true };
     inFlightControllers.set(controller, cancellation);
     const upstream = init?.signal;
+    const startedAt = Date.now();
+    let receivedBytes = 0;
+    let reachedEof = false;
+    const reportReadTermination = (source: string, reason?: unknown) => {
+        // Counts and control flow only: never retain request bodies, URLs or
+        // arbitrary error messages from private response consumers.
+        log.log(`[serverFetch] read termination ${JSON.stringify({ source, startedAt, receivedBytes, reachedEof,
+            elapsedMs: Date.now() - startedAt, upstreamAborted: upstream?.aborted === true,
+            reasonName: reason instanceof Error ? reason.name : typeof reason,
+            caller: new Error().stack?.split('\n').slice(2).join('\n') })}`);
+    };
     const abortFromUpstream = () => {
         cancellation.reason = upstream?.reason;
         controller.abort(upstream?.reason);
@@ -261,6 +276,10 @@ export async function withServerReadLifetime<T = Response>(
     const cancelled = new Promise<never>((_resolve, reject) => {
         controller.signal.addEventListener('abort', () => {
             const reason = cancellation.reason ?? controller.signal.reason;
+            reportReadTermination(upstream?.aborted ? 'upstream-abort'
+                : reason instanceof ServerFetchReadTimeoutError ? 'inactivity-abort'
+                : reason === 'manual-retry' ? 'manual-retry-abort'
+                : reason === 'server-switch' ? 'server-switch-abort' : 'owner-abort', reason);
             const error = reason instanceof ServerFetchReadTimeoutError ? reason
                 : reason === 'manual-retry' ? new ServerFetchReadSupersededError()
                 : reason === 'server-switch' ? new ServerFetchAbortedForServerSwitchError()
@@ -277,36 +296,41 @@ export async function withServerReadLifetime<T = Response>(
         if (controller.signal.aborted) return await cancelled;
         return await Promise.race([cancelled, request({ ...init, signal: controller.signal }, async response => {
             if (controller.signal.aborted) return await cancelled;
-            resetInactivity();
+            clearTimeout(timer);
             let ownedResponse = response;
             if (typeof response.body?.getReader === 'function') {
                 canObserveInactivity = true;
-                resetInactivity();
                 reader = response.body.getReader();
                 const bodyReader = reader;
-                ownedResponse = new Response(new ReadableStream<Uint8Array>({
+                ownedResponse = createReadLifetimeResponse(response, new ReadableStream<Uint8Array>({
                     async pull(body) {
+                        // Time only a pending transport read. Buffered rows and
+                        // post-EOF folding belong to the consumer's lifetime.
+                        resetInactivity();
                         try {
-                            const chunk = await bodyReader.read();
-                            if (chunk.done) body.close();
-                            else {
-                                if (chunk.value.byteLength > 0) resetInactivity();
-                                body.enqueue(chunk.value);
-                            }
-                        } catch (error) { body.error(error); }
+                            let chunk = await bodyReader.read();
+                            while (!chunk.done && chunk.value.byteLength === 0) chunk = await bodyReader.read();
+                            if (chunk.done) { reachedEof = true; body.close(); }
+                            else { receivedBytes += chunk.value.byteLength; body.enqueue(chunk.value); }
+                        } catch (error) { reportReadTermination('transport-read-throw', error); body.error(error); }
+                        finally { clearTimeout(timer); }
                     },
-                    cancel: reason => bodyReader.cancel(reason),
-                }), { status: response.status, statusText: response.statusText, headers: response.headers });
+                    cancel: reason => {
+                        if (!reachedEof) reportReadTermination('consumer-cancel-before-eof', reason);
+                        return bodyReader.cancel(reason);
+                    },
+                }));
             }
             // A raw Response borrower receives complete bytes before cancellation
             // and carrier custody end. Later json()/clone() cannot strand a read.
             const result = consumeResponse ? await consumeResponse(ownedResponse)
-                : reader ? new Response(await ownedResponse.blob(), {
-                    status: response.status, statusText: response.statusText, headers: response.headers,
-                }) : response;
+                : reader ? await bufferReadLifetimeResponse(ownedResponse) : response;
             if (controller.signal.aborted) return await cancelled;
             return result;
         })]);
+    } catch (error) {
+        if (!controller.signal.aborted) reportReadTermination('request-or-consumer-throw', error);
+        throw error;
     } finally {
         clearTimeout(timer);
         upstream?.removeEventListener('abort', abortFromUpstream);
@@ -732,11 +756,11 @@ async function requestAtEndpoint<T>(
                 markIssued();
                 const request = { ...init, headers, signal: requestController.signal };
                 try {
-                    response = homeCarrier
-                        ? await homeCarrier.request(requestUrl, request)
-                        : await runtimeFetch(requestUrl, request);
+                    response = await fetchWithCredentialRedirectRefusal(requestUrl, request,
+                        homeCarrier ? (url, init) => homeCarrier.request(String(url), init ?? {}) : runtimeFetch);
                 } catch (error) {
                     if (probeReportScope && !requestController.signal.aborted
+                        && !(error instanceof CredentialRequestRedirectError)
                         && !(error instanceof Error && error.name === 'AbortError')) {
                         const errorMessage = sanitizeEndpointErrorMessage(error) ?? 'Network request failed';
                         reportServerReachabilityProbeResult(context.endpointUrl, {
