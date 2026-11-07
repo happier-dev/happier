@@ -108,7 +108,7 @@ export async function scanPosthogIssuePage(
         return {
             ok: false,
             failure: page.failure,
-            uninterpretable: page.failure.kind === 'malformedResponse',
+            uninterpretable: 'kind' in page.failure && page.failure.kind === 'malformedResponse',
         };
     }
 

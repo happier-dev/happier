@@ -1,4 +1,6 @@
+import { activate as activateAccount } from '../accountRuntime.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     isExternalActionResultWithinResponseEnvelopeLimitV1,
@@ -15,8 +17,9 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it, vi } from 'vitest';
-import { activate } from '../activate.js';
+import { activate } from '../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { POSTHOG_PLUGIN } from '../manifest.js';
 import { TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import organizationsPage from '../api/__fixtures__/organizationsPage.json' with { type: 'json' };
@@ -176,6 +179,18 @@ function configuredInstance() {
 }
 
 describe('PostHog Triage source operations', () => {
+    it('executes the Account scan through registration and HTTP without a Machine', async () => {
+        const h = context([queryIssuesPage1]);
+        const kit = await createPluginTestkit({ manifest: POSTHOG_PLUGIN.manifest,
+            module: { activate: POSTHOG_PLUGIN.activate, activateAccount }, services: h.value.services });
+        try {
+            expect(await kit.invokeAction(POSTHOG_ACTION_IDS.scan, { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 3 } }))
+                .toMatchObject({ kind: 'page', observations: expect.arrayContaining([
+                    expect.objectContaining({ kind: 'present', snapshot: expect.objectContaining({ title: "Cannot read properties of undefined (reading 'id')" }) }),
+                ]) });
+            expect(h.request).toHaveBeenCalledTimes(1);
+        } finally { await kit.dispose(); }
+    });
     it('projects the immutable environment UUID as the scope unit without changing entry identity', async () => {
         const result = await scanPosthogSource({ v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 3 } }, context([queryIssuesPage1]).value);
         expect(result.kind).toBe('page');
@@ -321,17 +336,23 @@ describe('PostHog Triage source operations', () => {
         expect(absent.request.mock.calls.some(([request]) => request.method === 'PATCH')).toBe(false);
     });
 
-    async function write(action: string, host: ReturnType<typeof context>, extra: object = {}) {
-        const register = vi.fn();
-        await activate({ actions: { register }, connectedAccounts: { register: vi.fn() }, composerReferences: { register: vi.fn() } } as never);
-        const handler = register.mock.calls.find(([id]) => id === action)?.[1];
-        expect(handler, `registered ${action}`).toBeTypeOf('function');
-        const result: unknown = await handler({
-            v: 1, instance: configuredInstance(),
-            localRef: { kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id },
-            ...extra,
-        }, host.value);
-        return TriageTaskWriteResultV1Schema.parse(result);
+    async function write(action: string, host: ReturnType<typeof context>, extra: object = {}, observeCancelledSettlement = false) {
+        const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate: POSTHOG_PLUGIN.activate, activateAccount }, services: host.value.services });
+        try {
+            const handler = kit.registration('actions', action);
+            if (!handler) throw new Error(`Missing registered Action ${action}`);
+            const input = {
+                v: 1, instance: configuredInstance(),
+                localRef: { kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: crudIssueRead.id },
+                ...extra,
+            };
+            // Only cancellation settlement needs observation before the Action RPC discards an aborted reply.
+            return TriageTaskWriteResultV1Schema.parse(await (observeCancelledSettlement
+                ? handler(input, host.value)
+                : kit.invokeAction(action, input)));
+        } finally {
+            await kit.dispose();
+        }
     }
 
     it.each([
@@ -388,6 +409,13 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).not.toHaveBeenCalled();
     });
 
+    it('refuses an unavailable selected Account before PostHog mutation HTTP', async () => {
+        const host = context([]);
+        host.materializeListedAccount.mockRejectedValue(new Error('selected account unavailable'));
+        expect(await write('posthog/resolve-issue', host)).toMatchObject({ kind: 'failed', failure: { class: 'authentication' } });
+        expect(host.request).not.toHaveBeenCalled();
+    });
+
     it.each(['posthog/resolve-issue', 'posthog/suppress-issue', 'posthog/unsuppress-issue'])('does not confirm a permission-rejected %s write', async (action) => {
         const host = context([crudIssueRead, {}], [200, 403]);
         expect(await write(action, host)).toMatchObject({ kind: 'failed', failure: { class: 'permission' } });
@@ -413,7 +441,7 @@ describe('PostHog Triage source operations', () => {
         const host = context([], [], { signal: controller.signal });
         host.request.mockImplementationOnce(async (input) => ({ status: 200, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(crudIssueRead)) }));
         host.request.mockImplementationOnce(async () => { controller.abort(); throw new Error('cancelled after send'); });
-        expect(await write('posthog/resolve-issue', host)).toMatchObject({ kind: 'uncertain', failure: { code: POSTHOG_FAILURE_CODES.cancelled } });
+        expect(await write('posthog/resolve-issue', host, {}, true)).toMatchObject({ kind: 'uncertain', failure: { code: POSTHOG_FAILURE_CODES.cancelled } });
         expect(host.request.mock.calls).toHaveLength(2);
     });
 
@@ -892,20 +920,24 @@ describe('PostHog Triage source operations', () => {
         expect(result).toMatchObject({
             kind: 'present',
             localRef: { kindId: 'error-issue' },
-            snapshot: { title: 'TypeError', scopeLabel: 'Storefront production' },
+            snapshot: { title: "Cannot read properties of undefined (reading 'id')", scopeLabel: 'Storefront production' },
         });
         if (result.kind !== 'present') return;
         expect(result.snapshot.facts.map((fact) => fact.id)).toEqual([
             'posthog/occurrences',
             'posthog/function',
             'posthog/top-frame',
+            'posthog/release',
+            'posthog/last-seen',
+            'posthog/users',
+            'posthog/sessions',
+            'posthog/source',
+            'posthog/library',
+            'posthog/first-seen',
             'posthog/severity',
         ]);
         expect(result.snapshot.facts[0]?.value).toMatchObject({ kind: 'number', value: 1842 });
-        // Release is a valid fourth native candidate, but the protocol leaves only
-        // three native slots beside detail-only severity. It is bounded projection,
-        // not a reason to reject or hide the issue.
-        expect(result.snapshot.projectionTruncated).toBe(true);
+        expect(result.snapshot.projectionTruncated).not.toBe(true);
         expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
     });
 
@@ -926,7 +958,7 @@ describe('PostHog Triage source operations', () => {
             },
         }, host.value);
 
-        expect(result).toMatchObject({ kind: 'present', snapshot: { title: 'TypeError' } });
+        expect(result).toMatchObject({ kind: 'present', snapshot: { title: "Cannot read properties of undefined (reading 'id')" } });
         expect(host.listAccounts).toHaveBeenCalledTimes(1);
         expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
     });
@@ -1492,6 +1524,20 @@ describe('PostHog invocation boundaries', () => {
         expect(aggregateResult.kind).toBe('unresolved');
         expect(observedSignals).toHaveLength(1);
         expect(observedSignals[0]).toBe(aggregate.value.signal);
+    });
+
+    it.each([
+        ['connected_service_credential_reconnect_required', 'authentication'],
+        ['plugin_connected_account_settings_unavailable', 'transient'],
+    ] as const)('preserves typed host refusal %s and request ID without HTTP', async (code, classification) => {
+        const h = context([], [], { materialize: async () => {
+            throw Object.assign(new Error('private credential'), {
+                code, retryable: false, details: { requestId: 'posthog-host-refusal' },
+            });
+        } });
+        expect(await getPosthogSourceEntry({ v: 1, instance: configuredInstance(), localRef: LOCAL_REF }, h.value))
+            .toMatchObject({ kind: 'unresolved', failure: { class: classification, code, detail: 'Happier Request ID: posthog-host-refusal' } });
+        expect(h.request).not.toHaveBeenCalled();
     });
 
     it('admits the materialized account through the shared authorization owner', async () => {

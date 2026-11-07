@@ -3,6 +3,8 @@
  * Shared Triage projection bounds stay at their protocol owner.
  */
 
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+
 export const SENTRY_PLUGIN_ID = 'happier.sentry';
 export const SENTRY_CONNECTED_ACCOUNT_ID = 'sentry-account';
 export const SENTRY_CONNECTED_ACCOUNT_PURPOSE = 'sentry-account-use';
@@ -48,6 +50,8 @@ export const SENTRY_TRIAGE_SETTINGS_RENDERER_ID = 'sentry-triage-sources';
 export const SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID = 'sentry-triage-sources-native';
 
 export const SENTRY_ACTION_IDS = Object.freeze({
+  setupIssueEvent: 'automation/setup-issue-transition-v1',
+  resetIssueEvent: 'automation/reset-issue-transition-v1',
   listInstances: 'sentry/list-instances',
   listScopeUnits: 'sentry/list-projects',
   scan: 'sentry/scan-issues',
@@ -98,17 +102,14 @@ export const SENTRY_SCOPE_SEPARATOR = '\u001F';
 export const SENTRY_DISPLAY_PATH_SEPARATOR = ' \u00B7 ';
 
 /**
- * The closed Sentry failure vocabulary. Every code that can leave this source
- * appears here; no provider status, body or header is ever echoed.
+ * Sentry-owned failure codes. Classified host refusals retain the shared owner's
+ * code and redacted request identity instead of using this local vocabulary.
  */
 export const SENTRY_FAILURE_CODES = Object.freeze({
   tokenInvalid: 'sentry-token-invalid',
   /**
-   * The HOST refused to materialize the exact bound account — the account was
-   * removed, the purpose was revoked, or the origin is no longer admitted. It is
-   * an `authentication` failure, not a Sentry outage: the user fixes the
-   * connection and presses Refresh, which the aggregate's backoff deliberately
-   * exempts for this class.
+   * A materialization refusal with no typed host diagnostic. Classified host
+   * refusals keep their original code and class through the shared owner.
    */
   accountMaterializationFailed: 'sentry-account-materialization-failed',
   /** The account materialized, but carried no usable `authorization` header. */
@@ -155,6 +156,7 @@ export const SENTRY_FAILURE_CODES = Object.freeze({
   malformedOrganizationRow: 'sentry-malformed-organization-row',
   malformedProjectRow: 'sentry-malformed-project-row',
   accountListTruncated: 'sentry-account-list-truncated',
+  instanceListResponseTruncated: 'sentry-instance-list-response-truncated',
   regionOriginUndeclared: 'sentry-region-origin-undeclared',
   invokedOriginMismatch: 'sentry-invoked-origin-mismatch',
   invokedOrganizationMismatch: 'sentry-invoked-organization-mismatch',
@@ -173,6 +175,7 @@ export type SentryFailureCodeV1 =
  */
 export const SENTRY_SELF_HOSTED_UNSUPPORTED_CODES = Object.freeze({
   organizations: 'sentry-self-hosted-organizations-unsupported',
+  organizationMember: 'sentry-self-hosted-organization-member-unsupported',
   projects: 'sentry-self-hosted-projects-unsupported',
   issuesList: 'sentry-self-hosted-issues-list-unsupported',
   issue: 'sentry-self-hosted-issue-unsupported',
@@ -188,17 +191,6 @@ export type SentryOperationV1 = keyof typeof SENTRY_SELF_HOSTED_UNSUPPORTED_CODE
  * Triage contract's closed vocabulary so the later binding is a rename, not a
  * remapping.
  */
-export type SentryFailureClassV1 =
-  | 'authentication'
-  | 'permission'
-  | 'rateLimit'
-  | 'transient'
-  | 'unsupportedContract'
-  | 'unknown';
+export type SentryFailureClassV1 = TriageSourceFailureV1['class'];
 
-export type SentryFailureV1 = Readonly<{
-  class: SentryFailureClassV1;
-  code: SentryFailureCodeV1 | (typeof SENTRY_SELF_HOSTED_UNSUPPORTED_CODES)[SentryOperationV1];
-  /** Absolute epoch milliseconds; present only when the provider supplied usable evidence. */
-  retryNotBeforeMs?: number;
-}>;
+export type SentryFailureV1 = TriageSourceFailureV1;

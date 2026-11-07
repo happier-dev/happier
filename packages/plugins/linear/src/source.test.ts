@@ -1,14 +1,42 @@
-import { TriageGetResultV1Schema, TriageListInstancesResultV1Schema, TriageScanResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { activate as activateAccount } from './accountRuntime.js';
+import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, TriageGetResultV1Schema, TriageListInstancesResultV1Schema, TriageScanResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 import { getLinearEntry, listLinearInstances, listLinearScopeUnits, scanLinearSource, readLinearDetail } from './source.js';
 
 import { account, instance, localRef, issue, page, host } from './fixtures.test-support.js';
 import { writeLinearScopeSelection } from './contracts.js';
+import { LINEAR_ACTIONS } from './contracts.js';
+import { LINEAR_PLUGIN } from './manifest.js';
 
 const workspaceInstance = (teams: unknown) => ({ ...instance, localInstanceKey: 'linear',
   configuration: { v: 1 as const, token: JSON.stringify({ v: 1, teams, involvement: 'everyone' }) } });
 
 describe('Linear source through provider HTTP', () => {
+  it.each([
+    ['connected_service_credential_reconnect_required', 'authentication'],
+    ['plugin_connected_account_settings_unavailable', 'transient'],
+  ] as const)('preserves typed host refusal %s and request ID without HTTP', async (code, classification) => {
+    const h = host(() => ({}));
+    h.materializeListedAccount.mockRejectedValue(Object.assign(new Error('private credential'), {
+      code, retryable: false, details: { requestId: 'linear-host-refusal' },
+    }));
+    expect(await getLinearEntry({ v: 1, instance, localRef }, h.context)).toMatchObject({
+      kind: 'unresolved', failure: { class: classification, code, detail: 'Happier Request ID: linear-host-refusal' },
+    });
+    expect(h.request).not.toHaveBeenCalled();
+  });
+
+    it('executes the Account scan through registration and HTTP without a Machine', async () => {
+        const h = host(({ operationName }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } } : { issues: page([issue]) });
+        const kit = await createPluginTestkit({ manifest: LINEAR_PLUGIN.manifest,
+            module: { activate: LINEAR_PLUGIN.activate, activateAccount }, services: h.context.services });
+        try {
+            expect(await kit.invokeAction(LINEAR_ACTIONS.scan, { v: 1, instance: instance, page: { kind: 'initial', limit: 3 } }))
+                .toMatchObject({ kind: 'complete', observations: [{ kind: 'present', snapshot: { title: issue.title } }] });
+            expect(h.request).toHaveBeenCalledTimes(2);
+        } finally { await kit.dispose(); }
+    });
   it('bounds completed task reads at the provider without replacing the involvement union and keeps it on the next page', async () => {
     const sinceMs = Date.parse('2026-10-19T00:00:00Z');
     const h = host(({ operationName, variables }) => {
@@ -42,14 +70,15 @@ describe('Linear source through provider HTTP', () => {
   });
   it('loads complete editable values without putting bodies into scans', async () => {
     const body = 'Full Markdown\n\nPreserve whitespace.  \n';
+    const title = '界'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 3) + 1);
     const h = host(({ operationName, query }) => {
       if (operationName === 'LinearViewer') return { viewer: { id: 'viewer-1' } };
-      if (operationName === 'LinearIssue') return { issue: { ...issue, title: '界'.repeat(1000), description: body } };
+      if (operationName === 'LinearIssue') return { issue: { ...issue, title, description: body } };
       if (query.includes('labels(')) return { issue: { ...issue, labels: page([{ id: 'label-1', name: 'Fix' }]) } };
       throw new Error('Optional relation unavailable');
     });
     expect(await getLinearEntry({ v: 1, instance, localRef }, h.context)).toMatchObject({ kind: 'present',
-      snapshot: { projectionTruncated: true }, taskFields: { title: '界'.repeat(1000), body, assigneeIds: ['viewer-1'],
+      snapshot: { projectionTruncated: true }, taskFields: { title, body, assigneeIds: ['viewer-1'],
         labelIds: ['label-1'], projectId: 'project-1', priority: 2, dueDate: '2026-10-25', estimate: 3, parent: { entryId: 'parent-1' } } });
   });
   it('discovers one workspace through the exact listed account', async () => {
@@ -75,10 +104,14 @@ describe('Linear source through provider HTTP', () => {
     expect(result.kind).toBe('page');
     if (result.kind === 'failed') throw new Error('scan failed');
     expect(result.observations[0]).toMatchObject({ kind: 'present', localRef, snapshot: {
-      designation: 'ENG-123', state: { presentation: 'active', nativeLabel: 'In Progress', stage: 'started' }, projectionTruncated: true,
+      designation: 'ENG-123', state: { presentation: 'active', nativeLabel: 'In Progress', stage: 'started' },
     }, viewer: { involvement: ['author', 'assignee', 'subscribed'] } });
     if (result.observations[0]?.kind !== 'present') throw new Error('missing present issue');
     expect(result.observations[0].snapshot.facts).toContainEqual({ id: 'assignee', label: 'Assignee', importance: 'secondary', value: { kind: 'text', value: 'Mara' } });
+    expect(result.observations[0].snapshot.facts.map((fact) => fact.id)).toEqual([
+      'assignee', 'priority', 'project', 'cycle', 'parent', 'due', 'estimate',
+    ]);
+    expect(result.observations[0].snapshot.projectionTruncated).not.toBe(true);
     expect(JSON.stringify(result)).not.toContain('description');
   });
 
@@ -182,8 +215,9 @@ describe('Linear source through provider HTTP', () => {
   });
 
   it('retains a readable issue with long Unicode content and an unfamiliar native state', async () => {
+    const title = '界'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 3) + 1);
     const h = host(({ operationName }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } }
-      : { issue: { ...issue, title: '界'.repeat(1000), state: { ...issue.state, type: 'future-state' } } });
+      : { issue: { ...issue, title, state: { ...issue.state, type: 'future-state' } } });
     const result = TriageGetResultV1Schema.parse(await getLinearEntry({ v: 1, instance, localRef }, h.context));
     expect(result).toMatchObject({ kind: 'present', localRef, snapshot: { state: { presentation: 'unknown' }, projectionTruncated: true } });
   });
@@ -197,7 +231,7 @@ describe('Linear source through provider HTTP', () => {
     });
   });
 
-  it.each([1, 2])('projects native transitions and declares one-step completion only for an unambiguous done state (%s)', async (doneStates) => {
+  it.each([1, 2])('preserves the native workflow without opting into quick completion (%s completed states)', async (doneStates) => {
     const h = host(({ operationName, query }) => {
       if (operationName === 'LinearViewer') return { viewer: { id: 'viewer-1' } };
       if (operationName === 'LinearIssue') return { issue };
@@ -212,6 +246,8 @@ describe('Linear source through provider HTTP', () => {
     } });
     if (result.kind !== 'present') throw new Error('Expected a task');
     expect(result.snapshot.taskCapabilities?.transitions?.[0]).toMatchObject({ id: 'state-1', state: { presentation: 'active', stage: 'started' } });
-    expect(result.snapshot.taskCapabilities?.completingTransitionId).toBe(doneStates === 1 ? 'done-0' : undefined);
+    expect(result.snapshot.taskCapabilities).not.toHaveProperty('completingTransitionId');
+    expect(result.snapshot.taskCapabilities?.transitions?.map(transition => transition.id))
+      .toEqual(['state-1', ...Array.from({ length: doneStates }, (_, index) => `done-${index}`)]);
   });
 });

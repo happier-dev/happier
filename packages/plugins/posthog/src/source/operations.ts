@@ -14,7 +14,7 @@
  * intent submitted through the target's public administration Action can do that.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PosthogSourceContext } from '../api/invocationClient.js';
 import type {
     ConnectedAccountMetadataList,
     ConnectedAccountRef,
@@ -26,7 +26,6 @@ import {
     settleAtMostOnceProviderWrite,
 } from '@happier-dev/triage-sources/runtime';
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     projectTriageDisplayTextV1,
@@ -160,15 +159,10 @@ export const POSTHOG_FAILURE_CODES = {
     redirected: 'posthog/unexpected-redirect',
 } as const;
 
-/**
- * The shared projection bounds. One fact slot is deliberately withheld from the native
- * fact budget so the detail-only severity fact can always be appended without pushing a
- * selected native fact past the published count bound.
- */
+/** The shared text bounds; all native facts and detail-only severity are preserved. */
 const PROJECTION_BOUNDS: PosthogProjectionBounds = Object.freeze({
     textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     factValueUtf8Bytes: MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-    maxFacts: MAX_TRIAGE_ROW_FACTS_V1 - 1,
 });
 
 const UNTITLED_ISSUE_LABEL = 'Untitled issue';
@@ -213,6 +207,7 @@ function sourceFailure(
  * reader keys on.
  */
 export function toTriageSourceFailure(failure: PosthogFailure): TriageSourceFailureV1 {
+    if ('class' in failure) return failure;
     switch (failure.kind) {
         case 'unauthorized':
             return sourceFailure('authentication', POSTHOG_FAILURE_CODES.unauthorized);
@@ -312,7 +307,7 @@ function isForwardDirectoryContinuation(requestedUrl: string, nextUrl: string): 
 /** Factory seam for tests or a caller that supplies a real external deadline. */
 export type PosthogConfigurationDirectoryReader = (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ) => Promise<PosthogConfigurationDirectoryResultV1>;
 
 /** One explicitly requested page of the mounted PostHog configuration browser. */
@@ -321,7 +316,7 @@ export function createPosthogConfigurationDirectoryReader(
 ): PosthogConfigurationDirectoryReader {
   return async function readConfigurationDirectory(
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
   ): Promise<PosthogConfigurationDirectoryResultV1> {
     return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
     const parsed = PosthogConfigurationDirectoryInputV1Schema.parse(input);
@@ -487,7 +482,7 @@ function configuredScopeUnits(configuration: PosthogConfigurationToken, origin: 
 }
 
 /** The shared control and agents use this same provider-authorized directory owner. */
-export async function readPosthogScopeUnits(input: unknown, context: PluginInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+export async function readPosthogScopeUnits(input: unknown, context: PosthogSourceContext): Promise<TriageListScopeUnitsResultV1> {
     const parsed = TriageListScopeUnitsConnectedAccountInputV1Schema.parse(input);
     const scope = resolvePosthogInvocationScope(parsed.draft);
     const failed = (code: string): TriageListScopeUnitsResultV1 => ({ kind: 'failed', failure: sourceFailure('unsupportedContract', code) });
@@ -532,7 +527,7 @@ export async function readPosthogScopeUnits(input: unknown, context: PluginInvoc
  */
 export async function listPosthogInstances(
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<TriageListInstancesResultV1> {
     TriageListInstancesInputV1Schema.parse(input);
 
@@ -851,7 +846,7 @@ function scanWindow(geometry: PosthogScanGeometry): PosthogResolvedWindow {
 /** One provider page of the requested bounded walk for one exact configured instance. */
 export async function scanPosthogSource(
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<TriageScanResultV1> {
     const parsed = TriageScanInputV1Schema.parse(input);
     const failed = (failure: TriageSourceFailureV1): TriageScanResultV1 => Object.freeze({
@@ -1065,7 +1060,7 @@ type InvokedInstance =
  */
 async function resolveInvokedInstance(
     instance: TriageListScopeUnitsInputV1['draft'],
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<InvokedInstance> {
     const scope = resolvePosthogInvocationScope(instance);
     if (!scope.ok) {
@@ -1114,7 +1109,7 @@ async function resolveInvokedInstance(
 const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
-function isMountedPosthogUiRead(context: PluginInvocationContext): boolean {
+function isMountedPosthogUiRead(context: PosthogSourceContext): boolean {
     // The dispatcher stamps the handler-visible surface with the authenticated
     // invoking origin: a mounted detail-body read arrives as `ui`, while the
     // aggregate-owned get is `plugin`.
@@ -1126,7 +1121,7 @@ function isMountedPosthogUiRead(context: PluginInvocationContext): boolean {
 /** One authoritative read of one local ref through one exact configured instance. */
 async function readPosthogSourceEntry(
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
     signal: AbortSignal,
 ): Promise<PosthogNativeOverviewResultV1> {
     const parsed = TriageGetInputV1Schema.parse(input);
@@ -1255,7 +1250,7 @@ function posthogSparklineTrend(
 
 export type PosthogSourceEntryReader = (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ) => Promise<TriageGetResultV1>;
 
 export function createPosthogSourceEntryReader(
@@ -1281,7 +1276,7 @@ export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, con
 /** Overview consumes the same join; aggregate get exposes only its shared observation. */
 export const readPosthogNativeOverview = async (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<PosthogNativeOverviewResultV1> => await readPosthogSourceEntry(input, context, context.signal);
 
 /**
@@ -1305,7 +1300,7 @@ type PosthogIssueScope =
 async function resolvePosthogIssueScope(
     instance: TriageListScopeUnitsInputV1['draft'],
     localRef: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<PosthogIssueScope> {
     const routed = await resolveInvokedInstance(instance, context);
     if (!routed.ok) return routed;
@@ -1369,7 +1364,7 @@ function codeVariablesResult(variables: unknown): PosthogCodeVariablesResultV1 |
 
 export type PosthogCodeVariablesReader = (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ) => Promise<PosthogCodeVariablesResultV1>;
 
 export function createPosthogCodeVariablesReader(
@@ -1429,7 +1424,7 @@ export const readPosthogCodeVariablesForIssue: PosthogCodeVariablesReader
 
 export type PosthogSampledEventsReader = (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ) => Promise<PosthogSampledEventsResultV1>;
 
 /**
@@ -1448,7 +1443,7 @@ export function createPosthogSampledEventsReader(
 ): PosthogSampledEventsReader {
     return async function readSampledEvents(
         input: unknown,
-        context: PluginInvocationContext,
+        context: PosthogSourceContext,
     ): Promise<PosthogSampledEventsResultV1> {
         return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
         const parsed = PosthogSampledEventsInputV1Schema.parse(input);
@@ -1536,7 +1531,7 @@ export const readPosthogSampledEvents: PosthogSampledEventsReader
 
 export type PosthogIssueActivityReader = (
     input: unknown,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ) => Promise<PosthogIssueActivityResultV1>;
 
 /**
@@ -1558,7 +1553,7 @@ export function createPosthogIssueActivityReader(
 ): PosthogIssueActivityReader {
     return async function readIssueActivity(
         input: unknown,
-        context: PluginInvocationContext,
+        context: PosthogSourceContext,
     ): Promise<PosthogIssueActivityResultV1> {
         return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
         const parsed = PosthogIssueActivityInputV1Schema.parse(input);
@@ -1634,7 +1629,7 @@ type PosthogWriteAssignee = ReturnType<typeof PosthogIssueAssignInputV1Schema.pa
 async function writePosthogIssue(
     target: PosthogWriteTarget,
     change: Readonly<{ status: 'resolved' | 'suppressed' | 'active' }> | Readonly<{ assignee: PosthogWriteAssignee }>,
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
 ): Promise<TriageTaskWriteResultV1> {
     const scope = await resolvePosthogIssueScope(target.instance, target.localRef, context);
     if (!scope.ok) return { kind: 'failed', failure: scope.failure };
@@ -1663,9 +1658,9 @@ async function writePosthogIssue(
         }, () => true as const, options),
         // Success bodies are acknowledgements only. Lost/malformed replies and
         // server/redirect failures may follow an applied effect; never replay.
-        mayHaveChanged: (result) => result.ok || [
+        mayHaveChanged: (result) => result.ok || ('kind' in result.failure && [
             'transport', 'timeout', 'cancelled', 'server', 'malformedResponse', 'redirected',
-        ].includes(result.failure.kind),
+        ].includes(result.failure.kind)),
         confirm: async () => {
             const current = await read();
             if (!current.ok) return { kind: 'uncertain', failure: toTriageSourceFailure(current.failure) };
@@ -1688,19 +1683,19 @@ async function writePosthogIssue(
     return { kind: 'uncertain' };
 }
 
-export async function resolvePosthogIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function resolvePosthogIssue(input: unknown, context: PosthogSourceContext): Promise<TriageTaskWriteResultV1> {
     return writePosthogIssue(PosthogIssueWriteInputV1Schema.parse(input), { status: 'resolved' }, context);
 }
 
-export async function suppressPosthogIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function suppressPosthogIssue(input: unknown, context: PosthogSourceContext): Promise<TriageTaskWriteResultV1> {
     return writePosthogIssue(PosthogIssueWriteInputV1Schema.parse(input), { status: 'suppressed' }, context);
 }
 
-export async function unsuppressPosthogIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function unsuppressPosthogIssue(input: unknown, context: PosthogSourceContext): Promise<TriageTaskWriteResultV1> {
     return writePosthogIssue(PosthogIssueWriteInputV1Schema.parse(input), { status: 'active' }, context);
 }
 
-export async function assignPosthogIssue(input: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function assignPosthogIssue(input: unknown, context: PosthogSourceContext): Promise<TriageTaskWriteResultV1> {
     const { assignee, ...target } = PosthogIssueAssignInputV1Schema.parse(input);
     return writePosthogIssue(target, { assignee }, context);
 }

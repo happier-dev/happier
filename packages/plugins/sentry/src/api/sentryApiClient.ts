@@ -9,7 +9,10 @@
  * an origin the HostAccess declaration never admitted.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+export type SentrySourceContext = Pick<PluginAccountActionContext, 'signal'> & Readonly<{
+    services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
+}>;
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   isBoundedInvocationDeadline,
@@ -87,15 +90,8 @@ function isAbortError(error: unknown): boolean {
 }
 
 /**
- * The exact-account materialization rule is the shared source contract and lives in
- * `@happier-dev/triage-protocol/v1`; Sentry's published failure vocabulary is not, so
- * the three settled refusal reasons are mapped here and nowhere else.
- *
- * A host refusal is a **credential** problem the user can fix, so it is
- * `authentication` — never `transient`. Reporting it as a transport failure would
- * route it into the aggregate's provider-pacing backoff, which deliberately exempts
- * `authentication` so that reconnecting and pressing Refresh works immediately
- * (`refresh/refreshEligibility.ts`).
+ * The shared source owner classifies typed host refusals. Only its remaining
+ * neutral reasons need Sentry's local failure vocabulary here.
  *
  * `cancelled` is deliberately absent: the shared owner has one neutral word for
  * every abort, and which abort it was is a fact only this side holds. It is
@@ -120,7 +116,7 @@ const AUTHORIZATION_FAILURES: Readonly<
 });
 
 export async function createSentryApiClient(
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
   input: SentryApiClientInputV1,
 ): Promise<SentryApiClientV1> {
   const { origin } = input.deployment;
@@ -163,9 +159,9 @@ export async function createSentryApiClient(
     if (outcome.ok) {
       authorization = outcome.authorization;
     } else {
-      authorization = outcome.reason === 'cancelled'
+      authorization = outcome.failure ?? (outcome.reason === 'cancelled'
         ? abortFailure(operation)
-        : AUTHORIZATION_FAILURES[outcome.reason];
+        : AUTHORIZATION_FAILURES[outcome.reason]);
     }
     return authorization;
   }

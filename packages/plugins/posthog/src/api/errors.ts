@@ -10,8 +10,10 @@
  */
 
 import { parseRetryAfterNotBeforeMsV1 } from '@happier-dev/triage-sources/runtime';
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 export type PosthogFailure =
+    | TriageSourceFailureV1
     | Readonly<{ kind: 'unauthorized'; status: number }>
     | Readonly<{ kind: 'forbidden'; status: number }>
     | Readonly<{ kind: 'notFound'; status: number }>
@@ -99,5 +101,5 @@ export function classifyPosthogResponseStatus(
 export function isPosthogRateLimitFailure(
     failure: PosthogFailure,
 ): failure is Extract<PosthogFailure, Readonly<{ kind: 'rateLimited' }>> {
-    return failure.kind === 'rateLimited';
+    return 'kind' in failure && failure.kind === 'rateLimited';
 }

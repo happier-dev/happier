@@ -5,6 +5,7 @@ import issuesListRateLimited from '../fixtures/issuesListRateLimited.json' with 
 
 import { SENTRY_CONNECTED_ACCOUNT_PURPOSE } from '../sentryContracts.js';
 import { createSentryApiClient } from './sentryApiClient.js';
+import { toTriageFailure } from '../source/observation.js';
 
 const CLOUD = Object.freeze({
   kind: 'cloud' as const,
@@ -61,6 +62,24 @@ async function createClient(overrides: Parameters<typeof createContext>[0] = {})
 }
 
 describe('createSentryApiClient', () => {
+  it.each([
+    ['connected_service_credential_reconnect_required', 'authentication'],
+    ['plugin_connected_account_settings_unavailable', 'transient'],
+  ] as const)('preserves typed host refusal %s and request ID through the source projection without HTTP', async (code, classification) => {
+    const { client, request } = await createClient({ materialize: vi.fn(async () => {
+      throw Object.assign(new Error('private credential'), {
+        code, retryable: false, details: { requestId: 'sentry-host-refusal' },
+      });
+    }) });
+    const result = await client.request({ url: issuesListPage1.request.url, operation: 'issuesList' });
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('Expected refused request');
+    expect(toTriageFailure(result.failure)).toEqual({
+      class: classification, code, detail: 'Happier Request ID: sentry-host-refusal',
+    });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('materializes the exact listed account once, as http headers, for the configured origin', async () => {
     const { client, materialize, request } = await createClient();
 

@@ -7,7 +7,10 @@
  * and a Composer reference reread use the same currentness and origin admission path.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+export type PosthogSourceContext = Pick<PluginAccountActionContext, 'signal' | 'surface' | 'caller'> & Readonly<{
+    services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
+}>;
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
     materializeTriageSourceAuthorizationV1,
@@ -32,6 +35,7 @@ function toMaterializationOutcome(
     if (authorized.ok) {
         return { ok: true, authorization: authorized.authorization };
     }
+    if (authorized.failure !== undefined) return { ok: false, failure: authorized.failure };
     return authorized.reason === 'cancelled'
         ? { ok: false, failure: { kind: 'cancelled' } }
         : { ok: false, failure: { kind: 'unauthorized', status: 0 } };
@@ -45,7 +49,7 @@ function toMaterializationOutcome(
  * source has discarded the action.
  */
 export function createPosthogInvocationClient(
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
     account: ConnectedAccountRef,
     origin: PosthogApiOrigin,
 ): PosthogApiClient {

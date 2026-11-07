@@ -35,15 +35,9 @@ import type { SentryScanHealthV1 } from '../scan/sentryScanHealth.js';
 /** The reason carried when a Sentry walk reports a moving keyset rather than a stop. */
 export const SENTRY_MOVING_SCAN_REASON = 'sentry-scan-window-moving';
 
-/** Sentry's closed failure vocabulary is already the contract's shape. */
+/** The API already returns the shared failure, including safe host diagnostics. */
 export function toTriageFailure(failure: SentryFailureV1): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: failure.class,
-    code: failure.code,
-    ...(failure.retryNotBeforeMs === undefined
-      ? {}
-      : { retryNotBeforeMs: failure.retryNotBeforeMs }),
-  });
+  return failure;
 }
 
 export function toTriageLocalRef(localRef: SentryLocalRefV1): TriageSourceEntryLocalRefV1 {

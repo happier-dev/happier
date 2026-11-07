@@ -35,6 +35,26 @@ function abortedSignal(): AbortSignal {
 }
 
 describe('materializeTriageSourceAuthorizationV1', () => {
+  it.each([
+    ['plugin_connected_account_settings_unavailable', false],
+    ['plugin_connected_account_settings_unavailable', true],
+    ['plugin_connected_account_settings_conflict', true],
+  ] as const)('keeps temporary host refusal %s retryable (host retryable: %s)', async (code, retryable) => {
+    const outcome = await materializeTriageSourceAuthorizationV1({
+      connectedAccounts: materializer(async () => {
+        throw Object.assign(new Error('private catalog content'), {
+          code, retryable,
+          details: { requestId: 'catalog-request-1', reason: 'loading' },
+        });
+      }),
+      purpose: PURPOSE, account: ACCOUNT, origin: ORIGIN,
+    });
+    expect(outcome).toEqual({ ok: false, reason: 'materializationFailed', failure: {
+      class: 'transient', code,
+      detail: 'Happier Request ID: catalog-request-1',
+    } });
+  });
+
   it.each([false, true])('preserves typed host refusal and Happier request identity (host ID: %s)', async (hostId) => {
     const outcome = await materializeTriageSourceAuthorizationV1({
       connectedAccounts: materializer(async () => {

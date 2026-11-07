@@ -1,4 +1,7 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+export type LinearSourceContext = Pick<PluginAccountActionContext, 'signal'> & Readonly<{
+    services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
+}>;
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import { materializeTriageSourceAuthorizationV1, parseRetryAfterNotBeforeMsV1 } from '@happier-dev/triage-sources/runtime';
@@ -36,22 +39,31 @@ function retryDeadline(headers: Readonly<Record<string, string>>, nowMs: number)
 }
 
 /** One request, no retry or timer; the host owns credentials and invocation lifetime. */
-export async function requestLinearGraphql(input: Readonly<{
-  context: Pick<PluginInvocationContext, 'services' | 'signal'>;
-  account?: ConnectedAccountRef; authorization?: string; operationName: string;
+export async function requestLinearGraphql(input: Readonly<({
+  context: { services: Pick<PluginAccountActionContext['services'], 'http'>; signal: AbortSignal };
+  authorization: string; account?: never;
+} | {
+  context: Pick<LinearSourceContext, 'services' | 'signal'>;
+  account: ConnectedAccountRef; authorization?: never;
+}) & {
+  operationName: string;
   query: string; variables?: Readonly<Record<string, unknown>>;
 }>): Promise<Record<string, unknown>> {
   const { context } = input;
   context.signal.throwIfAborted();
-  let authorization = input.authorization;
-  if (authorization === undefined) {
+  let authorization: string;
+  if (input.authorization === undefined) {
     if (input.account === undefined) throw linearFailure('accountMissing', 'authentication');
     const materialized = await materializeTriageSourceAuthorizationV1({
-      connectedAccounts: context.services.connectedAccounts, purpose: LINEAR_PURPOSE,
+      connectedAccounts: input.context.services.connectedAccounts, purpose: LINEAR_PURPOSE,
       account: input.account, origin: LINEAR_ORIGIN, signal: context.signal,
     });
-    if (!materialized.ok) throw linearFailure(materialized.reason, 'authentication');
+    if (!materialized.ok) throw materialized.failure === undefined
+      ? linearFailure(materialized.reason, 'authentication')
+      : new LinearRequestError(materialized.failure);
     authorization = materialized.authorization;
+  } else {
+    authorization = input.authorization;
   }
   context.signal.throwIfAborted();
   const response = await context.services.http.request({

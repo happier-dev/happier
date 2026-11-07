@@ -1,3 +1,5 @@
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { activate as activateAccount } from '../accountRuntime.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
@@ -14,6 +16,7 @@ import { runTriageScanPass } from '../../../triage/src/projection/scanPass.js';
 import { createJiraIssue, editJiraIssue, transitionJiraIssue, commentJiraIssue } from './writes.js';
 import { TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { readJiraConfiguration } from './model.js';
+import { JIRA_ACTIONS } from '../contracts.js';
 
 const origin = 'https://work.atlassian.net';
 const account = { service: { pluginId: 'happier.jira', localId: 'jira-account' }, accountId: 'account-1' };
@@ -69,6 +72,29 @@ export function host(respond: (url: URL, body: unknown) => { status?: number; bo
 }
 
 describe('Jira source through provider HTTP', () => {
+    it.each([
+        ['connected_service_credential_reconnect_required', 'authentication'],
+        ['plugin_connected_account_settings_unavailable', 'transient'],
+    ] as const)('preserves typed host refusal %s and request ID without HTTP', async (code, classification) => {
+        const h = host(() => ({ body: {} }));
+        h.materializeListedAccount.mockRejectedValue(Object.assign(new Error('private credential'), {
+            code, retryable: false, details: { requestId: 'jira-host-refusal' },
+        }));
+        expect(await scanJiraSource({ v: 1, instance, page: { kind: 'initial', limit: 20 } }, h.context))
+            .toMatchObject({ kind: 'failed', failure: { class: classification, code, detail: 'Happier Request ID: jira-host-refusal' } });
+        expect(h.request).not.toHaveBeenCalled();
+    });
+
+    it('executes the Account scan through registration and HTTP without a Machine', async () => {
+        const h = host((url) => ({ body: url.pathname.endsWith('/myself') ? { accountId: 'person-1' } : { isLast: true, issues: [issue] } }));
+        const kit = await createPluginTestkit({ manifest: JIRA_PLUGIN.manifest,
+            module: { activate: JIRA_PLUGIN.activate, activateAccount }, services: h.context.services });
+        try {
+            expect(await kit.invokeAction(JIRA_ACTIONS.scan, { v: 1, instance: instance, page: { kind: 'initial', limit: 3 } }))
+                .toMatchObject({ kind: 'complete', observations: [{ kind: 'present', snapshot: { title: 'Repair the queue without losing work' } }] });
+            expect(h.request).toHaveBeenCalledTimes(2);
+        } finally { await kit.dispose(); }
+    });
     it('bounds completed task reads through native JQL while retaining project, involvement and provider paging', async () => {
         const sinceMs = Date.parse('2026-10-19T00:00:00Z');
         const completed = { kindIds: ['issue'], sinceMs };
@@ -155,7 +181,7 @@ describe('Jira source through provider HTTP', () => {
     it('lists searched project choices through the activated safe scope Action and projects configured choices without provider access', async () => {
         type Handler = (input: unknown, context: PluginInvocationContext) => Promise<unknown>;
         const handlers = new Map<string, Handler>();
-        JIRA_PLUGIN.activate({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
+        activateAccount({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
             connectedAccounts: { register: () => {} },
         } as unknown as PluginApi);
         const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
@@ -300,7 +326,7 @@ describe('Jira source through provider HTTP', () => {
         type Handler = (input: unknown, context: PluginInvocationContext) => Promise<unknown>;
         const handlers = new Map<string, Handler>();
         // Genuine host registration boundary; SDK activation and source handlers remain real.
-        JIRA_PLUGIN.activate({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
+        activateAccount({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
             connectedAccounts: { register: () => {} },
         } as unknown as PluginApi);
         const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
@@ -334,6 +360,9 @@ describe('Jira source through provider HTTP', () => {
             return { body: url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' }
                 : { ...issue, fields: { ...issue.fields, summary: 'Repair custody' } } };
         });
+        expect(await createJiraIssue({ v: 1, instance: configured, kindId: 'issue', initialStatusId: 'native-state',
+            fields: { title: 'Repair custody' } }, h.context)).toEqual({ kind: 'refused', reason: 'jira/unsupportedField' });
+        expect(h.request).not.toHaveBeenCalled();
         const result = TriageTaskWriteResultV1Schema.parse(await createJiraIssue({ v: 1, instance: configured, kindId: 'issue', fields: { title: 'Repair custody' } }, h.context));
         expect(result).toMatchObject({ kind: 'applied', observation: { localRef: ref, snapshot: { title: 'Repair custody' } } });
         expect(h.request.mock.calls.filter(([r]) => new URL(r.url).pathname === '/rest/api/3/issue')).toHaveLength(1);
@@ -355,8 +384,37 @@ describe('Jira source through provider HTTP', () => {
             return { body: url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' }
                 : { ...issue, fields: { ...issue.fields, ...(edited ? { summary: 'New title', description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'New body' }] }] } } : {}) } } };
         });
-        expect(await editJiraIssue({ v: 1, instance, localRef: ref, fields: { title: 'New title', body: 'New body' } }, h.context)).toMatchObject({ kind: 'applied', observation: { snapshot: { title: 'New title' } } });
-        expect(h.request.mock.calls.filter(([r]) => r.body)).toHaveLength(1);
+        const kit = await createPluginTestkit({ manifest: JIRA_PLUGIN.manifest,
+            module: { activate: JIRA_PLUGIN.activate, activateAccount }, services: h.context.services });
+        try {
+            expect(await kit.invokeAction(JIRA_ACTIONS.edit, { v: 1, instance, localRef: ref, fields: { title: 'New title', body: 'New body' } }))
+                .toMatchObject({ kind: 'applied', observation: { snapshot: { title: 'New title' } } });
+            expect(h.request.mock.calls.filter(([r]) => r.body)).toHaveLength(1);
+            h.request.mockClear();
+            h.materializeListedAccount.mockRejectedValue(new Error('selected account unavailable'));
+            expect(await kit.invokeAction(JIRA_ACTIONS.edit, { v: 1, instance, localRef: ref, fields: { title: 'Another title' } }))
+                .toMatchObject({ kind: 'failed', failure: { class: 'authentication' } });
+            expect(h.request).not.toHaveBeenCalled();
+        } finally { await kit.dispose(); }
+    });
+
+    it('keeps an Account Jira edit cancelled after dispatch uncertain without replay', async () => {
+        const controller = new AbortController();
+        const h = host((url, body) => {
+            if (url.pathname.endsWith('/editmeta')) return { body: { fields: { summary: { operations: ['set'] } } } };
+            if (body) { controller.abort(); throw new Error('cancelled after send'); }
+            return { body: url.pathname.endsWith('/myself') ? { accountId: 'person-1' } : issue };
+        });
+        const kit = await createPluginTestkit({ manifest: JIRA_PLUGIN.manifest,
+            module: { activate: JIRA_PLUGIN.activate, activateAccount }, services: h.context.services });
+        try {
+            const handler = kit.registration('actions', JIRA_ACTIONS.edit);
+            if (!handler) throw new Error('Missing Account edit Action');
+            // Observe source settlement before the Action RPC discards an aborted reply.
+            expect(await handler({ v: 1, instance, localRef: ref, fields: { title: 'New title' } }, { ...h.context, signal: controller.signal }))
+                .toMatchObject({ kind: 'uncertain' });
+            expect(h.request.mock.calls.filter(([r]) => r.body)).toHaveLength(1);
+        } finally { await kit.dispose(); }
     });
 
     it('uses an offered native transition id and does not replay an uncertain write', async () => {
@@ -436,15 +494,90 @@ describe('Jira source through provider HTTP', () => {
         }
     });
 
-    it('exposes only executable native transitions and offered edit fields on an exact read', async () => {
+    it('exposes native transitions with required inputs and offered edit fields on an exact read', async () => {
         const h = host((url) => ({ body: url.pathname.endsWith('/transitions') ? { transitions: [
             { id: '31', name: 'Complete', to: { id: '5', name: 'Done', statusCategory: { key: 'done' } }, fields: {} },
-            { id: '41', name: 'Require approval', to: { id: '6' }, fields: { customfield_1: { required: true, hasDefaultValue: false } } },
+            { id: '41', name: 'Require approval', to: { id: '6' }, fields: { resolution: { name: 'Resolution', required: true,
+                hasDefaultValue: false, operations: ['set'], schema: { type: 'resolution' }, allowedValues: [{ id: '1', name: 'Fixed' }] } } },
+            { id: '51', name: 'Native application step', to: { id: '7' }, fields: { customfield_13000: { name: 'Application data',
+                required: true, operations: ['set'], schema: { type: 'json' } } } },
         ] } : url.pathname.endsWith('/editmeta') ? { fields: { summary: { operations: ['set'] }, priority: { operations: ['set'] } } }
             : url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' } : issue }));
-        expect(await getJiraEntry({ v: 1, instance, localRef: ref }, h.context)).toMatchObject({ kind: 'present', snapshot: {
-            taskCapabilities: { editFields: ['title', 'priority'], completingTransitionId: '31', transitions: [{ id: '31', label: 'Complete', state: { presentation: 'resolved', completionReason: 'completed' } }] },
+        const read = TriageGetResultV1Schema.parse(await getJiraEntry({ v: 1, instance, localRef: ref }, h.context));
+        expect(read).toMatchObject({ kind: 'present', snapshot: {
+            taskCapabilities: { editFields: ['title', 'priority'], transitions: [
+                { id: '31', label: 'Complete', state: { presentation: 'resolved', completionReason: 'completed' } },
+                { id: '41', label: 'Require approval', requiredFields: [{ id: 'resolution', label: 'Resolution', kind: 'choice', options: [{ id: '1', label: 'Fixed' }] }] },
+                { id: '51', label: 'Native application step', requiredFields: [{ id: 'customfield_13000', label: 'Application data', kind: 'unsupported' }] },
+            ] },
         } });
+        expect(read).not.toHaveProperty('snapshot.taskCapabilities.completingTransitionId');
+    });
+
+    it.each(['applied', 'missing', 'invalid', 'duplicate', 'unoffered', 'provider-refusal', 'lost-response', 'unconfirmed-fields'] as const)(
+        'collects required native transition inputs, validates fresh metadata and writes at most once: %s', async (scenario) => {
+        let writes = 0;
+        const fields = { resolution: { name: 'Resolution', required: true, hasDefaultValue: false, operations: ['set'],
+            schema: { type: 'resolution' }, allowedValues: [{ id: '1', name: 'Fixed' }] },
+            customfield_12000: { name: 'Reason', required: true, operations: ['set'], schema: { type: 'string' } } };
+        const h = host((url, body) => {
+            if (url.pathname.endsWith('/transitions')) {
+                if (!body) return { body: { transitions: [{ id: '31', name: 'Done', to: { id: '5', name: 'Done', statusCategory: { key: 'done' } }, fields }] } };
+                writes += 1;
+                expect(body).toEqual({ transition: { id: '31' }, fields: { resolution: { id: '1' }, customfield_12000: 'Verified' } });
+                return { status: scenario === 'provider-refusal' ? 400 : scenario === 'lost-response' ? 503 : 204, body: null };
+            }
+            return { body: url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' } : {
+                ...issue, fields: { ...issue.fields, ...(writes > 0 && (scenario === 'applied' || scenario === 'unconfirmed-fields')
+                    ? { status: { id: '5', name: 'Done', statusCategory: { key: 'done' } },
+                        ...(scenario === 'applied' ? { resolution: { id: '1' }, customfield_12000: 'Verified' } : {}) } : {}) },
+            } };
+        });
+        const fieldValues = [{ fieldId: 'resolution', value: scenario === 'invalid' ? 'obsolete' : '1' },
+            { fieldId: 'customfield_12000', value: 'Verified' }];
+        if (scenario === 'missing') fieldValues.pop();
+        if (scenario === 'duplicate') fieldValues.push(fieldValues[0]!);
+        if (scenario === 'unoffered') fieldValues.push({ fieldId: 'description', value: 'Not on this transition screen' });
+        const result = TriageTaskWriteResultV1Schema.parse(await transitionJiraIssue({ v: 1, instance, localRef: ref, transitionId: '31', fieldValues }, h.context));
+        expect(result.kind).toBe(scenario === 'applied' ? 'applied' : scenario === 'provider-refusal' ? 'failed'
+            : scenario === 'lost-response' || scenario === 'unconfirmed-fields' ? 'uncertain' : 'refused');
+        if (scenario === 'provider-refusal') expect(result).toMatchObject({ failure: { code: 'jira/http400' } });
+        expect(writes).toBe(['applied', 'provider-refusal', 'lost-response', 'unconfirmed-fields'].includes(scenario) ? 1 : 0);
+    });
+
+    it.each([false, true])('uses the declared native transition Action and verifies typed number, option-list and ADF inputs (changed options: %s)', async (changedOptions) => {
+        type Handler = (input: unknown, context: PluginInvocationContext) => Promise<unknown>;
+        const handlers = new Map<string, Handler>();
+        activateAccount({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
+            connectedAccounts: { register: () => {} },
+        } as unknown as PluginApi);
+        const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+        const transition = handlers.get(contribution?.operations.transition ?? '');
+        if (transition === undefined) throw new Error('Declared native transition Action was not activated');
+        let stored: Record<string, unknown> = {};
+        const h = host((url, body) => {
+            if (url.pathname.endsWith('/transitions')) {
+                if (!body) return { body: { transitions: [{ id: '31', name: 'Done', to: { id: '5' }, fields: {
+                    description: { name: 'Reason', required: true, operations: ['set'], schema: { type: 'string' } },
+                    customfield_12000: { name: 'Effort', required: true, operations: ['set'], schema: { type: 'number' } },
+                    fixVersions: { name: 'Fix versions', required: true, operations: ['set'], schema: { type: 'array', items: 'version' },
+                        allowedValues: [{ id: '11', name: '1.1' }, { id: '12', name: '1.2' }] },
+                } }] } };
+                expect(body).toMatchObject({ transition: { id: '31' }, fields: { customfield_12000: 3, fixVersions: [{ id: '11' }, { id: '12' }],
+                    description: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Verified' }] }] } } });
+                stored = { ...(body as { fields: Record<string, unknown> }).fields,
+                    ...(changedOptions ? { fixVersions: [{ id: '11' }, { id: '11' }] } : {}) };
+                return { status: 204, body: null };
+            }
+            return { body: url.pathname === '/rest/api/3/myself' ? { accountId: 'person-1' } : {
+                ...issue, fields: { ...issue.fields, ...stored,
+                    ...(Object.keys(stored).length === 0 ? {} : { status: { id: '5', name: 'Done', statusCategory: { key: 'done' } } }) },
+            } };
+        });
+        expect(await transition({ v: 1, instance, localRef: ref, transitionId: '31', fieldValues: [
+            { fieldId: 'description', value: 'Verified' }, { fieldId: 'customfield_12000', value: 3 }, { fieldId: 'fixVersions', value: ['11', '12'] },
+        ] }, h.context)).toMatchObject({ kind: changedOptions ? 'uncertain' : 'applied' });
+        expect(h.request.mock.calls.filter(([request]) => request.method === 'POST')).toHaveLength(1);
     });
 
     it('accepts the canonical string priority id and confirms the native transition outcome', async () => {
@@ -469,7 +602,7 @@ describe('Jira source through provider HTTP', () => {
     it('offers every native issue type through its activated exact-account configuration Action', async () => {
         type Handler = (input: unknown, context: PluginInvocationContext) => Promise<unknown>;
         const handlers = new Map<string, Handler>();
-        JIRA_PLUGIN.activate({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
+        activateAccount({ actions: { register: (id: string, handler: Handler) => handlers.set(id, handler) },
             connectedAccounts: { register: () => {} },
         } as unknown as PluginApi);
         const h = host((url) => ({ body: { startAt: Number(url.searchParams.get('startAt')), maxResults: 1, total: 2,

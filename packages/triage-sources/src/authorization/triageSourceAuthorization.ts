@@ -75,18 +75,25 @@ export class TriageSourceAuthorizationErrorV1 extends PluginError {
 
 function projectHostRefusal(rejection: unknown, invocationId: string | undefined): TriageSourceFailureV1 | undefined {
   if (typeof rejection !== 'object' || rejection === null) return undefined;
-  const diagnostic = TriageListInvocationErrorV1Schema.safeParse({ code: Reflect.get(rejection, 'code') });
+  const diagnostic = TriageListInvocationErrorV1Schema.safeParse({
+    code: Reflect.get(rejection, 'code'), retryable: Reflect.get(rejection, 'retryable') === true,
+  });
   if (!diagnostic.success) return undefined;
+  // The purpose catalog producer also uses this code for loading/unavailable
+  // reads with retryable=false. It is not evidence of a revoked credential.
+  const classification = diagnostic.data.retryable === true
+    || diagnostic.data.code === 'plugin_connected_account_settings_unavailable'
+    ? 'transient' : 'authentication';
   const request = TriageListInvocationErrorV1Schema.safeParse({
     code: diagnostic.data.code,
     requestId: readPluginErrorRequestIdV1(rejection) ?? invocationId,
   });
   const failure = TriageSourceFailureV1Schema.safeParse({
-    class: 'authentication', code: diagnostic.data.code,
+    class: classification, code: diagnostic.data.code,
     ...(request.success && request.data.requestId !== undefined
       ? { detail: `Happier Request ID: ${request.data.requestId}` } : {}),
   });
-  return failure.success ? failure.data : { class: 'authentication', code: diagnostic.data.code };
+  return failure.success ? failure.data : { class: classification, code: diagnostic.data.code };
 }
 
 const AUTHORIZATION_HEADER_NAME = 'authorization';

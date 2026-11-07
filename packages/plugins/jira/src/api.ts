@@ -1,4 +1,7 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+export type JiraSourceContext = Pick<PluginAccountActionContext, 'signal'> & Readonly<{
+    services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
+}>;
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpMethod } from '@happier-dev/plugin-sdk/http';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
@@ -50,7 +53,7 @@ export function jiraResponseFailure(status: number, rawHeaders: Readonly<Record<
 }
 
 /** Reads and writes share exact-account authorization, cancellation and retry evidence. */
-export function createJiraClient(context: PluginInvocationContext, account: ConnectedAccountRef, origin: string) {
+export function createJiraClient(context: JiraSourceContext, account: ConnectedAccountRef, origin: string) {
     return {
         origin,
         async request(path: string, method: HttpMethod = 'GET', body?: unknown): Promise<unknown> {
@@ -61,7 +64,9 @@ export function createJiraClient(context: PluginInvocationContext, account: Conn
                 connectedAccounts: context.services.connectedAccounts, purpose: JIRA_ACCOUNT_PURPOSE,
                 account, origin, signal: context.signal,
             });
-            if (!auth.ok) throw new JiraFailure({ class: auth.reason === 'cancelled' ? 'transient' : 'authentication', code: `jira/${auth.reason}` });
+            if (!auth.ok) throw new JiraFailure(auth.failure ?? {
+                class: auth.reason === 'cancelled' ? 'transient' : 'authentication', code: `jira/${auth.reason}`,
+            });
             let response: Awaited<ReturnType<typeof context.services.http.request>>;
             try { response = await context.services.http.request({
                 url, method, redirect: 'error',
