@@ -70,11 +70,19 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             authentication: {
               defaultModeId: 'fine-grained-pat',
               native: { systemTool: 'gh' },
+              // Account-placed reads run in the plugin's account runtime artifact.
+              account: { artifactId: 'github-account-runtime', exportName: 'activate' },
               modes: [expect.objectContaining({
                 id: 'fine-grained-pat',
                 kind: 'manual',
                 outcomeReconciliation: 'none',
                 fields: [expect.objectContaining({ id: 'token', secret: true })],
+              }), expect.objectContaining({
+                // Saves this Machine's gh login as a connected account; it carries no secret field.
+                id: 'native-import',
+                kind: 'manual',
+                credentialOrigin: 'native_import',
+                fields: [expect.objectContaining({ id: 'source', secret: false })],
               })],
             },
           }),
@@ -120,6 +128,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     const cleanup = await mod.activate({
       actions: { register() {} },
       backgroundServices: { register() {} },
+      resources: { registerDynamicResource() { return { dispose() {} }; } },
       scm: {
         registerHostingProvider(id: string, runtime: Readonly<Record<string, unknown>>) {
           registered.push({ id, ...runtime });
@@ -186,6 +195,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     const cleanup = await mod.activate({
       actions: { register() {} },
       backgroundServices: { register() {} },
+      resources: { registerDynamicResource() { return { dispose() {} }; } },
       scm: {
         registerHostingProvider(
           id: string,

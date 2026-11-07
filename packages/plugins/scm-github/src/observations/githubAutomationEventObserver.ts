@@ -2,13 +2,17 @@ import { createHash } from 'node:crypto';
 import { isPluginError, PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
-import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import {
+  processCheckpointedPluginEventAttemptV1,
+  runCheckpointedPluginEventObserverV1,
+  type BackgroundServiceContext,
+  type PluginCheckpointedEventSourceAdapterV1,
+} from '@happier-dev/plugin-sdk/background-services';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createProtocolStoredReadSchema, defineProtocolLiteral, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import {
-  isAutomationEventSourcesListPageProgressingV1,
-  projectPluginEventAdmissionSourceStatusV1,
   type PluginEventAutomationHistoryGapResetActionResultV1,
+  type PluginEventObservationV1,
 } from '@happier-dev/plugin-sdk/events';
 import {
   PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
@@ -20,6 +24,7 @@ import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
   isGithubAutomationEventLocalId,
+  GITHUB_AUTOMATION_EVENT_LOCAL_IDS,
   normalizeGithubAutomationEvent,
   type GithubAutomationEventLocalIdV1,
   type GithubAutomationEventPayloadV1,
@@ -51,6 +56,7 @@ import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_PLUGIN_ID,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
   isGithubConnectedAccountRef,
   parseGithubRepositorySourceConfig,
   readGithubPositiveDecimal,
@@ -70,11 +76,16 @@ import {
   type GithubRepositoryEventsCursorV1,
   type GithubRepositoryTimelineEntryV1,
 } from './githubRepositoryEventsCursor.js';
-import { GithubObservationRequestCoalescer } from './githubRequestCoalescer.js';
 import { requireGithubAccountStorage } from '../requiredAccountStorage.js';
-import { classifyGithubAutomationAdmissionTelemetry } from './githubAutomationAdmissionAccounting.js';
 import { projectGithubChecksSourceEvents, githubChecksSourceInstanceId, isGithubChecksEvent, parseGithubChecksSource } from './githubChecksSource.js';
 import { readGithubPullRequestChecks } from '../triage/checks.js';
+import type { PluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { parseGithubDeploymentMonitoringSourceConfig } from './githubProviderContracts.js';
+import { publishGithubDeploymentReviewNoticesV1 } from '../actions/deploymentNotices.js';
+import { GithubDeploymentMonitorCursorV1Schema, type GithubDeploymentMonitorCursorV1 } from '../actions/deploymentReviewProtocol.js';
+import { readGithubDeploymentReviewCandidateV1, projectGithubDeploymentReviewCandidateV1, type GithubDeploymentReviewCandidateV1 } from './githubDeploymentMonitor.js';
+import { GithubCiReadError } from '../actions/reads.js';
+import type { GithubDeploymentWebhookWakeV1 } from '../webhookAction.js';
 
 const REPOSITORY_EVENTS_ENDPOINT_KIND = 'repositoryEvents' as const;
 const storedRepositoryEventsContinuitySchema = createProtocolStoredReadSchema(defineProtocolObject({
@@ -87,20 +98,12 @@ const REPOSITORY_EVENTS_PAGE_SIZE = 100;
 const DEFAULT_SOURCE_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_RECONCILIATION_INTERVAL_MS = 60_000;
 const DEFAULT_RETRY_DELAY_MS = 1_000;
-const DEFAULT_RECONCILIATION_LATE_AFTER_MS = 60_000;
-const MAX_CONCURRENT_SOURCES = 32;
-const MAX_PROVIDER_WAIT_MS = 24 * 60 * 60 * 1_000;
 type JsonRecord = Readonly<Record<string, unknown>>;
 type AutomationEventSourcesListResultV1 = PluginActionResultById['automation.event.sources.list'];
 export type GithubAutomationEventSourceDefinitionV1 = Extract<
   AutomationEventSourcesListResultV1,
   Readonly<{ kind: 'page' }>
 >['definitions'][number];
-/**
- * The host Action owns what an admitted automation-event payload may be. This
- * observer names that contract instead of a second SDK JSON projection, so a
- * payload it mints can never drift out of what `automation.event.admit` takes.
- */
 type AutomationEventSourceStatusReportV1 = PluginActionInputById['automation.event.source.status.report'];
 type AutomationEventSourceStatusInputV1 = Extract<
   AutomationEventSourceStatusReportV1,
@@ -108,10 +111,6 @@ type AutomationEventSourceStatusInputV1 = Extract<
 >;
 type AutomationEventSourceStatusStateV1 = AutomationEventSourceStatusInputV1['state'];
 type AutomationEventSourceStatusCodeV1 = AutomationEventSourceStatusInputV1['code'];
-type AutomationEventCatalogStatusInputV1 = Extract<
-  AutomationEventSourceStatusReportV1,
-  Readonly<{ kind: 'catalogReconciliation' }>
->;
 type AutomationEventCheckpointRetirementCandidateV1 = NonNullable<
   PluginActionInputById['automation.event.sources.list']['checkpointRetirementCandidates']
 >[number];
@@ -124,10 +123,13 @@ type GithubAutomationRepositoryEventObservationV1 = Readonly<{
 }>;
 
 type GithubAutomationObservedSourceV1 = Readonly<{
-  definition: GithubCheckpointedPullSourceDefinitionV1;
-  credentialRef: ConnectedAccountRef;
+  definition: GithubObservedSourceDefinitionV1;
+  credentialRef: ConnectedAccountRef | null;
   repository: GithubRepositorySourceConfigV1;
   checks?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['checks']>;
+  deploymentReview?: NonNullable<GithubAutomationRepositoryEventSourceConfigV1['deploymentReview']>;
+  /** The existing watcher or endpoint target is the single monitoring placement. */
+  materializationRef: NonNullable<GithubCheckpointedPullSourceDefinitionV1['observationTransport']['watcherMaterializationRef']>;
   daemonMaterializationRef: string;
 }>;
 
@@ -151,15 +153,19 @@ type GithubCheckpointedPullSourceDefinitionV1 = GithubAutomationEventSourceDefin
   >;
 }>;
 
+type GithubObservedSourceDefinitionV1 = GithubCheckpointedPullSourceDefinitionV1 | (GithubAutomationEventSourceDefinitionV1 & Readonly<{
+  eventRef: GithubAutomationEventRefV1;
+  observationTransport: Extract<GithubAutomationEventSourceDefinitionV1['observationTransport'], Readonly<{ kind: 'durablePush' }>>;
+}>);
+
 type SourceFailureStatusV1 = Readonly<{
   state: AutomationEventSourceStatusStateV1;
   code: AutomationEventSourceStatusCodeV1;
   nextRetryAt: number | null;
 }>;
 
-type GithubAutomationAdoptedSourcesV1 = Readonly<{
+type GithubCheckpointRetirementCatalogV1 = Readonly<{
   revision: string;
-  candidates: readonly GithubAutomationObservedSourceCandidateV1[];
   knownCurrentCheckpointsByRowId: ReadonlyMap<string, GithubAutomationKnownCurrentCheckpointV1 | null>;
 }>;
 
@@ -168,35 +174,10 @@ type GithubAutomationKnownCurrentCheckpointV1 = Readonly<{
   sourceContractVersion: number;
 }>;
 
-type GithubAutomationSourceRefreshResultV1 = Readonly<{
-  adopted: GithubAutomationAdoptedSourcesV1 | null;
-  isCurrent: boolean;
-}>;
-
-type GithubAutomationReconciliationV1 = Readonly<{
-  observedRevision: string;
-  scanStartedAt: number;
-}>;
-
 type GithubAutomationSourceCycleResultV1 = Readonly<{
   sourceKey: string;
-  nextEligibleAt: number;
+  nextEligibleAt: number | null;
 }>;
-
-type GithubAutomationObserverStateV1 = {
-  adopted: GithubAutomationAdoptedSourcesV1 | null;
-  reconciliation: GithubAutomationReconciliationV1 | null;
-  /**
-   * The adopted catalog revision whose checkpoint rows completed one
-   * conflict-free reconciliation pass in this generation. Until that holds,
-   * the revision is still reconciling: it is neither published as `current`
-   * nor allowed to stop retrying. After it holds, an unchanged catalog has no
-   * new retirement information, so the Account-wide scan does not repeat.
-   */
-  checkpointsReconciledRevision: string | null;
-  nextEligibleAtBySource: Map<string, number>;
-  nextFairSourceOffset: number;
-};
 
 export type GithubAutomationEventCheckpointedPullObserver = Readonly<{
   /** Runs the source-complete provider loop until the generation is aborted. */
@@ -205,14 +186,15 @@ export type GithubAutomationEventCheckpointedPullObserver = Readonly<{
   runCycle(context: BackgroundServiceContext): Promise<void>;
   /** Host target-Action handler for one exact source credential attempt. */
   runSourceAttempt(input: unknown, context: PluginInvocationContext): Promise<JsonValue>;
+  /** A verified ingress wake joins this same background observer's work loop. */
+  receiveDeploymentWebhook(wake: GithubDeploymentWebhookWakeV1, signal: AbortSignal): Promise<'accepted' | 'ignored'>;
 }>;
 
 export type GithubAutomationEventCheckpointedPullObserverOptions = Readonly<{
+  manifest?: Pick<PluginManifest, 'contributes'>;
   now?: () => number;
   sleep?: (delayMs: number, signal: AbortSignal) => Promise<void>;
-  maxConcurrentSources?: number;
   reconciliationIntervalMs?: number;
-  reconciliationLateAfterMs?: number;
   retryDelayMs?: number;
 }>;
 
@@ -267,7 +249,7 @@ function readGithubPollIntervalMs(headers: Readonly<Record<string, string>>): nu
   const seconds = Number(raw);
   if (!Number.isSafeInteger(seconds)) return null;
   const intervalMs = seconds * 1_000;
-  return Number.isSafeInteger(intervalMs) && intervalMs <= MAX_PROVIDER_WAIT_MS ? intervalMs : null;
+  return Number.isSafeInteger(intervalMs) ? intervalMs : null;
 }
 
 function readSingleQueryValue(url: URL, key: string): string | null {
@@ -345,7 +327,8 @@ function parseNextPageUrl(
   return next === undefined ? null : validateRepositoryEventsPageUrl(next, repository);
 }
 
-function credentialRequestKey(credentialRef: ConnectedAccountRef): string {
+function credentialRequestKey(credentialRef: ConnectedAccountRef | null): string {
+  if (credentialRef === null) return 'native-gh';
   return JSON.stringify([
     credentialRef.service.pluginId,
     credentialRef.service.localId,
@@ -382,10 +365,12 @@ function parseRepositoryEventsContinuity(
 function parseGithubAutomationRepositoryEventSourceConfig(
   value: unknown,
 ): GithubAutomationRepositoryEventSourceConfigV1 {
-  if (!isRecord(value) || value.v !== 1 || !isGithubConnectedAccountRef(value.credentialRef, GITHUB_PLUGIN_ID)) {
+  if (!isRecord(value) || value.v !== 1 || (!isGithubConnectedAccountRef(value.credentialRef, GITHUB_PLUGIN_ID)
+    && !(value.credentialRef === null && value.deploymentReview !== undefined))) {
     throw new GithubRepositoryEventsSourceContractError('GitHub Automation source configuration is incompatible');
   }
   try {
+    if (value.deploymentReview !== undefined) return parseGithubDeploymentMonitoringSourceConfig(value);
     return Object.freeze({
       v: 1,
       credentialRef: value.credentialRef,
@@ -400,18 +385,27 @@ function parseGithubAutomationRepositoryEventSourceConfig(
 function parseObservedSource(
   definition: GithubAutomationEventSourceDefinitionV1,
 ): GithubAutomationObservedSourceV1 | null {
-  if (!isGithubCheckpointedPullDefinition(definition)) return null;
+  if (!isGithubObservedDefinition(definition)) return null;
   if (definition.sourceContractVersion !== GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION) {
     throw new GithubRepositoryEventsSourceContractError('GitHub Automation source contract version is incompatible');
   }
   const sourceConfig = parseGithubAutomationRepositoryEventSourceConfig(definition.sourceConfig);
+  const materializationRef = definition.observationTransport.kind === 'checkpointedPull'
+    ? definition.observationTransport.watcherMaterializationRef
+    : definition.observationTransport.endpointMaterializationRef;
+  if (materializationRef === null) return null;
   const checksEvent = isGithubChecksEvent(definition.eventRef.localId);
   if (checksEvent !== (sourceConfig.checks !== undefined)) {
     throw new GithubRepositoryEventsSourceContractError('GitHub checks configuration must match its Event');
   }
+  const deploymentEvent = definition.eventRef.localId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview;
+  if (deploymentEvent !== (sourceConfig.deploymentReview !== undefined)
+    || (deploymentEvent && sourceConfig.deploymentReview?.monitoringMachineId !== materializationRef.machineId)) {
+    throw new GithubRepositoryEventsSourceContractError('Deployment monitoring must match its Event and selected Machine');
+  }
   const expectedInstance = sourceConfig.checks
     ? githubChecksSourceInstanceId(sourceConfig.repository.repositoryId, sourceConfig.checks)
-    : `github:repository:${sourceConfig.repository.repositoryId}`;
+    : `github:repository:${sourceConfig.repository.repositoryId}${deploymentEvent ? ':deployment-review' : ''}`;
   if (definition.sourceInstanceId !== expectedInstance) {
     throw new GithubRepositoryEventsSourceContractError('GitHub Automation source instance does not match its repository');
   }
@@ -420,9 +414,9 @@ function parseObservedSource(
     credentialRef: sourceConfig.credentialRef,
     repository: sourceConfig.repository,
     ...(sourceConfig.checks ? { checks: sourceConfig.checks } : {}),
-    daemonMaterializationRef: materializationRequestKey(
-      definition.observationTransport.watcherMaterializationRef,
-    ),
+    ...(sourceConfig.deploymentReview ? { deploymentReview: sourceConfig.deploymentReview } : {}),
+    materializationRef,
+    daemonMaterializationRef: materializationRequestKey(materializationRef),
   });
 }
 
@@ -558,30 +552,19 @@ async function pollRepositoryEvents(input: Readonly<{
   context: PluginInvocationContext;
   source: GithubAutomationObservedSourceV1;
   cursor: GithubRepositoryEventsCursorV1 | null;
-  coalescer: GithubObservationRequestCoalescer;
 }>): Promise<GithubRepositoryEventsPollResultV1<GithubAutomationRepositoryEventObservationV1>> {
   const client = await createGithubApiClient(input.context, input.source.credentialRef);
   const initialUrl = createRepositoryEventsUrl(input.source.repository);
-  let page = 0;
   return await pollGithubRepositoryEvents({
     initialUrl,
     etag: input.cursor?.etag ?? null,
     getPage: async ({ url, ifNoneMatch }) => {
       input.context.signal.throwIfAborted();
-      page += 1;
       const validatedUrl = validateRepositoryEventsPageUrl(url, input.source.repository);
-      const response = await input.coalescer.run({
-        credentialRef: credentialRequestKey(input.source.credentialRef),
-        repositoryId: input.source.repository.repositoryId,
-        endpointKind: REPOSITORY_EVENTS_ENDPOINT_KIND,
-        daemonMaterializationRef: input.source.daemonMaterializationRef,
-        url: validatedUrl,
-        page,
-        etag: ifNoneMatch,
-      }, async () => await client.request({
+      const response = await client.request({
         url: validatedUrl,
         ...(ifNoneMatch === null ? {} : { headers: { 'If-None-Match': ifNoneMatch } }),
-      })) as GithubApiResponseV1;
+      });
       input.context.signal.throwIfAborted();
       if (response.status === 304) {
         if (ifNoneMatch === null) {
@@ -744,7 +727,8 @@ function checkpointRetirementCandidateKey(candidate: AutomationEventCheckpointRe
  */
 async function reconcileCheckpointRows(input: Readonly<{
   context: BackgroundServiceContext;
-  adopted: GithubAutomationAdoptedSourcesV1;
+  catalog: GithubCheckpointRetirementCatalogV1;
+  isCurrent(): Promise<boolean>;
 }>): Promise<Readonly<{ complete: boolean }>> {
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
@@ -753,6 +737,7 @@ async function reconcileCheckpointRows(input: Readonly<{
   let complete = true;
   while (true) {
     input.context.signal.throwIfAborted();
+    if (!(await input.isCurrent())) return { complete: false };
     const page = await collection.query({
       index: GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID.byAutomationEventSource,
       order: 'asc',
@@ -767,7 +752,7 @@ async function reconcileCheckpointRows(input: Readonly<{
     for (const row of page.rows) {
       const candidate = checkpointRetirementCandidateForServerClassification({
         row,
-        knownCurrentCheckpointsByRowId: input.adopted.knownCurrentCheckpointsByRowId,
+        knownCurrentCheckpointsByRowId: input.catalog.knownCurrentCheckpointsByRowId,
       });
       if (candidate !== null) {
         candidatesByKey.set(checkpointRetirementCandidateKey(candidate), Object.freeze({ row, candidate }));
@@ -776,13 +761,13 @@ async function reconcileCheckpointRows(input: Readonly<{
     if (candidatesByKey.size > 0) {
       const result = await input.context.services.actions.execute('automation.event.sources.list', {
         transport: { kind: 'checkpointedPull' },
-        knownRevision: input.adopted.revision,
+        knownRevision: input.catalog.revision,
         checkpointRetirementCandidates: [...candidatesByKey.values()].map(({ candidate }) => candidate),
       }, { signal: input.context.signal });
       input.context.signal.throwIfAborted();
       if (
         result.kind !== 'unchanged'
-        || result.revision !== input.adopted.revision
+        || result.revision !== input.catalog.revision
         || result.checkpointRetirements === undefined
       ) return Object.freeze({ complete: false });
       const retirementKeys = result.checkpointRetirements.map(checkpointRetirementCandidateKey);
@@ -790,6 +775,7 @@ async function reconcileCheckpointRows(input: Readonly<{
         return Object.freeze({ complete: false });
       }
       for (const key of retirementKeys) {
+        if (!(await input.isCurrent())) return { complete: false };
         const candidate = candidatesByKey.get(key);
         if (candidate === undefined) return Object.freeze({ complete: false });
         try {
@@ -848,7 +834,7 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
   }
   // Checks sources recover current state, not repository occurrence history.
   // The required credential-bound recovery Action therefore has no gap to reset.
-  if (source.checks) return Object.freeze({ kind: 'noHistoryGap' });
+  if (source.checks || source.deploymentReview) return Object.freeze({ kind: 'noHistoryGap' });
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   );
@@ -874,7 +860,6 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
     context: input.context,
     source,
     cursor: null,
-    coalescer: new GithubObservationRequestCoalescer(),
   });
   input.context.signal.throwIfAborted();
   if (polled.kind !== 'events') {
@@ -926,12 +911,11 @@ function readObserverNow(now: () => number): number {
 }
 
 function addDelay(now: number, delayMs: number): number {
-  const boundedDelayMs = Math.min(Math.max(0, delayMs), MAX_PROVIDER_WAIT_MS);
-  return Math.min(Number.MAX_SAFE_INTEGER, now + boundedDelayMs);
+  return Math.min(Number.MAX_SAFE_INTEGER, now + Math.max(0, delayMs));
 }
 
 function sourceStatus(input: Readonly<{
-  definition: GithubCheckpointedPullSourceDefinitionV1;
+  definition: GithubObservedSourceDefinitionV1;
   state: AutomationEventSourceStatusStateV1;
   code: AutomationEventSourceStatusCodeV1;
   lastObservedAt?: number | null;
@@ -980,38 +964,6 @@ async function reportSourceStatus(input: Readonly<{
   input.context.signal.throwIfAborted();
 }
 
-function catalogStatus(input: Readonly<{
-  observedRevision: string;
-  adoptedRevision: string | null;
-  state: AutomationEventCatalogStatusInputV1['state'];
-  scanStartedAt: number | null;
-  nextRetryAt: number | null;
-}>): AutomationEventCatalogStatusInputV1 {
-  return {
-    kind: 'catalogReconciliation',
-    scope: { kind: 'checkpointedPull' },
-    observedRevision: input.observedRevision,
-    adoptedRevision: input.adoptedRevision,
-    state: input.state,
-    scanStartedAt: input.scanStartedAt,
-    nextRetryAt: input.nextRetryAt,
-  };
-}
-
-async function reportCatalogStatus(input: Readonly<{
-  context: BackgroundServiceContext;
-  observedRevision: string;
-  adoptedRevision: string | null;
-  state: AutomationEventCatalogStatusInputV1['state'];
-  scanStartedAt: number | null;
-  nextRetryAt: number | null;
-}>): Promise<void> {
-  input.context.signal.throwIfAborted();
-  await input.context.services.actions.execute('automation.event.source.status.report', catalogStatus(input), {
-    signal: input.context.signal,
-  });
-  input.context.signal.throwIfAborted();
-}
 
 function sourceCandidates(
   definitions: readonly GithubAutomationEventSourceDefinitionV1[],
@@ -1024,7 +976,7 @@ function sourceCandidates(
     } catch {
       // A same-event incompatible definition still needs a host-visible status,
       // while foreign Event contributions remain owned by their own provider.
-      if (isGithubCheckpointedPullDefinition(definition)) {
+      if (isGithubObservedDefinition(definition)) {
         candidates.push(Object.freeze({ kind: 'incompatible', definition }));
       }
     }
@@ -1032,12 +984,14 @@ function sourceCandidates(
   return Object.freeze(candidates);
 }
 
-function isGithubCheckpointedPullDefinition(
+function isGithubObservedDefinition(
   definition: GithubAutomationEventSourceDefinitionV1,
-): definition is GithubCheckpointedPullSourceDefinitionV1 {
+): definition is GithubObservedSourceDefinitionV1 {
   return definition.eventRef.pluginId === GITHUB_PLUGIN_ID
     && isGithubAutomationEventLocalId(definition.eventRef.localId)
-    && definition.observationTransport.kind === 'checkpointedPull';
+    && (definition.observationTransport.kind === 'checkpointedPull'
+      || (definition.observationTransport.kind === 'durablePush'
+        && definition.eventRef.localId === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview));
 }
 
 function knownCurrentCheckpointsByRowId(
@@ -1075,187 +1029,6 @@ function knownCurrentCheckpointsByRowId(
   return current;
 }
 
-function beginReconciliation(input: Readonly<{
-  state: GithubAutomationObserverStateV1;
-  observedRevision: string;
-  now: number;
-}>): GithubAutomationReconciliationV1 {
-  const current = input.state.reconciliation;
-  if (current !== null && current.observedRevision === input.observedRevision) return current;
-  const next = Object.freeze({ observedRevision: input.observedRevision, scanStartedAt: input.now });
-  input.state.reconciliation = next;
-  return next;
-}
-
-async function reportPendingReconciliation(input: Readonly<{
-  context: BackgroundServiceContext;
-  state: GithubAutomationObserverStateV1;
-  observedRevision: string;
-  now: number;
-  reconciliationLateAfterMs: number;
-  retryDelayMs: number;
-}>): Promise<void> {
-  const reconciliation = beginReconciliation({
-    state: input.state,
-    observedRevision: input.observedRevision,
-    now: input.now,
-  });
-  const adoptedRevision = input.state.adopted?.revision ?? null;
-  const state = input.now - reconciliation.scanStartedAt >= input.reconciliationLateAfterMs
-    ? 'reconciliationLate'
-    : 'reconciling';
-  await reportCatalogStatus({
-    context: input.context,
-    observedRevision: reconciliation.observedRevision,
-    adoptedRevision: adoptedRevision === reconciliation.observedRevision ? null : adoptedRevision,
-    state,
-    scanStartedAt: reconciliation.scanStartedAt,
-    nextRetryAt: addDelay(input.now, input.retryDelayMs),
-  });
-}
-
-async function reportCurrentCatalog(input: Readonly<{
-  context: BackgroundServiceContext;
-  state: GithubAutomationObserverStateV1;
-  revision: string;
-}>): Promise<void> {
-  input.state.reconciliation = null;
-  await reportCatalogStatus({
-    context: input.context,
-    observedRevision: input.revision,
-    adoptedRevision: input.revision,
-    state: 'current',
-    scanStartedAt: null,
-    nextRetryAt: null,
-  });
-}
-
-/**
- * A revision-complete catalog is only `current` once its checkpoint rows have
- * reconciled. Reporting `current` first would let the product claim a healthy
- * pull source while a required retirement of stale or incompatible rows had
- * failed with nothing to expose it.
- */
-async function reportAdoptedCatalog(input: Readonly<{
-  context: BackgroundServiceContext;
-  state: GithubAutomationObserverStateV1;
-  revision: string;
-  now: number;
-  reconciliationLateAfterMs: number;
-  retryDelayMs: number;
-  alreadyReportedPending?: boolean;
-}>): Promise<void> {
-  if (input.state.checkpointsReconciledRevision === input.revision) {
-    await reportCurrentCatalog({
-      context: input.context,
-      state: input.state,
-      revision: input.revision,
-    });
-    return;
-  }
-  if (input.alreadyReportedPending === true) return;
-  await reportPendingReconciliation({ ...input, observedRevision: input.revision });
-}
-
-function sourceRefreshResult(
-  adopted: GithubAutomationAdoptedSourcesV1 | null,
-  isCurrent: boolean,
-): GithubAutomationSourceRefreshResultV1 {
-  return Object.freeze({ adopted, isCurrent });
-}
-
-/**
- * Reads a complete revision-bound source set before replacing the retained
- * provider snapshot. The public projection is never admission authority;
- * `automation.event.admit` still resolves each tuple against the host's set.
- */
-async function refreshCurrentSources(input: Readonly<{
-  context: BackgroundServiceContext;
-  state: GithubAutomationObserverStateV1;
-  now: number;
-  reconciliationLateAfterMs: number;
-  retryDelayMs: number;
-}>): Promise<GithubAutomationSourceRefreshResultV1> {
-  const definitions: GithubAutomationEventSourceDefinitionV1[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  let revision: string | null = null;
-  let reportedPending = false;
-  while (true) {
-    input.context.signal.throwIfAborted();
-    const result = await input.context.services.actions.execute('automation.event.sources.list', {
-      transport: { kind: 'checkpointedPull' },
-      ...(cursor === undefined && input.state.adopted !== null
-        ? { knownRevision: input.state.adopted.revision }
-        : cursor === undefined ? {} : { cursor }),
-    }, { signal: input.context.signal });
-    input.context.signal.throwIfAborted();
-    // A policy deferral means the catalog read never ran. With no observed
-    // revision it can neither adopt nor invalidate the current catalog, so the
-    // existing not-refreshed result owns it instead of a reconciliation report.
-    if (isPluginActionApprovalRequestCreated(result)) {
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    if (result.kind === 'unchanged') {
-      if (input.state.adopted !== null && input.state.adopted.revision === result.revision) {
-        await reportAdoptedCatalog({ ...input, revision: result.revision });
-        return sourceRefreshResult(input.state.adopted, true);
-      }
-      await reportPendingReconciliation({
-        ...input,
-        observedRevision: result.revision,
-      });
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    if (result.kind === 'cursorStale') {
-      await reportPendingReconciliation({
-        ...input,
-        observedRevision: result.currentRevision,
-      });
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    if (revision !== null && revision !== result.revision) {
-      await reportPendingReconciliation({
-        ...input,
-        observedRevision: result.revision,
-      });
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    revision ??= result.revision;
-    if (!isAutomationEventSourcesListPageProgressingV1(result)) {
-      await reportPendingReconciliation({ ...input, observedRevision: revision });
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    if (input.state.adopted === null || input.state.adopted.revision !== revision) {
-      await reportPendingReconciliation({ ...input, observedRevision: revision });
-      reportedPending = true;
-    }
-    definitions.push(...result.definitions);
-    if (result.nextCursor === null) {
-      const adopted = Object.freeze({
-        revision,
-        candidates: sourceCandidates(definitions),
-        knownCurrentCheckpointsByRowId: knownCurrentCheckpointsByRowId(definitions),
-      });
-      input.state.adopted = adopted;
-      if (input.state.checkpointsReconciledRevision !== revision) {
-        input.state.checkpointsReconciledRevision = null;
-      }
-      await reportAdoptedCatalog({ ...input, revision, alreadyReportedPending: reportedPending });
-      return sourceRefreshResult(adopted, true);
-    }
-    if (seenCursors.has(result.nextCursor)) {
-      await reportPendingReconciliation({ ...input, observedRevision: revision });
-      return sourceRefreshResult(input.state.adopted, false);
-    }
-    seenCursors.add(result.nextCursor);
-    cursor = result.nextCursor;
-    // Yield and observe cancellation between pages rather than monopolizing
-    // the background generation.
-    await Promise.resolve();
-    input.context.signal.throwIfAborted();
-  }
-}
 
 /**
  * The shared GitHub classifier answers what the provider said; this names that
@@ -1277,8 +1050,8 @@ function githubFailureSourceStatus(failure: GithubResponseFailureV1, now: number
     return Object.freeze({
       state: 'backingOff',
       code: 'rateLimited',
-      // The classifier reports GitHub's absolute retry instant; the observer
-      // owns the wait ceiling it is willing to hold a source for.
+      // Preserve GitHub's absolute retry instant; the shared scheduler owns
+      // segmenting waits beyond the JavaScript timer range.
       nextRetryAt: addDelay(
         now,
         failure.retryNotBeforeMs === undefined ? GITHUB_RATE_LIMIT_FALLBACK_MS : failure.retryNotBeforeMs - now,
@@ -1305,6 +1078,10 @@ function failureStatus(error: unknown, now: number): SourceFailureStatusV1 {
   }
   if (error instanceof GithubRepositoryEventsHistoryGapError) {
     return Object.freeze({ state: 'attention', code: 'historyGap', nextRetryAt: null });
+  }
+  if (error instanceof GithubCiReadError) {
+    const status = githubFailureSourceStatus(error.failure, now);
+    if (status !== null) return status;
   }
   if (error instanceof GithubRepositoryEventsResponseError) {
     const status = githubResponseSourceStatus(error.response, now);
@@ -1335,42 +1112,9 @@ function nextEligibleAfterStatus(input: Readonly<{
   );
 }
 
-function checkpointForSafeObservations(input: Readonly<{
-  cursor: GithubRepositoryEventsCursorV1;
-  observedAtMs: number;
-  etag: string | null;
-  events: readonly GithubRepositoryTimelineEntryV1<GithubAutomationRepositoryEventObservationV1>[];
-  safeObservationCount: number;
-  allObservationCount: number;
-}>): GithubRepositoryEventsCursorV1 | null {
-  if (input.safeObservationCount === input.allObservationCount) {
-    const full = classifyGithubRepositoryEvents({
-      cursor: input.cursor,
-      observedAtMs: input.observedAtMs,
-      etag: input.etag,
-      maxEntries: PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
-      events: input.events,
-    });
-    return full.kind === 'observations' ? full.checkpoint : null;
-  }
-  if (input.safeObservationCount === 0) return null;
-  const prefix = classifyGithubRepositoryEvents({
-    cursor: input.cursor,
-    observedAtMs: input.observedAtMs,
-    etag: input.etag,
-    maxEntries: input.safeObservationCount,
-    events: input.events,
-  });
-  return prefix.kind === 'observations' ? prefix.checkpoint : null;
-}
 
-/**
- * Schedules are keyed by the exact definition revision they were earned by.
- * A parked or backing-off source therefore becomes due again as soon as its
- * owner edits it: the cycle's active-key sweep drops the previous revision's
- * entry, and normal observation resumes without waiting out the old wait.
- */
-function sourceScheduleKey(candidate: GithubAutomationObservedSourceCandidateV1): string {
+/** Exact per-trigger row/revision witness for the Account-bound target Action. */
+function sourceAttemptKey(candidate: GithubAutomationObservedSourceCandidateV1): string {
   if (candidate.kind === 'source') {
     return `${checkpointRowId(candidate.source)}:${candidate.source.definition.triggerRevision}`;
   }
@@ -1385,8 +1129,127 @@ function sourceScheduleKey(candidate: GithubAutomationObservedSourceCandidateV1)
   ]);
 }
 
-function sourceCycleResult(sourceKey: string, nextEligibleAt: number): GithubAutomationSourceCycleResultV1 {
+function sourceCycleResult(sourceKey: string, nextEligibleAt: number | null): GithubAutomationSourceCycleResultV1 {
   return Object.freeze({ sourceKey, nextEligibleAt });
+}
+
+/** Endpoint readiness belongs to the Home, never to a retained plugin flag. */
+async function hasVerifiedDeploymentWebhookRoute(source: GithubAutomationObservedSourceV1, context: PluginInvocationContext): Promise<boolean> {
+  const webhookEndpointId = source.definition.observationTransport.kind === 'durablePush'
+    ? source.definition.observationTransport.webhookEndpointId : undefined;
+  if (webhookEndpointId === undefined) return false;
+  try {
+    const endpoint = await context.services.actions.execute('plugin.webhook.endpoint.checkCorrespondence', {
+      webhookEndpointId,
+      webhookContribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' },
+      targetMaterialization: source.materializationRef,
+      sourceInstanceId: source.definition.sourceInstanceId,
+      setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+    }, { signal: context.signal });
+    context.signal.throwIfAborted();
+    if (isPluginActionApprovalRequestCreated(endpoint)) return false;
+    if (endpoint.kind !== 'ready') return false;
+    // Preserve every exact binding check on the observed nonsecret facts.
+    // Older correspondence results have no such observations and stay
+    // unverified, so Automatic continues its existing polling path.
+    const contribution = 'contribution' in endpoint && isRecord(endpoint.contribution) ? endpoint.contribution : null;
+    const target = 'targetMaterialization' in endpoint && isRecord(endpoint.targetMaterialization) ? endpoint.targetMaterialization : null;
+    return endpoint.webhookEndpointId === webhookEndpointId
+      && 'readiness' in endpoint && endpoint.readiness === 'ready'
+      && (!('revokedAt' in endpoint) || endpoint.revokedAt === undefined)
+      && contribution !== null && contribution.pluginId === GITHUB_PLUGIN_ID && contribution.localId === 'github-events'
+      && 'sourceInstanceId' in endpoint && endpoint.sourceInstanceId === source.definition.sourceInstanceId
+      && target !== null && target.pluginId === source.materializationRef.pluginId
+      && target.machineId === source.materializationRef.machineId
+      && target.materializationId === source.materializationRef.materializationId;
+  } catch (error) {
+    context.signal.throwIfAborted();
+    return false;
+  }
+}
+
+function readDeploymentCheckpoint(source: GithubAutomationObservedSourceV1, row: StoredCheckpointRowV1 | null) {
+  if (row && (row.rowId !== checkpointRowId(source) || !isGithubAutomationEventCheckpointRowV1(row.value)
+    || row.value.payload.sourceInstanceId !== source.definition.sourceInstanceId
+    || row.value.payload.sourceContractVersion !== source.definition.sourceContractVersion)) {
+    throw new GithubRepositoryEventsSourceContractError('GitHub deployment checkpoint identity is incompatible');
+  }
+  const retained = row && isGithubAutomationEventCheckpointRowV1(row.value) ? row.value : null;
+  const stored = retained ? GithubDeploymentMonitorCursorV1Schema.safeParse(retained.payload.cursor) : null;
+  if (stored && !stored.success) throw new GithubRepositoryEventsSourceContractError('Deployment checkpoint cursor is incompatible');
+  const priorCursor = stored?.success ? stored.data : null;
+  const monitorCursor: GithubDeploymentMonitorCursorV1 | null = retained?.payload.lastEvaluatedTriggerRevision === source.definition.triggerRevision
+    ? priorCursor : priorCursor === null ? null : { kind: 'deploymentReview', v: 1, pending: priorCursor.pending };
+  return { retained, priorCursor, monitorCursor };
+}
+
+function readChecksCheckpoint(source: GithubAutomationObservedSourceV1, row: StoredCheckpointRowV1 | null) {
+  if (row && (row.rowId !== checkpointRowId(source) || !isGithubAutomationEventCheckpointRowV1(row.value)
+    || row.value.payload.sourceInstanceId !== source.definition.sourceInstanceId
+    || row.value.payload.sourceContractVersion !== source.definition.sourceContractVersion)) {
+    throw new GithubRepositoryEventsSourceContractError('GitHub checks checkpoint identity is incompatible');
+  }
+  const previous = row && isRecord(row.value.payload) && isRecord(row.value.payload.cursor) ? row.value.payload.cursor : null;
+  if (row && (!previous || previous.kind !== 'pullRequestChecks' || previous.v !== 1)) {
+    throw new GithubRepositoryEventsSourceContractError('GitHub checks checkpoint cursor is incompatible');
+  }
+  return previous;
+}
+
+type GithubGroupCheckpointReadV1 = Readonly<{
+  source: GithubAutomationObservedSourceV1;
+  checkpoint: Promise<StoredCheckpointRowV1 | null>;
+}>;
+type GithubGroupProviderCandidateV1 =
+  | Readonly<{ kind: 'repository'; polled: GithubRepositoryEventsPollResultV1<GithubAutomationRepositoryEventObservationV1> }>
+  | Readonly<{ kind: 'checks'; surface: Awaited<ReturnType<typeof readGithubPullRequestChecks>> }>
+  | Readonly<{ kind: 'deployment'; candidate: GithubDeploymentReviewCandidateV1 }>;
+
+/** Raw native facts for one finite Account-bound group, never a row's cursor decision. */
+async function readGroupProviderCandidate(input: Readonly<{
+  context: PluginInvocationContext;
+  members: readonly GithubGroupCheckpointReadV1[];
+  isCurrent(): Promise<boolean>;
+  now: () => number;
+  deliveredRunId?: string;
+}>): Promise<GithubGroupProviderCandidateV1 | null> {
+  const loaded = await Promise.allSettled(input.members.map(async member => ({
+    source: member.source, row: await member.checkpoint,
+  })));
+  const eligible = loaded.flatMap(result => {
+    if (result.status === 'rejected') return [];
+    const member = result.value;
+    try {
+      if (member.source.deploymentReview) readDeploymentCheckpoint(member.source, member.row);
+      else if (member.source.checks) readChecksCheckpoint(member.source, member.row);
+      else if (member.row && loadCheckpoint({ source: member.source, row: member.row }).historyGap) return [];
+      return [member];
+    } catch {
+      // Each row's normal path reports its own invalid retained checkpoint;
+      // it cannot authorize a read or suppress an entitled sibling's read.
+      return [];
+    }
+  });
+  const first = eligible[0];
+  if (!first) return null;
+  input.context.signal.throwIfAborted();
+  if (!(await input.isCurrent())) throw new GithubRepositoryEventsSourceContractError('GitHub source group is no longer current');
+  const source = first.source;
+  if (source.deploymentReview) return { kind: 'deployment', candidate: await readGithubDeploymentReviewCandidateV1({
+    source: { v: 1, credentialRef: source.credentialRef, repository: source.repository, deploymentReview: source.deploymentReview },
+    previousCursors: eligible.map(member => readDeploymentCheckpoint(member.source, member.row).monitorCursor),
+    ...(input.deliveredRunId === undefined ? {} : { deliveredRunId: input.deliveredRunId }),
+  }, input.context) };
+  if (source.checks) {
+    const client = await createGithubApiClient(input.context, source.credentialRef);
+    return { kind: 'checks', surface: await readGithubPullRequestChecks({ route: source.repository, headSha: source.checks.headSha,
+      observation: { pullRequestNumber: source.checks.pullRequestNumber, selection: source.checks.selection },
+    }, { client, now: input.now, signal: input.context.signal }) };
+  }
+  const cursors = eligible.map(member => member.row ? loadCheckpoint({ source: member.source, row: member.row }).cursor : null);
+  const cursor = cursors[0] ?? null;
+  const agreed = cursor?.etag !== null && cursor?.etag !== undefined && cursors.every(value => value?.etag === cursor.etag);
+  return { kind: 'repository', polled: await pollRepositoryEvents({ context: input.context, source, cursor: agreed ? cursor : null }) };
 }
 
 async function runObservedSource(input: Readonly<{
@@ -1399,7 +1262,11 @@ async function runObservedSource(input: Readonly<{
   defaultPollIntervalMs: number;
   retryDelayMs: number;
   reconciliationIntervalMs: number;
-  coalescer: GithubObservationRequestCoalescer;
+  manifest?: Pick<PluginManifest, 'contributes'>;
+  isDefinitionCurrent: () => Promise<boolean>;
+  deliveredRunId?: string;
+  checkpoint: Promise<StoredCheckpointRowV1 | null>;
+  readCandidate(): Promise<GithubGroupProviderCandidateV1 | null>;
 }>): Promise<GithubAutomationSourceCycleResultV1> {
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
@@ -1407,6 +1274,7 @@ async function runObservedSource(input: Readonly<{
   const rowId = checkpointRowId(input.source);
   let existing: LoadedCheckpointV1 | null = null;
   const persistHistoryGap = async (checkpoint: LoadedCheckpointV1): Promise<void> => {
+    if (!(await input.isDefinitionCurrent())) return;
     await collection.put(createCheckpointRow({
       source: input.source,
       cursor: checkpoint.cursor,
@@ -1417,63 +1285,112 @@ async function runObservedSource(input: Readonly<{
     input.context.signal.throwIfAborted();
   };
   try {
-    const row = await collection.get(rowId, { signal: input.context.signal });
+    const row = await input.checkpoint;
     input.context.signal.throwIfAborted();
+    if (!(await input.isDefinitionCurrent())) return sourceCycleResult(input.sourceKey, addDelay(readObserverNow(input.now), input.retryDelayMs));
+    if (input.source.deploymentReview) {
+      const source = input.source;
+      const { retained, priorCursor, monitorCursor } = readDeploymentCheckpoint(source, row);
+      if (!input.manifest) throw new GithubRepositoryEventsSourceContractError('Deployment review page is unavailable');
+      let checkpointRevision: number | 'absent' = row?.revision ?? 'absent';
+      let observationId = `${rowId}:${checkpointRevision}:${source.definition.triggerRevision}`;
+      const pageAvailable = await publishGithubDeploymentReviewNoticesV1({ current: [], previous: [], manifest: input.manifest, observationId, isCurrent: input.isDefinitionCurrent }, input.context);
+      if (pageAvailable.kind !== 'published') throw new GithubRepositoryEventsSourceContractError(pageAvailable.code);
+      const previous = priorCursor?.pending ?? [];
+      if (!(await input.isDefinitionCurrent())) return sourceCycleResult(input.sourceKey, addDelay(readObserverNow(input.now), input.retryDelayMs));
+      const candidate = await input.readCandidate();
+      if (candidate?.kind !== 'deployment') throw new GithubRepositoryEventsSourceContractError('Deployment candidate is unavailable');
+      const observation = projectGithubDeploymentReviewCandidateV1({ previous: monitorCursor, candidate: candidate.candidate });
+      const current = observation.cursor.pending;
+      const observedAtMs = readObserverNow(input.now);
+      let occurredAtMs = observedAtMs;
+      let lastOccurrence = retained?.payload.lastContiguousOccurrenceId ?? null;
+      const checkpointBase = {
+        checkpointRowId: rowId, automationId: source.definition.automationId, triggerId: source.definition.triggerId,
+        eventRef: source.definition.eventRef, sourceSelectorId: source.definition.sourceSelectorId,
+        sourceInstanceId: source.definition.sourceInstanceId, sourceContractVersion: source.definition.sourceContractVersion,
+        baseline: retained?.payload.baseline ?? { kind: 'currentHead' as const, establishedAt: observedAtMs },
+        lastEvaluatedTriggerRevision: source.definition.triggerRevision,
+        continuity: { kind: 'deploymentReview', v: 1, repositoryId: source.repository.repositoryId },
+      };
+      const priorObservation = priorCursor?.observation;
+      const observations: PluginEventObservationV1[] = [];
+      if (current !== previous) {
+        const factsKey = createHash('sha256').update(JSON.stringify([
+          source.definition.triggerRevision, current.map(value => JSON.stringify(value)).sort(),
+        ])).digest('hex');
+        if (priorObservation?.factsKey === factsKey) {
+          observationId = priorObservation.id;
+          occurredAtMs = priorObservation.occurredAtMs;
+        } else {
+          if (!(await input.isDefinitionCurrent())) return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
+          // Persist only retry evidence, not a new pending-state authority. The
+          // settled facts stay in `pending`; every retry still reads GitHub.
+          const prepared = await collection.put(createGithubAutomationEventCheckpointRowV1({ ...checkpointBase,
+            cursor: { ...priorCursor, kind: 'deploymentReview', v: 1, pending: previous,
+              observation: { id: observationId, factsKey, occurredAtMs } }, lastContiguousOccurrenceId: lastOccurrence,
+          }), { expectedRevision: checkpointRevision, signal: input.context.signal });
+          checkpointRevision = prepared.revision;
+        }
+        const currentKeys = new Set(current.map(value => `${value.runId}/${value.attempt}/${value.environmentId}`));
+        const changes = [
+          ...current.filter(value => !previous.includes(value)).map(value => ({ ...value, resolved: false })),
+          ...previous.filter(value => !currentKeys.has(`${value.runId}/${value.attempt}/${value.environmentId}`)).map(value => ({ ...value, resolved: true })),
+        ];
+        for (const deploymentReview of changes) {
+          if (!(await input.isDefinitionCurrent())) return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
+          // Observation-only enrollment has no execution occurrence or recipe.
+          // Its consumed effect is this same notice publication below.
+          if (source.definition.observationOnly !== undefined) continue;
+          const occurrenceId = `github:deployment-review:${createHash('sha256').update(JSON.stringify([observationId, deploymentReview])).digest('hex')}`;
+          const event = normalizeGithubAutomationEvent({ kind: 'deploymentReview', repository: { repositoryId: source.repository.repositoryId, nameWithOwner: source.repository.nameWithOwner }, deploymentReview });
+          observations.push({ eventRef: source.definition.eventRef,
+            sourceInstanceId: source.definition.sourceInstanceId, sourceContractVersion: source.definition.sourceContractVersion,
+            occurrenceId, occurredAt: occurredAtMs, observationReceivedAt: observedAtMs, observedDelta: 1, payload: event.payload });
+          lastOccurrence = occurrenceId;
+        }
+      }
+      const manifest = input.manifest;
+      const disposition = await processCheckpointedPluginEventAttemptV1({
+        context: input.context, definitions: [input.source.definition], observations, complete: true, isCurrent: input.isDefinitionCurrent,
+        save: async () => {
+          const published = await publishGithubDeploymentReviewNoticesV1({ current, previous, manifest, observationId, isCurrent: input.isDefinitionCurrent }, input.context);
+          if (published.kind !== 'published') throw new GithubRepositoryEventsAdmissionError(published.code);
+          if (!(await input.isDefinitionCurrent())) throw new GithubRepositoryEventsAdmissionError('Deployment source changed before checkpoint');
+          if (!retained || current !== previous || priorObservation !== undefined
+            || observation.cursor.waitingPages !== priorCursor?.waitingPages
+            || retained.payload.lastEvaluatedTriggerRevision !== source.definition.triggerRevision) {
+            await collection.put(createGithubAutomationEventCheckpointRowV1({ ...checkpointBase,
+              cursor: observation.cursor, lastContiguousOccurrenceId: lastOccurrence,
+            }), { expectedRevision: checkpointRevision, signal: input.context.signal });
+          }
+        },
+      });
+      if (disposition.kind !== 'checkpointSafe') throw new GithubRepositoryEventsAdmissionError('Deployment event admission is unsettled');
+      await reportSourceStatus({ context: input.context, source, state: 'observing', code: 'none', lastObservedAt: observedAtMs });
+      return sourceCycleResult(input.sourceKey, input.deliveredRunId === undefined || source.definition.observationTransport.kind === 'checkpointedPull' ? addDelay(observedAtMs,
+        Math.max(source.deploymentReview?.pollingIntervalMs ?? readGithubPollIntervalMs(observation.responseHeaders) ?? input.defaultPollIntervalMs,
+          readGithubPollIntervalMs(observation.responseHeaders) ?? 0)) : null);
+    }
     if (input.source.checks) {
       const source = input.source;
-      const checks = input.source.checks;
-      if (row && (row.rowId !== rowId || !isGithubAutomationEventCheckpointRowV1(row.value)
-        || row.value.payload.sourceInstanceId !== source.definition.sourceInstanceId
-        || row.value.payload.sourceContractVersion !== source.definition.sourceContractVersion)) {
-        throw new GithubRepositoryEventsSourceContractError('GitHub checks checkpoint identity is incompatible');
-      }
-      const client = await createGithubApiClient(input.context, source.credentialRef);
-      let page = 0;
-      const coalescedClient = { ...client, request: async (request: Parameters<typeof client.request>[0]) => {
-        page += 1;
-        return await input.coalescer.run({
-          credentialRef: credentialRequestKey(source.credentialRef), repositoryId: source.repository.repositoryId,
-          endpointKind: 'pullRequestChecks', daemonMaterializationRef: source.daemonMaterializationRef,
-          url: request.url, page, etag: null,
-          body: request.body ? new TextDecoder().decode(request.body) : undefined,
-        }, () => client.request(request)) as GithubApiResponseV1;
-      } };
-      const surface = await readGithubPullRequestChecks({ route: source.repository, headSha: checks.headSha,
-        observation: { pullRequestNumber: checks.pullRequestNumber, selection: checks.selection },
-      }, { client: coalescedClient, now: input.now, signal: input.context.signal });
+      const previous = readChecksCheckpoint(source, row);
+      const candidate = await input.readCandidate();
+      if (candidate?.kind !== 'checks') throw new GithubRepositoryEventsSourceContractError('Checks candidate is unavailable');
+      const surface = candidate.surface;
       const { snapshot, evidenceKey, events } = projectGithubChecksSourceEvents({
         repositoryId: source.repository.repositoryId, nameWithOwner: source.repository.nameWithOwner,
       }, surface);
       const observedAtMs = readObserverNow(input.now);
-      const previous = row ? isRecord(row.value.payload) && isRecord(row.value.payload.cursor) ? row.value.payload.cursor : null : null;
-      if (row && (!previous || previous.kind !== 'pullRequestChecks' || previous.v !== 1)) {
-        throw new GithubRepositoryEventsSourceContractError('GitHub checks checkpoint cursor is incompatible');
-      }
       let lastOccurrence = row && isGithubAutomationEventCheckpointRowV1(row.value) ? row.value.payload.lastContiguousOccurrenceId : null;
       const changed = previous?.evidenceKey !== evidenceKey;
       const event = events.find((candidate) => candidate.eventRef.localId === source.definition.eventRef.localId);
-      if (row && changed && event) {
-        const occurrenceId = event.occurrenceId;
-        const admitted = await input.context.services.actions.execute('automation.event.admit', {
-          eventRef: source.definition.eventRef, occurrenceId, occurredAt: observedAtMs, observationReceivedAt: observedAtMs,
-          payload: event.payload,
-          definitions: [{ automationId: source.definition.automationId, triggerId: source.definition.triggerId,
-            triggerRevision: source.definition.triggerRevision, sourceSelectorId: source.definition.sourceSelectorId }],
-        }, { signal: input.context.signal });
-        input.context.signal.throwIfAborted();
-        if (isPluginActionApprovalRequestCreated(admitted) || admitted.results.length !== 1) {
-          throw new GithubRepositoryEventsAdmissionError('GitHub checks admission did not settle one definition');
-        }
-        const outcome = admitted.results[0]!;
-        if (!outcome.checkpointSafe) {
-          const projected = projectPluginEventAdmissionSourceStatusV1({ definition: source.definition,
-            result: outcome, observationReceivedAt: observedAtMs, observedDelta: 1 });
-          await reportSourceStatus({ context: input.context, source, state: projected.state,
-            code: projected.code, nextRetryAt: projected.nextRetryAt });
-          return sourceCycleResult(input.sourceKey, projected.nextRetryAt ?? addDelay(observedAtMs, input.retryDelayMs));
-        }
-        lastOccurrence = occurrenceId;
-      }
+      const observations: PluginEventObservationV1[] = row && changed && event ? [{
+        eventRef: event.eventRef, sourceInstanceId: source.definition.sourceInstanceId,
+        sourceContractVersion: source.definition.sourceContractVersion, occurrenceId: event.occurrenceId,
+        occurredAt: observedAtMs, observationReceivedAt: observedAtMs, observedDelta: 1, payload: event.payload,
+      }] : [];
+      if (observations[0]) lastOccurrence = observations[0].occurrenceId;
       const checkpoint = createGithubAutomationEventCheckpointRowV1({
         checkpointRowId: rowId, automationId: source.definition.automationId, triggerId: source.definition.triggerId,
         eventRef: source.definition.eventRef, sourceSelectorId: source.definition.sourceSelectorId,
@@ -1483,7 +1400,11 @@ async function runObservedSource(input: Readonly<{
         lastEvaluatedTriggerRevision: source.definition.triggerRevision,
         continuity: { v: 1, endpointKind: 'pullRequestChecks', repositoryId: source.repository.repositoryId },
       });
-      await collection.put(checkpoint, { expectedRevision: row?.revision ?? 'absent', signal: input.context.signal });
+      const disposition = await processCheckpointedPluginEventAttemptV1({
+        context: input.context, definitions: [input.source.definition], observations, complete: true, isCurrent: input.isDefinitionCurrent,
+        save: async () => { await collection.put(checkpoint, { expectedRevision: row?.revision ?? 'absent', signal: input.context.signal }); },
+      });
+      if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
       input.context.signal.throwIfAborted();
       const failure = surface.checkRunsFailure ?? surface.commitStatusFailure;
       const status = failure ? githubFailureSourceStatus(failure, observedAtMs)
@@ -1513,12 +1434,9 @@ async function runObservedSource(input: Readonly<{
       );
     }
 
-    const polled = await pollRepositoryEvents({
-      context: input.context,
-      source: input.source,
-      cursor: existing?.cursor ?? null,
-      coalescer: input.coalescer,
-    });
+    const candidate = await input.readCandidate();
+    if (candidate?.kind !== 'repository') throw new GithubRepositoryEventsSourceContractError('Repository candidate is unavailable');
+    const polled = candidate.polled;
     input.context.signal.throwIfAborted();
     // The response completion is the provider receipt fact. Do not reuse the
     // cycle-start time when persisting a timeline continuity horizon.
@@ -1535,12 +1453,14 @@ async function runObservedSource(input: Readonly<{
         events: polled.events,
         etag: polled.etag,
       });
-      await collection.put(createCheckpointRow({
-        source: input.source,
-        cursor: baseline,
-        lastContiguousOccurrenceId: null,
-        baseline: { kind: 'currentHead', establishedAt: observedAtMs },
-      }), { expectedRevision: 'absent', signal: input.context.signal });
+      const disposition = await processCheckpointedPluginEventAttemptV1({
+        context: input.context, definitions: [input.source.definition], observations: [], complete: true, isCurrent: input.isDefinitionCurrent,
+        save: async () => { await collection.put(createCheckpointRow({
+          source: input.source, cursor: baseline, lastContiguousOccurrenceId: null,
+          baseline: { kind: 'currentHead', establishedAt: observedAtMs },
+        }), { expectedRevision: 'absent', signal: input.context.signal }); },
+      });
+      if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
       input.context.signal.throwIfAborted();
       await reportSourceStatus({
         context: input.context,
@@ -1557,12 +1477,16 @@ async function runObservedSource(input: Readonly<{
       const checkpoint = reuseGithubRepositoryEventsCheckpointOnNotModified(existing.cursor, observedAtMs);
       // A 304 is still a completed observation. Its new continuity horizon
       // must be CAS-persisted even when no template field changed.
-      await collection.put(createCheckpointRow({
-        source: input.source,
-        cursor: checkpoint,
-        lastContiguousOccurrenceId: existing.row.value.payload.lastContiguousOccurrenceId,
-        baseline: existing.row.value.payload.baseline,
-      }), { expectedRevision: existing.row.revision, signal: input.context.signal });
+      const retained = existing;
+      const disposition = await processCheckpointedPluginEventAttemptV1({
+        context: input.context, definitions: [input.source.definition], observations: [], complete: true, isCurrent: input.isDefinitionCurrent,
+        save: async () => { await collection.put(createCheckpointRow({
+          source: input.source, cursor: checkpoint,
+          lastContiguousOccurrenceId: retained.row.value.payload.lastContiguousOccurrenceId,
+          baseline: retained.row.value.payload.baseline,
+        }), { expectedRevision: retained.row.revision, signal: input.context.signal }); },
+      });
+      if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
       input.context.signal.throwIfAborted();
       await reportSourceStatus({
         context: input.context,
@@ -1593,108 +1517,42 @@ async function runObservedSource(input: Readonly<{
       return sourceCycleResult(input.sourceKey, nextEligibleAt);
     }
 
-    let safeObservationCount = 0;
-    let admittedDelta = 0;
-    let skippedDelta = 0;
-    const matchingObservedDelta = classified.observations.filter(
-      (observation) => observation.eventRef.pluginId === input.source.definition.eventRef.pluginId
-        && observation.eventRef.localId === input.source.definition.eventRef.localId,
-    ).length;
-    let lastContiguousOccurrenceId = existing.row.value.payload.lastContiguousOccurrenceId;
-    let unsafe: SourceFailureStatusV1 | null = null;
-    for (const observation of classified.observations) {
-      input.context.signal.throwIfAborted();
-      if (observation.eventRef.localId !== input.source.definition.eventRef.localId) {
-        safeObservationCount += 1;
-        lastContiguousOccurrenceId = observation.occurrenceId;
-        continue;
-      }
-      const admitted = await input.context.services.actions.execute('automation.event.admit', {
-        eventRef: observation.eventRef,
-        occurrenceId: observation.occurrenceId,
-        occurredAt: observation.occurredAtMs,
-        observationReceivedAt: observedAtMs,
-        payload: observation.payload,
-        definitions: [{
-          automationId: input.source.definition.automationId,
-          triggerId: input.source.definition.triggerId,
-          triggerRevision: input.source.definition.triggerRevision,
-          sourceSelectorId: input.source.definition.sourceSelectorId,
-        }],
-      }, { signal: input.context.signal });
-      input.context.signal.throwIfAborted();
-      // A policy deferral is not an admission: the occurrence never reached the
-      // canonical Automation owner, so it stays unsettled rather than advancing
-      // this source's contiguous checkpoint.
-      if (isPluginActionApprovalRequestCreated(admitted)) {
-        throw new GithubRepositoryEventsAdmissionError('GitHub Automation admission was deferred to an approval decision');
-      }
-      if (admitted.results.length !== 1) {
-        throw new GithubRepositoryEventsAdmissionError('GitHub Automation admission did not settle one definition');
-      }
-      const outcome = admitted.results[0]!;
-      if (!outcome.checkpointSafe) {
-        // One admission classifier: the SDK's canonical projection decides what
-        // an unsafe admission means (definition refresh, capacity, or an
-        // unsettled admission); the observer only carries that verdict into the
-        // checkpoint decision and the source-status report below.
-        const projected = projectPluginEventAdmissionSourceStatusV1({
-          definition: input.source.definition,
-          result: outcome,
-          observationReceivedAt: observedAtMs,
-          observedDelta: 0,
-        });
-        unsafe = Object.freeze({
-          state: projected.state,
-          code: projected.code,
-          nextRetryAt: projected.nextRetryAt,
-        });
-        break;
-      }
-      safeObservationCount += 1;
-      lastContiguousOccurrenceId = observation.occurrenceId;
-      const telemetry = classifyGithubAutomationAdmissionTelemetry(outcome);
-      admittedDelta += telemetry.admittedDelta;
-      skippedDelta += telemetry.skippedDelta;
-    }
-
-    const checkpoint = checkpointForSafeObservations({
-      cursor: existing.cursor,
-      observedAtMs,
-      etag: polled.etag,
-      events: polled.events,
-      safeObservationCount,
-      allObservationCount: classified.observations.length,
+    const observations: PluginEventObservationV1[] = classified.observations
+      .filter(observation => observation.eventRef.localId === input.source.definition.eventRef.localId)
+      .map(observation => ({
+        eventRef: observation.eventRef, sourceInstanceId: input.source.definition.sourceInstanceId,
+        sourceContractVersion: input.source.definition.sourceContractVersion,
+        occurrenceId: observation.occurrenceId, occurredAt: observation.occurredAtMs,
+        observationReceivedAt: observedAtMs, observedDelta: 1, payload: observation.payload,
+      }));
+    const retained = existing;
+    const disposition = await processCheckpointedPluginEventAttemptV1({
+      context: input.context, definitions: [input.source.definition], observations, complete: true, isCurrent: input.isDefinitionCurrent,
+      save: async () => { await collection.put(createCheckpointRow({
+        source: input.source, cursor: classified.checkpoint,
+        lastContiguousOccurrenceId: classified.observations.at(-1)?.occurrenceId ?? retained.row.value.payload.lastContiguousOccurrenceId,
+        baseline: retained.row.value.payload.baseline,
+      }), { expectedRevision: retained.row.revision, signal: input.context.signal }); },
     });
-    if (checkpoint !== null) {
-      await collection.put(createCheckpointRow({
-        source: input.source,
-        cursor: checkpoint,
-        lastContiguousOccurrenceId,
-        baseline: existing.row.value.payload.baseline,
-      }), { expectedRevision: existing.row.revision, signal: input.context.signal });
-      input.context.signal.throwIfAborted();
-    }
-
+    if (disposition.kind !== 'checkpointSafe') return sourceCycleResult(input.sourceKey, addDelay(observedAtMs, input.retryDelayMs));
     await reportSourceStatus({
       context: input.context,
       source: input.source,
-      state: unsafe?.state ?? 'observing',
-      code: unsafe?.code ?? 'none',
+      state: 'observing',
+      code: 'none',
       lastObservedAt: observedAtMs,
-      lastDispositionAt: checkpoint === null ? null : observedAtMs,
-      nextRetryAt: unsafe?.nextRetryAt ?? null,
-      // Cursor safety requires traversing the shared repository timeline, but
-      // source counters describe this semantic trigger rather than its sibling
-      // GitHub Event kinds.
-      observedDelta: matchingObservedDelta,
-      admittedDelta,
-      skippedDelta,
+      lastDispositionAt: observedAtMs,
     });
-    return sourceCycleResult(input.sourceKey, unsafe?.nextRetryAt ?? nextEligibleAt);
+    return sourceCycleResult(input.sourceKey, nextEligibleAt);
   } catch (error) {
     if (input.context.signal.aborted) throw error;
+    // The durable webhook owner retries a failed exact-run read/publication;
+    // do not settle it just because a polling attempt would back off.
+    if (input.deliveredRunId !== undefined) throw error;
     let failure = error;
+    if (input.source.deploymentReview && error instanceof RangeError) {
+      failure = new GithubRepositoryEventsSourceContractError(error.message);
+    }
     if (failure instanceof GithubRepositoryEventsHistoryGapError && existing !== null) {
       try {
         await persistHistoryGap(existing);
@@ -1755,67 +1613,6 @@ async function runIncompatibleSource(input: Readonly<{
   }));
 }
 
-function rotateCandidatesFairly(input: Readonly<{
-  state: GithubAutomationObserverStateV1;
-  candidates: readonly GithubAutomationObservedSourceCandidateV1[];
-}>): readonly GithubAutomationObservedSourceCandidateV1[] {
-  if (input.candidates.length === 0) return input.candidates;
-  const start = input.state.nextFairSourceOffset % input.candidates.length;
-  input.state.nextFairSourceOffset = (start + 1) % input.candidates.length;
-  return Object.freeze([...input.candidates.slice(start), ...input.candidates.slice(0, start)]);
-}
-
-async function runDueCandidates(input: Readonly<{
-  context: BackgroundServiceContext;
-  candidates: readonly GithubAutomationObservedSourceCandidateV1[];
-  state: GithubAutomationObserverStateV1;
-  now: () => number;
-  defaultPollIntervalMs: number;
-  retryDelayMs: number;
-  reconciliationIntervalMs: number;
-  maxConcurrentSources: number;
-}>): Promise<readonly GithubAutomationSourceCycleResultV1[]> {
-  const dueNow = readObserverNow(input.now);
-  const candidates = rotateCandidatesFairly({ state: input.state, candidates: input.candidates })
-    .filter((candidate) => (input.state.nextEligibleAtBySource.get(sourceScheduleKey(candidate)) ?? 0) <= dueNow);
-  if (candidates.length === 0) return Object.freeze([]);
-
-  const results: GithubAutomationSourceCycleResultV1[] = [];
-  let nextIndex = 0;
-  const worker = async (): Promise<void> => {
-    while (true) {
-      input.context.signal.throwIfAborted();
-      const index = nextIndex;
-      nextIndex += 1;
-      const candidate = candidates[index];
-      if (candidate === undefined) return;
-      const sourceKey = sourceScheduleKey(candidate);
-      try {
-        const result = candidate.kind === 'source'
-          ? await runGithubAutomationSourceAttempt({
-            context: input.context,
-            source: candidate.source,
-            sourceKey,
-          })
-          : await runIncompatibleSource({
-            context: input.context,
-            definition: candidate.definition,
-            sourceKey,
-            now: input.now,
-            retryDelayMs: input.retryDelayMs,
-            reconciliationIntervalMs: input.reconciliationIntervalMs,
-          });
-        results.push(result);
-      } catch (error) {
-        if (input.context.signal.aborted) throw error;
-        results.push(sourceCycleResult(sourceKey, addDelay(readObserverNow(input.now), input.retryDelayMs)));
-      }
-    }
-  };
-  const workerCount = Math.min(input.maxConcurrentSources, candidates.length);
-  await Promise.all(Array.from({ length: workerCount }, async () => await worker()));
-  return Object.freeze(results);
-}
 
 function readGithubAutomationSourceCycleResult(
   value: unknown,
@@ -1823,9 +1620,8 @@ function readGithubAutomationSourceCycleResult(
 ): GithubAutomationSourceCycleResultV1 | null {
   if (!isRecord(value)
     || value.sourceKey !== expectedSourceKey
-    || typeof value.nextEligibleAt !== 'number'
-    || !Number.isSafeInteger(value.nextEligibleAt)
-    || value.nextEligibleAt < 0
+    || (value.nextEligibleAt !== null && (typeof value.nextEligibleAt !== 'number'
+      || !Number.isSafeInteger(value.nextEligibleAt) || value.nextEligibleAt < 0))
   ) return null;
   return Object.freeze({
     sourceKey: expectedSourceKey,
@@ -1835,17 +1631,22 @@ function readGithubAutomationSourceCycleResult(
 
 async function runGithubAutomationSourceAttempt(input: Readonly<{
   context: BackgroundServiceContext;
-  source: GithubAutomationObservedSourceV1;
+  sources: readonly GithubAutomationObservedSourceV1[];
   sourceKey: string;
+  deliveredRunId?: string;
 }>): Promise<GithubAutomationSourceCycleResultV1> {
+  const source = input.sources[0];
+  if (!source) throw new GithubRepositoryEventsSourceContractError('GitHub source group is empty');
   const result = await input.context.services.actions.execute(
     {
       pluginId: input.context.plugin.id,
       localId: GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
     },
     {
-      definition: input.source.definition,
-      credentialRef: input.source.credentialRef,
+      definitions: input.sources.map(member => member.definition),
+      ...(source.credentialRef === null ? { nativeService: GITHUB_CONNECTED_ACCOUNT_SERVICE }
+        : { credentialRef: source.credentialRef }),
+      ...(input.deliveredRunId === undefined ? {} : { deliveredRunId: input.deliveredRunId }),
     },
     { signal: input.context.signal },
   );
@@ -1858,298 +1659,259 @@ async function runGithubAutomationSourceAttempt(input: Readonly<{
   return parsed;
 }
 
-function nextCycleAt(input: Readonly<{
-  state: GithubAutomationObserverStateV1;
-  candidates: readonly GithubAutomationObservedSourceCandidateV1[];
-}>): number {
-  let next = Number.POSITIVE_INFINITY;
-  for (const candidate of input.candidates) {
-    const eligibleAt = input.state.nextEligibleAtBySource.get(sourceScheduleKey(candidate));
-    if (eligibleAt !== undefined && eligibleAt < next) next = eligibleAt;
-  }
-  return next;
-}
-
-function readPositiveOption(input: Readonly<{
-  value: number | undefined;
-  fallback: number;
-  maximum: number;
-  label: string;
-}>): number {
-  const value = input.value ?? input.fallback;
-  if (!Number.isSafeInteger(value) || value < 1 || value > input.maximum) {
-    throw new RangeError(`GitHub Automation observer ${input.label} must be a bounded positive safe integer`);
-  }
-  return value;
-}
-
-async function defaultSleep(delayMs: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(done, delayMs);
-    function done(): void {
-      clearTimeout(timeout);
-      signal.removeEventListener('abort', done);
-      resolve();
-    }
-    signal.addEventListener('abort', done, { once: true });
-  });
-}
 
 /**
- * Provider-local source slice only: host Actions own definition projection,
- * currentness, durable admission, and status; the provider owns the long-lived
- * authenticated Events loop and each Automation trigger's private checkpoint CAS.
+ * GitHub supplies finite provider and cursor operations. The SDK owns the one
+ * source-catalog, host-assignment, eligibility, cancellation and wake lifecycle.
  */
 export function createGithubAutomationEventCheckpointedPullObserver(
   options: GithubAutomationEventCheckpointedPullObserverOptions = {},
 ): GithubAutomationEventCheckpointedPullObserver {
   const now = options.now ?? Date.now;
-  const sleep = options.sleep ?? defaultSleep;
-  const maxConcurrentSources = readPositiveOption({
-    value: options.maxConcurrentSources,
-    fallback: 8,
-    maximum: MAX_CONCURRENT_SOURCES,
-    label: 'maxConcurrentSources',
-  });
-  const reconciliationIntervalMs = readPositiveOption({
-    value: options.reconciliationIntervalMs,
-    fallback: DEFAULT_RECONCILIATION_INTERVAL_MS,
-    maximum: MAX_PROVIDER_WAIT_MS,
-    label: 'reconciliationIntervalMs',
-  });
-  const reconciliationLateAfterMs = readPositiveOption({
-    value: options.reconciliationLateAfterMs,
-    fallback: DEFAULT_RECONCILIATION_LATE_AFTER_MS,
-    maximum: MAX_PROVIDER_WAIT_MS,
-    label: 'reconciliationLateAfterMs',
-  });
-  const retryDelayMs = readPositiveOption({
-    value: options.retryDelayMs,
-    fallback: DEFAULT_RETRY_DELAY_MS,
-    maximum: MAX_PROVIDER_WAIT_MS,
-    label: 'retryDelayMs',
-  });
-  const state: GithubAutomationObserverStateV1 = {
-    adopted: null,
-    reconciliation: null,
-    checkpointsReconciledRevision: null,
-    nextEligibleAtBySource: new Map<string, number>(),
-    nextFairSourceOffset: 0,
+  const deploymentEvent = options.manifest?.contributes?.events?.find(event => event.id === GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview);
+  const deploymentAutomation = isRecord(deploymentEvent?.automation) ? deploymentEvent.automation : null;
+  const deploymentSource = deploymentAutomation && isRecord(deploymentAutomation.source) ? deploymentAutomation.source : null;
+  const transportKinds = Array.isArray(deploymentSource?.supportedObservationTransports)
+    && deploymentSource.supportedObservationTransports.includes('durablePush')
+    ? ['checkpointedPull', 'durablePush'] as const : ['checkpointedPull'] as const;
+  const reconciliationIntervalMs = options.reconciliationIntervalMs ?? DEFAULT_RECONCILIATION_INTERVAL_MS;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  type ActiveAttempt = Readonly<{
+    sources: readonly GithubAutomationObservedSourceV1[];
+    signal: AbortSignal;
+    isCurrent(): Promise<boolean>;
+  }>;
+  const activeAttempts = new Map<string, ActiveAttempt>();
+  type PendingDelivery = {
+    wake: GithubDeploymentWebhookWakeV1;
+    signal: AbortSignal;
+    matched: boolean;
+    failure?: Readonly<{ error: unknown }>;
   };
-  let activeCycleCoalescer: GithubObservationRequestCoalescer | null = null;
+  // These are the authenticated ingress handler's live promises, not durable
+  // delivery state. Ingress retains retry/settlement custody across retirement.
+  const deliveries = new Set<PendingDelivery>();
+  let wakeForDelivery: ((sourceInstanceId?: string) => Promise<void>) | undefined;
 
-  const runCycleInternal = async (context: BackgroundServiceContext): Promise<number> => {
-    if (context.plugin.id !== GITHUB_PLUGIN_ID) {
-      throw new GithubRepositoryEventsSourceContractError('GitHub observer ran under a different plugin identity');
-    }
-    context.signal.throwIfAborted();
-    const cycleStartedAt = readObserverNow(now);
-    let refreshed: GithubAutomationSourceRefreshResultV1;
-    try {
-      refreshed = await refreshCurrentSources({
-        context,
-        state,
-        now: cycleStartedAt,
-        reconciliationLateAfterMs,
-        retryDelayMs,
-      });
-      if (
-        refreshed.isCurrent
-        && refreshed.adopted !== null
-        && state.checkpointsReconciledRevision !== refreshed.adopted.revision
-      ) {
-        const reconciled = await reconcileCheckpointRows({ context, adopted: refreshed.adopted });
-        if (reconciled.complete) {
-          state.checkpointsReconciledRevision = refreshed.adopted.revision;
-          await reportCurrentCatalog({
-            context,
-            state,
-            revision: refreshed.adopted.revision,
-          });
+  const matchesDelivery = (source: GithubAutomationObservedSourceV1, wake: GithubDeploymentWebhookWakeV1): boolean =>
+    source.definition.observationTransport.kind === 'durablePush'
+    && source.deploymentReview !== undefined && source.deploymentReview.deliveryMode !== 'polling'
+    && source.repository.repositoryId === wake.repositoryId
+    && source.repository.nameWithOwner.toLowerCase() === wake.repositoryNameWithOwner.toLowerCase()
+    && (wake.sourceInstanceId === source.definition.sourceInstanceId
+      || wake.sourceInstanceId === `github:repository:${wake.repositoryId}`);
+
+  const sourceAdapter: PluginCheckpointedEventSourceAdapterV1<GithubAutomationObservedSourceCandidateV1, never> = {
+    decode(definition) { return sourceCandidates([definition])[0] ?? null; },
+    async observe(input) {
+      let nextEligibleAt: number | null = null;
+      const candidates = sourceCandidates(input.definitions);
+      const sources = candidates.flatMap(candidate => candidate.kind === 'source' ? [candidate.source] : []);
+      const runGroup = async () => {
+        const pending = [...deliveries].filter(delivery => !delivery.matched && !delivery.failure
+          && sources.some(source => matchesDelivery(source, delivery.wake)));
+        const run = async (delivery?: PendingDelivery) => {
+          const members = sources;
+          const sourceKey = sourceAttemptKey({ kind: 'source', source: members[0]! });
+          const signal = delivery ? AbortSignal.any([input.context.signal, delivery.signal]) : input.context.signal;
+          const attempt: ActiveAttempt = { sources: members, signal, isCurrent: input.isCurrent };
+          for (const source of members) activeAttempts.set(sourceAttemptKey({ kind: 'source', source }), attempt);
+          try {
+            const result = await runGithubAutomationSourceAttempt({
+              context: { ...input.context, signal }, sources: members, sourceKey,
+              ...(delivery ? { deliveredRunId: delivery.wake.runId } : {}),
+            });
+            if (delivery) delivery.matched = true;
+            return result;
+          } catch (error) {
+            if (delivery) delivery.failure = { error };
+            throw error;
+          } finally {
+            for (const source of members) {
+              const key = sourceAttemptKey({ kind: 'source', source });
+              if (activeAttempts.get(key) === attempt) activeAttempts.delete(key);
+            }
+          }
+        };
+        if (pending.length === 0) return await run();
+        let latest: PromiseSettledResult<GithubAutomationSourceCycleResultV1> | undefined;
+        for (const delivery of pending) {
+          try { latest = { status: 'fulfilled', value: await run(delivery) }; }
+          catch (error) { input.context.signal.throwIfAborted(); latest = { status: 'rejected', reason: error }; }
+        }
+        // Every ingress promise keeps its own outcome. Scheduling follows the
+        // latest actual observation; the native Account client retains hard
+        // provider retry deadlines independently of this normal eligibility.
+        if (latest?.status === 'rejected') throw latest.reason;
+        return latest?.value ?? null;
+      };
+      const attempts = await Promise.allSettled([
+        ...candidates.flatMap(candidate => candidate.kind !== 'incompatible' ? [] : [runIncompatibleSource({
+          context: input.context, definition: candidate.definition, sourceKey: sourceAttemptKey(candidate), now, retryDelayMs, reconciliationIntervalMs,
+        })]),
+        ...(sources.length === 0 ? [] : [runGroup()]),
+      ]);
+      for (const attempt of attempts) {
+        if (attempt.status === 'rejected') throw attempt.reason;
+        const result = attempt.value;
+        if (result?.nextEligibleAt !== null && result?.nextEligibleAt !== undefined) {
+          nextEligibleAt = nextEligibleAt === null ? result.nextEligibleAt : Math.min(nextEligibleAt, result.nextEligibleAt);
         }
       }
-    } catch (error) {
-      if (context.signal.aborted) throw error;
-      // Source-list/catalog-status Actions and the checkpoint Collection are
-      // host boundaries. A transient failure must not terminate the provider
-      // loop or discard its last fully adopted source snapshot.
-      return addDelay(readObserverNow(now), retryDelayMs);
-    }
-    // A last-complete catalog is retained only to inform the next refresh.
-    // Once the host says it is stale, it cannot authorize provider I/O,
-    // checkpoint custody, admission, or source health for this cycle.
-    if (!refreshed.isCurrent) return addDelay(readObserverNow(now), retryDelayMs);
-    const adopted = refreshed.adopted;
-    if (adopted === null) return addDelay(readObserverNow(now), retryDelayMs);
-
-    const activeSourceKeys = new Set(adopted.candidates.map(sourceScheduleKey));
-    for (const sourceKey of state.nextEligibleAtBySource.keys()) {
-      if (!activeSourceKeys.has(sourceKey)) state.nextEligibleAtBySource.delete(sourceKey);
-    }
-    if (activeCycleCoalescer !== null) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub observer cycles cannot overlap within one plugin generation',
-      );
-    }
-    const cycleCoalescer = new GithubObservationRequestCoalescer();
-    activeCycleCoalescer = cycleCoalescer;
-    let results: readonly GithubAutomationSourceCycleResultV1[];
-    try {
-      results = await runDueCandidates({
-        context,
-        candidates: adopted.candidates,
-        state,
-        now,
-        defaultPollIntervalMs: DEFAULT_SOURCE_POLL_INTERVAL_MS,
-        retryDelayMs,
-        reconciliationIntervalMs,
-        maxConcurrentSources,
-      });
-    } finally {
-      if (activeCycleCoalescer === cycleCoalescer) activeCycleCoalescer = null;
-    }
-    for (const result of results) state.nextEligibleAtBySource.set(result.sourceKey, result.nextEligibleAt);
-    return nextCycleAt({
-      state,
-      candidates: adopted.candidates,
-    });
+      // Admission and CAS run through the same finite SDK processor inside the
+      // target Action, where the host's Account binding remains in scope.
+      return { observations: [], complete: false, nextEligibleAt };
+    },
+    async save() {
+      throw new GithubRepositoryEventsSourceContractError('GitHub checkpoints require their Account-bound target Action');
+    },
+    async retire(input) {
+      if (!(await input.isCurrent())) return { complete: false };
+      return await reconcileCheckpointRows({ context: input.context, isCurrent: input.isCurrent, catalog: {
+        revision: input.revision,
+        knownCurrentCheckpointsByRowId: knownCurrentCheckpointsByRowId(input.definitions),
+      } });
+    },
+    retryAt({ error, now: statusAt }) {
+      const status = failureStatus(error, statusAt);
+      return nextEligibleAfterStatus({ status, statusAt, retryDelayMs, reconciliationIntervalMs });
+    },
+    subscribeWake(wake) {
+      wakeForDelivery = wake;
+      return { dispose() { wakeForDelivery = undefined; } };
+    },
   };
 
-  const runSourceAttempt = async (
-    input: unknown,
-    context: PluginInvocationContext,
-  ): Promise<JsonValue> => {
-    if (context.plugin.id !== GITHUB_PLUGIN_ID) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt ran under a different plugin identity',
-      );
+  const runSourceAttempt = async (input: unknown, context: PluginInvocationContext): Promise<JsonValue> => {
+    if (context.plugin.id !== GITHUB_PLUGIN_ID || !isRecord(input)) {
+      throw new GithubRepositoryEventsSourceContractError('GitHub source attempt input is incompatible');
     }
     context.signal.throwIfAborted();
-    if (
-      !isRecord(input)
-      || !isGithubConnectedAccountRef(input.credentialRef)
-    ) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt input is incompatible',
-      );
+    if (!Array.isArray(input.definitions) || input.definitions.length === 0) {
+      throw new GithubRepositoryEventsSourceContractError('GitHub source group is empty');
     }
-    let source: GithubAutomationObservedSourceV1 | null;
-    try {
-      source = parseObservedSource(
-        input.definition as GithubAutomationEventSourceDefinitionV1,
-      );
-    } catch {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt definition is incompatible',
-      );
-    }
-    if (
-      source === null
-      || credentialRequestKey(source.credentialRef)
-        !== credentialRequestKey(input.credentialRef)
-    ) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt credential does not match its definition',
-      );
+    const definitions: readonly unknown[] = input.definitions;
+    // The catalog decoder already validated these typed witnesses. Raw Action
+    // input gains no source authority until every member matches that same
+    // active group exactly; never assert untrusted input into the source type.
+    const attempt = [...activeAttempts.values()].find(current => current.sources.some(member =>
+      JSON.stringify(member.definition) === JSON.stringify(definitions[0])));
+    if (!attempt) throw new GithubRepositoryEventsSourceContractError('GitHub source group is not active');
+    const members = definitions.map(value => {
+      const member = attempt.sources.find(current => JSON.stringify(current.definition) === JSON.stringify(value));
+      if (!member) throw new GithubRepositoryEventsSourceContractError('GitHub source group member is not active');
+      return member;
+    });
+    const source = members[0]!;
+    const credentialRef = isGithubConnectedAccountRef(input.credentialRef) && input.nativeService === undefined
+      ? input.credentialRef
+      : input.credentialRef === undefined && isRecord(input.nativeService)
+        && input.nativeService.pluginId === GITHUB_CONNECTED_ACCOUNT_SERVICE.pluginId
+        && input.nativeService.localId === GITHUB_CONNECTED_ACCOUNT_SERVICE.localId ? null : undefined;
+    if (credentialRef === undefined || members.some(member => credentialRequestKey(member.credentialRef) !== credentialRequestKey(credentialRef))) {
+      throw new GithubRepositoryEventsSourceContractError('GitHub source attempt credential does not match its definition');
     }
     const caller = context.caller;
-    if (
-      caller?.kind !== 'plugin'
-      || caller.pluginId !== GITHUB_PLUGIN_ID
+    if (caller?.kind !== 'plugin' || caller.pluginId !== GITHUB_PLUGIN_ID
       || caller.contribution.id !== GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID
-      || caller.contribution.qualifiedId
-        !== `${GITHUB_PLUGIN_ID}/backgroundServices/${GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID}`
-      || caller.originSurface !== 'background'
-      || !caller.materialization
-    ) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt did not come from its current observer materialization',
-      );
+      || caller.contribution.qualifiedId !== `${GITHUB_PLUGIN_ID}/backgroundServices/${GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID}`
+      || caller.originSurface !== 'background' || !caller.materialization
+      || members.some(member => materializationRequestKey(caller.materialization!) !== member.daemonMaterializationRef)) {
+      throw new GithubRepositoryEventsSourceContractError('GitHub source attempt did not come from its current observer materialization');
     }
-    if (materializationRequestKey(caller.materialization) !== source.daemonMaterializationRef) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt did not come from its current observer materialization',
-      );
+    const sourceKey = sourceAttemptKey({ kind: 'source', source });
+    const providerKey = (member: GithubAutomationObservedSourceV1) => JSON.stringify([
+      member.definition.sourceInstanceId, member.definition.sourceContractVersion,
+      member.repository, member.checks ?? null, member.deploymentReview ?? null,
+    ]);
+    if (members.length !== attempt.sources.length
+      || new Set(members.map(member => sourceAttemptKey({ kind: 'source', source: member }))).size !== members.length
+      || members.some(member => providerKey(member) !== providerKey(source)
+        || activeAttempts.get(sourceAttemptKey({ kind: 'source', source: member })) !== attempt
+        || !attempt.sources.some(current => JSON.stringify(current.definition) === JSON.stringify(member.definition)))
+      || !(await attempt.isCurrent())) {
+      throw new GithubRepositoryEventsSourceContractError('GitHub source attempt is not part of the current observer cycle');
     }
-    const coalescer = activeCycleCoalescer;
-    if (coalescer === null) {
-      throw new GithubRepositoryEventsSourceContractError(
-        'GitHub source attempt is not part of the current observer cycle',
-      );
+    const actionContext = { ...context, signal: AbortSignal.any([context.signal, attempt.signal]) };
+    const deliveredRunId = input.deliveredRunId === undefined ? undefined : readGithubPositiveDecimal(input.deliveredRunId, 'run ID');
+    if (deliveredRunId !== undefined) {
+      let verifiedWake = false;
+      for (const member of members) {
+        if (!member.deploymentReview || member.deploymentReview.deliveryMode === 'polling') {
+          throw new GithubRepositoryEventsSourceContractError('Deployment webhook route is unavailable');
+        }
+        if (member.definition.observationTransport.kind === 'durablePush'
+          && await hasVerifiedDeploymentWebhookRoute(member, actionContext)) verifiedWake = true;
+      }
+      if (!verifiedWake) throw new GithubRepositoryEventsSourceContractError('Deployment webhook route is unavailable');
     }
-    const result = await runObservedSource({
-      context,
-      source,
-      sourceKey: sourceScheduleKey({ kind: 'source', source }),
-      now,
-      defaultPollIntervalMs: DEFAULT_SOURCE_POLL_INTERVAL_MS,
-      retryDelayMs,
-      reconciliationIntervalMs,
-      // One source attempt owns one Automation trigger checkpoint. Identical
-      // authenticated repository reads coalesce generation-locally and carry
-      // no persisted checkpoint authority.
-      coalescer,
+    const observing: GithubAutomationObservedSourceV1[] = [];
+    for (const member of members) {
+      if (deliveredRunId === undefined && member.deploymentReview) {
+        const mode = member.deploymentReview.deliveryMode ?? 'automatic';
+        const webhookReady = mode !== 'polling' && await hasVerifiedDeploymentWebhookRoute(member, actionContext);
+        if (webhookReady || mode === 'webhook') {
+          await reportSourceStatus({ context: actionContext, source: member, state: webhookReady ? 'observing' : 'attention',
+            code: webhookReady ? 'none' : 'sourceContractIncompatible', lastObservedAt: null });
+          continue;
+        }
+      }
+      observing.push(member);
+    }
+    actionContext.signal.throwIfAborted();
+    if (!(await attempt.isCurrent())) throw new GithubRepositoryEventsSourceContractError('GitHub source group is no longer current');
+    if (observing.length === 0) return { sourceKey, nextEligibleAt: null };
+    // All selectors, revisions, assignment and the common credential principal
+    // were admitted above. One operation binding remains alive through every
+    // native read, per-row processor and CAS; no sibling borrows retired services.
+    const collection = requireGithubAccountStorage(actionContext).collection(GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION);
+    const checkpointReads: GithubGroupCheckpointReadV1[] = observing.map(member => ({ source: member,
+      checkpoint: collection.get(checkpointRowId(member), { signal: actionContext.signal }),
+    }));
+    let candidate: Promise<GithubGroupProviderCandidateV1 | null> | undefined;
+    const readCandidate = () => candidate ??= readGroupProviderCandidate({ context: actionContext, members: checkpointReads,
+      now, isCurrent: attempt.isCurrent, ...(deliveredRunId === undefined ? {} : { deliveredRunId }),
     });
-    return Object.freeze({
-      sourceKey: result.sourceKey,
-      nextEligibleAt: result.nextEligibleAt,
-    }) satisfies JsonValue;
+    const results = await Promise.allSettled(checkpointReads.map(member => runObservedSource({
+      context: actionContext, source: member.source, sourceKey: sourceAttemptKey({ kind: 'source', source: member.source }), now,
+      defaultPollIntervalMs: DEFAULT_SOURCE_POLL_INTERVAL_MS, retryDelayMs, reconciliationIntervalMs,
+      manifest: options.manifest, ...(deliveredRunId === undefined ? {} : { deliveredRunId }),
+      isDefinitionCurrent: attempt.isCurrent, checkpoint: member.checkpoint, readCandidate,
+    })));
+    let nextEligibleAt: number | null = null;
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      const next = result.value.nextEligibleAt;
+      if (next !== null) nextEligibleAt = nextEligibleAt === null ? next : Math.min(nextEligibleAt, next);
+    }
+    actionContext.signal.throwIfAborted();
+    return { sourceKey, nextEligibleAt };
   };
 
+  const run = async (context: BackgroundServiceContext, mode: 'once' | 'continuous'): Promise<void> => {
+    if (context.plugin.id !== GITHUB_PLUGIN_ID) throw new GithubRepositoryEventsSourceContractError('GitHub observer ran under a different plugin identity');
+    await runCheckpointedPluginEventObserverV1({ context, source: sourceAdapter, mode, now,
+      transportKinds,
+      ...(options.sleep ? { sleep: options.sleep } : {}) });
+  };
   return Object.freeze({
-    async run(context: BackgroundServiceContext): Promise<void> {
-      let invalidated = false;
-      let wake: (() => void) | undefined;
-      const notify = () => { invalidated = true; wake?.(); };
-      // Subscribe before the first catalog read, including invalidations that
-      // arrive during pagination. This is a wake, never catalog authority.
-      const subscription = context.services.events.host.subscribe({
-        eventId: '@happier/automation/event-sources-invalidated',
-        scope: { kind: 'account' },
-      }, notify);
+    async receiveDeploymentWebhook(wake: GithubDeploymentWebhookWakeV1, signal: AbortSignal): Promise<'accepted' | 'ignored'> {
+      signal.throwIfAborted();
+      const notify = wakeForDelivery;
+      if (!notify) throw new GithubRepositoryEventsSourceContractError('Deployment observer is unavailable');
+      const delivery: PendingDelivery = { wake, signal, matched: false };
+      deliveries.add(delivery);
       try {
-        while (!context.signal.aborted) {
-          invalidated = false;
-          let wakeAt: number;
-          try {
-            wakeAt = await runCycleInternal(context);
-          } catch (error) {
-            if (context.signal.aborted) return;
-            throw error;
-          }
-          if (context.signal.aborted) return;
-          if (invalidated) continue;
-          // Only provider eligibility or a failed/incomplete catalog read can
-          // set a deadline. An empty healthy catalog has no work to poll.
-          await new Promise<void>((resolve, reject) => {
-            const waiting = new AbortController();
-            const done = () => {
-              waiting.abort();
-              context.signal.removeEventListener('abort', done);
-              wake = undefined;
-              resolve();
-            };
-            wake = done;
-            context.signal.addEventListener('abort', done, { once: true });
-            if (Number.isFinite(wakeAt)) {
-              void sleep(Math.max(1, wakeAt - readObserverNow(now)), waiting.signal).then(done, error => {
-                if (waiting.signal.aborted) return;
-                context.signal.removeEventListener('abort', done);
-                wake = undefined;
-                reject(error);
-              });
-            }
-            if (context.signal.aborted || invalidated) done();
-          });
-        }
+        await notify(`github:repository:${wake.repositoryId}:deployment-review`);
+        signal.throwIfAborted();
+        if (delivery.failure) throw delivery.failure.error;
+        return delivery.matched ? 'accepted' : 'ignored';
       } finally {
-        await subscription.dispose();
+        deliveries.delete(delivery);
       }
     },
-    async runCycle(context: BackgroundServiceContext): Promise<void> {
-      await runCycleInternal(context);
-    },
+    async run(context: BackgroundServiceContext): Promise<void> { await run(context, 'continuous'); },
+    async runCycle(context: BackgroundServiceContext): Promise<void> { await run(context, 'once'); },
     runSourceAttempt,
   });
 }

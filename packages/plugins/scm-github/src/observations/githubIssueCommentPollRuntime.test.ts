@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   ConversationObservationV1,
   ConversationPollResultV1,
+  ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 
 import type { GithubApiClientV1, GithubApiResponseV1 } from './githubApiClient.js';
@@ -39,7 +40,10 @@ const CONFIG = {
 function jsonResponse(value: unknown, headers: Readonly<Record<string, string>> = {}) {
   return Object.freeze({
     status: 200,
-    headers: Object.freeze(headers),
+    headers: Object.freeze({
+      'x-ratelimit-remaining': '5000', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1_000) + 3_600),
+      ...headers,
+    }),
     body: new TextEncoder().encode(JSON.stringify(value)),
   });
 }
@@ -169,6 +173,170 @@ function secondlyComments(input: Readonly<{ firstId: number; count: number; firs
 }
 
 describe('GitHub issue-comment Channel polling', () => {
+  it.each([false, true])('uses the account overview for a headerless 304 and keeps the complete checkpoint (overview headers: %s)', async overviewHeaders => {
+    const nowMs = Date.parse('2026-08-10T12:01:00Z');
+    const checkpoint = { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head' };
+    const requests: string[] = [];
+    const result = await pollGithubIssueCommentsForChannels(pollInput({ nowMs, checkpoint, limit: 10, client: {
+      requestWithoutFollowingRedirects: refuseManualRedirectRead,
+      async request({ url }) {
+        requests.push(url);
+        if (new URL(url).pathname === '/rate_limit') {
+          const headers: Readonly<Record<string, string>> = overviewHeaders
+            ? { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': String(nowMs / 1_000 + 600) } : {};
+          return {
+            status: 200, headers,
+            // Headers are authoritative; the other bucket must never supply cadence.
+            body: new TextEncoder().encode(JSON.stringify({ resources: {
+              core: { remaining: overviewHeaders ? 999 : 10, reset: nowMs / 1_000 + 600 }, graphql: { remaining: 1, reset: nowMs / 1_000 + 60 },
+            } })),
+          };
+        }
+        return { status: 304, headers: {}, body: new Uint8Array() };
+      },
+    } }));
+    expect(result).toEqual({ kind: 'batch', observations: [], checkpointAfterBatch: checkpoint, retryHint: { retryAfterMs: 60_000 } });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toBe('https://api.github.com/rate_limit');
+  });
+
+  it('refuses malformed account-budget facts instead of committing a successful unpaced poll', async () => {
+    const checkpoint = { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head' };
+    const before = structuredClone(checkpoint);
+    await expect(pollGithubIssueCommentsForChannels(pollInput({ checkpoint, limit: 10, client: {
+      requestWithoutFollowingRedirects: refuseManualRedirectRead,
+      request: async ({ url }) => new URL(url).pathname === '/rate_limit'
+        ? { status: 200, headers: {}, body: new TextEncoder().encode('{"resources":{"core":{"remaining":"unknown","reset":0}}}') }
+        : { status: 304, headers: {}, body: new Uint8Array() },
+    } }))).rejects.toMatchObject({ code: 'github_api_response_invalid' });
+    expect(checkpoint).toEqual(before);
+  });
+
+  it.each([null, {
+    v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: null,
+  }])('paces a no-poll-header response from its remaining provider budget, including baseline %j', async checkpoint => {
+    const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
+    const client: GithubApiClientV1 = {
+      requestWithoutFollowingRedirects: refuseManualRedirectRead,
+      async request() {
+        return jsonResponse([], {
+          'x-ratelimit-remaining': '10',
+          'x-ratelimit-reset': String(nowMs / 1_000 + 600),
+        });
+      },
+    };
+    const result = await pollGithubIssueCommentsForChannels(pollInput({ client, checkpoint, limit: 10, nowMs }));
+    expect(result).toMatchObject({ retryHint: { retryAfterMs: 60_000 } });
+  });
+
+  it('waits only until the provider reset when the next poll needs more reads than remain', async () => {
+    const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
+    const result = await pollGithubIssueCommentsForChannels(pollInput({
+      checkpoint: { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: null },
+      limit: 10, nowMs,
+      client: {
+        requestWithoutFollowingRedirects: refuseManualRedirectRead,
+        async request({ url }) {
+          return jsonResponse(new URL(url).pathname.endsWith('/issues/1') ? { id: 5, number: 1 } : [{
+            id: 2, body: 'New comment', created_at: '2026-08-10T12:00:30Z', updated_at: '2026-08-10T12:00:30Z',
+            issue_url: 'https://api.github.com/repos/acme/widgets/issues/1', user: { id: 3, login: 'actor', type: 'User' },
+          }], { 'x-ratelimit-remaining': '1', 'x-ratelimit-reset': String(nowMs / 1_000 + 600) });
+        },
+      },
+    }));
+    expect(result).toMatchObject({ retryHint: { retryAfterMs: 600_000 } });
+    expect(fullTextObservations(expectPollBatch(result))).toHaveLength(1);
+  });
+
+  it.each<{ status: number; remaining: string; hints: Readonly<Record<string, string>>; delay: number }>([
+    { status: 200, remaining: '10', hints: { 'X-Poll-Interval': '30', 'Retry-After': '90' }, delay: 90_000 },
+    { status: 304, remaining: '10', hints: {}, delay: 60_000 },
+    { status: 304, remaining: '0', hints: {}, delay: 600_000 },
+  ])('preserves explicit waits and rate-budget pacing for response $status / remaining $remaining', async ({ status, remaining, hints, delay }) => {
+    const nowMs = Date.parse('2026-08-10T12:01:00.000Z');
+    const checkpoint = status === 304 ? {
+      v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: 'head',
+    } : null;
+    const result = await pollGithubIssueCommentsForChannels(pollInput({ client: {
+      requestWithoutFollowingRedirects: refuseManualRedirectRead,
+      request: async () => ({ status, body: status === 304 ? new Uint8Array() : new TextEncoder().encode('[]'),
+        headers: { ...hints, 'x-ratelimit-remaining': remaining, 'x-ratelimit-reset': String(nowMs / 1_000 + 600) } }),
+    }, checkpoint, limit: 10, nowMs }));
+    expect(result).toMatchObject({ retryHint: { retryAfterMs: delay } });
+    if (checkpoint !== null) expect(result).toMatchObject({ checkpointAfterBatch: checkpoint });
+  });
+
+  it('walks past ten provider pages to the comment cursor end in one admitted poll', async () => {
+    const comments = secondlyComments({ firstId: 2, count: 24, firstSecond: 1 });
+    const boundary = createMutableIssueCommentsApi({ comments, pageSize: 2 });
+    const result = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
+      client: boundary.client,
+      checkpoint: { v: 1, updatedAtIso: '2026-08-10T12:00:00.000Z', commentIdAtUpdatedAt: '1', etag: null },
+      limit: 100,
+    })));
+
+    expect(fullTextObservations(result)).toHaveLength(comments.length);
+    expect(result.checkpointAfterBatch).toMatchObject({
+      updatedAtIso: new Date(comments.at(-1)!.updatedAt).toISOString(),
+      commentIdAtUpdatedAt: String(comments.at(-1)!.id),
+    });
+    expect(boundary.requests.length).toBeGreaterThan(10);
+  });
+
+  it('retains admitted linked-PR identities across equal successful polls and replaces only changed state', async () => {
+    let state = 'open';
+    let pullReads = 0;
+    const client: GithubApiClientV1 = {
+      requestWithoutFollowingRedirects: refuseManualRedirectRead,
+      async request({ url }) {
+        const path = new URL(url).pathname;
+        if (path === '/repos/acme/widgets/issues/comments') return jsonResponse([]);
+        if (path === '/repositories/77/pulls/1') {
+          pullReads += 1;
+          return jsonResponse({ number: 1, base: { repo: { id: 77 } }, state, merged: state === 'merged' });
+        }
+        throw new Error(`Unexpected GitHub request ${url}`);
+      },
+    };
+    const endpoint: ConversationResolvedEndpointV1 = {
+      kind: 'githubPullRequest', audience: 'shared', id: 'github:repository:77:issue:5:number:1',
+      pullRequest: { repository: 'acme/widgets', number: 1 },
+      pullRequestState: { state: 'open', observedAt: 10 },
+    };
+    let previous = endpoint;
+    let changedEndpoints = 0;
+    for (const nowMs of [20, 30, 40]) {
+      const result = await pollGithubIssueCommentsForChannels({ ...pollInput({ client, checkpoint: null, limit: 100, nowMs }),
+        pullRequestEndpoints: [previous] });
+      if (result.kind !== 'checkpointOnly') throw new Error('Expected no-history checkpoint.');
+      const next = result.pullRequestEndpoints?.[0];
+      if (next?.kind !== 'githubPullRequest') throw new Error('Expected the retained PR endpoint.');
+      if (next !== previous) changedEndpoints += 1;
+      previous = next;
+    }
+    expect(changedEndpoints).toBe(0);
+    expect(previous).toBe(endpoint);
+    expect(previous.pullRequestState).toBe(endpoint.pullRequestState);
+    state = 'merged';
+    const changed = await pollGithubIssueCommentsForChannels({ ...pollInput({ client, checkpoint: null, limit: 100, nowMs: 50 }),
+      pullRequestEndpoints: [previous] });
+    if (changed.kind !== 'checkpointOnly') throw new Error('Expected no-history checkpoint.');
+    const terminal = changed.pullRequestEndpoints?.[0];
+    if (terminal?.kind !== 'githubPullRequest') throw new Error('Expected the terminal endpoint.');
+    expect(terminal).not.toBe(endpoint);
+    expect(terminal.pullRequest).toBe(endpoint.pullRequest);
+    expect(terminal.pullRequestState).toEqual({ state: 'merged', observedAt: 50 });
+    state = 'open';
+    const readsBeforeReopen = pullReads;
+    const reopened = await pollGithubIssueCommentsForChannels({ ...pollInput({ client, checkpoint: null, limit: 100, nowMs: 60 }),
+      // Several Session links can retain the same PR with different baselines.
+      // A stale later row must not hide a transition from the newest baseline.
+      pullRequestEndpoints: [terminal, endpoint] });
+    if (reopened.kind !== 'checkpointOnly') throw new Error('Expected no-history checkpoint.');
+    expect(reopened.pullRequestEndpoints?.[0]).toMatchObject({ pullRequestState: { state: 'open', observedAt: 60 } });
+    expect(pullReads - readsBeforeReopen).toBe(1);
+  });
+
   it('establishes an eleven-page no-history tail without admitting history before polling only post-baseline comments', async () => {
     const commentPageRequests: string[] = [];
     const client: GithubApiClientV1 = {
@@ -511,14 +679,14 @@ describe('GitHub issue-comment Channel polling', () => {
     });
   });
 
-  it('reports a history gap for contradictory same-revision issue-comment identity across window requests', async () => {
+  it('keeps the latest authenticated snapshot when same-second comment evidence changes during traversal', async () => {
     const client: GithubApiClientV1 = {
     requestWithoutFollowingRedirects: refuseManualRedirectRead,
       async request({ url }) {
         const parsed = new URL(url);
-        if (parsed.pathname !== '/repos/acme/widgets/issues/comments') {
-          throw new Error(`A contradictory revision must stop before issue materialization: ${url}`);
-        }
+        if (parsed.pathname === '/repos/acme/widgets/issues/1') return jsonResponse({ id: 5, number: 1 });
+        if (parsed.pathname === '/repos/acme/widgets/issues/2') return jsonResponse({ id: 6, number: 2 });
+        if (parsed.pathname !== '/repos/acme/widgets/issues/comments') throw new Error(`Unexpected GitHub request ${url}`);
         const since = parsed.searchParams.get('since');
         const comment = (id: number, second: string, issueNumber: number) => ({
           id,
@@ -545,7 +713,7 @@ describe('GitHub issue-comment Channel polling', () => {
       },
     };
 
-    await expect(pollGithubIssueCommentsForChannels(pollInput({
+    const result = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
       client,
       checkpoint: {
         v: 1,
@@ -554,10 +722,10 @@ describe('GitHub issue-comment Channel polling', () => {
         etag: null,
       },
       limit: 10,
-    }))).resolves.toEqual({
-      kind: 'historyGap',
-      reason: 'providerHistoryUnavailable',
-    });
+    })));
+    expect(fullTextObservations(result).map(row => row.message.id)).toEqual(['9', '10', '11', '12', '13']);
+    expect(fullTextObservations(result).find(row => row.message.id === '12')?.endpoint.id)
+      .toBe('github:repository:77:issue:6:number:2');
   });
 
   it('caps a batch at the Channels limit and resumes the remainder from the committed boundary', async () => {
@@ -595,9 +763,9 @@ describe('GitHub issue-comment Channel polling', () => {
       .toEqual(['106', '107', '108', '109', '110']);
   });
 
-  it('never commits inside an update second the bounded window left open, and resumes it whole', async () => {
-    // Two comments share every update second, so the window boundary lands
-    // inside a group whose lower comment ID could still be unseen.
+  it('finishes every equal-time group before committing the complete provider window', async () => {
+    // Two comments share every update second; no local request slice may leave
+    // an unseen sibling behind the committed provider position.
     const paired = Array.from({ length: 30 }, (_unused, index) => {
       const at = `2026-08-10T12:00:${String(Math.floor(index / 2) + 1).padStart(2, '0')}Z`;
       return { id: 101 + index, createdAt: at, updatedAt: at };
@@ -615,38 +783,35 @@ describe('GitHub issue-comment Channel polling', () => {
       limit: 100,
     })));
     const firstIds = fullTextObservations(first).map((observation) => observation.message.id);
-    expect(requests).toHaveLength(10);
+    expect(requests.length).toBeGreaterThan(10);
     expect(first.checkpointAfterBatch).toEqual({
       v: 1,
-      updatedAtIso: '2026-08-10T12:00:12.000Z',
-      commentIdAtUpdatedAt: '124',
+      updatedAtIso: '2026-08-10T12:00:15.000Z',
+      commentIdAtUpdatedAt: '130',
       etag: null,
     });
-    expect(firstIds.at(-1)).toBe('124');
+    expect(firstIds).toEqual(paired.map(comment => String(comment.id)));
 
     const second = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
       client,
       checkpoint: first.checkpointAfterBatch,
       limit: 100,
     })));
-    const secondIds = fullTextObservations(second).map((observation) => observation.message.id);
-
-    // 125 and 126 share one update second at the first window's boundary.
-    expect(secondIds).toEqual(['125', '126', '127', '128', '129', '130']);
-    expect([...firstIds, ...secondIds]).toEqual(paired.map((comment) => String(comment.id)));
+    expect(fullTextObservations(second)).toEqual([]);
+    expect(second.checkpointAfterBatch).toEqual(first.checkpointAfterBatch);
   });
 
-  it('reports explicit incompleteness when one update second exceeds a provider page', async () => {
+  it.each([6, 42])('traverses %s same-second comments through native pages without a history gap', async (count) => {
     const { client, requests } = createMutableIssueCommentsApi({
       pageSize: 4,
-      comments: Array.from({ length: 6 }, (_unused, index) => ({
+      comments: Array.from({ length: count }, (_unused, index) => ({
         id: 101 + index,
         createdAt: '2026-08-10T12:00:01Z',
         updatedAt: '2026-08-10T12:00:01Z',
       })),
     });
 
-    await expect(pollGithubIssueCommentsForChannels(pollInput({
+    const first = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
       client,
       checkpoint: {
         v: 1,
@@ -654,12 +819,16 @@ describe('GitHub issue-comment Channel polling', () => {
         commentIdAtUpdatedAt: '100',
         etag: null,
       },
-      limit: 10,
-    }))).resolves.toEqual({
-      kind: 'historyGap',
-      reason: 'providerHistoryUnavailable',
-    });
-    expect(requests).toHaveLength(1);
+      limit: 100,
+    })));
+    expect(fullTextObservations(first).map(row => row.message.id))
+      .toEqual(Array.from({ length: count }, (_unused, index) => String(101 + index)));
+    expect(requests).toHaveLength(Math.ceil(count / 4));
+    const replay = expectPollBatch(await pollGithubIssueCommentsForChannels(pollInput({
+      client, checkpoint: first.checkpointAfterBatch, limit: 100,
+    })));
+    expect(replay.observations).toEqual([]);
+    expect(replay.checkpointAfterBatch).toEqual(first.checkpointAfterBatch);
   });
 
   it('reports a history gap when GitHub emits a present malformed Link header', async () => {

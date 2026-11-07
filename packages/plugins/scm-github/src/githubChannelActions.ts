@@ -16,6 +16,7 @@ import {
   ConversationProviderConnectionInputV1Schema,
   ConversationProviderSetupResultV1Schema,
   compareCanonicalConversationResolutionCandidatesV1,
+  parseGithubConversationUrlV1,
   type ConversationConnectionTestResultV1,
   type ConversationDeliveryResultV1,
   type ConversationEndpointResolveResultV1,
@@ -30,8 +31,10 @@ import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-acco
 
 import {
   createGithubApiClient,
+  createGithubNativeApiClient,
   decodeGithubJsonResponse,
   type GithubApiClientV1,
+  type GithubApiMediaClientV1,
   type GithubApiResponseV1,
 } from './observations/githubApiClient.js';
 import {
@@ -58,9 +61,11 @@ import {
   type GithubChannelProviderConfigV1,
   type GithubRepositorySourceConfigV1,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
 } from './observations/githubProviderContracts.js';
 import { parseGithubRepositorySetupInput } from './observations/githubRepositorySetupInput.js';
 import { parseGithubChannelEndpoint as parseEndpointId } from './observations/githubChannelEndpoint.js';
+import { GithubPullRequestUpdateHistoryGapError } from './observations/githubPullRequestUpdates.js';
 
 const githubTextEncoder = new TextEncoder();
 
@@ -68,7 +73,7 @@ type JsonRecord = Readonly<Record<string, unknown>>;
 
 type GithubChannelConnectionV1 = Readonly<{
   config: GithubChannelProviderConfigV1;
-  credentialRef: ConnectedAccountRef;
+  credentialRef: ConnectedAccountRef | null;
 }>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -214,8 +219,8 @@ function providerFailure(error: unknown): ConversationProviderFailureV1 {
   return { kind: 'notReady', reason: 'network' };
 }
 
-function readCredentialRef(value: ConnectedAccountRef | null, pluginId: string): ConnectedAccountRef {
-  if (!isGithubConnectedAccountRef(value, pluginId)) {
+function readCredentialRef(value: ConnectedAccountRef | null, pluginId: string): ConnectedAccountRef | null {
+  if (value !== null && !isGithubConnectedAccountRef(value, pluginId)) {
     throw new PluginError({
       code: 'github_channel_credential_unavailable',
       message: 'Select the configured GitHub Connected Account before invoking this Channel operation.',
@@ -226,10 +231,11 @@ function readCredentialRef(value: ConnectedAccountRef | null, pluginId: string):
 
 async function createGithubChannelApiClient(
   context: PluginInvocationContext,
-  credentialRef: ConnectedAccountRef,
-): Promise<GithubApiClientV1 | ConversationProviderFailureV1> {
+  credentialRef: ConnectedAccountRef | null,
+): Promise<GithubApiMediaClientV1 | ConversationProviderFailureV1> {
   try {
-    return await createGithubApiClient(context, credentialRef);
+    return credentialRef === null ? await createGithubNativeApiClient(context, GITHUB_CONNECTED_ACCOUNT_SERVICE)
+      : await createGithubApiClient(context, credentialRef);
   } catch (error) {
     return classifyConversationProviderMaterializationFailureV1(error, context.signal);
   }
@@ -258,16 +264,9 @@ function decodeIssueNumber(query: string, repository: GithubRepositorySourceConf
   const trimmed = query.trim();
   const direct = /^#?([1-9][0-9]*)$/u.exec(trimmed);
   if (direct) return Number(direct[1]);
-  try {
-    const url = new URL(trimmed);
-    if (url.origin !== 'https://github.com') return null;
-    const expected = `/${repository.owner}/${repository.name}/`;
-    if (!url.pathname.toLowerCase().startsWith(expected.toLowerCase())) return null;
-    const match = /^\/(?:[^/]+)\/(?:[^/]+)\/(?:issues|pull)\/([1-9][0-9]*)\/?$/u.exec(url.pathname);
-    return match ? Number(match[1]) : null;
-  } catch {
-    return null;
-  }
+  const parsed = parseGithubConversationUrlV1(trimmed);
+  return parsed !== null && parsed.repository.toLowerCase() === repository.nameWithOwner.toLowerCase()
+    ? parsed.number : null;
 }
 
 function makeChannelConfig(
@@ -296,11 +295,11 @@ export async function setupGithubChannels(
   assertChannelsCoreCaller(context);
   if (isRecord(input) && Object.keys(input).length === 1 && typeof input.repository === 'string') {
     const selected = await context.services.connectedAccounts.getBinding(GITHUB_CONNECTED_ACCOUNT_PURPOSE, { signal: context.signal });
-    if (selected === null) throw new PluginError({ code: 'github_channel_credential_unavailable', message: 'Choose a GitHub Connected Account before linking a pull request.' });
-    input = { ...input, credentialRef: selected.account };
+    input = { ...input, credentialRef: selected?.account ?? null };
   }
-  const setup = parseGithubRepositorySetupInput(input, context.plugin.id);
-  const client = await createGithubApiClient(context, setup.credentialRef);
+  const setup = parseGithubRepositorySetupInput(input, context.plugin.id, true);
+  const client = setup.credentialRef === null ? await createGithubNativeApiClient(context, GITHUB_CONNECTED_ACCOUNT_SERVICE)
+    : await createGithubApiClient(context, setup.credentialRef);
   const [repository, identity] = await Promise.all([
     resolveGithubRepositoryWithClient(client, setup.repository),
     readConfiguredIdentityWithClient(client),
@@ -463,13 +462,16 @@ export async function pollGithubChannelObservations(
       limit: request.limit,
       connectionId: request.connectionId,
       providerConnectionKey: request.providerConnectionKey,
-      ciEndpoints: request.bindings?.filter((binding) => binding.scopedTriggerKind === 'ciFailed').map((binding) => binding.endpoint),
+      ciEndpoints: request.bindings?.filter((binding) => binding.pullRequestUpdates === true || binding.scopedTriggerKind === 'ciFailed').map((binding) => binding.endpoint),
+      feedbackEndpoints: request.bindings?.filter((binding) => binding.pullRequestUpdates === true || binding.scopedTriggerKind === 'prComment').map((binding) => binding.endpoint),
+      commentDemand: request.bindings === undefined || request.bindings.some(binding => binding.endpoint.kind !== 'githubPullRequest'
+        || binding.pullRequestUpdates === true || binding.scopedTriggerKind === 'prComment'),
       pullRequestEndpoints: request.bindings?.filter((binding) => binding.endpoint.kind === 'githubPullRequest').map((binding) => binding.endpoint),
       signal: context.signal,
     }));
   } catch (error) {
     rethrowConversationProviderLifecycleFailureV1(error, context.signal);
-    if (error instanceof GithubIssueCommentCheckpointError) {
+    if (error instanceof GithubIssueCommentCheckpointError || error instanceof GithubPullRequestUpdateHistoryGapError) {
       return ConversationPollResultV1Schema.parse({
         kind: 'historyGap',
         reason: 'providerHistoryUnavailable',

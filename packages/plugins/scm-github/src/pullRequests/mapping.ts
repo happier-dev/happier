@@ -6,6 +6,7 @@ import type {
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
 import { parseTimestampMs } from '@happier-dev/plugin-sdk';
+import { readGithubCheckOutcomeV1, readGithubStatusContextObservationV1 } from '../triage/checkOutcome.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -100,16 +101,21 @@ function mapGithubAuthor(raw: Record<string, unknown>): ScmPullRequestSummary['a
 function mapGithubChecks(raw: Record<string, unknown>): ScmPullRequestSummary['checks'] | undefined {
   const rollup = raw.statusCheckRollup;
   if (!Array.isArray(rollup) || rollup.length === 0) return undefined;
-  const conclusions = rollup
-    .map((entry) => isRecord(entry) ? readGithubString(entry.conclusion)?.toLowerCase() : null)
-    .filter((entry): entry is string => Boolean(entry));
+  const outcomes = rollup.map((entry) => {
+    if (!isRecord(entry)) return 'unknown';
+    if (entry.__typename === 'StatusContext') {
+      return readGithubCheckOutcomeV1(readGithubStatusContextObservationV1(readGithubString(entry.state)));
+    }
+    const status = readGithubString(entry.status)?.toLowerCase();
+    return status === undefined ? 'unknown' : readGithubCheckOutcomeV1({ status, conclusion: readGithubString(entry.conclusion)?.toLowerCase() ?? null });
+  });
   let state: ScmPullRequestChecksState = 'unknown';
-  if (conclusions.some((entry) => entry === 'failure' || entry === 'cancelled' || entry === 'timed_out')) {
+  if (outcomes.includes('failed')) {
     state = 'failure';
-  } else if (conclusions.length > 0 && conclusions.every((entry) => entry === 'success' || entry === 'skipped')) {
-    state = 'success';
-  } else if (conclusions.length > 0) {
+  } else if (outcomes.includes('pending')) {
     state = 'pending';
+  } else if (outcomes.every((outcome) => outcome === 'passed' || outcome === 'neutral')) {
+    state = 'success';
   }
   return { state };
 }

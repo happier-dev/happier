@@ -7,10 +7,11 @@ import {
 } from '@happier-dev/plugin-sdk/events';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
-import { activate } from './activate.js';
+import { activate, activateAccount } from './activate.js';
 import {
   GITHUB_TRIAGE_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   PLUGIN_MANIFEST,
 } from './manifest.js';
 import { GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID } from './observations/githubAutomationEventCheckpoint.js';
@@ -52,7 +53,7 @@ const GITHUB_CHANNEL_PROVIDER_ACTIONS = [
 describe('activate', () => {
   it('serializes one checkpointed-pull provider contribution while retaining webhook reception as generic Webhooks', async () => {
     assertConversationProviderContributionV1(PLUGIN_MANIFEST);
-    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
 
     try {
       // Two targeted contributions to two different target plugins: the Channels
@@ -61,7 +62,7 @@ describe('activate', () => {
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions).toEqual(
         expect.arrayContaining([{
           id: 'github-repository',
-          descriptor: { v: 1, displayName: 'GitHub' },
+          descriptor: expect.objectContaining({ v: 1, displayName: 'GitHub' }),
           target: { pluginId: 'happier.channels', pointId: 'providers' },
           protocol: { id: 'happier.channels/providers', version: 1 },
           operations: GITHUB_CHANNEL_PROVIDER_OPERATIONS,
@@ -85,6 +86,8 @@ describe('activate', () => {
         // activation. A declared-but-unregistered detail Action would mount a
         // detail body whose every panel reports a dispatch failure.
         ...Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1)
+          .map((localId) => ({ family: 'actions' as const, localId })),
+        ...Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
           .map((localId) => ({ family: 'actions' as const, localId })),
       ]));
       expect(PLUGIN_MANIFEST.contributes.webhooks).toEqual([expect.objectContaining({
@@ -127,7 +130,7 @@ describe('activate', () => {
   });
 
   it('registers the manifest-local hosting provider through the generated contribution adapter', async () => {
-    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
 
     try {
       expect(testkit.registrations()).toContainEqual({ family: 'scmHostingProviders', localId: 'github' });
@@ -155,7 +158,7 @@ describe('activate', () => {
       title: 'GitHub repository Event observer',
     }]);
 
-    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
     try {
       expect(testkit.registrations()).toContainEqual({
         family: 'backgroundServices',
@@ -180,7 +183,9 @@ describe('activate', () => {
     );
     // The built-in Automation form dispatches this provider fact producer;
     // the Action itself has no direct plugin UI destination.
-    expect(sourceSetupAction?.surfaces).toEqual(['plugin']);
+    expect(sourceSetupAction?.surfaces).toEqual(['plugin', 'ui', 'agent', 'mcp', 'cli']);
+    expect(sourceSetupAction).toMatchObject({ dangerLevel: 'safe' });
+    expect(sourceSetupAction).not.toHaveProperty('confirmation');
     expect(sourceSetupAction).toMatchObject({
       inputSchema: {
         type: 'object',
@@ -246,9 +251,12 @@ describe('activate', () => {
     // operation binding time, so the Action cannot use an unrelated selection.
     expect(historyGapResetAction).not.toHaveProperty('connectedAccountPurposeBindings');
     expect(historyGapResetAction).not.toHaveProperty('placement');
-    // Manifest projection may clone the two action declarations; users depend
-    // on the same rendered fields, not a shared in-memory object reference.
-    expect(channelsSetupAction?.inputHints).toEqual(sourceSetupAction?.inputHints);
+    // Channels also accepts the machine-native credential; Event enrollment
+    // requires an exact Account. Both still resolve through the same purpose.
+    expect(channelsSetupAction).toMatchObject({
+      inputSchema: { required: ['repository'] },
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'github-connected-account' }],
+    });
     const actionIds = new Set((PLUGIN_MANIFEST.contributes.actions ?? []).map(({ id }) => id));
     expect([...actionIds]).toEqual(expect.arrayContaining([
       ...Object.values(GITHUB_CHANNEL_ACTION_IDS),
@@ -260,6 +268,7 @@ describe('activate', () => {
       ({ id }) => id.startsWith('automation/'),
     );
     expect(semanticEvents.map(({ id }) => id).sort()).toEqual([
+      'automation/deployment-review-v1',
       'automation/issue-opened-v1',
       'automation/pull-request-merged-v1',
       'automation/pull-request-opened-v1',
@@ -268,7 +277,10 @@ describe('activate', () => {
       'automation/pull-request-checks-failed-v1',
       'automation/pull-request-checks-passed-v1',
     ].sort());
-    const repositoryEvents = semanticEvents.filter(({ id }) => !id.startsWith('automation/pull-request-checks-'));
+    const deploymentEvent = semanticEvents.find(({ id }) => id === 'automation/deployment-review-v1');
+    expect(deploymentEvent).toMatchObject({ automation: { source: { supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+      sourceConfigSchema: { required: ['v', 'credentialRef', 'repository', 'deploymentReview'] } } } });
+    const repositoryEvents = semanticEvents.filter(({ id }) => !id.startsWith('automation/pull-request-checks-') && id !== 'automation/deployment-review-v1');
     expect(repositoryEvents).toEqual(repositoryEvents.map((event) => expect.objectContaining({
       kind: 'event',
       payloadSchema: expect.objectContaining({

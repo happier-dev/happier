@@ -172,7 +172,7 @@ export function githubSearchResponse(input: Readonly<{
   });
 }
 
-export const GITHUB_PULL_REQUEST_RESPONSE: JsonRecord = Object.freeze({
+export const GITHUB_PULL_REQUEST_RESPONSE = Object.freeze({
   url: `https://api.github.com/repos/${OWNER}/${REPOSITORY}/pulls/1284`,
   id: 2_301_884_991,
   node_id: 'PR_kwDOsynthetic',
@@ -212,7 +212,7 @@ export const GITHUB_PULL_REQUEST_RESPONSE: JsonRecord = Object.freeze({
   additions: 214,
   deletions: 88,
   changed_files: 12,
-});
+}) satisfies JsonRecord;
 
 export const GITHUB_ISSUE_RESPONSE: JsonRecord = Object.freeze({
   url: `https://api.github.com/repos/${OWNER}/${OTHER_REPOSITORY}/issues/7`,

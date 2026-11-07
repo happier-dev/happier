@@ -67,6 +67,8 @@ export type GithubFeedbackFindingV1 =
     body: string;
     webUrl: string | null;
     truncated: boolean;
+    /** GitHub says this viewer may edit it, and its whole body was read. */
+    editable: boolean;
   }>
   | Readonly<{
     resource: 'review';
@@ -78,6 +80,7 @@ export type GithubFeedbackFindingV1 =
     state: string;
     webUrl: string | null;
     truncated: boolean;
+    editable: boolean;
   }>
   | Readonly<{
     resource: 'thread';
@@ -296,6 +299,7 @@ function remarkFindings(
     body: row.body,
     webUrl: row.url,
     truncated: row.truncated === true,
+    editable: row.editable === true && row.truncated !== true,
   }));
 }
 
@@ -312,6 +316,7 @@ function reviewFindings(
     state: review.state,
     webUrl: review.url,
     truncated: review.truncated === true,
+    editable: review.editable === true && review.truncated !== true,
   }));
 }
 

@@ -5,6 +5,7 @@ import {
 
 import {
   readGithubScanStickyReason,
+  GITHUB_SEARCH_RESULT_CEILING_V1,
   type GithubScanStickyReasonV1,
 } from '../types.js';
 
@@ -44,23 +45,26 @@ import { GITHUB_SCAN_LANE_ORDER_V1, type GithubScanLaneIdV1 } from './query.js';
  * against another.
  */
 
-const CONTINUATION_VERSION = 1;
+const CONTINUATION_VERSION = 2;
 
 type LaneRecord = Readonly<{
   laneId: GithubScanLaneIdV1;
   nextUrl: string | null;
   pagesConsumed: number;
   ended: boolean;
+  repositoryIndex: number | null;
 }>;
 
 export type GithubScanResumeV1 = Readonly<{
   scanLimit: number;
+  groupIndex: number;
   nextLaneIndex: number;
   walkHealth: readonly GithubScanStickyReasonV1[];
   lanes: readonly Readonly<{
     frontier: GithubScanLaneFrontierV1;
     pagesConsumed: number;
     ended: boolean;
+    repositoryIndex: number | null;
   }>[];
 }>;
 
@@ -78,9 +82,12 @@ export function encodeGithubScanContinuation(
     nextUrl: lane.frontier.kind === 'next' ? lane.frontier.nextUrl : null,
     pagesConsumed: lane.pagesConsumed,
     ended: lane.ended,
+    repositoryIndex: lane.repositoryIndex,
   }));
   return encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
+    scopeKey: frontier.scopeKey,
+    groupIndex: frontier.groupIndex,
     ...(completedSinceMs === undefined ? {} : { completedSinceMs }),
     scanLimit: frontier.scanLimit,
     nativePageSize: frontier.nativePageSize,
@@ -103,12 +110,15 @@ export function encodeGithubScanContinuation(
 export function decodeGithubScanContinuation(
   token: string,
   expected: Readonly<{
-    buildLaneQuery: (laneId: GithubScanLaneIdV1) => string;
+    buildLaneQuery: (laneId: GithubScanLaneIdV1, repositoryKeys: readonly string[] | null) => string;
+    repositoryGroups?: readonly (readonly string[] | null)[];
+    scopeKey?: string;
     completedSinceMs?: number;
   }>,
 ): GithubScanResumeV1 | null {
   const record = decodeTriagePagingTokenV1(token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
+  if (record.scopeKey !== (expected.scopeKey ?? '')) return null;
   if (record.completedSinceMs !== expected.completedSinceMs) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);
@@ -117,16 +127,20 @@ export function decodeGithubScanContinuation(
   // bound limit allows would raise this walk's ceiling above the admitted page size.
   const nativePageSize = githubScanNativePageSize(scanLimit);
   if (record.nativePageSize !== nativePageSize) return null;
-  const maxPagesPerLane = githubScanMaxPagesPerLane(nativePageSize);
 
+  const groups = expected.repositoryGroups ?? [null];
+  const groupIndex = readCount(record.groupIndex, 0);
+  if (groupIndex === null || groupIndex >= groups.length) return null;
+  const repositoryKeys = groups[groupIndex] ?? null;
+  const laneCount = GITHUB_SCAN_LANE_ORDER_V1.length;
   const nextLaneIndex = readCount(record.nextLaneIndex, 0);
-  if (nextLaneIndex === null || nextLaneIndex >= GITHUB_SCAN_LANE_ORDER_V1.length) return null;
+  if (nextLaneIndex === null || nextLaneIndex >= laneCount) return null;
 
   const walkHealth = readWalkHealth(record.walkHealth);
   if (walkHealth === null) return null;
 
   const raw = record.lanes;
-  if (!Array.isArray(raw) || raw.length !== GITHUB_SCAN_LANE_ORDER_V1.length) return null;
+  if (!Array.isArray(raw) || raw.length !== laneCount) return null;
 
   const lanes: GithubScanResumeV1['lanes'][number][] = [];
   for (const [index, entry] of raw.entries()) {
@@ -134,41 +148,47 @@ export function decodeGithubScanContinuation(
     const lane = readRecord(entry);
     if (laneId === undefined || lane === null || lane.laneId !== laneId) return null;
     if (typeof lane.ended !== 'boolean') return null;
+    const repositoryIndex = lane.repositoryIndex === null ? null : readCount(lane.repositoryIndex, 0);
+    if (lane.repositoryIndex !== null && (repositoryIndex === null || repositoryKeys === null || repositoryIndex >= repositoryKeys.length)) return null;
     const pagesConsumed = readCount(lane.pagesConsumed, 0);
-    if (pagesConsumed === null || pagesConsumed > maxPagesPerLane) return null;
-    // A lane already at GitHub's own per-query ceiling cannot be continued; a token that
-    // claims it can would walk past the 1,000-result wall the ceiling exists to mark.
-    if (!lane.ended && pagesConsumed >= maxPagesPerLane) return null;
+    if (pagesConsumed === null || pagesConsumed > GITHUB_SEARCH_RESULT_CEILING_V1) return null;
 
     if (lane.nextUrl === null) {
       // No next URL and not ended means the lane never started. A lane that consumed
       // pages and has no next URL is a finished lane, and must say so.
       if (!lane.ended && pagesConsumed !== 0) return null;
-      lanes.push({ frontier: { kind: 'initial' }, pagesConsumed, ended: lane.ended });
+      lanes.push({ frontier: { kind: 'initial' }, pagesConsumed, ended: lane.ended, repositoryIndex });
       continue;
     }
     if (typeof lane.nextUrl !== 'string') return null;
+    let perPage: number;
+    try { perPage = Number(new URL(lane.nextUrl).searchParams.get('per_page')); }
+    catch { return null; }
+    if (perPage > nativePageSize) return null;
     const validated = validateGithubSearchNextUrl(lane.nextUrl, {
-      laneQuery: expected.buildLaneQuery(laneId),
-      perPage: nativePageSize,
+      laneQuery: expected.buildLaneQuery(laneId, repositoryIndex === null ? repositoryKeys : [repositoryKeys![repositoryIndex]!]),
+      perPage,
     });
     // One consumed page advances the frontier past page 1. A token that points
     // at that page again (or any earlier page) cannot make progress and would
     // otherwise replay rows until the provider ceiling fired.
-    if (validated === null || validated.page <= pagesConsumed) return null;
+    if (validated === null || validated.page <= pagesConsumed
+      || (!lane.ended && pagesConsumed >= githubScanMaxPagesPerLane(perPage))) return null;
     lanes.push({
       frontier: { kind: 'next', nextUrl: validated.url },
       pagesConsumed,
       ended: lane.ended,
+      repositoryIndex,
     });
   }
 
   // A continuation whose every lane has ended describes a walk that was already complete.
   // Honouring it would answer a page request with a settled walk's leftovers.
-  if (lanes.every((lane) => lane.ended)) return null;
+  if (groupIndex + 1 === groups.length && lanes.every((lane) => lane.ended)) return null;
 
   return Object.freeze({
     scanLimit,
+    groupIndex,
     nextLaneIndex,
     walkHealth,
     lanes: Object.freeze(lanes),

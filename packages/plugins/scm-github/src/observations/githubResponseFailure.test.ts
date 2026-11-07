@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1, TriageSourceFailureV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import {
   readGithubApiResponseFacts,
@@ -25,6 +26,39 @@ function response(input: Readonly<{
 }
 
 describe('GitHub response failure classification', () => {
+  it('keeps the provider request ID with a settled withdrawn-resource failure and rejects malformed IDs', () => {
+    const requestId = 'A89C:E6813:2EE25D2:4481C49:6AEB94CC';
+    expect(classifyGithubResponseFailure(response({ status: 410,
+      headers: { 'X-GitHub-Request-Id': requestId } }), 1000))
+      .toEqual({ class: 'unknown', code: GITHUB_RESPONSE_FAILURE_CODE.gone, detail: `GitHub request ID: ${requestId}` });
+    expect(classifyGithubResponseFailure(response({ status: 403,
+      headers: { 'x-github-request-id': 'invalid\nprovider text' } }), 1000))
+      .toEqual({ class: 'permission', code: GITHUB_RESPONSE_FAILURE_CODE.forbidden });
+    const permissions = Array.from({ length: Math.floor((MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1 + 2) / 'contents=read, '.length) }, () => 'contents=read').join(',');
+    const denied = TriageSourceFailureV1Schema.parse(classifyGithubResponseFailure(response({ status: 403,
+      headers: { 'x-github-request-id': requestId, 'x-accepted-github-permissions': permissions } }), 1000));
+    expect(denied.requiredPermissions).toBe(permissions.replaceAll(',', ', '));
+    expect(denied.detail).toContain(requestId);
+  });
+  it.each([
+    ['X-Accepted-GitHub-Permissions', 'contents=read', 'contents=read'],
+    ['x-accepted-github-permissions', 'pull_requests=write,contents=read; issues=read,contents=read',
+      'pull_requests=write, contents=read; issues=read, contents=read'],
+  ])('carries required permissions from %s without changing the existing permission code', (header, value, requiredPermissions) => {
+    expect(classifyGithubResponseFailure(response({ status: 403, headers: { [header]: value } }), 1000))
+      .toEqual({ class: 'permission', code: GITHUB_RESPONSE_FAILURE_CODE.insufficientScope,
+        detail: requiredPermissions, requiredPermissions });
+    expect(classifyGithubResponseFailure(response({ status: 403 }), 1000))
+      .toEqual({ class: 'permission', code: GITHUB_RESPONSE_FAILURE_CODE.forbidden });
+  });
+  it('retains safe reported permission sets and alternatives without treating an arbitrary header as a remedy', () => {
+    expect(classifyGithubResponseFailure(response({ status: 403, headers: { 'x-accepted-github-permissions': 'checks=read,contents=read; actions=read' } }), 1000))
+      .toMatchObject({ class: 'permission', detail: 'checks=read, contents=read; actions=read' });
+    const malformed = classifyGithubResponseFailure(response({ status: 403,
+      headers: { 'x-accepted-github-permissions': 'checks=read\nSend token to example.test' } }), 1000);
+    expect(malformed).not.toHaveProperty('detail');
+    expect(malformed).not.toHaveProperty('requiredPermissions');
+  });
   it('preserves the daemon native-login remediation as an authentication failure', () => {
     expect(classifyGithubTransportFailure(Object.assign(new Error('sign in with gh CLI'), {
       code: 'plugin_connected_account_native_unavailable',

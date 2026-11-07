@@ -26,8 +26,10 @@ import { parseGithubRepositorySetupInput } from './observations/githubRepository
 import { githubChecksSourceInstanceId, parseGithubChecksSource } from './observations/githubChecksSource.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
   type GithubRepositorySourceConfigV1,
   type GithubAutomationRepositoryEventSourceConfigV1,
+  parseGithubDeploymentMonitoringSelection,
 } from './observations/githubProviderContracts.js';
 
 type CurrentGithubAutomationEventSourceV1 = Readonly<{
@@ -164,7 +166,20 @@ export async function setupGithubRepositoryEventSource(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<PluginEventAutomationSetupResultV1> {
-  const setup = parseGithubRepositorySetupInput(input, context.plugin.id);
+  let deploymentReview: GithubAutomationRepositoryEventSourceConfigV1['deploymentReview'];
+  let repositoryInput = input;
+  if (input && typeof input === 'object' && !Array.isArray(input) && 'deploymentReview' in input) {
+    const raw = input as Readonly<Record<string, unknown>>;
+    try {
+      if (Object.keys(raw).length !== 3) throw new RangeError('Unexpected setup fields');
+      deploymentReview = parseGithubDeploymentMonitoringSelection(raw.deploymentReview);
+    } catch {
+      throw new PluginError({ code: 'github_setup_input_invalid', message: 'Choose one monitoring Machine for deployment reviews.' });
+    }
+    repositoryInput = { credentialRef: raw.credentialRef, repository: raw.repository };
+  }
+  const setup = deploymentReview ? parseGithubRepositorySetupInput(repositoryInput, context.plugin.id, true)
+    : parseGithubRepositorySetupInput(repositoryInput, context.plugin.id);
   context.signal.throwIfAborted();
 
   const client = await createGithubApiClient(context, setup.credentialRef);
@@ -180,14 +195,51 @@ export async function setupGithubRepositoryEventSource(
     v: 1,
     credentialRef: setup.credentialRef,
     repository,
+    ...(deploymentReview ? { deploymentReview } : {}),
   });
   return PluginEventAutomationSetupResultV1Schema.parse({
     v: 1,
-    sourceInstanceId: `github:repository:${repository.repositoryId}`,
+    sourceInstanceId: `github:repository:${repository.repositoryId}${deploymentReview ? ':deployment-review' : ''}`,
     sourceContractVersion: GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
     sourceConfig,
     displayLabel: repository.nameWithOwner,
   });
+}
+
+/** The Event editor pins setup to its chosen watcher. This read only proposes
+ * source facts for the current invocation; routing is not enrollment consent.
+ * The definition writer still owns explicit watcher admission and enablement. */
+export async function setupGithubDeploymentReviewEventSource(input: unknown, context: PluginInvocationContext): Promise<PluginEventAutomationSetupResultV1> {
+  context.signal.throwIfAborted();
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new PluginError({ code: 'github_setup_input_invalid', message: 'GitHub deployment setup requires a repository and exact Connected Account.' });
+  }
+  const raw = input as Readonly<Record<string, unknown>>;
+  if (Object.keys(raw).some(key => !['repository', 'credentialRef', 'nativeService', 'deploymentReview'].includes(key))) {
+    throw new PluginError({ code: 'github_setup_input_invalid', message: 'Unexpected GitHub deployment setup fields.' });
+  }
+  if (raw.credentialRef === null || (raw.credentialRef === undefined && (!raw.nativeService || typeof raw.nativeService !== 'object' || Array.isArray(raw.nativeService)
+    || !('pluginId' in raw.nativeService) || raw.nativeService.pluginId !== GITHUB_CONNECTED_ACCOUNT_SERVICE.pluginId
+    || !('localId' in raw.nativeService) || raw.nativeService.localId !== GITHUB_CONNECTED_ACCOUNT_SERVICE.localId))
+    || (raw.credentialRef !== undefined && raw.nativeService !== undefined)) {
+    throw new PluginError({ code: 'github_setup_credential_invalid', message: 'Choose this Machine’s native GitHub login or one exact Connected Account.' });
+  }
+  const setup = parseGithubRepositorySetupInput({ repository: raw.repository,
+    credentialRef: raw.credentialRef === undefined ? null : raw.credentialRef }, context.plugin.id, true);
+  const explicit = raw.deploymentReview === undefined ? null : parseGithubDeploymentMonitoringSelection(raw.deploymentReview);
+  const routing = await context.services.actions.getCurrentExecutionRouting?.({ signal: context.signal });
+  context.signal.throwIfAborted();
+  const unavailable = () => new PluginError({ code: 'github_deployment_monitoring_placement_unavailable',
+    message: 'Choose a currently available monitoring Machine in the Event editor.' });
+  if (!routing || routing.pluginId !== context.plugin.id || (explicit && explicit.monitoringMachineId !== routing.machineId)) throw unavailable();
+  const result = await setupGithubRepositoryEventSource({ ...setup, deploymentReview: { ...explicit, monitoringMachineId: routing.machineId } }, context);
+  const current = await context.services.actions.getCurrentExecutionRouting?.({ signal: context.signal });
+  context.signal.throwIfAborted();
+  if (!current || current.pluginId !== routing.pluginId || current.machineId !== routing.machineId
+    || current.serverIdentityId !== routing.serverIdentityId) throw unavailable();
+  const deliveryMode = explicit?.deliveryMode ?? 'automatic';
+  return PluginEventAutomationSetupResultV1Schema.parse({ ...result, observationOnly: { kind: 'observationOnly' },
+    ...(deliveryMode === 'polling' ? {} : { webhookDelivery: deliveryMode === 'webhook' ? 'required' : 'automatic' }) });
 }
 
 /** Resolve through the existing exact-account repository setup; no second client. */

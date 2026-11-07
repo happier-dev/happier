@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -121,7 +122,7 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mountChecksDetail(input: JsonValue = launchInput()): Promise<PluginUiTestkit> {
+async function mountChecksDetail(input: JsonValue = launchInput(), readChecks = async () => failingChecksAnswer()): Promise<PluginUiTestkit> {
     let detail!: PluginUiTestkit;
     await act(async () => {
       detail = await createPluginUiTestkit({
@@ -150,8 +151,12 @@ async function mountChecksDetail(input: JsonValue = launchInput()): Promise<Plug
               }
               return emptyFeedbackAnswer(connection);
             }
-            if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) {
-              return failingChecksAnswer();
+            if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview) {
+              // The Overview read states the detail's checks from its own rollup.
+              const { kind: _kind, ...checks } = await readChecks() as Record<string, JsonValue>;
+              return { kind: 'overview', kindId: 'pull-request', observedAtMs: 1_760_000_800_000,
+                title: 'Consolidate the duplicated normalizer', headRevision: HEAD_REVISION,
+                branchUpdateEligibility: 'not-behind', checks } as JsonValue;
             }
             if (action === 'reviews.comments.list') {
               return { items: [], cursor: null } as JsonValue;
@@ -166,10 +171,37 @@ async function mountChecksDetail(input: JsonValue = launchInput()): Promise<Plug
 }
 
 describe('the mounted GitHub Checks plane Session-start boundary', () => {
+  it('keeps the Checks chapter visible while its first read is pending, then shows the answer', async () => {
+    let settle!: (value: JsonValue) => void;
+    const answer = new Promise<JsonValue>(resolve => { settle = resolve; });
+    const detail = await mountChecksDetail({ ...(launchInput() as Record<string, JsonValue>), panel: 'overview' }, () => answer);
+    await expect(detail.getByText('Checks')).resolves.toBeDefined();
+    await expect(detail.getByText('Reading the checks from GitHub')).resolves.toBeDefined();
+    await act(async () => { settle(failingChecksAnswer()); });
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Typecheck found 2 errors in src/pump.ts.'));
+    await expect(detail.queryByText('Reading the checks from GitHub')).resolves.toBeUndefined();
+  });
+
   it('says under each failing check in the story what GitHub reported about it', async () => {
     // The Triage frame asks the source for its Overview panel: the shared story with its Checks step.
     const detail = await mountChecksDetail({ ...(launchInput() as Record<string, JsonValue>), panel: 'overview' });
     await vi.waitFor(() => expect(document.body.textContent).toContain('Typecheck found 2 errors in src/pump.ts.'));
+  });
+
+  it('keeps the chapter visible after a failed read and retries through the Overview read that states the checks', async () => {
+    let failed = false;
+    const detail = await mountChecksDetail({ ...(launchInput() as Record<string, JsonValue>), panel: 'overview' }, async () => {
+      if (!failed) {
+        failed = true;
+        throw new PluginError({ code: 'unavailable', retryable: true });
+      }
+      return failingChecksAnswer();
+    });
+    await expect(detail.getByText('Checks')).resolves.toBeDefined();
+    await expect(detail.getByText('The checks are unavailable')).resolves.toBeDefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Re-read this overview from GitHub' })); });
+    await expect(detail.getByText('Typecheck found 2 errors in src/pump.ts.')).resolves.toBeDefined();
+    await expect(detail.queryByText('The checks are unavailable')).resolves.toBeUndefined();
   });
 
   it('mounts the provider facts and zero Session-start controls', async () => {

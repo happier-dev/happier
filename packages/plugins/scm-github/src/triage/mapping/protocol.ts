@@ -199,6 +199,7 @@ export function toTriageSnapshot(
     ...(snapshot.reviewRevision === undefined
       ? {}
       : { reviewRevision: snapshot.reviewRevision }),
+    ...(snapshot.branches === undefined ? {} : { branches: snapshot.branches }),
     ...(truncated ? { projectionTruncated: true as const } : {}),
   });
 }

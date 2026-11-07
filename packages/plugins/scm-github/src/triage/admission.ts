@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { GithubTriageInvocationContext } from './invocation.js';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceFailureV1,
@@ -69,7 +69,7 @@ export async function admitGithubEntryInvocation(
     /** The kinds this caller can answer for at all. */
     admissibleKinds: readonly GithubTriageKindIdV1[];
   }>,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
 ): Promise<GithubAdmittedInvocationV1> {
   const kindId = readGithubTriageKindId(input.localRef.kindId);
   if (kindId === null || !input.admissibleKinds.includes(kindId)) {
@@ -108,13 +108,13 @@ export async function admitGithubEntryInvocation(
  * scoped by GitHub's immutable numeric repository id. A rename followed by path
  * reuse must therefore stop before the detail collection is requested.
  *
- * Writes keep using `admitGithubEntryInvocation`: their canonical entity reread
- * already resolves and compares the repository id, so charging them a second
- * repository request here would add no authority.
+ * PR/issue writes use `admitGithubEntryInvocation`: their canonical entity reread
+ * proves repository identity. Alert responses omit it, so their writes also
+ * use this detail admission and revalidate repository identity on settlement.
  */
 export async function admitGithubDetailInvocation(
   input: Parameters<typeof admitGithubEntryInvocation>[0],
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
 ): Promise<GithubAdmittedDetailInvocationV1> {
   const admitted = await admitGithubEntryInvocation(input, context);
   if (!admitted.ok) return admitted;

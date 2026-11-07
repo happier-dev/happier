@@ -1,10 +1,10 @@
 import type { GithubFeedbackReviewV1 } from '../feedback.js';
 
 /** Latest dated review per author, independent of independently loaded page order. */
-export function readLatestGithubReviewsV1(
-  historical: readonly GithubFeedbackReviewV1[],
-): ReadonlyMap<string, GithubFeedbackReviewV1> {
-  const latestByAuthor = new Map<string, GithubFeedbackReviewV1>();
+export function readLatestGithubReviewsV1<T extends Pick<GithubFeedbackReviewV1, 'author' | 'submittedAtMs'>>(
+  historical: readonly T[],
+): ReadonlyMap<string, T> {
+  const latestByAuthor = new Map<string, T>();
   for (const review of historical) {
     if (review.author === null) continue;
     const previous = latestByAuthor.get(review.author);

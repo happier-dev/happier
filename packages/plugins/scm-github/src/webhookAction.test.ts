@@ -95,6 +95,7 @@ describe('GitHub webhook Action', () => {
 
     const cleanup = await activate({
       actions: { register },
+      resources: { registerDynamicResource: vi.fn() },
       backgroundServices: { register: vi.fn() },
       connectedAccounts: { register: vi.fn() },
       scm: { registerHostingProvider: vi.fn() },
@@ -104,6 +105,7 @@ describe('GitHub webhook Action', () => {
       expect(register).toHaveBeenCalledWith(
         GITHUB_WEBHOOK_ACTION_ID,
         expect.any(Function),
+        undefined,
       );
     } finally {
       await disposeActivation(cleanup);
@@ -114,6 +116,7 @@ describe('GitHub webhook Action', () => {
     const register = vi.fn();
     const cleanup = await activate({
       actions: { register },
+      resources: { registerDynamicResource: vi.fn() },
       backgroundServices: { register: vi.fn() },
       connectedAccounts: { register: vi.fn() },
       scm: { registerHostingProvider: vi.fn() },
@@ -169,6 +172,7 @@ describe('GitHub webhook Action', () => {
     const firstRegister = vi.fn();
     const firstCleanup = await activate({
       actions: { register: firstRegister },
+      resources: { registerDynamicResource: vi.fn() },
       backgroundServices: { register: vi.fn() },
       connectedAccounts: { register: vi.fn() },
       scm: { registerHostingProvider: vi.fn() },
@@ -199,6 +203,7 @@ describe('GitHub webhook Action', () => {
     const secondRegister = vi.fn();
     const secondCleanup = await activate({
       actions: { register: secondRegister },
+      resources: { registerDynamicResource: vi.fn() },
       backgroundServices: { register: vi.fn() },
       connectedAccounts: { register: vi.fn() },
       scm: { registerHostingProvider: vi.fn() },

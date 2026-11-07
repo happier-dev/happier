@@ -60,6 +60,59 @@ describe('GitHub REST repository provisioning adapter', () => {
       failureCause: { phase: 'scm.repository_auth.materialization', errorClass: 'Error', errorCode: null, httpStatus: null } });
   });
 
+  it('blocks later repository invocations after GitHub throttles the account', async () => {
+    let requests = 0;
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'backoff-token', profileKey: 'github:backoff' }),
+      fetcher: async () => {
+        requests += 1;
+        return jsonResponse({ message: 'Secondary rate limit' }, {
+          status: 403,
+          headers: { 'retry-after': '60' },
+        });
+      },
+    });
+    const input = { provider: githubProvider, owner: 'happier-dev', repositoryName: 'happier' };
+
+    await expect(adapter.getRepository(input)).rejects.toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    await expect(adapter.getRepository(input)).rejects.toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    expect(requests).toBe(1);
+  });
+
+  it('shares simultaneous repository reads but releases the response after settlement', async () => {
+    let requests = 0;
+    let release = () => {};
+    let notifyStarted = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'coalesced-token', profileKey: 'github:coalesced' }),
+      fetcher: async () => {
+        requests += 1;
+        notifyStarted();
+        await pending;
+        return jsonResponse({
+          full_name: 'happier-dev/happier',
+          html_url: 'https://github.com/happier-dev/happier',
+          visibility: 'public',
+        });
+      },
+    });
+    const input = { provider: githubProvider, owner: 'happier-dev', repositoryName: 'happier' };
+    const first = adapter.getRepository(input);
+    const second = adapter.getRepository(input);
+    await started;
+    release();
+
+    const values = await Promise.all([first, second]);
+    expect(values).toHaveLength(2);
+    expect(values[0]).toMatchObject({ nameWithOwner: 'happier-dev/happier' });
+    expect(values[1]).toEqual(values[0]);
+    expect(requests).toBe(1);
+    await expect(adapter.getRepository(input)).resolves.toEqual(values[0]);
+    expect(requests).toBe(2);
+  });
+
   it('lists REST publish targets for authenticated principals', async () => {
     const requests: Array<Readonly<{ url: string; init?: RequestInit }>> = [];
     const adapter = mod.createGithubRepositoryRestAdapter({
@@ -207,6 +260,7 @@ describe('GitHub REST repository provisioning adapter', () => {
       defaultBranch: 'main',
     });
     expect(requests[0]?.url).toBe('https://api.github.com/orgs/happier-dev/repos');
+    expect(requests[0]?.init?.method).toBe('POST');
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
       name: 'happier',
       visibility: 'internal',

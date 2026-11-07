@@ -6,8 +6,6 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    "./happier-plugin-ui/github-forge-native": "./src/ui/forge/renderForgeSurface.tsx",
-    "./happier-plugin-ui/github-local-act-actions": "./src/ui/actions/local/activate.ts",
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
@@ -18,7 +16,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./happier-plugin-ui/github-account-runtime": "./src/accountRuntime.ts",
     "./happier-plugin-ui/github-detail-native": "./src/ui/renderSurface.tsx",
+    "./happier-plugin-ui/github-forge-native": "./src/ui/forge/renderForgeSurface.tsx",
+    "./happier-plugin-ui/github-local-act-actions": "./src/ui/actions/local/activate.ts",
     "./happier-plugin-ui/github-triage-sources-native": "./src/ui/settings/renderSettingsSurface.tsx",
     "./happier-plugin-ui/github-collection-migrations": "./src/collectionMigrationArtifact.ts"
   },
@@ -37,7 +38,7 @@
     "test": "../../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run --config vitest.config.ts",
     "typecheck": "../../../apps/stack/bin/hstack-exec --script=typecheck:local",
-    "typecheck:local": "pnpm --dir ../../triage-sources --silent run build && pnpm --silent run typecheck:source && pnpm --silent run typecheck:tests",
+    "typecheck:local": "pnpm --silent run typecheck:source && pnpm --silent run typecheck:tests",
     "typecheck:source": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "typecheck:tests": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },

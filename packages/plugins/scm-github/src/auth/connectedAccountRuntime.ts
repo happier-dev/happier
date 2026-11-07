@@ -1,3 +1,4 @@
+import { GITHUB_TOKEN_CREDENTIAL_KEY as TOKEN_CREDENTIAL_KEY, materializeGithubCredential } from './credentialMaterialization.js';
 import type {
   ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
@@ -8,14 +9,10 @@ import { resolveGhNativeToken } from '@happier-dev/plugin-sdk/exec';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
+import { getGithubAccountRequestOwnerV1 } from '../observations/githubApiClient.js';
+import { GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
 
-const TOKEN_CREDENTIAL_KEY = 'token';
 const GITHUB_IDENTITY_URL = 'https://api.github.com/user';
-const GITHUB_HTTP_ORIGINS = new Set([
-  'https://api.github.com',
-  'https://github.com',
-]);
-const EMPTY_HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({});
 
 function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
@@ -77,17 +74,28 @@ function parseConfirmedIdentity(
 
 async function confirmGithubIdentity(
   token: string,
-  context: Pick<PluginConnectedAccountAuthenticationContext, 'services' | 'signal'>,
+  context: Pick<PluginConnectedAccountAuthenticationContext, 'services' | 'signal'>
+    & Partial<Pick<GithubConnectedAccountReadContext, 'account'>>,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ConfirmedGithubIdentity | GithubIdentityFailure> {
   const signal = options?.signal ?? context.signal;
   try {
-    const response = await context.services.http.request({
+    const account = context.account;
+    const owner = getGithubAccountRequestOwnerV1({
+      accountScope: account ? JSON.stringify([account.service.pluginId, account.service.localId, account.accountId]) : 'authentication',
+      credentialScope: `Bearer ${token}`,
+      executionOrigin: GITHUB_API_ORIGIN,
+      fallbackLifetime: githubConnectedAccountRuntimeDefinition,
+    });
+    const response = await owner.request({
       url: GITHUB_IDENTITY_URL,
       method: 'GET',
       headers: createGithubRequestHeaders({ authorization: `Bearer ${token}` }),
       redirect: 'error',
-    }, { signal });
+    }, { signal, transport: (request, requestSignal) => context.services.http.request({
+      ...request,
+      redirect: request.redirect ?? 'error',
+    }, { signal: requestSignal }) });
     if (response.status === 401) {
       return {
         status: 'rejected',
@@ -164,19 +172,15 @@ async function readHealth(
   }
   return {
     status: 'connected',
+    providerIdentity: {
+      accountId: identity.providerAccountId,
+      ...(identity.email ? { email: identity.email } : {}),
+    },
     displayName: identity.displayName,
     scopes: identity.scopes,
   };
 }
 
-function isAllowedGithubOrigin(origin: string): boolean {
-  try {
-    const parsed = new URL(origin);
-    return parsed.origin === origin && GITHUB_HTTP_ORIGINS.has(parsed.origin);
-  } catch {
-    return false;
-  }
-}
 
 const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
@@ -254,25 +258,7 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   async status(context, options) {
     return readHealth(context, options);
   },
-  async materialize(request, context, options) {
-    if (request.kind !== 'httpHeaders') {
-      throw new Error('GitHub connected accounts support HTTP-header materialization only');
-    }
-    if (!isAllowedGithubOrigin(request.origin)) {
-      throw new Error('GitHub connected accounts cannot materialize credentials for this origin');
-    }
-    if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) {
-      return { kind: 'httpHeaders', headers: EMPTY_HTTP_HEADERS };
-    }
-    const token = (await context.credentials.get(TOKEN_CREDENTIAL_KEY, options))?.trim() ?? '';
-    if (!token) {
-      throw new Error('GitHub connected-account credentials are unavailable');
-    }
-    return {
-      kind: 'httpHeaders',
-      headers: { Authorization: `Bearer ${token}` },
-    };
-  },
+  materialize: materializeGithubCredential,
 };
 
 export const githubConnectedAccountRuntime = Object.freeze(

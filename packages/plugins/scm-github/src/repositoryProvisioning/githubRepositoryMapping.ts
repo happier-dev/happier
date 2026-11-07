@@ -24,7 +24,7 @@ function normalizeVisibility(value: unknown): ScmHostingRepositoryVisibility {
   return 'private';
 }
 
-function readDefaultBranch(raw: Record<string, unknown>): string | null {
+export function readGithubRepositoryDefaultBranchV1(raw: Record<string, unknown>): string | null {
   const defaultBranch = readString(raw, 'default_branch') ?? readString(raw, 'defaultBranch');
   if (defaultBranch) return defaultBranch;
   const defaultBranchRef = raw.defaultBranchRef;
@@ -55,7 +55,7 @@ export function mapGithubRepositorySummary(input: Readonly<{
   const cloneUrl = readString(input.raw, 'clone_url') ?? readString(input.raw, 'cloneUrl');
   const sshUrl = readString(input.raw, 'ssh_url') ?? readString(input.raw, 'sshUrl');
   const visibility = normalizeVisibility(input.raw.visibility ?? input.fallbackVisibility);
-  const defaultBranch = readDefaultBranch(input.raw);
+  const defaultBranch = readGithubRepositoryDefaultBranchV1(input.raw);
 
   return {
     provider: {

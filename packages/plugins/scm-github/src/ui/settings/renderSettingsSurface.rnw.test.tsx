@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
@@ -21,6 +21,8 @@ import {
 } from '../../triage/contribution.js';
 
 import { renderSurface } from './renderSettingsSurface.js';
+import { GITHUB_PLUGIN } from '../../manifest.js';
+import { createStubGithubTransport, GITHUB_TEST_ACCOUNT } from '../../triage/testkit/githubTriage.test-support.js';
 
 /**
  * What GitHub contributes to the shared PRs & Issues settings page.
@@ -50,14 +52,14 @@ async function executeAction(
   return { kind: 'read', status: 'complete', instances: [] };
 }
 
-async function mountSettings(handler = executeAction): Promise<PluginUiTestkit> {
+async function mountSettings(handler = executeAction, surfaceContext = createSurfaceContextFixture()): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
       identity: { instanceId: 'fixture-instance-204', mountNonce: 'fixture-mount-204' },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       surface: renderSurface,
-      surfaceContext: createSurfaceContextFixture(),
+      surfaceContext,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         executeAction: async ({ action, input }) => await handler({ action, input }),
@@ -74,6 +76,33 @@ afterEach(async () => {
 });
 
 describe('the mounted GitHub PRs & Issues settings page', () => {
+  it.each(['plain', 'e2ee'] as const)('enumerates and refreshes Account sources through the placement owner with zero Machines (%s)', async accountEncryptionMode => {
+    const transport = createStubGithubTransport({
+      respond: request => new URL(request.url).pathname === '/user'
+        ? { status: 200, body: { login: 'source-owner' } } : undefined,
+      listing: { status: 'complete', accounts: [{ account: GITHUB_TEST_ACCOUNT, displayName: 'Source owner',
+        connectedAccountOrigins: ['https://api.github.com'], connectedAccountBases: [] }] },
+      nativeMaterialization() { throw new Error('Account discovery must not acquire native credentials'); },
+    });
+    const github = await createPluginTestkit({ manifest: GITHUB_PLUGIN.manifest, module: GITHUB_PLUGIN,
+      resolveCurrentPluginMaterializationRef: () => null, services: {
+        http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+      } });
+    try {
+      const page = await mountSettings(async ({ action, input }) => {
+        const ref = action as Readonly<{ pluginId: string; localId: string }>;
+        if (ref.pluginId === GITHUB_PLUGIN_ID) return await github.invokeAction(ref.localId, input as JsonValue);
+        return { kind: 'read', status: 'complete', instances: [] };
+      }, createSurfaceContextFixture({ accountEncryptionMode, machineExecutionReady: false, machineConnectionPending: false }));
+      await expect(page.getByRole('button', { name: 'Add source-owner to PRs & Issues' })).resolves.toBeDefined();
+      expect(transport.materializeCount()).toBe(1);
+      await act(async () => { await page.press(await page.getByRole('button', { name: 'Refresh' })); });
+      await expect(page.getByRole('button', { name: 'Add source-owner to PRs & Issues' })).resolves.toBeDefined();
+      expect(transport.materializeCount()).toBe(2);
+      expect(transport.materializations.every(request => request.account.accountId === GITHUB_TEST_ACCOUNT.accountId)).toBe(true);
+    } finally { await github.dispose(); }
+  });
+
   it('uses the shared multi-repository control and preserves the exact native binding across a remount', async () => {
     const sourceInstanceId = '11111111-1111-4111-8111-111111111111';
     const draft = TriageSourceInstanceDraftV1Schema.parse({

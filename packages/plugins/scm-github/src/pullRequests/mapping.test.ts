@@ -92,7 +92,7 @@ describe('GitHub pull request mapping', () => {
       baseRefOid: 'cli-base-sha',
       headRefOid: 'cli-head-sha',
       statusCheckRollup: [
-        { conclusion: 'SUCCESS' },
+        { status: 'COMPLETED', conclusion: 'SUCCESS' },
       ],
     });
     expect(mapped).toMatchObject({
@@ -117,6 +117,23 @@ describe('GitHub pull request mapping', () => {
     });
     expect(mapped).not.toHaveProperty('createdAtMs');
     expect(mapped).not.toHaveProperty('closedAtMs');
+  });
+
+  it.each([
+    { entries: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'IN_PROGRESS', conclusion: null }], state: 'pending' },
+    { entries: [{ status: 'COMPLETED', conclusion: 'ACTION_REQUIRED' }], state: 'failure' },
+    { entries: [{ status: 'COMPLETED', conclusion: 'STARTUP_FAILURE' }], state: 'failure' },
+    { entries: [{ status: 'COMPLETED', conclusion: 'CANCELLED' }], state: 'success' },
+    { entries: [{ status: 'COMPLETED', conclusion: null }], state: 'unknown' },
+    { entries: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'COMPLETED', conclusion: 'FUTURE' }], state: 'unknown' },
+    { entries: [{ __typename: 'StatusContext', state: 'ERROR' }], state: 'failure' },
+    { entries: [{ __typename: 'StatusContext', state: 'PENDING' }], state: 'pending' },
+  ])('uses native outcome policy for rollup $state', async ({ entries, state }) => {
+    const { mapGithubPullRequest } = await import('./mapping.js');
+    expect(mapGithubPullRequest(provider, {
+      number: 1, title: 'Checks', url: 'https://github.com/o/r/pull/1',
+      baseRefName: 'main', headRefName: 'branch', statusCheckRollup: entries,
+    })?.checks?.state).toBe(state);
   });
 
   it('keeps native close time separate from absent merge time and omits invalid dates', async () => {

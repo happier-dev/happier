@@ -70,6 +70,23 @@ function transport(input: Readonly<{
 }
 
 describe('GitHub Triage discovery', () => {
+  it.each(['Mona Lisa', null, '   '])('names a connection from its existing profile response (%j), with no extra read', async (name) => {
+    const stub = createStubGithubTransport({
+      listing: listing('complete', [FIRST_ACCOUNT]),
+      respond: request => request.url.endsWith('/user') ? {
+        status: 200, headers: { 'content-type': 'application/json' },
+        body: { ...GITHUB_AUTHENTICATED_USER_RESPONSE, name },
+      } : undefined,
+    });
+    const result = await listGithubTriageInstances(stub.context);
+    if (result.kind !== 'complete') throw new Error('expected complete discovery');
+    expect(result.candidates[0]?.locator.displayLabel).toBe(name?.trim() || 'octocat-dev');
+    // One identity per row: the account's name leads and its login is the second line (UI4 D16); a login alone is said once.
+    expect(result.candidates[0]?.locator.displayPath).toBe(name?.trim() ? 'octocat-dev' : undefined);
+    expect(stub.requests).toHaveLength(1);
+    expect(result.candidates[0]?.binding).toEqual({ purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, account: FIRST_ACCOUNT });
+  });
+
   it('offers the machine login only when unbound and authenticated, without exposing the token in the candidate', async () => {
     const nativeToken = 'native-token-must-stay-in-daemon';
     const stub = transport({
@@ -117,7 +134,7 @@ describe('GitHub Triage discovery', () => {
     });
     expect(await listGithubTriageInstances(stub.context)).toEqual({ kind: 'complete', candidates: [], failures: [] });
     expect(stub.requests).toEqual([]);
-    expect(stub.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
+    expect(stub.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
   });
 
   it('reports the native sign-in remedy for an unbound purpose when the machine login is unavailable', async () => {

@@ -1,9 +1,11 @@
-import { GITHUB_LOCAL_ACT_ACTIONS_V1 } from './actions/local/contribution.js';
-import { GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1, GITHUB_LOCAL_ACT_PROJECT_VIEW_ID_V1, GITHUB_FORGE_ARTIFACT_ID_V1, GITHUB_FORGE_RENDERER_ID_V1 } from './ui/forge/surfaceIds.js';
+import { githubAccountCredentialRuntime } from './auth/credentialMaterialization.js';
+import { activate as activateGithubAccountRuntime } from './accountRuntime.js';
+import { GITHUB_ACCOUNT_READ_ACTIONS, GITHUB_NATIVE_READ_ACTIONS, TRIAGE_READ_HOST_ACCESS, TRIAGE_INSTANCE_ACCOUNT_BINDINGS } from './triage/readActions.js';
 import {
   CONVERSATION_PROVIDERS_CONTRIBUTION_POINT_ID_V1,
   ConversationProvidersContributionProtocolV1,
 } from '@happier-dev/channels-protocol/v1';
+import { GITHUB_CHANNEL_PULL_REQUESTS } from './githubChannelContribution.js';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -15,8 +17,9 @@ import {
   definePlugin,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import { GITHUB_CHANNEL_PULL_REQUESTS } from './githubChannelContribution.js';
 import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
+import { GITHUB_FILE_VIEWED_ACTION_IDS_V1, GithubFileViewedSetInputV1Schema, ScmFileViewedSetResultV1Schema } from './triage/fileViewedContracts.js';
+import { GITHUB_PREVIEW_STATUS_WORKFLOW_ID_V1, GITHUB_PREVIEW_STATUS_WORKFLOW_V1 } from './triage/previewStatusWorkflow.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -26,9 +29,12 @@ import {
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
-import { GITHUB_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
-import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
+
+
+
+import { GITHUB_RELEASE_ACTIONS_V1 } from './releases/contribution.js';
+import { GITHUB_LOCAL_ACT_ACTIONS_V1 } from './actions/local/contribution.js';
+import { beginGithubAccountRequestOccurrenceV1 } from './observations/githubApiClient.js';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -39,6 +45,11 @@ import {
 } from '@happier-dev/plugin-sdk/protocol';
 
 import { GITHUB_SCM_HOSTING_PROVIDER_LOCAL_ID } from './adapter.js';
+import { GITHUB_CI_ACTION_BINDINGS_V1 } from './actions/contribution.js';
+import { githubCiBranchCountsResourceV1 } from './actions/branchCounts.js';
+import { GITHUB_OVERVIEW_TARGET_ACTIONS_V1 } from './actions/overview.js';
+import { GITHUB_OVERVIEW_TARGET_ACTION_ID } from './actions/overviewContracts.js';
+import { ForgeCiMountedIntentInputV1Schema, ForgeCiMountedIntentResultV1Schema } from '@happier-dev/triage-protocol/ci/v1';
 import { githubConnectedAccountRuntime } from './auth/connectedAccountRuntime.js';
 import {
   deliverGithubChannelMessage,
@@ -52,8 +63,12 @@ import {
   resetGithubRepositoryEventHistoryGap,
   setupGithubRepositoryEventSource,
   setupGithubPullRequestChecksSource,
+  setupGithubDeploymentReviewEventSource,
 } from './githubAutomationEventActions.js';
 import { GITHUB_AUTOMATION_EVENT_CATALOG } from './githubAutomationEvents.js';
+import { GITHUB_DEPLOYMENT_ACTIONS_V1 } from './actions/deploymentReviews.js';
+import { GITHUB_DEPLOYMENT_MONITORING_ACTIONS_V1 } from './actions/deploymentMonitoring.js';
+import { GITHUB_DEPLOYMENT_REVIEW_CATEGORY_ID } from './actions/deploymentReviewProtocol.js';
 import { GITHUB_CHECKS_SETUP_ACTION_ID, GITHUB_CHECKS_WAIT_ACTION_ID, GITHUB_CHECKS_SOURCE_SCHEMA, isGithubChecksEvent } from './observations/githubChecksSource.js';
 import { waitGithubChecksSource, GITHUB_CHECKS_WAIT_INPUT_SCHEMA, GITHUB_CHECKS_WAIT_RESULT_SCHEMA } from './observations/githubChecksWait.js';
 import {
@@ -68,12 +83,15 @@ import {
   GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID,
   GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
+  GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_CONNECTED_ACCOUNT_ID,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_PLUGIN_ID,
+  GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1,
   GITHUB_WEBHOOK_CONTRIBUTION_ID,
+  GithubDeploymentMonitoringSelectionV1Schema,
 } from './observations/githubProviderContracts.js';
 import {
   GITHUB_TRIAGE_ACTION_IDS_V1,
@@ -88,36 +106,55 @@ import {
   GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
 } from './triage/contribution.js';
-import {
-  GithubCapabilitiesInputV1Schema,
-  GithubCapabilitiesResultV1Schema,
-  GithubChangedFilesInputV1Schema,
-  GithubChangedFilesResultV1Schema,
-  GithubChecksInputV1Schema,
-  GithubChecksResultV1Schema,
-  GithubFeedbackInputV1Schema,
-  GithubFeedbackResultV1Schema,
-  GithubOverviewInputV1Schema,
-  GithubOverviewResultV1Schema,
-  GithubTimelineInputV1Schema,
-  GithubTimelineResultV1Schema,
-} from './triage/detail/contracts.js';
+
+import { GITHUB_SECURITY_ALERT_ACTION_IDS_V1, GithubDependabotDismissInputV1Schema, GithubDependabotReopenInputV1Schema, GithubCodeScanningDismissInputV1Schema, GithubCodeScanningReopenInputV1Schema, GithubSecurityAlertMutationResultV1Schema } from './triage/securityAlerts/actionContracts.js';
+export { GITHUB_SECURITY_ALERT_ACTION_IDS_V1 } from './triage/securityAlerts/actionContracts.js';
 import {
   GithubIssueAssigneeAddInputV1Schema,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
   GithubIssueCommentInputV1Schema,
   GithubIssueCommentResultV1Schema,
+  GithubCommentEditInputV1Schema,
+  GithubCommentEditResultV1Schema,
+  GithubCommentCreateInputV1Schema,
+  GithubCommentCreateResultV1Schema,
   GithubIssueDeltaResultV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
   GithubIssueReopenInputV1Schema,
   GithubPullRequestAddReviewersInputV1Schema,
+  GithubPullRequestEditInputV1Schema,
+  GithubPullRequestChangeBaseInputV1Schema,
+  GithubPullRequestConvertToDraftInputV1Schema,
+  GithubEntryMilestoneSetInputV1Schema,
+  GithubIssueTypeSetInputV1Schema,
+  GithubEntryLockInputV1Schema,
+  GithubEntryUnlockInputV1Schema,
+  GithubPullRequestPendingReviewCreateInputV1Schema,
+  GithubPullRequestPendingReviewSubmitInputV1Schema,
+  GithubPullRequestPendingReviewDeleteInputV1Schema,
+  GithubPullRequestReviewDismissInputV1Schema,
+  GithubPullRequestReviewMutationResultV1Schema,
+  GithubEntryAdministrationInputV1Schema,
+  GithubIssueTransferInputV1Schema,
+  GithubEntryAdministrationResultV1Schema,
+  GithubPullRequestRevertInputV1Schema,
+  GithubPullRequestHeadBranchRestoreInputV1Schema,
+  GithubPullRequestHeadBranchRestoreResultV1Schema,
+  GithubPullRequestHeadBranchDeleteInputV1Schema,
+  GithubPullRequestHeadBranchDeleteResultV1Schema,
   GithubPullRequestCloseInputV1Schema,
+  GithubPullRequestPreviewStatusInputV1Schema,
+  GithubPullRequestPreviewStatusResultV1Schema,
   GithubPullRequestMarkReadyInputV1Schema,
-  GithubPullRequestMarkReadyResultV1Schema,
+  GithubPullRequestMarkReadyActionResultV1Schema,
   GithubPullRequestMergeInputV1Schema,
-  GithubPullRequestMergeResultV1Schema,
+  GithubPullRequestEnqueueInputV1Schema,
+  GithubPullRequestDequeueInputV1Schema,
+  GithubPullRequestAutoMergeSetInputV1Schema,
+  GithubPullRequestNativeMergeActionResultV1Schema,
+  GithubPullRequestMergeActionResultV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
   GithubPullRequestReviewPublicationResultV1Schema,
   GithubPullRequestReviewCommentCreateInputV1Schema,
@@ -134,8 +171,26 @@ import {
   GithubPullRequestUpdateBranchResultV1Schema,
 } from './triage/mutations/contracts.js';
 import { githubHostingProviderAdapter } from './adapter.js';
+import {
+  GithubRelatedEntryInputV1Schema, GithubSubIssueAddInputV1Schema, GithubSubIssueReprioritizeInputV1Schema,
+  GithubProjectItemAddInputV1Schema, GithubProjectItemRemoveInputV1Schema,
+  GithubProjectFieldSetInputV1Schema, GithubProjectFieldClearInputV1Schema, GithubRelationshipMutationResultV1Schema,
+} from './triage/mutations/relationshipContracts.js';
 import { githubPullRequestAdapter } from './pullRequests/authChain.js';
 import { githubRepositoryProvisioningAdapter } from './repositoryProvisioning/createRepositoryWithAuthFallback.js';
+import {
+  GITHUB_ACTIONS_PAGE_ID_V1,
+  GITHUB_DEPLOYMENT_REVIEW_VIEW_ID_V1,
+  GITHUB_SESSION_CI_VIEW_ID_V1,
+  GITHUB_RESOURCE_RUN_PAGE_ID_V1,
+  GITHUB_RESOURCE_RUN_SESSION_VIEW_ID_V1,
+  GITHUB_PROJECT_STATUS_WIDGET_ID_V1,
+  GITHUB_FORGE_ARTIFACT_ID_V1,
+  GITHUB_FORGE_RENDERER_ID_V1,
+  GITHUB_RELEASES_PAGE_ID_V1,
+  GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1,
+  GITHUB_LOCAL_ACT_PROJECT_VIEW_ID_V1,
+} from './ui/forge/surfaceIds.js';
 import {
   createGithubWebhookActionHandlerV1,
   type GithubWebhookActionHandlerV1,
@@ -168,7 +223,7 @@ const sources = TriageSourcesContributionProtocolV1;
  * Every Triage operation materializes the exact configured account through the
  * same purpose-scoped seam, so all read roles carry the same host access.
  */
-const TRIAGE_READ_HOST_ACCESS = ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE];
+
 
 /**
  * Every operation with a configured instance declares its exact account path, so the
@@ -179,11 +234,7 @@ const TRIAGE_READ_HOST_ACCESS = ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]
  * `listInstances` carries no account at all, because producing account references is what
  * it performs.
  */
-const TRIAGE_INSTANCE_ACCOUNT_BINDINGS = [{
-  path: 'instance.binding.account',
-  nativeServicePath: 'instance.binding.service',
-  purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
-}];
+
 
 const CHANNELS_PLUGIN_ID = 'happier.channels';
 const GITHUB_CHANNEL_PROVIDER_CONTRIBUTION_ID = 'github-repository';
@@ -309,6 +360,14 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
   required: ['v', 'credentialRef', 'repository'],
 } satisfies PluginJsonSchema;
 
+const GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA = {
+  ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
+  properties: { ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.properties,
+    credentialRef: { anyOf: [QualifiedConnectedAccountRefJsonSchema, { type: 'null' }] },
+    deploymentReview: GithubDeploymentMonitoringSelectionV1Schema.jsonSchema },
+  required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required, 'deploymentReview'],
+} satisfies PluginJsonSchema;
+
 const GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA =
   createPluginEventAutomationSetupResultV1JsonSchema(
     GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
@@ -321,22 +380,36 @@ const GITHUB_CHECKS_SOURCE_CONFIG_SCHEMA = {
   required: [...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA.required, 'checks'],
 } satisfies PluginJsonSchema;
 
-const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_INPUT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    definition: { type: 'object', additionalProperties: true },
-    credentialRef: QualifiedConnectedAccountRefJsonSchema,
-  },
-  required: ['definition', 'credentialRef'],
+const GITHUB_NATIVE_SERVICE_INPUT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: { pluginId: { type: 'string', const: GITHUB_PLUGIN_ID }, localId: { type: 'string', const: GITHUB_CONNECTED_ACCOUNT_ID } },
+  required: ['pluginId', 'localId'],
 } satisfies PluginJsonSchema;
+
+/** Each declared arm selects one authority, never an account/native pair. */
+function githubCredentialInputSchema(properties: NonNullable<PluginJsonSchema['properties']>, required: readonly string[]): PluginJsonSchema {
+  return { anyOf: [{
+    type: 'object', additionalProperties: false,
+    properties: { ...properties, credentialRef: QualifiedConnectedAccountRefJsonSchema },
+    required: [...required, 'credentialRef'],
+  }, {
+    type: 'object', additionalProperties: false,
+    properties: { ...properties, nativeService: GITHUB_NATIVE_SERVICE_INPUT_SCHEMA },
+    required: [...required, 'nativeService'],
+  }] };
+}
+
+const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_INPUT_SCHEMA = githubCredentialInputSchema({
+    definitions: { type: 'array', minItems: 1, items: { type: 'object', additionalProperties: true } },
+    deliveredRunId: { type: 'string', pattern: '^[1-9][0-9]*$' },
+}, ['definitions']);
 
 const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_RESULT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     sourceKey: { type: 'string', minLength: 1, maxLength: 4096 },
-    nextEligibleAt: { type: 'integer', minimum: 0 },
+    nextEligibleAt: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
   },
   required: ['sourceKey', 'nextEligibleAt'],
 } satisfies PluginJsonSchema;
@@ -374,24 +447,34 @@ function createGithubPlugin() {
     if (activeGithubPluginRuntime !== null) {
       throw new Error('GitHub plugin activation overlap would replace the active plugin generation');
     }
-    const runtime = Object.freeze({
-      automationEventObserver: createGithubAutomationEventCheckpointedPullObserver(),
-      webhookActionHandler: createGithubWebhookActionHandlerV1(),
+    const retireRequests = beginGithubAccountRequestOccurrenceV1();
+    const automationEventObserver = createGithubAutomationEventCheckpointedPullObserver({ manifest: PLUGIN_MANIFEST });
+    const runtime = Object.freeze({ automationEventObserver,
+      webhookActionHandler: createGithubWebhookActionHandlerV1({ observeDeploymentRun: automationEventObserver.receiveDeploymentWebhook }),
     });
     activeGithubPluginRuntime = runtime;
     return () => {
+      retireRequests();
       if (activeGithubPluginRuntime === runtime) activeGithubPluginRuntime = null;
     };
   }
 
+  const branchCounts = {
+    resourceId: 'ci-branch-counts',
+    items: [
+      { field: 'running', label: { key: 'plugins.github.ci.counts.running', fallback: 'Running' } },
+      { field: 'failed', label: { key: 'plugins.github.ci.counts.failed', fallback: 'Failed' } },
+    ],
+  };
   return definePlugin({
   id: GITHUB_PLUGIN_ID,
   version: '0.0.0',
   displayName: 'GitHub SCM hosting provider',
   description: 'Detects GitHub remotes and provides GitHub repository operations.',
   brand: { iconResourceId: GITHUB_BRAND_RESOURCE_ID, monochrome: true },
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  activation: { events: [], configuration: { automationEventSources: true } },
+  workflows: { [GITHUB_PREVIEW_STATUS_WORKFLOW_ID_V1]: GITHUB_PREVIEW_STATUS_WORKFLOW_V1 },
   hostAccess: {
     required: [{
       id: 'github-api',
@@ -412,6 +495,14 @@ function createGithubPlugin() {
         // withdrawal — the only declared Action that consumes it. No verb is
         // granted "for symmetry".
         methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      },
+    }, {
+      id: 'github-downloads',
+      capability: 'network',
+      reason: 'Read private GitHub job logs and downloads from GitHub-provided storage locations without API credentials.',
+      scope: {
+        targets: GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1.map(hostSuffix => ({ kind: 'httpsHostSuffix' as const, hostSuffix })),
+        methods: ['GET'],
       },
     }, {
       id: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -440,14 +531,106 @@ function createGithubPlugin() {
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID]: GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   },
   resources: {
+    'ci-branch-counts': {
+      source: 'dynamic',
+      scope: 'surface',
+      kind: 'config',
+      contentType: 'application/json',
+      runtime: githubCiBranchCountsResourceV1,
+    },
     [GITHUB_BRAND_RESOURCE_ID]: {
       kind: 'asset',
       path: 'assets/brand.png',
       contentType: 'image/png',
     },
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
   },
   ui: {
     views: [{
+      id: GITHUB_RESOURCE_RUN_PAGE_ID_V1,
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.ci.run.title', fallback: 'Workflow run' },
+      icon: 'workflow',
+      instancePolicy: 'singleton',
+      resourceLinks: [{ kind: 'ciRun',
+        urlPattern: '^https://github\\.com/[^/?#]+/[^/?#]+/actions/runs/[1-9][0-9]*(?:/[^?#]*)?(?:\\?[^#]*)?(?:#.*)?$',
+        destination: GITHUB_RESOURCE_RUN_PAGE_ID_V1 }],
+    }, {
+      id: GITHUB_RESOURCE_RUN_SESSION_VIEW_ID_V1,
+      container: 'detailsTab',
+      target: { kind: 'session' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.ci.run.title', fallback: 'Workflow run' },
+      icon: 'workflow',
+      instancePolicy: 'multiple',
+      resourceLinks: [{ kind: 'ciRun',
+        urlPattern: '^https://github\\.com/[^/?#]+/[^/?#]+/actions/runs/[1-9][0-9]*(?:/[^?#]*)?(?:\\?[^#]*)?(?:#.*)?$',
+        destination: GITHUB_RESOURCE_RUN_SESSION_VIEW_ID_V1 }],
+    }, {
+      id: GITHUB_ACTIONS_PAGE_ID_V1,
+      container: 'appPage',
+      counts: branchCounts,
+      target: { kind: 'project' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.actions.page.title', fallback: 'Actions' },
+      description: { key: 'plugins.github.actions.page.description', fallback: 'Workflow runs for this repository, and the workflows you can run.' },
+      icon: 'workflow',
+      availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } },
+      instancePolicy: 'singleton',
+    }, {
+      id: GITHUB_RELEASES_PAGE_ID_V1,
+      container: 'appPage',
+      target: { kind: 'project' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.releases.page.title', fallback: 'Releases' },
+      description: { key: 'plugins.github.releases.page.description', fallback: 'What shipped from this repository, and the next release.' },
+      icon: 'tag',
+      availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } },
+      instancePolicy: 'singleton',
+    }, {
+      // Opened from deployment notices, Inbox and the Actions banner; the locator grants nothing by itself.
+      id: GITHUB_DEPLOYMENT_REVIEW_VIEW_ID_V1,
+      container: 'appPage',
+      target: { kind: 'app' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.deploymentReview.page.title', fallback: 'Deployment review' },
+      description: { key: 'plugins.github.deploymentReview.page.description', fallback: 'Approve or reject a deployment that is waiting for you.' },
+      icon: 'review',
+      instancePolicy: 'singleton',
+    }, {
+      // The Session rail's CI tab (lab a6): runs for the Session's exact HEAD, read through this plugin's CI Actions.
+      id: GITHUB_SESSION_CI_VIEW_ID_V1,
+      container: 'rightSidebarTab',
+      counts: branchCounts,
+      target: { kind: 'session' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.ci.rail.title', fallback: 'CI' },
+      icon: 'workflow',
+      instancePolicy: 'singleton',
+    }, {
+      // The Project Overview's GitHub widget (lab a7): default-branch CI, with the latest release beside it.
+      id: GITHUB_PROJECT_STATUS_WIDGET_ID_V1,
+      container: 'widget',
+      target: { kind: 'project' },
+      renderer: GITHUB_FORGE_RENDERER_ID_V1,
+      title: { key: 'plugins.github.overview.title', fallback: 'CI and releases' },
+      icon: 'workflow',
+      sizeDeclaration: { sizes: ['medium', 'wide', 'tall', 'large'], defaultSize: 'medium' },
+      availability: { when: { fact: 'project.repository.kind', operator: 'equals', value: 'github' } },
+    }, {
       id: GITHUB_LOCAL_ACT_SESSION_VIEW_ID_V1,
       container: 'detailsPane',
       target: { kind: 'session' },
@@ -461,7 +644,7 @@ function createGithubPlugin() {
       renderer: GITHUB_FORGE_RENDERER_ID_V1,
       title: { key: 'plugins.github.actions.local.title', fallback: 'Local run' },
       instancePolicy: 'singleton',
-    }, ],
+    }],
     renderers: [{
       id: GITHUB_FORGE_RENDERER_ID_V1,
       kind: 'reactNative',
@@ -503,90 +686,75 @@ function createGithubPlugin() {
       defaultRank: 10,
       renderer: GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
     }],
-    translations: withTriageSourceSettingsTranslationsV1([
-      { locale: 'en', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["en"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs & Issues', 'plugins.github.settings.sources.subtitle': 'Choose which GitHub accounts and repositories appear in PRs & Issues.', 'github.automation.historyGapReset.confirmation.title': 'Start a new baseline', 'github.automation.historyGapReset.confirmation.body': 'Events in the history gap are not replayed.' } },
-      { locale: 'ru', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ru"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR и задачи', 'plugins.github.settings.sources.subtitle': 'Выберите учетные записи и репозитории GitHub, которые будут отображаться в разделе PR и задач.', 'github.automation.historyGapReset.confirmation.title': 'Начать с новой базовой точки', 'github.automation.historyGapReset.confirmation.body': 'События из пропуска в истории не воспроизводятся.' } },
-      { locale: 'pl', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["pl"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR-y i zgłoszenia', 'plugins.github.settings.sources.subtitle': 'Wybierz konta i repozytoria GitHub wyświetlane w sekcji PR-ów i zgłoszeń.', 'github.automation.historyGapReset.confirmation.title': 'Rozpocznij od nowej linii bazowej', 'github.automation.historyGapReset.confirmation.body': 'Zdarzenia z luki w historii nie zostaną odtworzone.' } },
-      { locale: 'es', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["es"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["es"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR e incidencias', 'plugins.github.settings.sources.subtitle': 'Elige qué cuentas y repositorios de GitHub aparecen en PR e incidencias.', 'github.automation.historyGapReset.confirmation.title': 'Iniciar una nueva referencia', 'github.automation.historyGapReset.confirmation.body': 'Los eventos del intervalo perdido del historial no se reproducirán.' } },
-      { locale: 'fr', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["fr"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["fr"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR et tickets', 'plugins.github.settings.sources.subtitle': 'Choisis les comptes et dépôts GitHub affichés dans PR et tickets.', 'github.automation.historyGapReset.confirmation.title': 'Démarrer une nouvelle référence', 'github.automation.historyGapReset.confirmation.body': 'Les événements manquants dans l’historique ne sont pas rejoués.' } },
-      { locale: 'it', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["it"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["it"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR e segnalazioni', 'plugins.github.settings.sources.subtitle': 'Scegli gli account e i repository GitHub da mostrare in PR e segnalazioni.', 'github.automation.historyGapReset.confirmation.title': 'Avvia un nuovo riferimento', 'github.automation.historyGapReset.confirmation.body': 'Gli eventi mancanti nella cronologia non vengono riprodotti.' } },
-      { locale: 'pt', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["pt"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["pt"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs e problemas', 'plugins.github.settings.sources.subtitle': 'Escolha as contas e os repositórios GitHub apresentados em PRs e problemas.', 'github.automation.historyGapReset.confirmation.title': 'Iniciar uma nova referência', 'github.automation.historyGapReset.confirmation.body': 'Os eventos em falta no histórico não são reproduzidos.' } },
-      { locale: 'ca', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ca"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ca"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR i incidències', 'plugins.github.settings.sources.subtitle': 'Tria els comptes i repositoris de GitHub que es mostren a PR i incidències.', 'github.automation.historyGapReset.confirmation.title': 'Inicia una referència nova', 'github.automation.historyGapReset.confirmation.body': 'Els esdeveniments del buit de l’historial no es tornen a reproduir.' } },
-      { locale: 'zh-Hans', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hans"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 和问题', 'plugins.github.settings.sources.subtitle': '选择要在 PR 和问题中显示的 GitHub 帐户和仓库。', 'github.automation.historyGapReset.confirmation.title': '开始新的基准', 'github.automation.historyGapReset.confirmation.body': '不会重放历史缺口中的事件。' } },
-      { locale: 'zh-Hant', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 與問題', 'plugins.github.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitHub 帳戶和儲存庫。', 'github.automation.historyGapReset.confirmation.title': '開始新的基準', 'github.automation.historyGapReset.confirmation.body': '不會重播歷史缺口中的事件。' } },
-      { locale: 'ja', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ja"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR と課題', 'plugins.github.settings.sources.subtitle': 'PR と課題に表示する GitHub アカウントとリポジトリを選択します。', 'github.automation.historyGapReset.confirmation.title': '新しい基準点を開始', 'github.automation.historyGapReset.confirmation.body': '履歴の欠落区間にあるイベントは再実行されません。' } },
-      { locale: 'de', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["de"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["de"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs und Issues', 'plugins.github.settings.sources.subtitle': 'Wählen Sie aus, welche GitHub-Konten und -Repositorys unter PRs und Issues angezeigt werden.', 'github.automation.historyGapReset.confirmation.title': 'Neue Ausgangsbasis erstellen', 'github.automation.historyGapReset.confirmation.body': 'Ereignisse aus der Verlaufslücke werden nicht erneut abgespielt.' } },
-    ]),
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+      { locale: "de", resourceId: "i18n-de" },
+    ],
   },
   // The Event observer activates this plugin independently of Triage use. Keep
   // Action contracts available here, but initialize Triage execution on invocation.
   actions: {
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestPreviewStatus]: {
+      title: 'Publish preview status',
+      description: 'Publishes one admitted own-server preview receipt to its exact GitHub pull-request head.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      approvalScope: 'environment',
+      dangerLevel: 'writesRemote',
+      confirmation: { title: 'Publish preview status?' },
+      confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubPullRequestPreviewStatusInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestPreviewStatusResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutations/previewStatusAdmission.js')).publishGithubPullRequestPreviewStatusAction(input, context),
+    },
     ...GITHUB_LOCAL_ACT_ACTIONS_V1,
-    [GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits]: {
-      title: 'List GitHub repositories',
-      description: 'Lists selectable repositories or the retained configured selection.',
-      surfaces: sources.operations.listScopeUnits.declaration.surfaces,
-      dangerLevel: sources.operations.listScopeUnits.declaration.dangerLevel,
-      inputSchema: TriageSourceCredentialInputsV1.listScopeUnits.jsonSchema,
-      resultSchema: sources.operations.listScopeUnits.declaration.resultSchema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: [{ path: 'draft.binding.account', nativeServicePath: 'draft.binding.service', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE }],
-      run: async (input, context) => (await import('./triage/operations.js')).listGithubTriageScopeUnits(input, context),
+    ...GITHUB_ACCOUNT_READ_ACTIONS,
+    ...GITHUB_NATIVE_READ_ACTIONS,
+    ...GITHUB_CI_ACTION_BINDINGS_V1,
+    ...GITHUB_OVERVIEW_TARGET_ACTIONS_V1,
+    'ui/ci-view-v1': {
+      title: 'Control the mounted Actions view',
+      description: 'Applies typed selection, filters, trigger draft and log controls to one current mount. It never mounts a page or performs a provider write.',
+      surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [], dangerLevel: 'safe',
+      execution: { target: 'client', client: { artifactId: 'github-forge-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
+      inputSchema: ForgeCiMountedIntentInputV1Schema, resultSchema: ForgeCiMountedIntentResultV1Schema,
     },
-    [GITHUB_TRIAGE_ACTION_IDS_V1.listInstances]: {
-      title: 'Discover GitHub accounts',
-      description: 'Lists the GitHub accounts each authorized connection can reach.',
-      surfaces: sources.operations.listInstances.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
+    ...GITHUB_RELEASE_ACTIONS_V1,
+    ...GITHUB_DEPLOYMENT_ACTIONS_V1,
+    ...GITHUB_DEPLOYMENT_MONITORING_ACTIONS_V1,
+    
+    
+    
+    
+    
+    
+    [GITHUB_TRIAGE_ACTION_IDS_V1.linkSession]: {
+      title: 'Link or unlink a GitHub pull request Session',
+      description: 'Changes one exact Session relationship through the canonical Channels binding owner.',
+      surfaces: sources.operations.linkSession.declaration.surfaces,
       placementBindings: [],
-      dangerLevel: sources.operations.listInstances.declaration.dangerLevel,
-      inputSchema: sources.operations.listInstances.declaration.input.schema.jsonSchema,
-      resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      run: async (input, context) => (await import('./triage/operations.js')).listGithubTriageInstancesOperation(input, context),
-    },
-    [GITHUB_TRIAGE_ACTION_IDS_V1.scan]: {
-      title: 'Scan GitHub pull requests and issues',
-      description: 'Reads one bounded page of GitHub pull requests and issues for a configured account.',
-      surfaces: sources.operations.scan.declaration.surfaces,
-      dangerLevel: sources.operations.scan.declaration.dangerLevel,
-      inputSchema: TriageSourceCredentialInputsV1.scan.jsonSchema,
-      resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema,
+      dangerLevel: sources.operations.linkSession.declaration.dangerLevel,
+      sessionTarget: { field: 'sessionId', cardinality: 'one' },
+      inputSchema: TriageSourceCredentialInputsV1.linkSession.jsonSchema,
+      resultSchema: sources.operations.linkSession.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/operations.js')).scanGithubTriageSource(input, context),
+      run: async (input, context) => (await import('./triage/sessionRelations.js')).linkGithubTriageSession(input, context),
     },
-    [GITHUB_TRIAGE_ACTION_IDS_V1.get]: {
-      title: 'Read one GitHub pull request or issue',
-      description: 'Authoritatively reads one GitHub pull request or issue for a configured account.',
-      surfaces: sources.operations.get.declaration.surfaces,
-      // Mounted-only placement. `plugin` stays because the Triage daemon
-      // consumes it and `ui` because this source's own mounted surfaces hold
-      // present-user authority; the explicit empty list only withdraws the
-      // Action from global placement discovery — it disables no invocation.
-      placementBindings: [],
-      dangerLevel: sources.operations.get.declaration.dangerLevel,
-      inputSchema: TriageSourceCredentialInputsV1.get.jsonSchema,
-      resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/operations.js')).getGithubTriageEntry(input, context),
-    },
-    [GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus]: {
-      title: 'Read GitHub pull-request status',
-      description: 'Reads checks, reviews, mergeability and branches when a pull request is opened.',
-      surfaces: sources.operations.readPullRequestStatus.declaration.surfaces,
-      placementBindings: [],
-      dangerLevel: sources.operations.readPullRequestStatus.declaration.dangerLevel,
-      inputSchema: TriageSourceCredentialInputsV1.readPullRequestStatus.jsonSchema,
-      resultSchema: sources.operations.readPullRequestStatus.declaration.resultSchema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).readGithubPullRequestStatus(input, context),
-    },
+    
+    
     [GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace]: {
       title: 'Prepare a GitHub pull-request review workspace',
       description: 'Rereads one GitHub pull request and prepares its source branch in the selected workspace.',
@@ -596,6 +764,10 @@ function createGithubPlugin() {
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },
       inputSchema: TriageSourceCredentialInputsV1.prepareReviewWorkspace.jsonSchema,
+      // Placement and the observed PR facts are supplied by their host owners.
+      // Keep the complete Action schema for agents and final validation, but
+      // never offer those technical objects as a person-authored JSON form.
+      inputHints: { fields: [] },
       resultSchema: sources.operations.prepareReviewWorkspace.declaration.resultSchema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
@@ -614,77 +786,332 @@ function createGithubPlugin() {
     },
     // Native provider reads are available to the mounted UI and agent-facing
     // Actions without adding a generic host PR-management owner.
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities]: {
-      title: 'Read GitHub repository capabilities',
-      description: 'Reads authoritative repository write, issue, and merge-method availability.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubCapabilitiesInputV1Schema.jsonSchema,
-      resultSchema: GithubCapabilitiesResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).readGithubCapabilities(input, context),
+    
+    
+    
+    
+    [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissDependabot]: {
+      title: 'Dismiss this Dependabot alert', description: 'Dismisses the selected finding with the native reason and optional comment.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Dismiss this Dependabot alert?', body: 'The finding is hidden on GitHub. Dismissal does not fix the vulnerability.', confirmLabel: 'Dismiss' }, confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubDependabotDismissInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).dismissGithubDependabotAlert(input, context),
     },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview]: {
-      title: 'Refresh the GitHub overview',
-      description: 'Reads the current body, people, milestone, and branch facts for one pull request or issue.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubOverviewInputV1Schema.jsonSchema,
-      resultSchema: GithubOverviewResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).readGithubOverview(input, context),
+    [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenDependabot]: {
+      title: 'Reopen this Dependabot alert', description: 'Reopens a dismissed Dependabot finding when its native state permits it.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Reopen this Dependabot alert?', body: 'The finding becomes open again on GitHub.', confirmLabel: 'Reopen' }, confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubDependabotReopenInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).reopenGithubDependabotAlert(input, context),
     },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
-      title: 'Read a GitHub timeline page',
-      description: 'Reads one bounded page of the event timeline of one pull request or issue.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubTimelineInputV1Schema.jsonSchema,
-      resultSchema: GithubTimelineResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).listGithubTimeline(input, context),
+    [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissCodeScanning]: {
+      title: 'Dismiss this code scanning alert', description: 'Dismisses the selected code scanning finding with its native reason and optional comment.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Dismiss this code scanning alert?', body: 'The finding is hidden on GitHub. Dismissal does not fix the code.', confirmLabel: 'Dismiss' }, confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubCodeScanningDismissInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).dismissGithubCodeScanningAlert(input, context),
     },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles]: {
-      title: 'Read a GitHub changed-file page',
-      description: 'Reads one bounded page of the files one pull request changes, with their'
-        + ' counts and whether GitHub supplied a patch for each.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubChangedFilesInputV1Schema.jsonSchema,
-      resultSchema: GithubChangedFilesResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).listGithubChangedFiles(input, context),
+    [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenCodeScanning]: {
+      title: 'Reopen this code scanning alert', description: 'Reopens a dismissed code scanning finding when its native state permits it.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Reopen this code scanning alert?', body: 'The finding becomes open again on GitHub.', confirmLabel: 'Reopen' }, confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubCodeScanningReopenInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/securityAlerts/mutations.js')).reopenGithubCodeScanningAlert(input, context),
     },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback]: {
-      title: 'Read one GitHub feedback connection',
-      description: 'Reads one independently paged pull-request feedback connection: issue comments,'
-        + ' review threads, review bodies, outstanding requests, or one thread\'s earlier replies.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubFeedbackInputV1Schema.jsonSchema,
-      resultSchema: GithubFeedbackResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).readGithubFeedback(input, context),
+    
+    
+    [GITHUB_FILE_VIEWED_ACTION_IDS_V1.set]: {
+      title: 'Set GitHub file viewed', description: 'Changes your private, reversible viewed state for one pull request file.',
+      surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'writesRemote',
+      // Strict boolean input makes the default predicate always false; the
+      // Action policy still honors a user's explicit Ask override.
+      confirmationWhen: { default: { op: 'eq', path: 'viewed', value: null }, presentUserUi: false },
+      confirmation: { title: 'Change your Viewed state?', body: 'This changes your private viewed state for this file on GitHub.', confirmLabel: 'Change Viewed' },
+      inputSchema: GithubFileViewedSetInputV1Schema, resultSchema: ScmFileViewedSetResultV1Schema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/fileViewed.js')).setGithubFileViewed(input, context),
     },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks]: {
-      title: 'Read the GitHub checks of a pull request',
-      description: 'Reads the check runs and commit statuses of one pull request at its current'
-        + ' head revision.',
-      surfaces: ['ui', 'agent', 'mcp', 'cli'],
-      placementBindings: [],
-      inputSchema: GithubChecksInputV1Schema.jsonSchema,
-      resultSchema: GithubChecksResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: async (input, context) => (await import('./triage/detailOperations.js')).readGithubChecks(input, context),
-    },
+    
+    
+    
+    
+    
     // PR and issue writes retain provider-native danger levels and confirmations.
     // The shared Action policy requires approval by default on agent/MCP/CLI.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceAdd]: {
+      title: 'Link closing pull request', description: 'Links one exact pull request as a manual closing reference on one issue; accepts either detail as the primary entry.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Link closing reference?', body: 'The selected pull request will be linked to close this issue when merged.', confirmLabel: 'Link' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubClosingReferenceAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.closingReferenceRemove]: {
+      title: 'Unlink closing pull request', description: 'Removes one manual closing reference. Body-keyword references require editing the pull request description.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Unlink closing reference?', body: 'This removes the selected manual link. References from description keywords remain.', confirmLabel: 'Unlink' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubClosingReferenceAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueAdd]: {
+      title: 'Add sub-issue', description: 'Adds one exact issue under this parent. Moving it from an existing parent requires an explicit replaceParent choice.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Add sub-issue?', body: 'This links the selected issue under this parent. If replaceParent is selected, it moves from its current parent.', confirmLabel: 'Add sub-issue' },
+      inputSchema: GithubSubIssueAddInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubSubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueRemove]: {
+      title: 'Remove sub-issue', description: 'Removes this exact parent/sub-issue relationship without deleting either issue.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Remove sub-issue?', body: 'This removes the selected issue from this parent.', confirmLabel: 'Remove' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubSubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.subIssueReprioritize]: {
+      title: 'Move sub-issue', description: 'Moves one sub-issue before or after one exact sibling without replacing the parent list.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Move sub-issue?', body: 'This changes the selected sub-issue’s position in its parent list.', confirmLabel: 'Move' },
+      inputSchema: GithubSubIssueReprioritizeInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).reprioritizeGithubSubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByAdd]: {
+      title: 'Add blocker', description: 'Marks this issue as blocked by one exact related issue.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Add blocker?', body: 'This issue will be marked as blocked by the selected issue.', confirmLabel: 'Add blocker' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubBlockedByAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockedByRemove]: {
+      title: 'Remove blocker', description: 'Removes one exact blocked-by relationship.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Remove blocker?', body: 'This issue will no longer be marked as blocked by the selected issue.', confirmLabel: 'Remove blocker' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubBlockedByAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingAdd]: {
+      title: 'Add blocked issue', description: 'Marks one exact related issue as blocked by this issue.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Add blocked issue?', body: 'The selected issue will be marked as blocked by this issue.', confirmLabel: 'Add blocked issue' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubBlockingAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.blockingRemove]: {
+      title: 'Remove blocked issue', description: 'Removes the exact relationship where this issue blocks the related issue.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Remove blocked issue?', body: 'The selected issue will no longer be marked as blocked by this issue.', confirmLabel: 'Remove' },
+      inputSchema: GithubRelatedEntryInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubBlockingAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemAdd]: {
+      title: 'Add to GitHub Project', description: 'Adds this exact issue or pull request to one selected GitHub Project.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Add to Project?', body: 'This adds the selected entry to the selected GitHub Project.', confirmLabel: 'Add' },
+      inputSchema: GithubProjectItemAddInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubProjectItemAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectItemRemove]: {
+      title: 'Remove from GitHub Project', description: 'Removes the exact Project item belonging to this issue or pull request.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Remove from Project?', body: 'This removes the selected entry from the selected GitHub Project.', confirmLabel: 'Remove' },
+      inputSchema: GithubProjectItemRemoveInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubProjectItemAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldSet]: {
+      title: 'Edit GitHub Project field', description: 'Sets one exact Project item field: text, number, date, single-select, multi-select or iteration.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Save Project field?', body: 'This updates one field on the selected GitHub Project item.', confirmLabel: 'Save' },
+      inputSchema: GithubProjectFieldSetInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubProjectFieldAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.projectFieldClear]: {
+      title: 'Clear GitHub Project field', description: 'Clears one exact field on the selected Project item.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Clear Project field?', body: 'This clears the selected field on the selected GitHub Project item.', confirmLabel: 'Clear' },
+      inputSchema: GithubProjectFieldClearInputV1Schema.jsonSchema, resultSchema: GithubRelationshipMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).clearGithubProjectFieldAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEdit]: {
+      title: 'Edit pull request title or description',
+      description: 'Updates only the title and description fields you supply on this GitHub pull request.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Save pull request changes?', body: 'This updates the selected title or description on GitHub.', confirmLabel: 'Save changes' },
+      inputSchema: GithubPullRequestEditInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).editGithubPullRequestAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryMilestoneSet]: {
+      title: 'Set or clear milestone', description: 'Sets the chosen milestone on this GitHub issue or pull request, or clears it with null.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Change milestone?', body: 'This changes the milestone on GitHub.', confirmLabel: 'Save milestone' },
+      inputSchema: GithubEntryMilestoneSetInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubEntryMilestoneAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTypeSet]: {
+      title: 'Set or clear issue type', description: 'Changes the issue type using GitHub’s native type name, or clears it with null.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Change issue type?', body: 'This changes the selected issue’s type on GitHub.', confirmLabel: 'Save type' },
+      inputSchema: GithubIssueTypeSetInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubIssueTypeAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryLock]: {
+      title: 'Lock conversation', description: 'Locks this issue or pull request’s conversation with an optional native lock reason.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Lock conversation?', body: 'This restricts new comments according to GitHub’s repository permissions.', confirmLabel: 'Lock' },
+      inputSchema: GithubEntryLockInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).lockGithubEntryAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnlock]: {
+      title: 'Unlock conversation', description: 'Unlocks this GitHub issue or pull request’s conversation.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Unlock conversation?', body: 'This allows comments again under the repository’s ordinary permissions.', confirmLabel: 'Unlock' },
+      inputSchema: GithubEntryUnlockInputV1Schema.jsonSchema, resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).unlockGithubEntryAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestChangeBase]: {
+      title: 'Change pull request base',
+      description: 'Changes the base branch of this pull request within its current GitHub repository.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Change base branch?', body: 'This changes the target branch and the comparison shown on GitHub.', confirmLabel: 'Change base' },
+      inputSchema: GithubPullRequestChangeBaseInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).changeGithubPullRequestBaseAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchDelete]: {
+      title: 'Delete pull request head branch', description: 'Deletes the source branch only when its current tip still matches the head you selected.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Delete source branch?', body: 'This deletes the pull request’s source branch on GitHub, not its base branch.', confirmLabel: 'Delete branch' },
+      inputSchema: GithubPullRequestHeadBranchDeleteInputV1Schema.jsonSchema, resultSchema: GithubPullRequestHeadBranchDeleteResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubPullRequestHeadBranchAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestHeadBranchRestore]: {
+      title: 'Restore pull request head branch', description: 'Recreates the source branch at the head you selected, without overwriting an existing branch.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Restore source branch?', body: 'This recreates the deleted source branch at the selected commit.', confirmLabel: 'Restore branch' },
+      inputSchema: GithubPullRequestHeadBranchRestoreInputV1Schema.jsonSchema, resultSchema: GithubPullRequestHeadBranchRestoreResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).restoreGithubPullRequestHeadBranchAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRevert]: {
+      title: 'Revert pull request', description: 'Creates a new GitHub pull request reverting this merged pull request.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'externalSideEffect',
+      confirmation: { title: 'Create revert pull request?', body: 'This creates a new pull request on GitHub; the merged original stays unchanged.', confirmLabel: 'Create revert' },
+      inputSchema: GithubPullRequestRevertInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).revertGithubPullRequestAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueTransfer]: {
+      title: 'Transfer issue', description: 'Moves this issue to the chosen owner/repository through the existing repository reader.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Transfer issue?', body: 'This moves the issue and its conversation to the chosen GitHub repository.', confirmLabel: 'Transfer issue' },
+      inputSchema: GithubIssueTransferInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).transferGithubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueDelete]: {
+      title: 'Delete issue', description: 'Deletes this issue and its conversation on GitHub.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'destructive',
+      confirmation: { title: 'Delete issue?', body: 'This permanently deletes the issue and its comments on GitHub.', confirmLabel: 'Delete issue' },
+      inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issuePin]: {
+      title: 'Pin issue', description: 'Pins this issue to the repository issue list.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Pin issue?', body: 'This pins the selected issue on GitHub.', confirmLabel: 'Pin issue' },
+      inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).pinGithubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueUnpin]: {
+      title: 'Unpin issue', description: 'Unpins this issue from the repository issue list.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Unpin issue?', body: 'This unpins the selected issue on GitHub.', confirmLabel: 'Unpin issue' },
+      inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).unpinGithubIssueAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entrySubscribe]: {
+      title: 'Subscribe to conversation', description: 'Subscribes the acting GitHub user to this issue or pull request.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Subscribe?', body: 'GitHub will notify you about this conversation.', confirmLabel: 'Subscribe' },
+      inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).subscribeGithubEntryAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.entryUnsubscribe]: {
+      title: 'Unsubscribe from conversation', description: 'Restores ordinary participation and mention notifications for this issue or pull request.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Unsubscribe?', body: 'GitHub will notify you only when participating or mentioned.', confirmLabel: 'Unsubscribe' },
+      inputSchema: GithubEntryAdministrationInputV1Schema.jsonSchema, resultSchema: GithubEntryAdministrationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).unsubscribeGithubEntryAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewCreate]: {
+      title: 'Start a pending review', description: 'Creates a GitHub-hosted pending review at the chosen commit.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Save pending review?', body: 'This saves a review draft on GitHub without submitting it.', confirmLabel: 'Save draft' },
+      inputSchema: GithubPullRequestPendingReviewCreateInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).createGithubPendingReviewAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewSubmit]: {
+      title: 'Submit a pending review', description: 'Submits the selected native GitHub review as Approve, Request changes or Comment.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'externalSideEffect',
+      confirmation: { title: 'Submit pending review?', body: 'This publishes the saved review and its verdict on GitHub.', confirmLabel: 'Submit review' },
+      inputSchema: GithubPullRequestPendingReviewSubmitInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).submitGithubPendingReviewAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pendingReviewDelete]: {
+      title: 'Delete a pending review', description: 'Deletes the selected unsubmitted review on GitHub.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'destructive',
+      confirmation: { title: 'Delete pending review?', body: 'This deletes the review draft and its pending comments on GitHub.', confirmLabel: 'Delete review' },
+      inputSchema: GithubPullRequestPendingReviewDeleteInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).deleteGithubPendingReviewAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.reviewDismiss]: {
+      title: 'Dismiss a review', description: 'Dismisses the selected submitted GitHub review with the supplied reason.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Dismiss review?', body: 'This withdraws the review’s approval or request for changes on GitHub.', confirmLabel: 'Dismiss review' },
+      inputSchema: GithubPullRequestReviewDismissInputV1Schema.jsonSchema, resultSchema: GithubPullRequestReviewMutationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).dismissGithubReviewAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestConvertToDraft]: {
+      title: 'Convert pull request to draft',
+      description: 'Returns one open GitHub pull request to draft status.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+      confirmation: { title: 'Convert to draft?', body: 'This pull request will no longer be marked ready for review.', confirmLabel: 'Convert to draft' },
+      inputSchema: GithubPullRequestConvertToDraftInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).convertGithubPullRequestToDraftAction(input, context),
+    },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge]: {
       title: 'Merge this pull request',
       description: 'Merges one GitHub pull request at the exact head revision you are looking at,'
@@ -706,12 +1133,63 @@ function createGithubPlugin() {
           key: 'plugins.github.mutations.merge.confirmation.confirmLabel',
           fallback: 'Merge',
         },
+        inputFields: [
+          { path: 'routingToken', title: { key: 'plugins.github.ui.field.repository', fallback: 'Repository' } },
+          { path: 'localRef.entryId', title: { key: 'plugins.github.ui.field.number', fallback: 'Number' } },
+          { path: 'headRevision', title: { key: 'plugins.github.ui.atHead', fallback: 'At this head' } },
+          { path: 'mergeMethod', title: { key: 'plugins.github.ui.mutations.mergeMethod', fallback: 'Merge method' } },
+          { path: 'skippedRequirements.[].label', title: {
+            key: 'plugins.github.ui.primaryWrite.withoutWaiting', fallback: 'Merge without waiting for requirements',
+          } },
+        ],
       },
       inputSchema: GithubPullRequestMergeInputV1Schema.jsonSchema,
-      resultSchema: GithubPullRequestMergeResultV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestMergeActionResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).mergeGithubPullRequestAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestEnqueue]: {
+      title: 'Add this pull request to the merge queue',
+      description: 'Asks GitHub to queue this pull request at the exact observed head.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: { title: 'Add to merge queue?', body: 'GitHub will merge this pull request when its queue requirements are satisfied.' },
+      confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubPullRequestEnqueueInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).enqueueGithubPullRequestAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestDequeue]: {
+      title: 'Remove this pull request from the merge queue',
+      description: 'Asks GitHub to remove this exact pull request from its merge queue.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: { title: 'Remove from merge queue?' },
+      confirmationWhen: { presentUserUi: false },
+      inputSchema: GithubPullRequestDequeueInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).dequeueGithubPullRequestAction(input, context),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAutoMergeSet]: {
+      title: 'Set native pull request auto-merge',
+      description: 'Enables GitHub auto-merge, which may merge immediately, or cancels it.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'destructive',
+      confirmation: { title: 'Merge when ready?', body: 'GitHub may merge this pull request immediately. This cannot be undone.', confirmLabel: 'Enable auto-merge' },
+      confirmationWhen: { presentUserUi: { op: 'eq', path: 'enabled', value: true } },
+      inputSchema: GithubPullRequestAutoMergeSetInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestNativeMergeActionResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubPullRequestAutoMergeAction(input, context),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose]: {
       title: 'Close this pull request',
@@ -793,7 +1271,7 @@ function createGithubPlugin() {
         },
       },
       inputSchema: GithubPullRequestMarkReadyInputV1Schema.jsonSchema,
-      resultSchema: GithubPullRequestMarkReadyResultV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestMarkReadyActionResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).markGithubPullRequestReadyAction(input, context),
@@ -1001,6 +1479,52 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: async (input, context) => (await import('./triage/mutationOperations.js')).setGithubPullRequestThreadResolutionAction(input, context),
     },
+    // Editing a comment is `writesRemote`: it changes text everyone can read and
+    // summons nobody, and GitHub keeps the earlier text in its edit history.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentEdit]: {
+      title: 'Edit a GitHub comment',
+      description: 'Replaces the text of one comment, line review comment or review summary on'
+        + ' this GitHub issue or pull request, where GitHub lets you edit it.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.github.mutations.commentEdit.confirmation.title', fallback: 'Save this edit?' },
+        body: {
+          key: 'plugins.github.mutations.commentEdit.confirmation.body',
+          fallback: 'The new text replaces this comment on GitHub for everyone who can see it.'
+            + ' GitHub keeps the earlier text in the comment\'s edit history.',
+        },
+        confirmLabel: { key: 'plugins.github.mutations.commentEdit.confirmation.confirmLabel', fallback: 'Save edit' },
+      },
+      inputSchema: GithubCommentEditInputV1Schema.jsonSchema,
+      resultSchema: GithubCommentEditResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).editGithubCommentAction(input, context),
+    },
+    // Posting is `writesRemote` like every conversation write here: everyone
+    // watching the entry reads it, and GitHub notifies its subscribers.
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.commentCreate]: {
+      title: 'Comment on this GitHub issue or pull request',
+      description: 'Posts one new comment at the end of this GitHub issue or pull request conversation.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.github.mutations.commentCreate.confirmation.title', fallback: 'Post this comment?' },
+        body: {
+          key: 'plugins.github.mutations.commentCreate.confirmation.body',
+          fallback: 'Your comment is added to this conversation on GitHub for everyone who can see it.',
+        },
+        confirmLabel: { key: 'plugins.github.mutations.commentCreate.confirmation.confirmLabel', fallback: 'Post comment' },
+      },
+      inputSchema: GithubCommentCreateInputV1Schema.jsonSchema,
+      resultSchema: GithubCommentCreateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./triage/mutationOperations.js')).createGithubCommentAction(input, context),
+    },
     // The issue writes. Each is `writesRemote`: it moves remote state, summons
     // nobody, and is reversible through the Action that undoes it. Every one of
     // them is an exact transition or an exact delta — none can express a desired
@@ -1109,8 +1633,8 @@ function createGithubPlugin() {
       run: async (input, context) => (await import('./triage/mutationOperations.js')).reopenGithubIssueAction(input, context),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd]: {
-      title: 'Assign people to this issue',
-      description: 'Assigns exactly the named GitHub users to this issue, leaving everyone somebody else assigned untouched.',
+      title: 'Assign people',
+      description: 'Assigns exactly the named GitHub users to this issue or pull request, leaving other assignees untouched.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
@@ -1121,7 +1645,7 @@ function createGithubPlugin() {
         },
         body: {
           key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.body',
-          fallback: 'Everyone you named is assigned to this issue on GitHub and is notified. People somebody else assigned are left alone.',
+          fallback: 'Everyone you named is assigned to this issue or pull request on GitHub and is notified. Other assignees are left alone.',
         },
         confirmLabel: {
           key: 'plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel',
@@ -1135,8 +1659,8 @@ function createGithubPlugin() {
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubIssueAssigneesAction(input, context),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove]: {
-      title: 'Unassign people from this issue',
-      description: 'Unassigns exactly the named GitHub users from this issue, leaving everyone you did not name untouched.',
+      title: 'Unassign people',
+      description: 'Unassigns exactly the named GitHub users from this issue or pull request, leaving other assignees untouched.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
@@ -1147,7 +1671,7 @@ function createGithubPlugin() {
         },
         body: {
           key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.body',
-          fallback: 'Everyone you named stops being assigned to this issue on GitHub. People you did not name are left alone.',
+          fallback: 'Everyone you named stops being assigned to this issue or pull request on GitHub. Other assignees are left alone.',
         },
         confirmLabel: {
           key: 'plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel',
@@ -1161,8 +1685,8 @@ function createGithubPlugin() {
       run: async (input, context) => (await import('./triage/mutationOperations.js')).removeGithubIssueAssigneesAction(input, context),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd]: {
-      title: 'Add labels to this issue',
-      description: 'Adds exactly the named labels to this issue, leaving every label somebody else added untouched.',
+      title: 'Add labels',
+      description: 'Adds exactly the named labels to this issue or pull request, leaving other labels untouched.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
@@ -1173,7 +1697,7 @@ function createGithubPlugin() {
         },
         body: {
           key: 'plugins.github.mutations.issueLabelAdd.confirmation.body',
-          fallback: 'Exactly the labels you named are added to this issue on GitHub. Labels somebody else added are left alone.',
+          fallback: 'Exactly the labels you named are added to this issue or pull request on GitHub. Other labels are left alone.',
         },
         confirmLabel: {
           key: 'plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel',
@@ -1187,8 +1711,8 @@ function createGithubPlugin() {
       run: async (input, context) => (await import('./triage/mutationOperations.js')).addGithubIssueLabelsAction(input, context),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove]: {
-      title: 'Remove a label from this issue',
-      description: 'Removes exactly one named label from this issue, leaving every other label untouched.',
+      title: 'Remove a label',
+      description: 'Removes exactly one named label from this issue or pull request, leaving every other label untouched.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
@@ -1199,7 +1723,7 @@ function createGithubPlugin() {
         },
         body: {
           key: 'plugins.github.mutations.issueLabelRemove.confirmation.body',
-          fallback: 'Exactly the label you named is removed from this issue on GitHub. Every other label is left alone.',
+          fallback: 'Exactly the label you named is removed from this issue or pull request on GitHub. Every other label is left alone.',
         },
         confirmLabel: {
           key: 'plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel',
@@ -1225,6 +1749,7 @@ function createGithubPlugin() {
       ],
       connectedAccountPurposeBindings: [{
         path: 'credentialRef',
+        nativeServicePath: 'nativeService',
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       run: runGithubAutomationEventSourceAttempt,
@@ -1242,7 +1767,7 @@ function createGithubPlugin() {
         type: 'object',
         additionalProperties: false,
         properties: {
-          credentialRef: QualifiedConnectedAccountRefJsonSchema,
+          credentialRef: { anyOf: [QualifiedConnectedAccountRefJsonSchema, { type: 'null' }] },
           repository: GITHUB_REPOSITORY_INPUT_SCHEMA,
         },
         required: ['repository'],
@@ -1251,7 +1776,10 @@ function createGithubPlugin() {
       description: 'Verifies the selected GitHub repository for Channels setup.',
       resultSchema: providers.operations.setup.declaration.resultSchema.jsonSchema,
       surfaces: providers.operations.setup.declaration.surfaces,
-      inputHints: GITHUB_REPOSITORY_SETUP_INPUT_HINTS,
+      // This transport input also admits the machine-native service. Its
+      // semantic purpose binding selects credentials; an Account-only select
+      // form cannot describe the nullable native credential operand.
+      inputHints: { fields: GITHUB_REPOSITORY_SETUP_INPUT_HINTS.fields.filter(field => field.path !== 'credentialRef') },
       hostAccess: ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE],
       connectedAccountPurposeBindings: [{
         path: 'credentialRef',
@@ -1283,7 +1811,8 @@ function createGithubPlugin() {
     [GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID]: {
       title: 'Set up GitHub repository Event source',
       description: 'Resolves a GitHub repository to immutable source facts for an Automation Event.',
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+      dangerLevel: 'safe',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -1301,6 +1830,20 @@ function createGithubPlugin() {
         purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
       }],
       run: setupGithubRepositoryEventSource,
+    },
+    [GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID]: {
+      title: 'Set up GitHub deployment review Event source',
+      description: 'Resolves one repository, exact Connected Account and monitoring Machine through the existing repository setup owner.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
+      inputSchema: githubCredentialInputSchema({ repository: GITHUB_REPOSITORY_INPUT_SCHEMA,
+        deploymentReview: GithubDeploymentMonitoringSelectionV1Schema.jsonSchema }, ['repository']),
+      // The declared nativeServicePath gives this existing chooser an exact
+      // native-service option alongside its qualified Connected Accounts.
+      inputHints: GITHUB_REPOSITORY_SETUP_INPUT_HINTS,
+      resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION, GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA),
+      hostAccess: ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE],
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', nativeServicePath: 'nativeService', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE }],
+      run: setupGithubDeploymentReviewEventSource,
     },
     [GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID]: {
       title: 'Start a new GitHub repository Event baseline',
@@ -1401,6 +1944,17 @@ function createGithubPlugin() {
       handlerAction: { localId: GITHUB_WEBHOOK_ACTION_ID },
     },
   },
+  notifications: {
+    [GITHUB_DEPLOYMENT_REVIEW_CATEGORY_ID]: { kind: 'approval', title: 'Deployment reviews',
+      description: 'Pending GitHub deployment reviews. Open the review before allowing or denying.',
+      eventIds: ['automation/deployment-review-v1'],
+      // No page override: both buttons open this notice's exact admitted locator.
+      buttons: [
+        { id: 'allow', label: { key: 'plugins.github.deploymentReview.allow', fallback: 'Allow' }, effect: { kind: 'open' } },
+        { id: 'deny', label: { key: 'plugins.github.deploymentReview.deny', fallback: 'Deny' }, effect: { kind: 'open' } },
+      ],
+    },
+  },
   events: Object.fromEntries(GITHUB_AUTOMATION_EVENT_CATALOG.map((event) => [
     event.localId,
     {
@@ -1419,10 +1973,11 @@ function createGithubPlugin() {
               pluginId: GITHUB_PLUGIN_ID,
               localId: GITHUB_WEBHOOK_CONTRIBUTION_ID,
             } }),
-            sourceConfigSchema: isGithubChecksEvent(event.localId) ? GITHUB_CHECKS_SOURCE_CONFIG_SCHEMA : GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
+            sourceConfigSchema: isGithubChecksEvent(event.localId) ? GITHUB_CHECKS_SOURCE_CONFIG_SCHEMA : event.kind === 'deploymentReview' ? GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA : GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
             setupActionRef: {
               pluginId: GITHUB_PLUGIN_ID,
-              localId: isGithubChecksEvent(event.localId) ? GITHUB_CHECKS_SETUP_ACTION_ID : GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
+              localId: isGithubChecksEvent(event.localId) ? GITHUB_CHECKS_SETUP_ACTION_ID
+                : event.kind === 'deploymentReview' ? GITHUB_DEPLOYMENT_REVIEW_SETUP_ACTION_ID : GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID,
             },
             historyGapResetActionRef: {
               pluginId: GITHUB_PLUGIN_ID,
@@ -1452,6 +2007,7 @@ function createGithubPlugin() {
         kind: 'github',
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: GITHUB_CONNECTED_ACCOUNT_ID,
+        resolveRefAction: GITHUB_OVERVIEW_TARGET_ACTION_ID,
       },
       runtime: {
         adapter: Object.freeze({
@@ -1471,10 +2027,17 @@ function createGithubPlugin() {
         description: 'GitHub account used for repository and pull-request operations.',
         authentication: {
           native: { systemTool: 'gh' },
+          account: { artifactId: 'github-account-runtime', exportName: 'activate' },
           defaultModeId: 'fine-grained-pat',
           modes: [{
             id: 'fine-grained-pat',
             kind: 'manual',
+            setup: {
+              url: 'https://github.com/settings/personal-access-tokens/new',
+              checklist: ['Generate a fine-grained personal access token and choose its resource owner, repositories, and expiration.', 'Grant the repository and organization permissions needed for the actions you want to use; an organization may require approval.', 'Copy the generated token and paste it here.'],
+              createKeyTitle: 'Open GitHub fine-grained tokens',
+            },
+            credentialOrigin: 'authentication',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'Fine-grained personal access token',
             outcomeReconciliation: 'none',
@@ -1485,14 +2048,14 @@ function createGithubPlugin() {
               schema: { type: 'string', minLength: 1 },
               secret: true,
             }],
-      setup: {
-              url: 'https://github.com/settings/personal-access-tokens/new',
-              checklist: ['Generate a fine-grained personal access token and choose its resource owner, repositories, and expiration.', 'Grant the repository and organization permissions needed for the actions you want to use; an organization may require approval.', 'Copy the generated token and paste it here.'],
-              createKeyTitle: 'Open GitHub fine-grained tokens',
-            },
           }, {
             id: 'native-import',
             kind: 'manual',
+            setup: {
+              url: 'https://cli.github.com/manual/gh_auth_login',
+              checklist: ['On the computer you will import from, run gh auth login and complete the GitHub sign-in.', 'Choose that computer in Happier to import its saved GitHub CLI login.'],
+              createKeyTitle: 'Read GitHub CLI login instructions',
+            },
             credentialOrigin: 'native_import',
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'Import GitHub CLI login',
@@ -1506,16 +2069,12 @@ function createGithubPlugin() {
               default: 'native',
               presentation: { control: 'select', options: [{ value: 'native', title: 'GitHub CLI login' }] },
             }],
-      setup: {
-              url: 'https://cli.github.com/manual/gh_auth_login',
-              checklist: ['On the computer you will import from, run gh auth login and complete the GitHub sign-in.', 'Choose that computer in Happier to import its saved GitHub CLI login.'],
-              createKeyTitle: 'Read GitHub CLI login instructions',
-            },
           }],
         },
         capabilities: ['scmHostingToken'],
       },
       runtime: githubConnectedAccountRuntime,
+      accountRuntime: githubAccountCredentialRuntime,
     },
   },
   contributesTo: {
@@ -1531,7 +2090,12 @@ function createGithubPlugin() {
             listInstances: sources.operations.listInstances
               .bind(GITHUB_TRIAGE_ACTION_IDS_V1.listInstances),
             scan: sources.operations.scan.bind(GITHUB_TRIAGE_ACTION_IDS_V1.scan),
+            resolveResource: sources.operations.resolveResource.bind(GITHUB_TRIAGE_ACTION_IDS_V1.resolveResource),
+            readAttention: sources.operations.readAttention.bind(GITHUB_TRIAGE_ACTION_IDS_V1.readAttention),
             get: sources.operations.get.bind(GITHUB_TRIAGE_ACTION_IDS_V1.get),
+            linkSession: sources.operations.linkSession.bind(GITHUB_TRIAGE_ACTION_IDS_V1.linkSession),
+            readSessionLinks: sources.operations.readSessionLinks.bind(GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks),
+            readFixPullRequests: sources.operations.readFixPullRequests.bind(GITHUB_TRIAGE_ACTION_IDS_V1.readFixPullRequests),
             readPullRequestStatus: sources.operations.readPullRequestStatus
               .bind(GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
@@ -1563,7 +2127,7 @@ function createGithubPlugin() {
   });
 }
 
-export const GITHUB_PLUGIN = createGithubPlugin();
+export const GITHUB_PLUGIN = { ...createGithubPlugin(), activateAccount: activateGithubAccountRuntime };
 
 export const PLUGIN_MANIFEST = GITHUB_PLUGIN.manifest;
 

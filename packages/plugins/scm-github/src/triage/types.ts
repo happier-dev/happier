@@ -91,6 +91,8 @@ export type GithubTriageEntrySnapshotV1 = Readonly<{
   nativeRevision: string | null;
   /** Present only on an authoritative pull-request read with all three revisions. */
   reviewRevision?: GithubTriageReviewRevisionV1;
+  /** The head and base branch names, present only on an exact pull-request read that carried both. */
+  branches?: Readonly<{ head: string; base: string }>;
   state: GithubTriageEntryStateV1;
   relations?: TriageSourceEntrySnapshotV1['relations'];
   rowFacts: readonly GithubTriageRowFactV1[];

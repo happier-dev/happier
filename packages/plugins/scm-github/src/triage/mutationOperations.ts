@@ -16,12 +16,30 @@ import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
 
 
 import { admitGithubEntryInvocation } from './admission.js';
+import { withGithubOperationOutcomeV1 } from './mutations/outcome.js';
+import { editGithubPullRequest } from './mutations/pullRequestEdit.js';
+export {
+  addGithubClosingReferenceAction, removeGithubClosingReferenceAction,
+  addGithubSubIssueAction, removeGithubSubIssueAction, reprioritizeGithubSubIssueAction,
+  addGithubBlockedByAction, removeGithubBlockedByAction, addGithubBlockingAction, removeGithubBlockingAction,
+  addGithubProjectItemAction, removeGithubProjectItemAction, setGithubProjectFieldAction, clearGithubProjectFieldAction,
+} from './mutations/relationships.js';
+export { setGithubEntryMilestoneAction, setGithubIssueTypeAction, lockGithubEntryAction, unlockGithubEntryAction } from './mutations/entryMetadata.js';
+export { createGithubPendingReviewAction, submitGithubPendingReviewAction, deleteGithubPendingReviewAction, dismissGithubReviewAction } from './mutations/pendingReview.js';
+export { restoreGithubPullRequestHeadBranchAction, deleteGithubPullRequestHeadBranchAction } from './mutations/pullRequestBranch.js';
+export { transferGithubIssueAction, deleteGithubIssueAction, pinGithubIssueAction, unpinGithubIssueAction,
+  subscribeGithubEntryAction, unsubscribeGithubEntryAction, revertGithubPullRequestAction } from './mutations/entryAdministration.js';
 import {
+  GithubPullRequestEditInputV1Schema,
+  GithubPullRequestChangeBaseInputV1Schema,
+  GithubPullRequestConvertToDraftInputV1Schema,
   GithubIssueAssigneeAddInputV1Schema,
   githubReviewPublicationCredential,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
   GithubIssueCommentInputV1Schema,
+  GithubCommentEditInputV1Schema,
+  GithubCommentCreateInputV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
   GithubIssueReopenInputV1Schema,
@@ -29,6 +47,9 @@ import {
   GithubPullRequestCloseInputV1Schema,
   GithubPullRequestMarkReadyInputV1Schema,
   GithubPullRequestMergeInputV1Schema,
+  GithubPullRequestEnqueueInputV1Schema,
+  GithubPullRequestDequeueInputV1Schema,
+  GithubPullRequestAutoMergeSetInputV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
   GithubPullRequestReviewCommentCreateInputV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
@@ -37,8 +58,11 @@ import {
   GithubPullRequestThreadReplyInputV1Schema,
   GithubPullRequestUpdateBranchInputV1Schema,
   type GithubIssueDeltaResultV1,
+  type GithubCommentEditResultV1,
+  type GithubCommentCreateResultV1,
   type GithubPullRequestMarkReadyResultV1,
   type GithubPullRequestMergeResultV1,
+  type GithubPullRequestNativeMergeResultV1,
   type GithubPullRequestReviewersResultV1,
   type GithubPullRequestStateResultV1,
   type GithubPullRequestThreadResolutionResultV1,
@@ -58,8 +82,12 @@ import {
 } from './mutations/issue.js';
 import {
   closeGithubPullRequest,
+  convertGithubPullRequestToDraft,
   markGithubPullRequestReady,
   mergeGithubPullRequest,
+  enqueueGithubPullRequest,
+  dequeueGithubPullRequest,
+  setGithubPullRequestAutoMerge,
   publishGithubPullRequestReview,
   publishGithubPullRequestComment,
   reopenGithubPullRequest,
@@ -70,6 +98,7 @@ import {
   requestGithubPullRequestReviewers,
 } from './mutations/reviewers.js';
 import { setGithubReviewThreadResolution } from './mutations/reviewThread.js';
+import { createGithubComment, editGithubComment } from './mutations/comments.js';
 import { openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
 import { parseGithubRoutingToken } from './locator.js';
 import { GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1 } from './contribution.js';
@@ -92,6 +121,7 @@ export async function createGithubIssueAction(input: unknown, context: PluginInv
   if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
   const request = parsed.data;
   if (request.kindId !== 'issue') return { kind: 'refused', reason: 'unsupported_kind' };
+  if (request.initialStatusId !== undefined) return { kind: 'refused', reason: 'unsupported_field' };
   if (!taskFieldsSupported(request.fields, true)) return { kind: 'refused', reason: 'unsupported_field' };
   const resolved = resolveGithubTriageInstance(request.instance);
   if (!resolved.ok) return failed(resolved.failure);
@@ -120,6 +150,7 @@ export async function transitionGithubIssueAction(input: unknown, context: Plugi
   const parsed = TriageSourceCredentialInputsV1.transition.safeParse(input);
   if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
   const request = parsed.data;
+  if ((request.fieldValues?.length ?? 0) > 0) return { kind: 'refused', reason: 'unsupported_field' };
   if (!['open', 'completed', 'not_planned'].includes(request.transitionId)) return { kind: 'refused', reason: 'unsupported_transition' };
   const admitted = await admitGithubEntryInvocation({ instance: request.instance, localRef: request.localRef,
     routingToken: request.lastKnownLocator?.routingToken ?? '', admissibleKinds: ['issue'] }, context);
@@ -228,7 +259,10 @@ function namedReviewers(
  * also compared against the fresh read: a head that moved refuses with the
  * currently observed entity and ZERO writes.
  */
-export async function mergeGithubPullRequestAction(
+export async function mergeGithubPullRequestAction(input: unknown, context: PluginInvocationContext) {
+  return withGithubOperationOutcomeV1(await runMergeGithubPullRequestAction(input, context));
+}
+async function runMergeGithubPullRequestAction(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GithubPullRequestMergeResultV1> {
@@ -251,9 +285,60 @@ export async function mergeGithubPullRequestAction(
     route: admitted.route,
     headRevision: request.headRevision,
     mergeMethod: request.mergeMethod,
+    ...(request.intent === 'withoutWaiting'
+      ? { intent: request.intent, skippedRequirements: request.skippedRequirements }
+      : request.intent === undefined ? {} : { intent: request.intent }),
     ...(request.commitTitle === undefined ? {} : { commitTitle: request.commitTitle }),
     ...(request.commitMessage === undefined ? {} : { commitMessage: request.commitMessage }),
   }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+export async function enqueueGithubPullRequestAction(input: unknown, context: PluginInvocationContext) {
+  return withGithubOperationOutcomeV1(await runEnqueueGithubPullRequestAction(input, context));
+}
+async function runEnqueueGithubPullRequestAction(
+  input: unknown, context: PluginInvocationContext,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  const parsed = GithubPullRequestEnqueueInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return enqueueGithubPullRequest({ localRef: admitted.localRef, route: admitted.route,
+    expectedHeadSha: request.expectedHeadSha },
+  { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+export async function dequeueGithubPullRequestAction(input: unknown, context: PluginInvocationContext) {
+  return withGithubOperationOutcomeV1(await runDequeueGithubPullRequestAction(input, context));
+}
+async function runDequeueGithubPullRequestAction(
+  input: unknown, context: PluginInvocationContext,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  const parsed = GithubPullRequestDequeueInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return dequeueGithubPullRequest({ localRef: admitted.localRef, route: admitted.route },
+    { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+export async function setGithubPullRequestAutoMergeAction(input: unknown, context: PluginInvocationContext) {
+  return withGithubOperationOutcomeV1(await runSetGithubPullRequestAutoMergeAction(input, context));
+}
+async function runSetGithubPullRequestAutoMergeAction(
+  input: unknown, context: PluginInvocationContext,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  const parsed = GithubPullRequestAutoMergeSetInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return setGithubPullRequestAutoMerge({ localRef: admitted.localRef, route: admitted.route,
+    expectedHeadSha: request.expectedHeadSha, enabled: request.enabled,
+    ...(request.mergeMethod === undefined ? {} : { mergeMethod: request.mergeMethod }) },
+  { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
 /** Publishes one canonical multi-comment plan through GitHub's single review endpoint. */
@@ -418,6 +503,39 @@ export async function createGithubIssueCommentAction(
   }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
+/** Replaces only the requested PR title and/or description. */
+export async function editGithubPullRequestAction(input: unknown, context: PluginInvocationContext): Promise<GithubPullRequestStateResultV1> {
+  const parsed = GithubPullRequestEditInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return editGithubPullRequest({ localRef: admitted.localRef, route: admitted.route, fields: {
+    ...(request.title === undefined ? {} : { title: request.title }),
+    ...(request.body === undefined ? {} : { body: request.body }),
+  } }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+export async function changeGithubPullRequestBaseAction(input: unknown, context: PluginInvocationContext): Promise<GithubPullRequestStateResultV1> {
+  const parsed = GithubPullRequestChangeBaseInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return editGithubPullRequest({ localRef: admitted.localRef, route: admitted.route, fields: { base: request.baseBranch } },
+    { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+export async function convertGithubPullRequestToDraftAction(input: unknown, context: PluginInvocationContext): Promise<GithubPullRequestStateResultV1> {
+  const parsed = GithubPullRequestConvertToDraftInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({ ...request, admissibleKinds: ['pull-request'] }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return convertGithubPullRequestToDraft({ localRef: admitted.localRef, route: admitted.route },
+    { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
 /** Closes one open pull request, leaving its branch and commits untouched. */
 export async function closeGithubPullRequestAction(
   input: unknown,
@@ -472,7 +590,10 @@ export async function reopenGithubPullRequestAction(
  * observed entity and ZERO writes. The write's effect IS a notification fan-out,
  * and against a stale head it summons reviewers to code the user never saw.
  */
-export async function markGithubPullRequestReadyAction(
+export async function markGithubPullRequestReadyAction(input: unknown, context: PluginInvocationContext) {
+  return withGithubOperationOutcomeV1(await runMarkGithubPullRequestReadyAction(input, context));
+}
+async function runMarkGithubPullRequestReadyAction(
   input: unknown,
   context: PluginInvocationContext,
 ): Promise<GithubPullRequestMarkReadyResultV1> {
@@ -631,6 +752,50 @@ export async function setGithubPullRequestThreadResolutionAction(
   }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
+/** Posts one new conversation comment on this issue or pull request. */
+export async function createGithubCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GithubCommentCreateResultV1> {
+  const parsed = GithubCommentCreateInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['issue', 'pull-request'],
+  }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return await createGithubComment({ localRef: admitted.localRef, route: admitted.route, body: request.body },
+    { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+/** Edits one existing comment body on this entry; GitHub decides who may. */
+export async function editGithubCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GithubCommentEditResultV1> {
+  const parsed = GithubCommentEditInputV1Schema.safeParse(input);
+  if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    // A conversation comment hangs on an issue or a pull request; line comments
+    // and review summaries exist only on a pull request.
+    admissibleKinds: request.target.kind === 'issue-comment' ? ['issue', 'pull-request'] : ['pull-request'],
+  }, context);
+  if (!admitted.ok) return failed(admitted.failure);
+  return await editGithubComment({
+    localRef: admitted.localRef,
+    route: admitted.route,
+    target: request.target,
+    body: request.body,
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
 /* --------------------------------------------------------------- issue writes */
 
 /**
@@ -720,7 +885,7 @@ export async function addGithubIssueAssigneesAction(
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
-    admissibleKinds: ['issue'],
+    admissibleKinds: ['issue', 'pull-request'],
   }, context);
   if (!admitted.ok) return failed(admitted.failure);
 
@@ -743,7 +908,7 @@ export async function removeGithubIssueAssigneesAction(
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
-    admissibleKinds: ['issue'],
+    admissibleKinds: ['issue', 'pull-request'],
   }, context);
   if (!admitted.ok) return failed(admitted.failure);
 
@@ -766,7 +931,7 @@ export async function addGithubIssueLabelsAction(
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
-    admissibleKinds: ['issue'],
+    admissibleKinds: ['issue', 'pull-request'],
   }, context);
   if (!admitted.ok) return failed(admitted.failure);
 
@@ -794,7 +959,7 @@ export async function removeGithubIssueLabelAction(
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
-    admissibleKinds: ['issue'],
+    admissibleKinds: ['issue', 'pull-request'],
   }, context);
   if (!admitted.ok) return failed(admitted.failure);
 

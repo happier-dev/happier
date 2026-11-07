@@ -1,5 +1,4 @@
 import {
-  MAX_TRIAGE_ROW_FACTS_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
   TriageSourceEntrySnapshotV1Schema,
@@ -25,7 +24,7 @@ import {
   projectGithubEntry,
   readGithubRepositoryRouteFromApiUrl,
 } from './entry.js';
-import { buildGithubRowFacts, formatGithubLabelSummary } from './facts.js';
+import { formatGithubLabelSummary } from './facts.js';
 import { toTriageFailure, toTriageSnapshot } from './protocol.js';
 
 const SINGLE_LINE_V1 = new RegExp(TRIAGE_SINGLE_LINE_STRING_PATTERN_V1, 'u');
@@ -186,24 +185,7 @@ describe('GitHub triage entry mapping', () => {
       projectGithubEntry(view, GITHUB_FIXTURE_REPOSITORY_ID, { additionsDeletions: null }),
     );
 
-    // Read the fact TABLE, not the bounded row: the published fact count is small
-    // enough that a supplementary fact may not reach the row at all, and the contract
-    // under test here is that answered-elsewhere and cannot-report stay distinct.
-    const readFact = (row: typeof scanRow) => buildGithubRowFacts({
-      kindId: 'pull-request',
-      number: row.localRef.entryId,
-      repositoryLabel: row.snapshot.scopeLabel,
-      authorLogin: null,
-      updatedAtMs: row.snapshot.sourceUpdatedAtMs,
-      commentCount: null,
-      labelNames: [],
-      reviewDecision: null,
-      checks: null,
-      mergeability: null,
-      additionsDeletions: row === scanRow
-        ? 'detailOnly'
-        : row === detailRow ? { additions: 214, deletions: 88 } : null,
-    }).rowFacts.find((fact) => fact.id === 'github/additions-deletions');
+    const readFact = (row: typeof scanRow) => row.snapshot.rowFacts.find((fact) => fact.id === 'github/additions-deletions');
 
     expect(readFact(scanRow)?.value).toEqual({ kind: 'detailOnly' });
     expect(readFact(detailRow)?.value).toEqual({ kind: 'text', value: '+214 −88' });
@@ -226,13 +208,13 @@ describe('GitHub triage entry mapping', () => {
     expect(new TextEncoder().encode(projection.snapshot.title).byteLength)
       .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
     expect(projection.snapshot.projectionTruncated).toBe(true);
-    expect(projection.snapshot.rowFacts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(projection.snapshot.rowFacts.length).toBeGreaterThan(4);
     // 300 labels become one bounded summary, never a complete label set on a list row.
     expect(formatGithubLabelSummary(view.labelNames))
       .toBe('label-0, label-1, label-2 +297');
   });
 
-  it('keeps the highest-importance facts when the published fact count cannot hold the table', () => {
+  it('preserves every fact when the table exceeds row display density', () => {
     const view = decodeGithubSearchItem(GITHUB_SEARCH_PULL_REQUEST_ITEM)!;
     const projection = requireProjection(
       projectGithubEntry(view, GITHUB_FIXTURE_REPOSITORY_ID, {
@@ -243,15 +225,16 @@ describe('GitHub triage entry mapping', () => {
       }),
     );
 
-    // Emission order is the table's reading order, so a positional bound would keep
-    // the comment count and drop the review decision a reviewer triages on.
-    expect(projection.snapshot.rowFacts.map((fact) => fact.id)).toEqual([
+    expect(projection.snapshot.rowFacts.map((fact) => fact.id)).toEqual(expect.arrayContaining([
       'github/number',
       'github/repository',
       'github/review-decision',
       'github/checks',
-    ]);
-    expect(projection.snapshot.projectionTruncated).toBe(true);
+      'github/mergeability',
+      'github/author',
+      'github/updated',
+    ]));
+    expect(projection.snapshot.projectionTruncated).toBe(false);
   });
 
   it('retains issue labels as Signal before metadata already carried by the snapshot', () => {
@@ -271,10 +254,10 @@ describe('GitHub triage entry mapping', () => {
     }));
     expect(snapshot.authorLabel).toBe(view.authorLogin);
     expect(projection.snapshot.sourceUpdatedAtMs).toBe(view.updatedAtMs);
-    expect(snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    expect(snapshot.facts.length).toBeGreaterThan(4);
   });
 
-  it('keeps PR mergeability ahead of labels when review facts fill the row budget', () => {
+  it('keeps PR mergeability and labels alongside review facts', () => {
     const view = decodeGithubSearchItem({
       ...GITHUB_SEARCH_PULL_REQUEST_ITEM,
       labels: [{ name: 'type: bug' }],
@@ -284,12 +267,13 @@ describe('GitHub triage entry mapping', () => {
       mergeability: 'conflicts',
     }));
 
-    expect(projection.snapshot.rowFacts.map((fact) => fact.id)).toEqual([
+    expect(projection.snapshot.rowFacts.map((fact) => fact.id)).toEqual(expect.arrayContaining([
       'github/number',
       'github/repository',
       'github/review-decision',
       'github/mergeability',
-    ]);
+      'github/labels',
+    ]));
   });
 
   it('never carries a body excerpt onto a list row', () => {

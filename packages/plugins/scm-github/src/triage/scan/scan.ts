@@ -15,10 +15,11 @@ import {
   isGithubSuccessStatus,
 } from '../errors.js';
 import { decodeGithubSearchItem, projectGithubEntry } from '../mapping/entry.js';
-import { readGithubChecksSurface } from '../detail/reads.js';
-import { createGithubRepositoryReader, type GithubRepositoryReaderV1 } from '../repositories.js';
+import { readGithubChecksConditionBatch, type GithubChecksBatchTargetV1 } from '../checksCondition.js';
+import type { GithubChecksSurfaceV1 } from '../checks.js';
 import {
   GITHUB_SEARCH_RESULT_CEILING_V1,
+  GITHUB_SCAN_PARTIAL_REASON_PRIORITY_V1,
   type GithubTriageFailureV1,
   type GithubTriageScanEvidenceV1,
   type GithubTriageScanObservationV1,
@@ -32,8 +33,12 @@ import {
 } from './continuation.js';
 import {
   createGithubScanFrontier,
+  finishGithubScanLane,
   githubScanFrontierHasOpenLane,
+  githubScanLanePageSize,
+  githubScanMaxPagesPerLane,
   readGithubScanWalkHealth,
+  splitGithubScanLane,
   takeNextGithubScanLane,
   type GithubScanInvocationFrontierV1,
   type GithubScanLaneStateV1,
@@ -42,6 +47,7 @@ import { readValidatedGithubNextPage } from './link.js';
 import {
   buildGithubLaneQuery,
   buildGithubLaneSearchUrl,
+  groupGithubScanRepositories,
   mapGithubLaneToInvolvement,
   type GithubScanLaneIdV1,
 } from './query.js';
@@ -72,9 +78,11 @@ export type GithubScanPageRequestV1 =
 
 export type GithubScanInputV1 = Readonly<{
   page: GithubScanPageRequestV1;
-  /** `owner/name` when the configured instance is repository-scoped, else `null`. */
-  repositoryKey: string | null;
+  /** Selected `owner/name` scopes, or null for the explicit Account-wide scan. */
+  repositoryKeys: readonly string[] | null;
+  scopeKey?: string;
   completedSinceMs?: number;
+  query?: string;
 }>;
 
 export type GithubScanDependenciesV1 = Readonly<{
@@ -82,7 +90,6 @@ export type GithubScanDependenciesV1 = Readonly<{
   /** Injected clock. `Date.now()` in an adapter makes every freshness claim untestable. */
   now: () => number;
   signal: AbortSignal;
-  repositories?: GithubRepositoryReaderV1;
 }>;
 
 /**
@@ -95,17 +102,10 @@ export type GithubScanDependenciesV1 = Readonly<{
  * account, so reporting the condition underneath it would present a cut-short walk as an
  * ordinary partial one.
  */
-const PARTIAL_REASON_PRIORITY: readonly GithubTriageScanPartialReasonV1[] = Object.freeze([
-  'continuation-unavailable',
-  'result-ceiling',
-  'incomplete-results',
-  'undecodable-items',
-  'lane-unresolved',
-  'projection-budget',
-]);
+const PARTIAL_REASON_PRIORITY = GITHUB_SCAN_PARTIAL_REASON_PRIORITY_V1;
 
 /** The floor for any arm that did not settle the walk: this page could not hold
- *  another whole native page, which is why it stopped. */
+ *  another fitting native page, which is why it stopped. */
 const PROJECTION_BUDGET_EVIDENCE: GithubTriageScanEvidenceV1 = Object.freeze({
   kind: 'partial',
   reason: 'projection-budget',
@@ -209,20 +209,26 @@ export async function runGithubTriageScan(
   input: GithubScanInputV1,
   dependencies: GithubScanDependenciesV1,
 ): Promise<GithubTriageScanResultV1> {
-  const repositories = dependencies.repositories
-    ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
-  const buildLaneQuery = (laneId: GithubScanLaneIdV1): string => buildGithubLaneQuery({
+  const repositoryGroups = input.repositoryKeys === null
+    ? [null]
+    : groupGithubScanRepositories(input.repositoryKeys, input.completedSinceMs);
+  const scope = input.scopeKey ?? JSON.stringify(repositoryGroups);
+  const query = input.query?.trim();
+  const scopeKey = query ? JSON.stringify([scope, query]) : scope;
+  const buildLaneQuery = (laneId: GithubScanLaneIdV1, repositoryKeys: readonly string[] | null): string => buildGithubLaneQuery({
     laneId,
-    repositoryKey: input.repositoryKey,
+    repositoryKeys,
+    ...(query ? { query } : {}),
     ...(input.completedSinceMs === undefined ? {} : { completedSinceMs: input.completedSinceMs }),
   });
 
   let frontier: GithubScanInvocationFrontierV1;
   if (input.page.kind === 'initial') {
-    frontier = createGithubScanFrontier({ scanLimit: input.page.limit, buildLaneQuery });
+    frontier = createGithubScanFrontier({ scanLimit: input.page.limit, buildLaneQuery, repositoryGroups, scopeKey });
   } else {
     const resumed = decodeGithubScanContinuation(input.page.token, {
       buildLaneQuery,
+      repositoryGroups, scopeKey,
       ...(input.completedSinceMs === undefined ? {} : { completedSinceMs: input.completedSinceMs }),
     });
     if (resumed === null) {
@@ -230,7 +236,9 @@ export async function runGithubTriageScan(
     }
     frontier = createGithubScanFrontier({
       scanLimit: resumed.scanLimit,
+      groupIndex: resumed.groupIndex,
       buildLaneQuery,
+      repositoryGroups, scopeKey,
       resume: {
         nextLaneIndex: resumed.nextLaneIndex,
         walkHealth: resumed.walkHealth,
@@ -240,26 +248,17 @@ export async function runGithubTriageScan(
   }
 
   const observations: GithubTriageScanObservationV1[] = [];
-  // Search does not carry checks. Use the same current-head/checks reader as the detail panel, once per
-  // PR in this invocation. Keep classified failures until fact/health projection; provider responses stay source-local.
-  const checks = new Map<string, ReturnType<typeof readGithubChecksSurface>>();
-  const readChecks = (view: NonNullable<ReturnType<typeof decodeGithubSearchItem>>) => {
-    if (view.kindId !== 'pull-request') return null;
-    const key = JSON.stringify([view.owner, view.name, view.number]);
-    let pending = checks.get(key);
-    if (pending === undefined) {
-      pending = readGithubChecksSurface({
-        route: { owner: view.owner, name: view.name }, entryNumber: view.number,
-      }, dependencies);
-      checks.set(key, pending);
-    }
-    return pending;
-  };
+  // Search omits current-head checks and can omit immutable repository identity.
+  // One native batch per page acquires both; repeated involvement encounters reuse them.
+  const checks = new Map<string, GithubChecksSurfaceV1>();
+  const repositoryIds = new Map<string, string>();
+  const repositoryKey = (view: NonNullable<ReturnType<typeof decodeGithubSearchItem>>) => JSON.stringify([view.owner, view.name]);
+  const checksKey = (view: NonNullable<ReturnType<typeof decodeGithubSearchItem>>) => JSON.stringify([view.owner, view.name, view.number]);
   const laneFailures: GithubTriageFailureV1[] = [];
   const health: ScanHealth = { reasons: new Set(), omittedItemCount: 0, checksFailure: null };
 
   const failLane = (lane: GithubScanLaneStateV1, failure: GithubTriageFailureV1): void => {
-    lane.ended = true;
+    finishGithubScanLane(lane, buildLaneQuery);
     laneFailures.push(failure);
     frontier.walkHealth.add('lane-unresolved');
   };
@@ -297,21 +296,28 @@ export async function runGithubTriageScan(
     });
   };
 
+  const pendingViews: { view: ReturnType<typeof decodeGithubSearchItem>; involvement: ReturnType<typeof mapGithubLaneToInvolvement> }[] = [];
+  const searched = new Set<GithubScanLaneStateV1>();
   while (githubScanFrontierHasOpenLane(frontier)) {
     if (dependencies.signal.aborted) {
       return CANCELLED_SCAN;
     }
-    if (frontier.remainingBudget < frontier.nativePageSize) {
+    if (frontier.remainingBudget === 0) {
       health.reasons.add('projection-budget');
       break;
     }
-    const lane = takeNextGithubScanLane(frontier);
+    const lane = takeNextGithubScanLane(frontier, buildLaneQuery);
     if (lane === null) break;
+    // The text-query budget is one native page per involvement/repository lane;
+    // preserve the remaining frontier for explicit Load More.
+    if (query && searched.has(lane)) break;
+    searched.add(lane);
+    const perPage = githubScanLanePageSize(frontier, lane);
 
     const url = lane.frontier.kind === 'initial'
       ? buildGithubLaneSearchUrl({
         laneQuery: lane.laneQuery,
-        perPage: frontier.nativePageSize,
+        perPage,
         page: 1,
       })
       : lane.frontier.nextUrl;
@@ -336,6 +342,9 @@ export async function runGithubTriageScan(
       });
     }
     if (!isGithubSuccessStatus(response.status)) {
+      // A grouped qualifier can be rejected for one inaccessible repository.
+      // Walk its members through this same fair frontier, preserving readable work.
+      if (response.status === 422 && splitGithubScanLane(lane, buildLaneQuery)) continue;
       failLane(lane, classifyGithubResponseFailure(response, nowMs));
       continue;
     }
@@ -355,7 +364,7 @@ export async function runGithubTriageScan(
       continue;
     }
 
-    if (page.items.length > frontier.nativePageSize) {
+    if (page.items.length > perPage) {
       // A page wider than the geometry this walk requested cannot be admitted: the budget
       // was reserved whole pages at a time, so ingesting the overflow would push
       // `observations + omittedItemCount` past the limit the target strictly rejects.
@@ -366,11 +375,12 @@ export async function runGithubTriageScan(
       continue;
     }
     if (page.totalCount > GITHUB_SEARCH_RESULT_CEILING_V1) {
+      // Grouping must not reduce the per-repository 1,000-result reachability.
+      if (splitGithubScanLane(lane, buildLaneQuery)) continue;
       frontier.walkHealth.add('result-ceiling');
     }
     if (page.incompleteResults) frontier.walkHealth.add('incomplete-results');
 
-    const involvement = mapGithubLaneToInvolvement(lane.laneId);
     const views = page.items.map((rawItem) => {
       // Budget is spent on RAW provider cardinality, before and regardless of decoding. A
       // malformed row still consumed a row of this page, and counting only the rows that
@@ -381,86 +391,30 @@ export async function runGithubTriageScan(
       // undecodable item can never make a following raw item vanish.
       return decodeGithubSearchItem(rawItem);
     });
-    // GitHub omits `repository` from a search item, so identity needs one read per
-    // DISTINCT repository this page names. Every one of them is ASKED FOR here,
-    // before any answer is awaited below, because taken one after another they are
-    // a chain of round trips inside a single lane's page: an involvement inbox
-    // spanning fifty repositories would spend fifty sequential round trips before
-    // the second lane is asked at all, and the invocation would settle on its
-    // budget with the later lanes never read. That is the fairness the round-robin
-    // rotation exists to provide, lost inside one page.
-    //
-    // The request COUNT is unchanged — the reader memoizes by path for the
-    // invocation, so a page of a hundred rows in three repositories still issues
-    // three reads. At most one page of rows is outstanding, and the walk already
-    // bounds a page to GitHub's own maximum page size, so this batch cannot exceed
-    // the concurrency GitHub documents for its REST API.
-    const identified = await Promise.all(views.map(async (view) => {
-      if (view === null) return null;
-      if (view.repositoryId !== null) return { view, repositoryId: view.repositoryId };
-      const read = await repositories.read({ owner: view.owner, name: view.name });
-      return read.kind === 'readable' ? { view, repositoryId: read.repositoryId } : null;
-    }));
-    // Keep the identity and check phases separate: each is bounded by GitHub's native page size, while
-    // overlapping both could exceed its documented 100 concurrent requests. No new local limit is needed.
-    for (const row of identified) {
-      if (row !== null) void readChecks(row.view)?.catch(() => undefined);
-    }
-    for (const row of identified) {
-      if (row === null) {
-        health.omittedItemCount += 1;
-        frontier.walkHealth.add('undecodable-items');
-        continue;
-      }
-      const { view, repositoryId } = row;
-      const checksRead = await readChecks(view);
-      const checksFailure = checksRead === null ? null : checksRead.ok
-        ? checksRead.value.surface.checkRunsFailure ?? checksRead.value.surface.commitStatusFailure
-        : checksRead.failure;
-      health.checksFailure ??= checksFailure;
-      const projection = projectGithubEntry(view, repositoryId, {
-        additionsDeletions: view.kindId === 'pull-request' ? 'detailOnly' : null,
-        checks: checksFailure !== null ? 'unavailable'
-          : checksRead?.ok ? checksRead.value.surface.rowState : null,
-      });
-      if (projection === null) {
-        health.omittedItemCount += 1;
-        frontier.walkHealth.add('undecodable-items');
-        continue;
-      }
-      // One item can match `authored` AND `mentioned`. Every native encounter emits its
-      // own observation carrying that lane's canonical fact: the aggregate applies the
-      // exact canonical ref idempotently and unions involvement, so it stays one row.
-      // Suppressing the later encounter here would drop a fact, and holding a private
-      // delivered-item set would merely rebuild a second dedupe owner inside the source.
-      observations.push(Object.freeze({
-        kind: 'present',
-        localRef: projection.localRef,
-        locator: projection.locator,
-        snapshot: projection.snapshot,
-        viewer: Object.freeze({ involvement: Object.freeze([involvement]) }),
-      }));
-    }
+    // Rows wait for the page's one checks/identity batch below. A batch per lane put a
+    // GraphQL round trip between consecutive lane searches of the same page.
+    const involvement = mapGithubLaneToInvolvement(lane.laneId);
+    for (const view of views) pendingViews.push({ view, involvement });
 
     if (isGithubBudgetExhausted(response)) {
       return Object.freeze({ kind: 'failed', failure: budgetExhaustedFailure(response, nowMs) });
     }
 
     lane.pagesConsumed += 1;
-    if (lane.pagesConsumed >= frontier.maxPagesPerLane) {
+    if (lane.pagesConsumed >= githubScanMaxPagesPerLane(perPage)) {
       // GitHub's search cannot return anything past its 1,000-result ceiling, so a lane
       // still offering `rel="next"` here is structurally truncated, not continuable.
-      lane.ended = true;
+      finishGithubScanLane(lane, buildLaneQuery);
       frontier.walkHealth.add('result-ceiling');
       continue;
     }
 
     const next = readValidatedGithubNextPage(response.headers, url, {
       laneQuery: lane.laneQuery,
-      perPage: frontier.nativePageSize,
+      perPage,
     });
     if (next.kind === 'ended') {
-      lane.ended = true;
+      finishGithubScanLane(lane, buildLaneQuery);
     } else if (next.kind === 'invalid') {
       failLane(lane, Object.freeze({
         class: 'unsupportedContract',
@@ -469,6 +423,85 @@ export async function runGithubTriageScan(
     } else {
       lane.frontier = Object.freeze({ kind: 'next', nextUrl: next.next.url });
     }
+  }
+
+  if (dependencies.signal.aborted) return CANCELLED_SCAN;
+  // One native batch acquires current-head checks for every pull request on this page
+  // and the immutable repository identity search omitted. It runs after the page's last
+  // search, so a rate-limited optional Checks read can no longer park a search after it.
+  const targets = new Map<string, GithubChecksBatchTargetV1>();
+  const queriedRepositories = new Set<string>();
+  for (const { view } of pendingViews) {
+    if (view === null) continue;
+    if (view.repositoryId !== null) repositoryIds.set(repositoryKey(view), view.repositoryId);
+    if (view.kindId === 'pull-request' && !targets.has(checksKey(view))) {
+      targets.set(checksKey(view), {
+        route: { owner: view.owner, name: view.name }, pullRequestNumber: Number(view.number),
+        // A list row shows only the outcome counts; GitHub states them without context pages.
+        depth: 'counts',
+      });
+      queriedRepositories.add(repositoryKey(view));
+    }
+  }
+  for (const { view } of pendingViews) {
+    if (view === null || repositoryIds.has(repositoryKey(view))) continue;
+    // A PR's query already carries its repository's databaseId; issues need only that field.
+    if (!queriedRepositories.has(repositoryKey(view))) {
+      targets.set(repositoryKey(view), { route: { owner: view.owner, name: view.name } });
+      queriedRepositories.add(repositoryKey(view));
+    }
+  }
+  if (targets.size > 0) {
+    try {
+      const reads = await readGithubChecksConditionBatch([...targets.values()], dependencies);
+      let index = 0;
+      for (const [key, target] of targets) {
+        const read = reads[index++];
+        if (read?.repositoryId !== null && read?.repositoryId !== undefined) {
+          repositoryIds.set(JSON.stringify([target.route.owner, target.route.name]), read.repositoryId);
+        }
+        if (read?.surface !== null && read?.surface !== undefined) checks.set(key, read.surface);
+      }
+    } catch (error) {
+      if (dependencies.signal.aborted) return CANCELLED_SCAN;
+      throw error;
+    }
+  }
+  for (const { view, involvement } of pendingViews) {
+    const repositoryId = view === null ? null : view.repositoryId ?? repositoryIds.get(repositoryKey(view)) ?? null;
+    if (view === null || repositoryId === null) {
+      health.omittedItemCount += 1;
+      frontier.walkHealth.add('undecodable-items');
+      continue;
+    }
+    const surface = view.kindId === 'pull-request' ? checks.get(checksKey(view)) : undefined;
+    const checksFailures = surface === undefined ? [] : [surface.checkRunsFailure, surface.commitStatusFailure];
+    const checksRateLimit = checksFailures.find(failure => failure?.class === 'rateLimit');
+    const checksFailure = checksRateLimit ?? checksFailures.find(failure => failure !== null) ?? null;
+    health.checksFailure = checksRateLimit ?? health.checksFailure ?? checksFailure;
+    const projection = projectGithubEntry(view, repositoryId, {
+      additionsDeletions: view.kindId === 'pull-request' ? 'detailOnly' : null,
+      reviewDecision: surface?.reviewDecision ?? null,
+      checks: checksFailure !== null || surface?.state === 'unknown' ? 'unavailable'
+        : surface?.rowState ?? null,
+    });
+    if (projection === null) {
+      health.omittedItemCount += 1;
+      frontier.walkHealth.add('undecodable-items');
+      continue;
+    }
+    // One item can match `authored` AND `mentioned`. Every native encounter emits its
+    // own observation carrying that lane's canonical fact: the aggregate applies the
+    // exact canonical ref idempotently and unions involvement, so it stays one row.
+    // Suppressing the later encounter here would drop a fact, and holding a private
+    // delivered-item set would merely rebuild a second dedupe owner inside the source.
+    observations.push(Object.freeze({
+      kind: 'present',
+      localRef: projection.localRef,
+      locator: projection.locator,
+      snapshot: projection.snapshot,
+      viewer: Object.freeze({ involvement: Object.freeze([involvement]) }),
+    }));
   }
 
   return dependencies.signal.aborted ? CANCELLED_SCAN : settle();

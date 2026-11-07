@@ -1,14 +1,18 @@
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ConnectedAccountRef, ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
   createGithubListedAccountApiClient,
-  type GithubApiClientV1,
+  type GithubApiMediaClientV1,
 } from '../../observations/githubApiClient.js';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import {
   GITHUB_FIXTURE_OWNER,
   GITHUB_FIXTURE_REPOSITORY,
+  GITHUB_FIXTURE_REPOSITORY_ID,
+  GITHUB_FIXTURE_OTHER_REPOSITORY,
+  GITHUB_FIXTURE_OTHER_REPOSITORY_ID,
   GITHUB_REPOSITORY_RESPONSE,
 } from '../__fixtures__/githubResponses.js';
 
@@ -53,6 +57,60 @@ export type StubHttpResponse = Readonly<{
   /** Raw body, when the test needs a non-JSON payload. */
   rawBody?: Uint8Array;
 }>;
+
+/** Synthetic GitHub GraphQL boundary shape; production traversal/projectors stay real. */
+/**
+ * GitHub's `StatusCheckRollupContextConnection` counts for the same contexts a node
+ * page would list: a Check Run counts under its conclusion once completed and under
+ * its status before that; a commit status counts under its state.
+ */
+export function githubChecksRollupCounts(nodes: readonly unknown[]): Readonly<{
+  checkRunCountsByState: readonly Readonly<{ state: string; count: number }>[];
+  statusContextCountsByState: readonly Readonly<{ state: string; count: number }>[];
+}> {
+  const runs = new Map<string, number>();
+  const statuses = new Map<string, number>();
+  for (const raw of nodes) {
+    const node = raw as Readonly<Record<string, unknown>>;
+    if (node.__typename === 'CheckRun') {
+      const state = String(node.status) === 'COMPLETED' ? String(node.conclusion ?? 'COMPLETED') : String(node.status);
+      runs.set(state, (runs.get(state) ?? 0) + 1);
+    } else if (node.__typename === 'StatusContext') {
+      statuses.set(String(node.state), (statuses.get(String(node.state)) ?? 0) + 1);
+    }
+  }
+  const list = (counts: Map<string, number>) => [...counts].map(([state, count]) => ({ state, count }));
+  return { checkRunCountsByState: list(runs), statusContextCountsByState: list(statuses) };
+}
+
+export function githubChecksBatchResponse(request: RecordedGithubRequest, input: Readonly<{
+  nodes?: readonly unknown[];
+  errors?: readonly unknown[];
+  pullRequest?: unknown;
+  reviewDecision?: string;
+}> = {}): StubHttpResponse {
+  // The test HTTP boundary carries the exact GraphQL variables production serialized,
+  // and answers the connection shape the query selected: node pages or state counts.
+  const { query, variables } = readRecordedJsonBody(request) as { query: string; variables: Record<string, unknown> };
+  const counts = query.includes('checkRunCountsByState');
+  const data: Record<string, unknown> = {};
+  for (const key of Object.keys(variables).filter(key => key.startsWith('owner'))) {
+    const index = key.slice('owner'.length);
+    data[`row${index}`] = {
+      databaseId: Number(variables[`name${index}`] === GITHUB_FIXTURE_OTHER_REPOSITORY
+        ? GITHUB_FIXTURE_OTHER_REPOSITORY_ID : GITHUB_FIXTURE_REPOSITORY_ID),
+      ...(variables[`number${index}`] === undefined ? {} : { pullRequest: input.pullRequest === undefined ? {
+        ...(input.reviewDecision === undefined ? {} : { reviewDecision: input.reviewDecision }),
+        headRefOid: 'a'.repeat(40), commits: { nodes: [{ commit: {
+          oid: 'a'.repeat(40), statusCheckRollup: { contexts: counts ? githubChecksRollupCounts(input.nodes ?? []) : {
+            nodes: input.nodes ?? [], pageInfo: { hasNextPage: false, endCursor: null },
+          } },
+        } }] },
+      } : input.pullRequest }),
+    };
+  }
+  return { status: 200, body: { data, ...(input.errors === undefined ? {} : { errors: input.errors }) } };
+}
 
 /** One exact-account materialization request the boundary actually received. */
 export type RecordedMaterialization = Readonly<{
@@ -101,6 +159,7 @@ export function createStubGithubTransport(input: Readonly<{
    */
   respond: (
     request: RecordedGithubRequest,
+    options?: Readonly<{ signal?: AbortSignal }>,
   ) => StubHttpResponse | Promise<StubHttpResponse> | undefined;
   signal?: AbortSignal;
   /** Present only for discovery tests; absent leaves the listing unimplemented. */
@@ -111,7 +170,7 @@ export function createStubGithubTransport(input: Readonly<{
    * bound summary so a test that only stubs a listing still describes a
    * configured Account.
    */
-  binding?: Readonly<{ purpose: string }> | null;
+  binding?: Readonly<{ purpose: string; account?: ConnectedAccountRef }> | null;
   /** Daemon credential boundary; native credentials never enter the listed-account path. */
   nativeMaterialization?: ConnectedAccountMaterialization | (() => never);
   /** Optional host Action boundary used by operations that coordinate through a canonical host owner. */
@@ -141,9 +200,15 @@ export function createStubGithubTransport(input: Readonly<{
       }
       return typeof listing === 'function' ? listing() : listing;
     },
-    async getBinding(purpose: string): Promise<Readonly<{ purpose: string }> | null> {
+    async getBinding(purpose: string, options?: Readonly<{ signal?: AbortSignal }>) {
+      options?.signal?.throwIfAborted();
       bindingReads.push(purpose);
-      return input.binding === undefined ? Object.freeze({ purpose }) : input.binding;
+      return input.binding === null ? null : Object.freeze({
+        purpose,
+        account: input.binding?.account ?? GITHUB_TEST_ACCOUNT,
+        service: (input.binding?.account ?? GITHUB_TEST_ACCOUNT).service,
+        target: { kind: 'account' as const, displayName: 'GitHub fixture' },
+      });
     },
     async materializeListedAccount(
       request: Readonly<{
@@ -196,7 +261,7 @@ export function createStubGithubTransport(input: Readonly<{
         const signal = options?.signal;
         const onAbort = () => reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
         signal?.addEventListener('abort', onAbort, { once: true });
-        Promise.resolve(input.respond(recorded)).then(resolve, reject).finally(() => {
+        Promise.resolve(input.respond(recorded, options)).then(resolve, reject).finally(() => {
           signal?.removeEventListener('abort', onAbort);
         });
       });
@@ -238,7 +303,7 @@ export function createStubGithubTransport(input: Readonly<{
     signal: input.signal ?? new AbortController().signal,
     services: {
       connectedAccounts,
-      http,
+      http: createPluginHttpFixture({ request: http.request }),
       actions: {
         execute: async (actionId: string, actionInput: unknown) => {
           if (input.executeAction === undefined) {
@@ -262,7 +327,7 @@ export function createStubGithubTransport(input: Readonly<{
 
 export async function createTestGithubApiClient(
   transport: StubGithubTransport,
-): Promise<GithubApiClientV1> {
+): Promise<GithubApiMediaClientV1> {
   return createGithubListedAccountApiClient(transport.context, GITHUB_TEST_ACCOUNT);
 }
 

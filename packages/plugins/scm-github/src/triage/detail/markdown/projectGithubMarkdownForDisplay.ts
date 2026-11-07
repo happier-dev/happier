@@ -77,7 +77,7 @@ function readTagSource(tag: string): string | null {
 
 const HTML_TAG = /<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?\/?>/g;
 const HTML_ANCHOR = /<a\s[^<>]*?href\s*=\s*(?:"([^"]*)"|'([^']*)')[^<>]*>(.*?)<\/a\s*>/gi;
-const HTML_IMAGE = /<img\s[^<>]*?alt\s*=\s*(?:"([^"]*)"|'([^']*)')[^<>]*>/gi;
+const HTML_IMAGE = /<img\b[^<>]*>/gi;
 const HTML_LINE_BREAK = /<br\s*\/?>/gi;
 const HTML_VIDEO_SOURCE = /<(?:video|source)\b[^<>]*>/gi;
 
@@ -85,7 +85,14 @@ function stripHtmlTags(value: string): string {
   return value.replace(HTML_VIDEO_SOURCE, (tag) => {
     const source = readTagSource(tag);
     return source === null ? '' : `[${source}](${source})`;
-  }).replace(HTML_IMAGE, (_match, double?: string, single?: string) => double ?? single ?? '')
+  }).replace(HTML_IMAGE, (tag: string) => {
+    const alt = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(tag);
+    const label = alt?.[1] ?? alt?.[2] ?? '';
+    const source = readTagSource(tag);
+    if (source === null) return label;
+    const destination = new URL(source).href.replaceAll('(', '%28').replaceAll(')', '%29');
+    return `![${label.replace(/[\\[\]]/g, '\\$&')}](${destination})`;
+  })
     .replace(HTML_LINE_BREAK, ' ')
     .replace(HTML_TAG, '');
 }
@@ -106,7 +113,7 @@ function htmlLineToText(line: string): string {
 
 /**
  * Removes what GitHub does not show (HTML comments) and reduces the rest of its inline HTML to
- * text: a link becomes a Markdown link, an image its alt text, any other tag nothing. Fenced and
+ * Markdown: links and images retain their destinations, any other tag becomes nothing. Fenced and
  * indented code remain exact source bytes, like the attachment projection below.
  */
 function sanitizeGithubHtmlForDisplay(source: string): string {
@@ -186,6 +193,18 @@ function videoBlockAttachment(
   return Object.freeze({ segment: null, nextLine });
 }
 
+/** GitHub's five alert types (`> [!NOTE]`), as GitHub titles them. */
+const GITHUB_ALERT_TITLES: Readonly<Record<string, string>> = Object.freeze({
+  NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution',
+});
+const GITHUB_ALERT_MARKER = /^([ ]{0,3}>[ ]?)\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(\r?\n?)$/u;
+
+/** A GitHub alert's marker line becomes its bold title inside the same quote, as GitHub renders it. */
+function projectGithubAlertMarker(bytes: string): string {
+  const match = GITHUB_ALERT_MARKER.exec(bytes);
+  return match === null ? bytes : `${match[1]}**${GITHUB_ALERT_TITLES[match[2]!]}**${match[3]}`;
+}
+
 /**
  * Separates the small attachment vocabulary GitHub documents from Markdown.
  *
@@ -252,7 +271,7 @@ export function projectGithubMarkdownForDisplay(
       continue;
     }
 
-    markdown += line.bytes;
+    markdown += projectGithubAlertMarker(line.bytes);
     index += 1;
   }
 

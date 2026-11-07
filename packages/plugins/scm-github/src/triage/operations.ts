@@ -1,10 +1,10 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { GithubTriageInvocationContext } from './invocation.js';
 import {
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   isPluginActionApprovalRequestCreated,
 } from '@happier-dev/plugin-sdk/actions';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import { scanTriageSelectedScopeUnitsV1, parseForgeLinkHeader, readForgeLinkHeaderValue, admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
+import { deriveTriageConfiguredSourceInstanceDigestV1, admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 import {
   TriageSourceCredentialInputsV1,
   TriageSourceCredentialBindingV1Schema,
@@ -19,6 +19,7 @@ import {
   type TriageListInstancesResultV1,
   type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
+  type TriageScanInputV1,
   type TriageSourceFailureV1,
   type TriageVerifyReviewWorkspaceInputV1,
   type TriageVerifyReviewWorkspaceResultV1,
@@ -27,7 +28,6 @@ import {
 import {
   createGithubListedAccountApiClient,
   createGithubNativeApiClient,
-  decodeGithubJsonResponse,
   type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
 import { GITHUB_PLUGIN_ID, GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
@@ -42,7 +42,7 @@ import {
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
   readGithubTriageKindId,
 } from './contribution.js';
-import { classifyGithubTransportFailure, classifyGithubResponseFailure, isGithubSuccessStatus, GITHUB_MISSING_LOCATOR_FAILURE } from './errors.js';
+import { classifyGithubTransportFailure, GITHUB_MISSING_LOCATOR_FAILURE } from './errors.js';
 import {
   readGithubPullRequest,
   runGithubTriageGet,
@@ -57,9 +57,11 @@ import {
   toTriageScanEvidence,
   toTriageScanObservation,
 } from './mapping/protocol.js';
-import { createGithubRepositoryReader, decodeGithubRepositoryMetadata } from './repositories.js';
+import { createGithubRepositoryReader, readGithubRepositoryDirectoryPage } from './repositories.js';
 import { buildGithubCollisionScope } from './identity.js';
 import { runGithubTriageScan } from './scan/scan.js';
+import { withGithubSecurityAlertDispatchEvidence } from './securityAlerts/dispatchEvidence.js';
+import { scanGithubForgeWithAlerts } from './securityAlerts/scan.js';
 import { GITHUB_MAX_PAGE_SIZE_V1, type GithubTriageEntryLocalRefV1 } from './types.js';
 
 /**
@@ -148,7 +150,7 @@ function resolveInstance(instance: Pick<TriageConfiguredSourceInstanceV1, 'bindi
  */
 export async function openGithubTriageClient(
   instance: TriageConfiguredSourceInstanceV1,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
 ): Promise<
   | Readonly<{ ok: true; client: GithubApiClientV1 }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>
@@ -158,7 +160,7 @@ export async function openGithubTriageClient(
 
 async function openClient(
   instance: Pick<TriageConfiguredSourceInstanceV1, 'binding'>,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
 ): Promise<
   | Readonly<{ ok: true; client: GithubApiClientV1 }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>
@@ -188,7 +190,7 @@ async function openClient(
  * when the selected observation carries no usable route instead of guessing
  * from the configured scan scope.
  */
-export async function listGithubTriageScopeUnits(input: unknown, context: PluginInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+export async function listGithubTriageScopeUnits(input: unknown, context: GithubTriageInvocationContext): Promise<TriageListScopeUnitsResultV1> {
   const parsed = TriageSourceCredentialInputsV1.listScopeUnits.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: INVALID_INPUT_FAILURE };
   const { draft, mode, cursor } = parsed.data;
@@ -220,26 +222,19 @@ export async function listGithubTriageScopeUnits(input: unknown, context: Plugin
   const opened = await openClient(draft, context);
   if (!opened.ok) return { kind: 'failed', failure: opened.failure };
   try {
-    const response = await opened.client.request({ url });
-    if (!isGithubSuccessStatus(response.status)) return { kind: 'failed', failure: toTriageFailure(classifyGithubResponseFailure(response, Date.now())) };
-    const body = decodeGithubJsonResponse(response);
-    const search = typeof body === 'object' && body !== null && !Array.isArray(body) ? body as Readonly<Record<string, unknown>> : null;
-    const rows = query === '' ? body : search?.items;
-    if (!Array.isArray(rows)) return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'github_repository_directory_invalid' } };
-    const projected = rows.map((row) => {
-      const repository = decodeGithubRepositoryMetadata(row);
-      return repository === null || repository.repositoryKey === null ? null : TriageSourceScopeUnitV1Schema.safeParse({
+    const page = await readGithubRepositoryDirectoryPage({ client: opened.client, url, now: () => context.invokedAtMs });
+    if (page.kind === 'failed') return { kind: 'failed', failure: toTriageFailure(page.failure) };
+    const projected = page.repositories.map(repository => {
+      return TriageSourceScopeUnitV1Schema.safeParse({
         id: repository.repositoryKey, label: repository.repositoryKey, collisionScope: buildGithubCollisionScope(repository.repositoryId),
       });
     });
     const listed = projected.flatMap((unit) => unit?.success ? [unit.data] : []);
-    const link = parseForgeLinkHeader(readForgeLinkHeaderValue(response.headers));
-    const next = link.kind === 'parsed' ? link.links.next : undefined;
-    const nextToken = next !== undefined && next !== url && admits(next) ? encodeTriagePagingTokenV1({
+    const next = page.nextUrl;
+    const nextToken = next !== null && admits(next) ? encodeTriagePagingTokenV1({
       v: 1, binding: draft.binding, localInstanceKey: draft.localInstanceKey, query, url: next,
     }) : null;
-    const incomplete = listed.length !== rows.length || link.kind === 'malformed' || next !== undefined || search?.incomplete_results === true
-      || (typeof search?.total_count === 'number' && search.total_count > Number(new URL(url).searchParams.get('page') ?? '1') * GITHUB_MAX_PAGE_SIZE_V1);
+    const incomplete = listed.length !== page.repositories.length || page.partial || next !== null;
     return TriageListScopeUnitsResultV1Schema.parse(incomplete
       ? { kind: 'page', status: 'partial', selection, units: listed, ...(nextToken === null ? {} : { nextCursor: { v: 1, token: nextToken } }) }
       : { kind: 'page', status: 'complete', selection, units: listed });
@@ -364,7 +359,7 @@ type GithubAuthorizedReviewWorkspaceV1 =
 /** One provider authority path shared by initial preparation and final verification. */
 async function authorizeGithubReviewWorkspace(
   request: GithubReviewWorkspaceRequestV1,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1,
 ): Promise<GithubAuthorizedReviewWorkspaceV1> {
   if (!isGithubPullRequestEntryRef(request.entryRef)) {
@@ -432,7 +427,7 @@ async function authorizeGithubReviewWorkspace(
 
 export async function listGithubTriageInstancesOperation(
   input: unknown,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1 = {},
 ): Promise<TriageListInstancesResultV1> {
   const parsed = TriageListInstancesInputV1Schema.safeParse(input);
@@ -467,6 +462,7 @@ export function settleGithubTriageScanPage(
     evidence: Object.freeze({
       kind: 'partial' as const,
       reason: 'continuation-unavailable' as const,
+      ...(evidence.kind === 'partial' && evidence.failure !== undefined ? { failure: evidence.failure } : {}),
       ...(evidence.kind === 'partial' && evidence.omittedItemCount !== undefined
         ? { omittedItemCount: evidence.omittedItemCount }
         : {}),
@@ -476,7 +472,7 @@ export function settleGithubTriageScanPage(
 
 export async function scanGithubTriageSource(
   input: unknown,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1 = {},
 ): Promise<TriageScanResultV1> {
   const parsed = TriageSourceCredentialInputsV1.scan.safeParse(input);
@@ -495,28 +491,31 @@ export async function scanGithubTriageSource(
 
   const now = dependencies.now ?? (() => context.invokedAtMs);
   const repositories = createGithubRepositoryReader({ client: opened.client, now });
-  return await scanTriageSelectedScopeUnitsV1({
-    instance: scanInput.instance, selection: resolved.configuration.selection, page: scanInput.page,
-    scan: async (unitId, page) => {
-      const repositoryKey = unitId;
-      const result = await runGithubTriageScan({
-        page: page.kind === 'initial' ? { kind: 'initial', limit: page.limit }
-          : { kind: 'continuation', token: page.continuation.token },
-        repositoryKey,
-        ...(scanInput.completed?.kindIds.includes('issue') ? { completedSinceMs: scanInput.completed.sinceMs } : {}),
-      }, { client: opened.client, now, signal: context.signal, repositories });
-      if (result.kind === 'failed') return { kind: 'failed', failure: toTriageFailure(result.failure) };
-      const observations = result.observations.map(toTriageScanObservation);
-      const evidence = toTriageScanEvidence(result.evidence);
-      return result.kind === 'complete' ? { kind: 'complete', observations, evidence }
-        : settleGithubTriageScanPage(observations, evidence, result.continuation);
-    },
-  });
+  const scanForge = async (page: TriageScanInputV1['page']): Promise<TriageScanResultV1> => {
+    const result = await runGithubTriageScan({
+      page: page.kind === 'initial' ? { kind: 'initial', limit: page.limit }
+        : { kind: 'continuation', token: page.continuation.token },
+      repositoryKeys: resolved.configuration.selection.kind === 'selected' ? resolved.configuration.selection.unitIds : null,
+      scopeKey: deriveTriageConfiguredSourceInstanceDigestV1(scanInput.instance),
+        ...(scanInput.query?.trim() ? { query: scanInput.query.trim() } : {}),
+      ...(scanInput.completed?.kindIds.includes('issue') ? { completedSinceMs: scanInput.completed.sinceMs } : {}),
+    }, { client: opened.client, now, signal: context.signal });
+    if (result.kind === 'failed') return { kind: 'failed', failure: toTriageFailure(result.failure) };
+    const observations = result.observations.map(toTriageScanObservation);
+    const evidence = toTriageScanEvidence(result.evidence);
+    return result.kind === 'complete' ? { kind: 'complete', observations, evidence }
+      : settleGithubTriageScanPage(observations, evidence, result.continuation);
+  };
+  const result = await scanGithubForgeWithAlerts({ instance: scanInput.instance, configuration: resolved.configuration,
+    page: scanInput.page, client: opened.client, repositories, now, signal: context.signal, scanForge,
+    ...(scanInput.query?.trim() ? { query: scanInput.query.trim() } : {}),
+    ...(scanInput.completed?.kindIds.includes('issue') ? { completedSinceMs: scanInput.completed.sinceMs } : {}) });
+  return result.kind === 'page' ? settleGithubTriageScanPage(result.observations, result.evidence, result.continuation.token) : result;
 }
 
 export async function getGithubTriageEntry(
   input: unknown,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1 = {},
 ): Promise<TriageGetResultV1> {
   const parsed = TriageSourceCredentialInputsV1.get.safeParse(input);
@@ -551,14 +550,10 @@ export async function getGithubTriageEntry(
       failure: resolved.failure,
     });
   }
-  // `lastKnownLocator` is the newest locator the target observed for THIS entry, and
-  // it is the only evidence that can name the repository of an entry an account-wide
-  // scan discovered: the configured instance names no repository at all, and §6 forbids
-  // recovering one by parsing `collisionScope`. The same owner resolves this route for
-  // `get` and review-workspace preparation, so either path fails closed rather than
-  // guessing from identity or display text.
+  // Use the observed locator when supplied. A locator-free pin resolves the
+  // current repository at the source's exact-get owner, never from scan configuration.
   const routingToken = resolveGithubTriageRoutingToken(getInput.lastKnownLocator);
-  if (routingToken === null) {
+  if (routingToken === null && getInput.lastKnownLocator !== undefined) {
     return Object.freeze({
       kind: 'unresolved' as const,
       localRef: toTriageLocalRef(localRef),
@@ -575,12 +570,15 @@ export async function getGithubTriageEntry(
     });
   }
 
-  const observation = await runGithubTriageGet({ localRef, routingToken }, {
+  const read = await runGithubTriageGet({ localRef, routingToken }, {
     client: opened.client,
     now: dependencies.now ?? (() => context.invokedAtMs),
     signal: context.signal,
   });
-  return toTriageGetResult(observation, getInput.instance);
+  const result = toTriageGetResult(read.observation, getInput.instance);
+  return result.kind === 'present' && read.dispatchEvidence !== undefined
+    ? withGithubSecurityAlertDispatchEvidence(result, read.dispatchEvidence)
+    : result;
 }
 
 /**
@@ -591,7 +589,7 @@ export async function getGithubTriageEntry(
  */
 export async function prepareGithubTriageReviewWorkspace(
   input: unknown,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1 = {},
 ): Promise<TriagePrepareReviewWorkspaceResultV1> {
   const parsed = TriageSourceCredentialInputsV1.prepareReviewWorkspace.safeParse(input);
@@ -651,13 +649,13 @@ export async function prepareGithubTriageReviewWorkspace(
 
 /**
  * Reauthorizes the exact provider revision and then asks the canonical SCM
- * owner to resolve the already prepared checkout's local HEAD. Verification is
+ * owner to resolve the prepared or accepted checkout's local HEAD. Verification is
  * a read arm of the incumbent materialization Action: it never fetches, moves,
  * recreates, or substitutes a workspace.
  */
 export async function verifyGithubTriageReviewWorkspace(
   input: unknown,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageOperationDependenciesV1 = {},
 ): Promise<TriageVerifyReviewWorkspaceResultV1> {
   const parsed = TriageSourceCredentialInputsV1.verifyReviewWorkspace.safeParse(input);

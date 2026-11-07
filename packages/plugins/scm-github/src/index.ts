@@ -9,3 +9,4 @@ export * from './pullRequests/restAdapter.js';
 export * from './repositoryProvisioning/index.js';
 export * from './remoteUrl.js';
 export * from './webhookAction.js';
+export * from './triage/securityAlerts/actionContracts.js';

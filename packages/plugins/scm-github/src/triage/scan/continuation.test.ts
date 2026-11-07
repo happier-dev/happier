@@ -28,7 +28,9 @@ function laneNextUrl(laneQuery: string, page: number): string {
 
 function handMintedToken(buildLaneQuery: (laneId: GithubScanLaneIdV1) => string): string {
   return JSON.stringify({
-    v: 1,
+    v: 2,
+    scopeKey: '',
+    groupIndex: 0,
     scanLimit: SCAN_LIMIT,
     nativePageSize: SCAN_LIMIT,
     nextLaneIndex: 0,
@@ -38,6 +40,7 @@ function handMintedToken(buildLaneQuery: (laneId: GithubScanLaneIdV1) => string)
       nextUrl: laneNextUrl(buildLaneQuery(laneId), 2),
       pagesConsumed: 1,
       ended: false,
+      repositoryIndex: null,
     })),
   });
 }
@@ -56,6 +59,19 @@ describe('GitHub scan continuation envelope', () => {
     });
   });
 
+  it('resumes each lane at its issued page size after a short earlier lane', () => {
+    const frontier = createGithubScanFrontier({ scanLimit: SCAN_LIMIT, buildLaneQuery: shortLaneQuery });
+    const lane = frontier.lanes[1]!;
+    const next = new URL(laneNextUrl(lane.laneQuery, 2));
+    next.searchParams.set('per_page', '48');
+    lane.frontier = { kind: 'next', nextUrl: next.toString() };
+    lane.pagesConsumed = 1;
+    const token = encodeGithubScanContinuation(frontier);
+    if (token === null) throw new Error('expected a resumable frontier');
+    const decoded = decodeGithubScanContinuation(token, { buildLaneQuery: shortLaneQuery });
+    expect(decoded?.lanes[1]?.frontier).toEqual({ kind: 'next', nextUrl: next.toString() });
+  });
+
   it('round-trips a wide valid frontier and leaves size to the Action envelope', () => {
     const frontier = createGithubScanFrontier({
       scanLimit: SCAN_LIMIT,
@@ -67,6 +83,7 @@ describe('GitHub scan continuation envelope', () => {
           frontier: { kind: 'next' as const, nextUrl: laneNextUrl(wideLaneQuery(laneId), 2) },
           pagesConsumed: 1,
           ended: false,
+          repositoryIndex: null,
         })),
       },
     });
@@ -82,7 +99,9 @@ describe('GitHub scan continuation envelope', () => {
     const scanLimit = 65_536;
     const nativePageSize = 100;
     const token = JSON.stringify({
-      v: 1,
+      v: 2,
+      scopeKey: '',
+      groupIndex: 0,
       scanLimit,
       nativePageSize,
       nextLaneIndex: 0,
@@ -92,6 +111,7 @@ describe('GitHub scan continuation envelope', () => {
         nextUrl: null,
         pagesConsumed: 0,
         ended: false,
+        repositoryIndex: null,
       })),
     });
 
@@ -102,7 +122,9 @@ describe('GitHub scan continuation envelope', () => {
 
   it('rejects a continuation whose next page does not advance its consumed frontier', () => {
     const token = JSON.stringify({
-      v: 1,
+      v: 2,
+      scopeKey: '',
+      groupIndex: 0,
       scanLimit: SCAN_LIMIT,
       nativePageSize: SCAN_LIMIT,
       nextLaneIndex: 0,
@@ -112,6 +134,7 @@ describe('GitHub scan continuation envelope', () => {
         nextUrl: laneNextUrl(shortLaneQuery(laneId), 1),
         pagesConsumed: 1,
         ended: false,
+        repositoryIndex: null,
       })),
     });
 

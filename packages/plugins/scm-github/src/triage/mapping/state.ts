@@ -56,3 +56,19 @@ export function mapGithubIssueState(
   }
   return Object.freeze({ presentation: 'unknown', nativeLabel: state ?? '' });
 }
+
+/**
+ * `Computing` is a REAL GitHub state: mergeability is asynchronously derived and
+ * `mergeable` is `null` until GitHub finishes. It means "ask again shortly" and must not
+ * be collapsed into unresolved, which means "we cannot determine this at all".
+ */
+export function mapGithubMergeability(
+  raw: Readonly<Record<string, unknown>>,
+): 'conflicts' | 'blocked' | 'computing' | null {
+  const state = typeof raw.mergeable_state === 'string' ? raw.mergeable_state.trim() : '';
+  if (raw.draft === true || state === 'draft') return 'blocked';
+  if (raw.mergeable === false || state === 'dirty') return 'conflicts';
+  if (state === 'blocked') return 'blocked';
+  if (raw.mergeable === null || state === 'unknown' || state === '') return 'computing';
+  return null;
+}

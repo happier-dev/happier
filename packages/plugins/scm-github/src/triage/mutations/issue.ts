@@ -11,16 +11,15 @@ import {
 
 import type {
   GithubApiMethodV1,
-  GithubApiResponseV1,
 } from '../../observations/githubApiClient.js';
+import { sendGithubRestRequest as send } from './http.js';
 
 import {
   classifyGithubResponseFailure,
-  classifyGithubTransportFailure,
   isGithubSuccessStatus,
   isGithubWriteResponseAmbiguous,
 } from '../errors.js';
-import { readGithubIssue, type GithubIssueFactsV1, type GithubIssueReadV1 } from '../get.js';
+import { readGithubIssue, readGithubEntryMetadata, type GithubIssueFactsV1, type GithubIssueReadV1 } from '../get.js';
 import { buildGithubApiUrl, type GithubRepositoryRouteV1 } from '../locator.js';
 import { buildGithubEntryLocalRef, readGithubRepositoryIdFromCollisionScope } from '../identity.js';
 import { decodeGithubIssueBody } from '../mapping/entry.js';
@@ -144,38 +143,6 @@ function openResolver(dependencies: GithubMutationDependenciesV1): GithubReposit
     ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
 }
 
-/** One write request, with its JSON body encoded here and nowhere else. */
-async function send(
-  dependencies: GithubMutationDependenciesV1,
-  request: Readonly<{
-    url: string;
-    method: GithubApiMethodV1;
-    body?: Readonly<Record<string, unknown>>;
-  }>,
-): Promise<
-  | Readonly<{ ok: true; response: GithubApiResponseV1 }>
-  | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>
-> {
-  try {
-    return Object.freeze({
-      ok: true as const,
-      response: await dependencies.client.request({
-        url: request.url,
-        method: request.method,
-        ...(request.body === undefined ? {} : {
-          headers: { 'content-type': 'application/json' },
-          body: new TextEncoder().encode(JSON.stringify(request.body)),
-        }),
-      }),
-    });
-  } catch (error) {
-    return Object.freeze({
-      ok: false as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(error)),
-    });
-  }
-}
-
 /** The single confirming read every issue write runs, under the same signal. */
 async function confirm(
   localRef: GithubTriageEntryLocalRefV1,
@@ -183,7 +150,7 @@ async function confirm(
   repositories: GithubRepositoryReaderV1,
   dependencies: GithubMutationDependenciesV1,
 ): Promise<Current> {
-  return reduce(await readGithubIssue(localRef, route, repositories, dependencies));
+  return reduce(await readGithubEntryMetadata(localRef, route, repositories, dependencies));
 }
 
 /**
@@ -214,6 +181,8 @@ function alreadySatisfied(current: Current & Readonly<{ ok: true }>): Applied {
     observation: current.observation,
   });
 }
+
+export { reduce as reduceGithubEntryMutationRead, send as sendGithubEntryMutation };
 
 /** Create identity comes only from the response; an answer-lost POST is never replayed. */
 export async function createGithubIssue(
@@ -669,7 +638,7 @@ async function applyGithubIssueMembershipDelta(
 ): Promise<GithubIssueDeltaOutcomeV1> {
   const repositories = openResolver(dependencies);
   const current = reduce(
-    await readGithubIssue(input.localRef, input.route, repositories, dependencies),
+    await readGithubEntryMetadata(input.localRef, input.route, repositories, dependencies),
   );
   if (!current.ok) return Object.freeze({ kind: 'failed' as const, failure: current.failure });
 

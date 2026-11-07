@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import {
-  MAX_CONVERSATION_RETRY_AFTER_MS,
   type ConversationNormalizedIngressV1,
   type ConversationObservationV1,
   type ConversationPollResultV1,
   type ConversationResolvedEndpointV1,
+  type SessionPullRequestUpdateV1,
+  type ConversationPullRequestFixResolutionV1,
 } from '@happier-dev/channels-protocol/v1';
 import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
@@ -25,14 +26,18 @@ import type {
 } from './githubProviderContracts.js';
 import { GITHUB_API_ORIGIN, readGithubPositiveDecimal } from './githubProviderContracts.js';
 import { parseGithubChannelEndpoint } from './githubChannelEndpoint.js';
-import { readGithubPullRequestChecks } from '../triage/checks.js';
-import { projectGithubChecksSourceEvents } from './githubChecksSource.js';
-import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from '../githubAutomationEvents.js';
+import type { GithubCheckObservationV1 } from '../triage/checks.js';
+import { readGithubChecksConditionBatch } from '../triage/checksCondition.js';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/plugin-sdk/actions';
+import { collectGithubPullRequestUpdates, compareGithubPullRequestEvents, enrichGithubPullRequestCheckFailure,
+  parseGithubPullRequestUpdateCheckpoints } from './githubPullRequestUpdates.js';
+import { readGithubPullRequestInlineComments, GithubPullRequestUpdateHistoryGapError } from './githubPullRequestUpdates.js';
+import { readGithubUpdatedCommentWindow } from './githubUpdatedCommentWindow.js';
 import { readGithubPullRequestState } from '../pullRequests/mapping.js';
-
-const MAX_GITHUB_ISSUE_COMMENT_PAGES_PER_POLL = 10;
-const MAX_GITHUB_ISSUE_COMMENT_SCOPE_LENGTH = 512;
-const MAX_GITHUB_ISSUE_COMMENT_PAGE_URL_LENGTH = 2_048;
+import { readValidatedGithubFollowUpPage } from '../triage/scan/link.js';
+import { projectGithubPullRequestFixResolution } from '../triage/pullRequestFixResolution.js';
+import { pollWithGithubChannelCadence } from './githubChannelPollCadence.js';
+import { readGithubResourceIntent } from '../triage/locator.js';
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -69,7 +74,7 @@ export class GithubIssueCommentPollResponseError extends Error {
 
 class GithubIssueCommentHistoryGapError extends Error {
   constructor() {
-    super('GitHub issue-comment baseline or poll exceeded the bounded pagination window');
+    super('GitHub issue-comment ordering boundary is unavailable');
   }
 }
 
@@ -128,10 +133,6 @@ function parseGithubPaginationLink(
   return parsed.kind === 'parsed' ? parsed.links[relation] ?? null : null;
 }
 
-function parseNextLink(headers: Readonly<Record<string, string>>): string | null {
-  return parseGithubPaginationLink(headers, 'next');
-}
-
 function parseLastLink(headers: Readonly<Record<string, string>>): string | null {
   return parseGithubPaginationLink(headers, 'last');
 }
@@ -145,12 +146,11 @@ function readPollScope(input: Readonly<{
   providerConnectionKey: string;
   repository: GithubRepositorySourceConfigV1;
 }>): GithubIssueCommentPollScopeV1 {
-  if (!input.connectionId.trim() || input.connectionId.length > MAX_GITHUB_ISSUE_COMMENT_SCOPE_LENGTH) {
-    throw new RangeError('GitHub issue-comment polling requires a bounded Channel connection ID');
+  if (!input.connectionId.trim()) {
+    throw new RangeError('GitHub issue-comment polling requires a Channel connection ID');
   }
   if (
     !input.providerConnectionKey.trim()
-    || input.providerConnectionKey.length > MAX_GITHUB_ISSUE_COMMENT_SCOPE_LENGTH
     || input.providerConnectionKey !== expectedConnectionKey(input.repository)
   ) {
     throw new RangeError('GitHub issue-comment polling requires its immutable repository connection key');
@@ -163,7 +163,7 @@ function readPollScope(input: Readonly<{
 
 /**
  * A persisted checkpoint is an Account-owned recovery boundary. Its malformed
- * contents must request an authenticated baseline reset instead of becoming a
+ * contents must request the core-owned fresh baseline instead of becoming a
  * retryable transport failure or silently lending an invalid continuation to
  * this poll.
  */
@@ -227,9 +227,6 @@ function validateGithubIssueCommentPageUrlUnchecked(input: Readonly<{
   repository: GithubRepositorySourceConfigV1;
   expectedFilterUrl: string;
 }>): string {
-  if (!input.value || input.value.length > MAX_GITHUB_ISSUE_COMMENT_PAGE_URL_LENGTH) {
-    throw new RangeError('GitHub issue-comment page URL is invalid');
-  }
   let url: URL;
   try {
     url = new URL(input.value);
@@ -410,58 +407,6 @@ function sortComments(
   }));
 }
 
-function sameIssueCommentRevision(
-  left: GithubIssueCommentRecordV1,
-  right: GithubIssueCommentRecordV1,
-): boolean {
-  return left.id === right.id
-    && left.body === right.body
-    && left.createdAtIso === right.createdAtIso
-    && left.updatedAtIso === right.updatedAtIso
-    && left.issueNumber === right.issueNumber
-    && left.actor.id === right.actor.id
-    && left.actor.label === right.actor.label
-    && left.actor.kind === right.actor.kind;
-}
-
-/** Reconciles GitHub's mutable Link-page snapshot by immutable comment ID. */
-function reconcileIssueCommentPages(
-  comments: readonly GithubIssueCommentRecordV1[],
-): readonly GithubIssueCommentRecordV1[] {
-  const latestById = new Map<string, GithubIssueCommentRecordV1>();
-  for (const comment of comments) {
-    const current = latestById.get(comment.id);
-    if (current === undefined) {
-      latestById.set(comment.id, comment);
-      continue;
-    }
-    const currentRevision = Date.parse(current.updatedAtIso);
-    const candidateRevision = Date.parse(comment.updatedAtIso);
-    if (candidateRevision === currentRevision) {
-      if (!sameIssueCommentRevision(current, comment)) {
-        throw new GithubIssueCommentHistoryGapError();
-      }
-      continue;
-    }
-    if (candidateRevision > currentRevision) latestById.set(comment.id, comment);
-  }
-  return sortComments([...latestById.values()]);
-}
-
-function pollIntervalHint(headers: Readonly<Record<string, string>>): number | null {
-  const raw = readTriageResponseHeaderV1(headers, 'x-poll-interval');
-  if (!raw || !/^\d+$/u.test(raw.trim())) return null;
-  const seconds = Number(raw.trim());
-  if (!Number.isSafeInteger(seconds) || seconds < 0) return null;
-  const retryAfterMs = seconds * 1_000;
-  // GitHub's poll cadence is projected through the same strict Channels retry
-  // result as rate-limit hints, so normalize an oversized provider interval at
-  // this provider boundary before the core parses it.
-  return !Number.isSafeInteger(retryAfterMs)
-    ? MAX_CONVERSATION_RETRY_AFTER_MS
-    : Math.min(retryAfterMs, MAX_CONVERSATION_RETRY_AFTER_MS);
-}
-
 function providerHistoryGapResult(): ConversationPollResultV1 {
   return Object.freeze({
     kind: 'historyGap' as const,
@@ -475,6 +420,7 @@ type GithubIssueCommentPageV1 = Readonly<{
   etag: string | null;
   /** The provider still had ordered rows after this page. */
   morePages: boolean;
+  nextPageUrl: string | null;
   lastPageUrl: string | null;
   headers: Readonly<Record<string, string>>;
 }>;
@@ -500,6 +446,7 @@ async function readIssueCommentPage(input: Readonly<{
       comments: Object.freeze([]),
       etag: input.etag,
       morePages: false,
+      nextPageUrl: null,
       lastPageUrl: null,
       headers: response.headers,
     });
@@ -508,11 +455,15 @@ async function readIssueCommentPage(input: Readonly<{
   const parsed = decodeJson(response);
   if (!Array.isArray(parsed)) throw new RangeError('GitHub issue-comment API response must be an array');
   const last = input.readLastPageLink ? parseLastLink(response.headers) : null;
+  const next = readValidatedGithubFollowUpPage(response.headers, input.url, input.repository.repositoryId);
+  if (next.kind === 'invalid') throw new GithubIssueCommentHistoryGapError();
+  const nextPageUrl = next.kind === 'next' ? next.url : null;
   return Object.freeze({
     kind: 'page',
     comments: Object.freeze(parsed.map((entry) => parseIssueComment(entry, input.repository))),
     etag: readTriageResponseHeaderV1(response.headers, 'etag'),
-    morePages: parseNextLink(response.headers) !== null,
+    morePages: nextPageUrl !== null,
+    nextPageUrl,
     lastPageUrl: last === null
       ? null
       : validateGithubIssueCommentPageUrl({
@@ -522,30 +473,6 @@ async function readIssueCommentPage(input: Readonly<{
       }),
     headers: response.headers,
   });
-}
-
-/**
- * The furthest position in this page whose whole `updated_at` group was
- * returned. GitHub's ordering is only guaranteed on `updated_at`, so the
- * trailing group can continue onto rows this page did not return and no
- * position inside it is safe to stand on.
- */
-function fullyObservedPosition(
-  page: readonly GithubIssueCommentRecordV1[],
-): GithubIssueCommentCursorPositionV1 | null {
-  const ordered = sortComments(page);
-  const trailing = ordered.at(-1);
-  if (trailing === undefined) return null;
-  for (let index = ordered.length - 1; index >= 0; index -= 1) {
-    const candidate = ordered[index]!;
-    if (candidate.updatedAtIso !== trailing.updatedAtIso) {
-      return Object.freeze({
-        updatedAtIso: candidate.updatedAtIso,
-        commentIdAtUpdatedAt: candidate.id,
-      });
-    }
-  }
-  return null;
 }
 
 /** Drops the trailing `updated_at` group that the provider may still continue. */
@@ -569,81 +496,42 @@ function withoutOpenTrailingGroup(
  * re-derived from the furthest position this poll has fully observed, using the
  * provider's own ascending `since` filter. `updated_at` only ever moves
  * forward, so a comment that was not returned stays above that boundary and is
- * still reachable on the next request.
+ * still reachable on the next request. An equal-time group uses validated native
+ * pages until its immutable IDs can be classified together.
  */
 async function readIssueCommentWindow(input: Readonly<{
   client: GithubApiClientV1;
   repository: GithubRepositorySourceConfigV1;
   startPosition: GithubIssueCommentCursorPositionV1;
   etag: string | null;
-  maxRequests: number;
 }>): Promise<Readonly<{
   kind: 'notModified' | 'window';
   comments: readonly GithubIssueCommentRecordV1[];
   etag: string | null;
   morePages: boolean;
   requestCount: number;
-  pollIntervalHeaders: Readonly<Record<string, string>>;
 }>> {
-  let position = input.startPosition;
-  let etag: string | null = null;
-  let morePages = false;
-  let requestCount = 0;
-  let lastHeaders: Readonly<Record<string, string>> = {};
-  const comments: GithubIssueCommentRecordV1[] = [];
-
-  while (requestCount < input.maxRequests) {
+  return readGithubUpdatedCommentWindow({
+    startPosition: input.startPosition, etag: input.etag,
+    position: (comment: GithubIssueCommentRecordV1) => ({ updatedAtIso: comment.updatedAtIso, commentIdAtUpdatedAt: comment.id }),
+    readPage: async (position, etag, nextPageUrl) => {
     const url = createGithubRepositoryIssueCommentsUrl({
       apiBaseUrl: 'https://api.github.com',
       owner: input.repository.owner,
       repository: input.repository.name,
       cursor: cursorAtPosition(position),
     });
-    const page = await readIssueCommentPage({
+    return readIssueCommentPage({
       client: input.client,
-      url,
+      url: nextPageUrl ?? url,
       // An ETag validates the complete ordered head only. It is never sent for
       // a continuation request, whose boundary has already moved.
-      etag: requestCount === 0 ? input.etag : null,
+      etag,
       repository: input.repository,
       expectedFilterUrl: url,
       readLastPageLink: false,
     });
-    lastHeaders = page.headers;
-    requestCount += 1;
-    if (page.kind === 'notModified') {
-      return Object.freeze({
-        kind: 'notModified',
-        comments: Object.freeze([]),
-        etag: page.etag,
-        morePages: false,
-        requestCount,
-        pollIntervalHeaders: lastHeaders,
-      });
-    }
-    comments.push(...page.comments);
-    if (requestCount === 1) etag = page.etag;
-    morePages = page.morePages;
-    if (!morePages) break;
-    const advanced = fullyObservedPosition(page.comments);
-    if (advanced === null
-      || compareGithubIssueCommentCursorPositions(advanced, position) <= 0) {
-      // Every row this boundary can address shares one second-granular
-      // `updated_at` group that is larger than a provider page, so no request
-      // can prove it observed the whole group. Report incompleteness rather
-      // than advance the checkpoint past comments this poll cannot see.
-      throw new GithubIssueCommentHistoryGapError();
-    }
-    position = advanced;
-  }
-
-  return Object.freeze({
-    kind: 'window',
-    comments: reconcileIssueCommentPages(comments),
-    etag,
-    morePages,
-    requestCount,
-    pollIntervalHeaders: lastHeaders,
+    },
   });
 }
 
@@ -662,98 +550,215 @@ type GithubChannelPollInput = Readonly<{
   providerConnectionKey: string;
   nowMs?: number;
   ciEndpoints?: readonly ConversationResolvedEndpointV1[];
+  feedbackEndpoints?: readonly ConversationResolvedEndpointV1[];
+  commentDemand?: boolean;
   pullRequestEndpoints?: readonly ConversationResolvedEndpointV1[];
   signal?: AbortSignal;
 }>;
 
 /** One Channel cursor commits comments and linked-PR check observations together. */
 export async function pollGithubIssueCommentsForChannels(input: GithubChannelPollInput): Promise<ConversationPollResultV1> {
-  const rawChecks = isRecord(input.checkpoint) ? input.checkpoint.pullRequestChecks : undefined;
-  if (rawChecks !== undefined && (!isRecord(rawChecks)
-    || Object.values(rawChecks).some((value) => !Array.isArray(value) || value.some((key) => typeof key !== 'string')))) {
-    throw new GithubIssueCommentCheckpointError();
-  }
-  const checks: Record<string, readonly string[]> = {};
-  if (isRecord(rawChecks)) {
-    for (const [key, value] of Object.entries(rawChecks)) {
-      if (Array.isArray(value)) checks[key] = value.filter((entry): entry is string => typeof entry === 'string');
-    }
-  }
-  const result = await pollGithubIssueComments(input);
+  return pollWithGithubChannelCadence(input.client, input.nowMs ?? Date.now(), client => (
+    pollGithubIssueCommentsAndPullRequests({ ...input, client })
+  ));
+}
+
+async function pollGithubIssueCommentsAndPullRequests(input: GithubChannelPollInput): Promise<ConversationPollResultV1> {
+  let updates: ReturnType<typeof parseGithubPullRequestUpdateCheckpoints>;
+  try { updates = parseGithubPullRequestUpdateCheckpoints(isRecord(input.checkpoint) ? input.checkpoint.pullRequestUpdates : undefined); }
+  catch { throw new GithubIssueCommentCheckpointError(); }
+  const writeAccessByActor = new Map<string, boolean | null>();
+  const result = await pollGithubIssueComments(input, writeAccessByActor);
   if (result.kind !== 'batch' && result.kind !== 'checkpointOnly') return result;
   const observations = result.kind === 'batch' ? [...result.observations] : [];
   const signal = input.signal ?? new AbortController().signal;
-  let repositoryWriteAccess: boolean | null | undefined;
   const ciEndpointIds = new Set((input.ciEndpoints ?? []).map(endpoint => endpoint.id));
-  const endpoints = new Map([...(input.pullRequestEndpoints ?? []), ...(input.ciEndpoints ?? [])].map((endpoint) => [endpoint.id, endpoint]));
+  const feedbackEndpointIds = new Set((input.feedbackEndpoints ?? []).map(endpoint => endpoint.id));
+  const demandedEndpointIds = new Set([...ciEndpointIds, ...feedbackEndpointIds]);
+  for (const id of Object.keys(updates)) if (!demandedEndpointIds.has(id)) delete updates[id];
+  let commentBaseline: GithubIssueCommentCursorPositionV1 | undefined;
+  if ([...feedbackEndpointIds].some(id => updates[id]?.commentsBaseline === undefined)) {
+    const baseline = result.kind === 'checkpointOnly' ? result : await pollGithubIssueComments({ ...input, checkpoint: null, commentDemand: true }, writeAccessByActor);
+    if (baseline.kind === 'historyGap') return baseline;
+    if (baseline.kind !== 'checkpointOnly') throw new RangeError('GitHub PR activation requires its authenticated comment baseline');
+    commentBaseline = cursorPosition(parseGithubIssueCommentCursor(baseline.checkpointAfterBatch));
+  }
+  const snapshots = new Map<string, Readonly<{ head: SessionPullRequestUpdateV1['head'];
+    endpoint: ConversationResolvedEndpointV1 }>>();
+  const failureChecks = new Map<string, GithubCheckObservationV1>();
+  const inlineBoundaries = [...feedbackEndpointIds].map<string | null>(id => updates[id]?.inlineAt ?? null);
+  const inlineSince = inlineBoundaries.includes(null) ? null : inlineBoundaries.reduce<string | null>((oldest, value) => value !== null && (oldest === null || value < oldest) ? value : oldest, null);
+  let inlineRows: Awaited<ReturnType<typeof readGithubPullRequestInlineComments>> | undefined;
+  try { inlineRows = feedbackEndpointIds.size === 0 ? undefined : await readGithubPullRequestInlineComments(input.client, input.config, inlineSince, signal); }
+  catch (error) { if (error instanceof GithubPullRequestUpdateHistoryGapError) return providerHistoryGapResult(); throw error; }
+  const endpoints = new Map<string, Extract<ConversationResolvedEndpointV1, { kind: 'githubPullRequest' }>>();
+  for (const endpoint of [...(input.pullRequestEndpoints ?? []), ...(input.ciEndpoints ?? [])]) {
+    if (endpoint.kind !== 'githubPullRequest') throw new RangeError('GitHub CI polling requires a pull-request endpoint');
+    const previous = endpoints.get(endpoint.id);
+    if (previous === undefined || (endpoint.pullRequestState?.observedAt ?? -1) > (previous.pullRequestState?.observedAt ?? -1)) {
+      endpoints.set(endpoint.id, endpoint);
+    }
+  }
   const pullRequestEndpoints: ConversationResolvedEndpointV1[] = [];
+  const pullRequests: Array<{ endpoint: Extract<ConversationResolvedEndpointV1, { kind: 'githubPullRequest' }>;
+    number: number; pr: JsonRecord; headSha: string | null }> = [];
   for (const endpoint of endpoints.values()) {
     signal.throwIfAborted();
     const parsed = parseGithubChannelEndpoint(endpoint, input.config.repository.repositoryId);
     if (parsed.kind !== 'githubPullRequest') throw new RangeError('GitHub CI polling requires a pull-request endpoint');
-    const repositoryRoute = `/repos/${encodeURIComponent(input.config.repository.owner)}/${encodeURIComponent(input.config.repository.name)}`;
-    const issueResponse = await input.client.request({ url: `${GITHUB_API_ORIGIN}${repositoryRoute}/issues/${parsed.issueNumber}` });
-    if (issueResponse.status !== 200) throw new GithubIssueCommentPollResponseError(issueResponse);
-    const issue = parseGithubIssue(decodeJson(issueResponse));
-    if (issue.id !== parsed.issueId || issue.number !== parsed.issueNumber || issue.kind !== 'githubPullRequest') {
-      throw new RangeError('GitHub CI endpoint identity no longer matches its pull request');
-    }
+    // PR numbers do not transfer between repositories. Pin the repository ID so
+    // rename/reuse cannot substitute another PR at the old owner/name route.
+    const repositoryRoute = `/repositories/${encodeURIComponent(input.config.repository.repositoryId)}`;
     const prResponse = await input.client.request({ url: `${GITHUB_API_ORIGIN}${repositoryRoute}/pulls/${parsed.issueNumber}` });
     if (prResponse.status !== 200) throw new GithubIssueCommentPollResponseError(prResponse);
     const pr = decodeJson(prResponse);
-    if (!isRecord(pr) || pr.number !== parsed.issueNumber) throw new RangeError('GitHub PR response identity does not match its endpoint');
-    // The issue endpoint establishes the immutable issue identity; /pulls establishes
-    // remote merge/close state. Neither an empty open-PR list nor CI implies closure.
-    const remoteState = readGithubPullRequestState(pr);
-    pullRequestEndpoints.push({ ...endpoint, kind: 'githubPullRequest', audience: 'shared',
-      pullRequest: { repository: input.config.repository.nameWithOwner, number: parsed.issueNumber },
-      pullRequestState: { state: remoteState === 'draft' ? 'open' : remoteState, observedAt: input.nowMs ?? Date.now() },
-    });
-    if (!ciEndpointIds.has(endpoint.id) || observations.length >= input.limit) continue;
-    const head = isRecord(pr) && isRecord(pr.head) ? pr.head : null;
-    if (!head || typeof head.sha !== 'string' || !head.sha) throw new RangeError('GitHub PR head is unavailable');
-    const surface = await readGithubPullRequestChecks({ route: input.config.repository, headSha: head.sha,
-      observation: { pullRequestNumber: parsed.issueNumber, selection: 'all' },
-    }, { client: input.client, now: () => input.nowMs ?? Date.now(), signal });
-    signal.throwIfAborted();
-    const source = projectGithubChecksSourceEvents({ repositoryId: input.config.repository.repositoryId,
-      nameWithOwner: input.config.repository.nameWithOwner }, surface);
-    if (source.snapshot.state === 'unknown' || source.snapshot.state === 'superseded') continue;
-    const prior = new Set(checks[endpoint.id] ?? []);
-    const observed: string[] = [];
-    for (const event of source.events) {
-      if (event.eventRef.localId !== GITHUB_AUTOMATION_EVENT_LOCAL_IDS.checksFailed) continue;
-      const evidenceKey = source.evidenceKey;
-      if (prior.has(evidenceKey) || result.kind === 'checkpointOnly') { observed.push(evidenceKey); continue; }
-      if (observations.length >= input.limit) continue;
-      if (repositoryWriteAccess === undefined) {
-        repositoryWriteAccess = await readCommenterRepositoryWriteAccess(input.client, input.config.repository, input.config.integrationPrincipal);
-      }
-      signal.throwIfAborted();
-      const occurrenceId = event.occurrenceId;
-      const occurredAt = event.providerOccurredAtMs;
-      if (occurredAt === null) continue;
-      const observation: ConversationObservationV1 = {
-        v: 1, occurrenceId, occurredAt, scopedTriggerKind: 'ciFailed', transport: { kind: 'poll' }, endpoint,
-        actor: { principalId: input.config.integrationPrincipal.id, label: input.config.integrationPrincipal.label,
-          kind: 'integration', isIntegrationSelf: true, repositoryWriteAccess },
-        message: { id: occurrenceId, revision: evidenceKey, text: `CI checks ${event.failedCheckNames.join(', ')} failed on ${input.config.repository.nameWithOwner}#${parsed.issueNumber} (${head.sha}).`,
-          addressingEvidence: 'none', contentProvenance: 'original', providerTimestamp: occurredAt },
-      };
-      observations.push({ observation: { kind: 'fullText', observation }, eventCandidate: null });
-      observed.push(evidenceKey);
+    const repository = isRecord(pr) && isRecord(pr.base) && isRecord(pr.base.repo) ? pr.base.repo : null;
+    if (!isRecord(pr) || pr.number !== parsed.issueNumber || repository === null
+      || readGithubPositiveDecimal(repository.id, 'repository id') !== input.config.repository.repositoryId) {
+      throw new RangeError('GitHub PR response identity does not match its endpoint');
     }
-    checks[endpoint.id] = observed;
+    let headSha: string | null = null;
+    if (demandedEndpointIds.has(endpoint.id)) {
+      const head = isRecord(pr.head) ? pr.head : null;
+      if (!head || typeof head.sha !== 'string' || !head.sha) throw new RangeError('GitHub PR head is unavailable');
+      headSha = head.sha;
+    }
+    pullRequests.push({ endpoint, number: parsed.issueNumber, pr, headSha });
   }
+  const ciPullRequests = pullRequests.filter(({ endpoint }) => ciEndpointIds.has(endpoint.id));
+  const checks = await readGithubChecksConditionBatch(ciPullRequests.map(({ number, headSha }) => ({
+    route: input.config.repository, pullRequestNumber: number, headSha: headSha!, includeStatus: true,
+  })), { client: input.client, now: () => input.nowMs ?? Date.now(), signal });
+  const surfaces = new Map(ciPullRequests.map(({ endpoint }, index) => [endpoint.id, checks[index]?.surface ?? undefined]));
+  for (const { endpoint, number, pr, headSha } of pullRequests) {
+    signal.throwIfAborted();
+    // Only the pinned PR response establishes remote merge/close state.
+    // Neither an empty open-PR list nor CI implies closure.
+    const remoteState = readGithubPullRequestState(pr);
+    const state = remoteState === 'draft' ? 'open' : remoteState;
+    const pullRequest = endpoint.pullRequest?.repository === input.config.repository.nameWithOwner
+      && endpoint.pullRequest.number === number
+      ? endpoint.pullRequest
+      : { repository: input.config.repository.nameWithOwner, number };
+    // This endpoint carries the observation of a changed native fact, not the
+    // completion time of every successful poll. Its admitted baseline owns
+    // identity for unchanged links and state.
+    const projectEndpoint = (nextResolution?: ConversationPullRequestFixResolutionV1) => {
+      const previous = endpoint.pullRequestState;
+      const previousResolution = previous?.fixResolution;
+      const equalResolution = previousResolution?.headRevision === nextResolution?.headRevision
+        && previousResolution?.resolved === nextResolution?.resolved
+        && previousResolution?.incomplete === nextResolution?.incomplete;
+      const fixResolution = equalResolution ? previousResolution : nextResolution;
+      const pullRequestState = previous?.state === state && equalResolution ? previous
+        : { state, observedAt: input.nowMs ?? Date.now(), ...(fixResolution === undefined ? {} : { fixResolution }) };
+      const refreshed = pullRequest === endpoint.pullRequest && pullRequestState === previous
+        ? endpoint : { ...endpoint, pullRequest, pullRequestState };
+      pullRequestEndpoints.push(refreshed);
+      return refreshed;
+    };
+    if (headSha === null) {
+      projectEndpoint();
+      delete updates[endpoint.id];
+      continue;
+    }
+    const surface = surfaces.get(endpoint.id);
+    const { fixResolution } = projectGithubPullRequestFixResolution({ headRevision: headSha, draft: pr.draft === true,
+      mergeable: typeof pr.mergeable === 'boolean' ? pr.mergeable : null,
+      mergeableState: typeof pr.mergeable_state === 'string' ? pr.mergeable_state : null, surface });
+    const refreshedEndpoint = projectEndpoint(fixResolution);
+    signal.throwIfAborted();
+    const native = await collectGithubPullRequestUpdates({ client: input.client, config: input.config, endpoint, pr, number, state,
+      previous: updates[endpoint.id], baseline: result.kind === 'checkpointOnly', feedback: feedbackEndpointIds.has(endpoint.id), commentBaseline,
+      inlineRows, checks: surface?.observation?.state === 'superseded' ? [] : surface?.observations, signal });
+    if (!native.head || !native.checkpoint) throw new RangeError('GitHub PR evidence requires its exact head SHA and ref');
+    snapshots.set(endpoint.id, { head: native.head, endpoint: refreshedEndpoint });
+    updates[endpoint.id] = native.checkpoint;
+    for (const candidate of [...native.candidates].sort((left, right) => compareGithubPullRequestEvents(left.event, right.event))) {
+      if (result.kind === 'checkpointOnly' || observations.length >= input.limit) break;
+      const event = candidate.event.kind === 'review' && candidate.readInlineCommentIds
+        ? { ...candidate.event, inlineCommentIds: await candidate.readInlineCommentIds() }
+        : candidate.event;
+      const feedback = event.kind === 'inlineComment' || event.kind === 'review';
+      const principalId = feedback ? event.author.principalId : input.config.integrationPrincipal.id;
+      const label = feedback ? event.author.label : input.config.integrationPrincipal.label;
+      const accessActor = feedback ? { id: principalId, ...(label ? { label } : {}) } : input.config.integrationPrincipal;
+      const actorKey = `${accessActor.id}:${accessActor.label}`;
+      const needsWriteEvidence = feedback || event.kind === 'check' && event.state === 'failed';
+      if (needsWriteEvidence && !writeAccessByActor.has(actorKey)) writeAccessByActor.set(actorKey, await readCommenterRepositoryWriteAccess(input.client, input.config.repository, accessActor));
+      const repositoryWriteAccess = needsWriteEvidence ? writeAccessByActor.get(actorKey) ?? null : null;
+      const occurrenceId = `github:pr-update:${createHash('sha256').update(JSON.stringify([input.config.repository.repositoryId, number, event.kind, event.id, event.revision])).digest('base64url')}`;
+      const observation: ConversationObservationV1 = {
+        v: 1, occurrenceId, occurredAt: event.occurredAt, transport: { kind: 'poll' }, endpoint: refreshedEndpoint,
+        ...(feedback ? { scopedTriggerKind: 'prComment' as const } : event.kind === 'check' && event.state === 'failed' ? { scopedTriggerKind: 'ciFailed' as const } : {}),
+        actor: { principalId, ...(label ? { label } : {}), kind: feedback ? event.author.kind === 'bot' ? 'bot' : event.author.kind === 'person' ? 'human' : 'unknown' : 'integration',
+          isIntegrationSelf: principalId === input.config.integrationPrincipal.id, repositoryWriteAccess },
+        message: { id: event.id, revision: event.revision, text: 'body' in event ? event.body || `Pull request ${event.kind}.` : event.kind === 'check' ? `${event.name}: ${event.state}` : event.kind === 'push' ? `PR head changed to ${event.sha} (${event.writer} writer).` : `Pull request ${event.kind}.`,
+          addressingEvidence: 'none', contentProvenance: 'original', providerTimestamp: event.occurredAt },
+        pullRequestUpdate: { head: native.head, event },
+      };
+      const failedCheck = event.kind === 'check' && event.state === 'failed' ? surface?.observations.find(check => check.key === event.id) : undefined;
+      if (failedCheck) failureChecks.set(occurrenceId, failedCheck);
+      observations.push({ observation: { kind: 'fullText', observation }, eventCandidate: null });
+      candidate.commit();
+    }
+    native.finish?.();
+  }
+  for (let index = observations.length - 1; index >= 0; index -= 1) {
+    const row = observations[index]!;
+    const observation = row.observation.kind === 'fullText' ? row.observation.observation : row.observation.kind === 'routableNonAdmission' ? row.observation.shell : null;
+    if (observation === null) continue;
+    if (observation.endpoint.kind !== 'githubPullRequest' || row.observation.kind === 'fullText' && row.observation.observation.pullRequestUpdate) continue;
+    const baseline = updates[observation.endpoint.id]?.commentsBaseline;
+    if (baseline && compareGithubIssueCommentCursorPositions({ updatedAtIso: new Date(observation.message.providerTimestamp ?? observation.occurredAt).toISOString(), commentIdAtUpdatedAt: observation.message.id }, baseline) <= 0) observations.splice(index, 1);
+  }
+  for (let index = 0; index < observations.length; index += 1) {
+    const row = observations[index]!;
+    if (row.observation.kind !== 'fullText') continue;
+    const observation = row.observation.observation;
+    const snapshot = snapshots.get(observation.endpoint.id);
+    if (!snapshot || observation.pullRequestUpdate || observation.endpoint.kind !== 'githubPullRequest') continue;
+    const { head, endpoint } = snapshot;
+    const url = `https://github.com/${input.config.repository.nameWithOwner}/pull/${parseGithubChannelEndpoint(observation.endpoint, input.config.repository.repositoryId).issueNumber}#issuecomment-${observation.message.id}`;
+    const resource = readGithubResourceIntent(url);
+    observations[index] = { ...row, observation: { kind: 'fullText', observation: { ...observation, endpoint, pullRequestUpdate: { head,
+      event: { kind: 'comment', id: observation.message.id, revision: observation.message.revision ?? String(observation.message.providerTimestamp ?? observation.occurredAt), occurredAt: observation.message.providerTimestamp ?? observation.occurredAt,
+        url, ...(resource === undefined ? {} : { resource }),
+        author: { principalId: observation.actor.principalId, kind: observation.actor.kind === 'human' ? 'person' : observation.actor.kind === 'bot' ? 'bot' : 'unknown', ...(observation.actor.label ? { label: observation.actor.label } : {}) }, body: observation.message.text } } } } };
+  }
+  observations.sort((left, right) => {
+    const a = left.observation.kind === 'fullText' ? left.observation.observation : null;
+    const b = right.observation.kind === 'fullText' ? right.observation.observation : null;
+    return a?.pullRequestUpdate && b?.pullRequestUpdate ? compareGithubPullRequestEvents(a.pullRequestUpdate.event, b.pullRequestUpdate.event) : 0;
+  });
   const checkpointAfterBatch = { ...parseGithubIssueCommentCursor(result.checkpointAfterBatch),
-    ...(Object.keys(checks).length === 0 ? {} : { pullRequestChecks: checks }),
+    ...(Object.keys(updates).length === 0 ? {} : { pullRequestUpdates: updates }),
   };
   const refreshedEndpoints = pullRequestEndpoints.length === 0 ? {} : { pullRequestEndpoints };
+  // Failure evidence shares the actual final Action carrier. All classified
+  // rows, endpoint metadata and committed checkpoints are known before fitting.
+  for (let index = 0; index < observations.length; index += 1) {
+    const row = observations[index]!;
+    if (row.observation.kind !== 'fullText') continue;
+    const observation = row.observation.observation;
+    const update = observation.pullRequestUpdate;
+    const check = failureChecks.get(observation.occurrenceId);
+    if (!check || !update || update.event.kind !== 'check' || update.event.state !== 'failed') continue;
+    const shellRows: unknown[] = [...observations];
+    shellRows[index] = { ...row, observation: { kind: 'fullText', observation: { ...observation,
+      pullRequestUpdate: { ...update, event: { ...update.event, failure: { kind: 'summary', summary: {} } } },
+    } } };
+    const remaining = EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - measureExternalActionResultResponseEnvelopeUtf8BytesV1({
+      ...result, ...refreshedEndpoints, observations: shellRows, checkpointAfterBatch,
+    }) + 2; // Replace the measured `{}` with this many encoded summary bytes.
+    const event = await enrichGithubPullRequestCheckFailure(input.client, update.event, check, Math.max(0, remaining), signal);
+    observations[index] = { ...row, observation: { kind: 'fullText', observation: { ...observation, pullRequestUpdate: { ...update, event } } } };
+  }
   return result.kind === 'checkpointOnly' ? { ...result, ...refreshedEndpoints, checkpointAfterBatch }
     : { ...result, ...refreshedEndpoints, observations, checkpointAfterBatch };
 }
 
-async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<ConversationPollResultV1> {
+async function pollGithubIssueComments(input: GithubChannelPollInput, writeAccessByActor: Map<string, boolean | null>): Promise<ConversationPollResultV1> {
   if (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 100) {
     throw new RangeError('GitHub issue-comment polling requires the Channels batch limit');
   }
@@ -764,6 +769,11 @@ async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<C
     providerConnectionKey: input.providerConnectionKey,
     repository: input.config.repository,
   });
+
+  if (input.commentDemand === false) {
+    return checkpoint === null ? { kind: 'checkpointOnly', checkpointAfterBatch: initialCursor(nowMs) }
+      : { kind: 'batch', observations: [], checkpointAfterBatch: checkpoint };
+  }
 
   if (checkpoint === null) {
     // A null checkpoint has no history to admit. Read the authenticated head
@@ -821,20 +831,16 @@ async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<C
       repository: input.config.repository,
       startPosition: cursorPosition(checkpoint),
       etag: checkpoint.etag,
-      maxRequests: MAX_GITHUB_ISSUE_COMMENT_PAGES_PER_POLL,
     });
   } catch (error) {
     if (error instanceof GithubIssueCommentHistoryGapError) return providerHistoryGapResult();
     throw error;
   }
-  const retryAfterMs = pollIntervalHint(window.pollIntervalHeaders);
-
   if (window.kind === 'notModified') {
     return Object.freeze({
       kind: 'batch' as const,
       observations: [],
       checkpointAfterBatch: checkpoint,
-      ...(retryAfterMs === null ? {} : { retryHint: { retryAfterMs } }),
     });
   }
 
@@ -860,7 +866,6 @@ async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<C
   const issuesByNumber = new Map<number, GithubIssueRecordV1>();
   // Invocation-local only: share a commenter's read without retaining grants
   // across polls, so the next poll observes revocations with the same credential.
-  const writeAccessByActor = new Map<string, boolean | null>();
   const observations: ConversationNormalizedIngressV1[] = [];
 
   for (const entry of classification.classifications) {
@@ -906,7 +911,7 @@ async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<C
         providerTimestamp: updatedAtMs,
       },
     });
-    if (entry.kind === 'unsupportedEdit') {
+    if (entry.kind === 'unsupportedEdit' && issue.kind !== 'githubPullRequest') {
       observations.push(Object.freeze({
         kind: 'routableNonAdmission' as const,
         shell,
@@ -969,6 +974,5 @@ async function pollGithubIssueComments(input: GithubChannelPollInput): Promise<C
       eventCandidate: null,
     })),
     checkpointAfterBatch,
-    ...(retryAfterMs === null ? {} : { retryHint: { retryAfterMs } }),
   });
 }

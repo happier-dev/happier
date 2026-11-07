@@ -63,7 +63,7 @@ function graphqlDataFor(document: string) {
         pullRequest: {
           reviewDecision: 'CHANGES_REQUESTED',
           reviews: {
-            nodes: [{ id: 'PRR_1', author: { login: 'reviewer' }, body: 'Please split this.', state: 'CHANGES_REQUESTED', submittedAt: '2026-08-12T14:00:00Z', url: 'https://github.com/o/r/pull/1#pullrequestreview-1' }],
+            nodes: [{ id: 'PRR_1', author: { login: 'reviewer' }, body: 'Please split this.', state: 'CHANGES_REQUESTED', commit: { oid: 'a'.repeat(40) }, submittedAt: '2026-08-12T14:00:00Z', url: 'https://github.com/o/r/pull/1#pullrequestreview-1' }],
             pageInfo: { hasPreviousPage: true, startCursor: 'reviews-before' },
           },
         },
@@ -105,6 +105,105 @@ function graphqlDataFor(document: string) {
 }
 
 describe('the GitHub feedback fetcher', () => {
+  it('keeps the commit-bound anchor when paging older thread replies', async () => {
+    const stub = createStubGithubTransport({ respond: request => {
+      const body = readRecordedJsonBody(request) as { query: string };
+      expect(body.query).toContain('diffSide');
+      return { status: 200, body: { data: { node: { id: 'thread', diffSide: 'RIGHT',
+        pullRequest: { number: 1284, repository: { databaseId: 4210 } },
+        comments: { nodes: [{ id: 'reply', body: '```suggestion\nnew\n```', path: 'file.ts',
+          originalLine: 1, originalCommit: { oid: 'a'.repeat(40) }, outdated: false,
+          diffHunk: '@@ -1 +1 @@\n-old\n+original' }], pageInfo: { hasPreviousPage: false } },
+      } } } };
+    } });
+    const client = await createTestGithubApiClient(stub);
+    const result = await readGithubFeedbackConnection({ route: ROUTE, repositoryId: '4210', number: '1284',
+      kindId: 'pull-request', cursor: null, connection: 'threadReplies', threadId: 'thread' },
+    { client, now: fixedClock(1000), signal: stub.context.signal });
+    if (result.kind !== 'threadReplies') throw new Error(result.kind);
+    expect(result.rows[0]).toMatchObject({ suggestions: [{ commitOid: 'a'.repeat(40),
+      startLine: 1, endLine: 1, originalLines: ['original'], replacement: 'new' }] });
+    expect(stub.requests).toHaveLength(1);
+  });
+  it.each([false, true])('projects a complete commit-bound suggestion (outdated=%s) without another read', async outdated => {
+    const stub = createStubGithubTransport({ respond: request => {
+      const body = readRecordedJsonBody(request) as { query: string };
+      expect(body.query).toContain('diffHunk');
+      return { status: 200, body: { data: { repository: { databaseId: 4210, pullRequest: {
+        reviewThreads: { nodes: [{ id: 'thread', isResolved: false, diffSide: 'RIGHT', path: 'src/file.ts', line: 12,
+          firstComment: { totalCount: 1, nodes: [{ id: 'comment', body: 'Try this:\n```suggestion\nnew value\n```',
+            path: 'src/file.ts', line: 12, originalLine: 3, originalStartLine: 2, outdated,
+            commit: { oid: 'b'.repeat(40) }, originalCommit: { oid: 'a'.repeat(40) },
+            diffHunk: '@@ -1,3 +1,3 @@\n context\n-old\n+old value\n tail' }] },
+          comments: { nodes: [], pageInfo: { hasPreviousPage: false } } }],
+          pageInfo: { hasPreviousPage: false } },
+      } } } } };
+    } });
+    const client = await createTestGithubApiClient(stub);
+    const result = await readGithubFeedbackConnection({ route: ROUTE, repositoryId: '4210', number: '1284',
+      kindId: 'pull-request', cursor: null, connection: 'threads' },
+    { client, now: fixedClock(1000), signal: stub.context.signal });
+    if (result.kind !== 'threads') throw new Error(result.kind);
+    expect(result.rows[0]?.firstReply).toMatchObject({ suggestions: [{ path: 'src/file.ts',
+      commitOid: 'a'.repeat(40), startLine: 2, endLine: 3, originalLines: ['old value', 'tail'],
+      replacement: 'new value', outdated }] });
+    expect(stub.requests).toHaveLength(1);
+  });
+  it.each(['comments', 'threads', 'reviews', 'requests', 'threadReplies'] as const)(
+    'refuses a reused repository in the %s response without a repository preflight', async connection => {
+      const stub = createStubGithubTransport({ respond: request => {
+        const { query } = readRecordedJsonBody(request) as { query: string };
+        const data = graphqlDataFor(query);
+        if ('repository' in data && data.repository !== undefined) data.repository.databaseId = 999;
+        if ('node' in data && data.node !== undefined) data.node.pullRequest.repository.databaseId = 999;
+        return { status: 200, body: { data } };
+      } });
+      const client = await createTestGithubApiClient(stub);
+      const common = { route: ROUTE, repositoryId: '4210', number: '1284', kindId: 'pull-request' as const, cursor: null };
+      const input = connection === 'threadReplies' ? { ...common, connection, threadId: 'PRRT_1' } : { ...common, connection };
+      expect(await readGithubFeedbackConnection(input, { client, now: fixedClock(1000), signal: stub.context.signal }))
+        .toMatchObject({ kind: 'unavailable', failure: { code: 'route-body-mismatch' } });
+      expect(stub.requests).toHaveLength(1);
+    },
+  );
+
+  it('marks only the comments, replies and reviews GitHub says this viewer may update as editable', async () => {
+    const queries: string[] = [];
+    const stub = createStubGithubTransport({ respond: (request) => {
+      const { query } = readRecordedJsonBody(request) as { query: string };
+      queries.push(query);
+      const data = graphqlDataFor(query) as { repository: { pullRequest: Record<string, { nodes: Record<string, unknown>[] }> } };
+      const pullRequest = data.repository.pullRequest;
+      if (pullRequest.comments) {
+        pullRequest.comments.nodes[0]!.viewerCanUpdate = true;
+        pullRequest.comments.nodes[1]!.viewerCanUpdate = false;
+      }
+      if (pullRequest.reviews) pullRequest.reviews.nodes[0]!.viewerCanUpdate = true;
+      if (pullRequest.reviewThreads) {
+        const thread = pullRequest.reviewThreads.nodes[0] as { comments: { nodes: Record<string, unknown>[] } };
+        thread.comments.nodes[0]!.viewerCanUpdate = true;
+      }
+      return { status: 200, body: { data } };
+    } });
+    const client = await createTestGithubApiClient(stub);
+    const read = async (connection: 'comments' | 'threads' | 'reviews') => await readGithubFeedbackConnection(
+      { route: ROUTE, repositoryId: '4210', number: '1284', kindId: 'pull-request', cursor: null, connection },
+      { client, now: fixedClock(1000), signal: stub.context.signal },
+    );
+
+    const comments = await read('comments');
+    if (comments.kind !== 'comments') throw new Error(comments.kind);
+    expect(comments.rows.map((row) => [row.id, row.editable === true])).toEqual([['IC_1', false], ['IC_2', true]]);
+    const reviews = await read('reviews');
+    if (reviews.kind !== 'reviews') throw new Error(reviews.kind);
+    expect(reviews.rows[0]?.editable).toBe(true);
+    const threads = await read('threads');
+    if (threads.kind !== 'threads') throw new Error(threads.kind);
+    expect(threads.rows[0]?.replies.find((reply) => reply.id === 'PRRC_2')?.editable).toBe(true);
+    expect(threads.rows[0]?.replies.find((reply) => reply.id === 'PRRC_1')?.editable).toBeUndefined();
+    expect(queries.every((query) => query.includes('viewerCanUpdate'))).toBe(true);
+  });
+
   it('keeps issue comment history at its issue-local 40-row window', async () => {
     const stub = createStubGithubTransport({
       respond: (request) => {
@@ -213,7 +312,7 @@ describe('the GitHub feedback fetcher', () => {
       kind: 'reviews',
       reviewDecision: 'changes-requested',
       previousCursor: 'reviews-before',
-      rows: [{ id: 'PRR_1', body: 'Please split this.' }],
+      rows: [{ id: 'PRR_1', body: 'Please split this.', commitRevision: 'a'.repeat(40) }],
     });
     expect(requests).toEqual({
       kind: 'requests',
@@ -233,6 +332,7 @@ describe('the GitHub feedback fetcher', () => {
     const documents = stub.requests.map((request) => (
       readRecordedJsonBody(request) as { query: string }
     ).query);
+    expect(documents[2]).toContain('commit { oid }');
     expect(variables).toEqual([
       expect.objectContaining({ commentCursor: 'comments-cursor', commentCount: 24 }),
       expect.objectContaining({ threadCursor: 'threads-cursor', threadCount: 12, replyCount: 3 }),

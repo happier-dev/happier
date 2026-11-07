@@ -47,6 +47,9 @@ export type GithubWebhookActionHandlerV1 = (
   context: PluginInvocationContext,
 ) => Promise<PluginWebhookActionResult>;
 
+export type GithubDeploymentWebhookWakeV1 = NonNullable<ReturnType<typeof normalizeGithubWebhookDelivery>['deploymentRun']> & Readonly<{ sourceInstanceId: string }>;
+type GithubDeploymentWebhookObserverV1 = (wake: GithubDeploymentWebhookWakeV1, signal: AbortSignal) => Promise<'accepted' | 'ignored'>;
+
 function isWebhookIngressHostCaller(context: PluginInvocationContext): boolean {
   return context.surface === 'plugin'
     && context.caller?.kind === 'host'
@@ -309,6 +312,7 @@ async function admitAutomationWebhookEvent(params: Readonly<{
 async function handleGithubWebhookActionV1(
   rawInput: unknown,
   context: PluginInvocationContext,
+  observeDeploymentRun?: GithubDeploymentWebhookObserverV1,
 ): Promise<PluginWebhookActionResult> {
   context.signal.throwIfAborted();
   if (!isWebhookIngressHostCaller(context)) return invalidWebhookCallerResult();
@@ -342,6 +346,17 @@ async function handleGithubWebhookActionV1(
   // GitHub sends to this endpoint — including a normalized issue comment — is
   // settled as ignored: retrying cannot make a missing consumer appear, so a
   // retry would only burn twelve attempts and record a misleading dead letter.
+  if (normalized.deploymentRun !== undefined) {
+    try {
+      if (!observeDeploymentRun) throw new Error('github_deployment_observer_unavailable');
+      const disposition = await observeDeploymentRun({ ...normalized.deploymentRun, sourceInstanceId: input.endpoint.sourceInstanceId }, context.signal);
+      context.signal.throwIfAborted();
+      return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition });
+    } catch (error) {
+      context.signal.throwIfAborted();
+      return PluginWebhookActionResultSchema.parse({ kind: 'retry', code: 'github.deployment-unavailable' });
+    }
+  }
   if (normalized.automationEvent === null) {
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }
@@ -360,6 +375,6 @@ async function handleGithubWebhookActionV1(
   }
 }
 
-export function createGithubWebhookActionHandlerV1(): GithubWebhookActionHandlerV1 {
-  return handleGithubWebhookActionV1;
+export function createGithubWebhookActionHandlerV1(options: Readonly<{ observeDeploymentRun?: GithubDeploymentWebhookObserverV1 }> = {}): GithubWebhookActionHandlerV1 {
+  return (input, context) => handleGithubWebhookActionV1(input, context, options.observeDeploymentRun);
 }

@@ -35,6 +35,31 @@ function emptyStatus(): StubHttpResponse {
 }
 
 describe('GitHub pull-request checks', () => {
+  it('keeps an unrecognized native commit status unknown rather than inventing failure', async () => {
+    const { surface } = await readChecks((request) => request.url.includes('/check-runs')
+      ? { status: 200, body: githubCheckRunsResponse({ runs: [] }) }
+      : { status: 200, body: githubCombinedStatusResponse({ state: 'pending', statuses: [
+        { ...githubCommitStatus({ id: 9_200, context: 'legacy/ci', state: 'success' }), state: 'future_state' },
+      ] }) });
+    expect(surface.state).toBe('unknown');
+    expect(surface.failingCount).toBeNull();
+    expect(surface.observations[0]).toMatchObject({ status: 'completed', conclusion: null });
+  });
+  it('retains admitted annotation totals without requesting annotation bodies or count-only reads', async () => {
+    const { surface, transport } = await readChecks((request) => request.url.includes('/check-runs')
+      ? { status: 200, body: githubCheckRunsResponse({ runs: [
+        { ...githubCheckRun({ id: 9_100, name: 'build', status: 'completed', conclusion: 'failure' }), output: { annotations_count: 12 } },
+        { ...githubCheckRun({ id: 9_101, name: 'build', status: 'completed', conclusion: 'failure' }), output: { annotations_count: 0 } },
+        { ...githubCheckRun({ id: 9_102, name: 'build', status: 'completed', conclusion: 'failure' }), output: { annotations_count: -1 } },
+        { ...githubCheckRun({ id: 9_103, name: 'build', status: 'completed', conclusion: 'failure' }), output: {} },
+      ] }) } : emptyStatus());
+    expect(surface.observations[0]).toMatchObject({ annotationsCount: 12 });
+    expect(surface.observations[1]).toMatchObject({ annotationsCount: 0 });
+    expect(surface.observations[2]).not.toHaveProperty('annotationsCount');
+    expect(surface.observations[3]).not.toHaveProperty('annotationsCount');
+    expect(transport.requests).toHaveLength(2);
+  });
+
   it('does not claim passing counts or an all-passing verdict when a completed conclusion is missing', async () => {
     const { surface } = await readChecks((request) => request.url.includes('/check-runs')
       ? { status: 200, body: githubCheckRunsResponse({ runs: [
@@ -57,6 +82,23 @@ describe('GitHub pull-request checks', () => {
       .toBe(true);
     expect(transport.requests.some((request) => request.url.endsWith('/status?per_page=100')))
       .toBe(true);
+  });
+
+  it('issues the check-runs and commit-status reads together, not one after the other', async () => {
+    // The two collections are independent; serial reads put one GitHub round trip
+    // in front of the other on every Checks open.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { surface } = await readChecks((request) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      const answer = request.url.includes('/check-runs')
+        ? { status: 200, body: githubCheckRunsResponse({ runs: [githubCheckRun({ id: 1, name: 'build', status: 'completed', conclusion: 'success' })] }) }
+        : emptyStatus();
+      return new Promise<StubHttpResponse>((resolve) => setTimeout(() => { inFlight -= 1; resolve(answer); }, 5));
+    });
+    expect(maxInFlight).toBe(2);
+    expect(surface.observations).toHaveLength(1);
   });
 
   it('keys matrix check runs distinctly when name and url collide', async () => {

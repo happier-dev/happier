@@ -8,6 +8,22 @@ const VIDEO_SOURCE = 'https://media.example.test/demo.webm';
 const VIDEO_BLOCK = `<video controls>\n  <source src="${VIDEO_SOURCE}">\n</video>`;
 
 describe('GitHub Markdown display projection', () => {
+  it('titles a GitHub alert as GitHub does instead of showing its marker, and leaves code alone', () => {
+    expect(githubMarkdownDisplayText('> [!IMPORTANT]\n> Run the migration first.\n'))
+      .toBe('> **Important**\n> Run the migration first.\n');
+    expect(githubMarkdownDisplayText('```\n> [!NOTE]\n```\n')).toBe('```\n> [!NOTE]\n```\n');
+  });
+
+  it('preserves GitHub HTML image destinations as Markdown without executing HTML or touching code', () => {
+    const source = 'https://github.com/user-attachments/assets/screenshot';
+    expect(githubMarkdownDisplayText(`<img width="800" alt="image" src="${source}">`))
+      .toBe(`![image](${source})`);
+    expect(githubMarkdownDisplayText(`<img src="${source}" />`)).toBe(`![](${source})`);
+    expect(githubMarkdownDisplayText('<img alt="image" src="javascript:alert(1)">')).toBe('image');
+    expect(githubMarkdownDisplayText('`<img alt="image" src="https://example.test/a.png">`'))
+      .toBe('`<img alt="image" src="https://example.test/a.png">`');
+  });
+
   it.each([4, 8, 100])('recognizes video blocks with %i blank lines without hiding the source', (blankLines) => {
     const block = `<video controls>\n${'\n'.repeat(blankLines)}  <source src="${VIDEO_SOURCE}">\n</video>`;
     expect(projectGithubMarkdownForDisplay(block)).toEqual([
@@ -82,7 +98,7 @@ describe('GitHub Markdown display projection', () => {
     ]);
   });
 
-  it('never shows raw HTML: comments vanish, links and images become text, code stays exact', () => {
+  it('never shows raw HTML: comments vanish, links and images become Markdown, code stays exact', () => {
     // Live 2026-10-16: a review bot's comment showed `<!-- … -->` and `<a href><picture>` tags literally.
     const input = [
       '<!-- auto-generated comment: summarize by bot -->',
@@ -104,7 +120,7 @@ describe('GitHub Markdown display projection', () => {
     expect(text).not.toContain('auto-generated');
     expect(text).not.toContain('multi line note');
     expect(text).not.toContain('<picture>');
-    expect(text).toContain('[Review in Change Stack](https://app.example.test/stack/pull/535?scope=abc)');
+    expect(text).toContain('[![Review in Change Stack](https://x.test/l.svg)](https://app.example.test/stack/pull/535?scope=abc)');
     expect(text).toContain('Line one line two and bold plus <https://example.test/auto>.');
     expect(text).toContain('`<div class="x">`');
     expect(text).toContain('<!-- kept -->\n<a href="https://keep.test">kept</a>');

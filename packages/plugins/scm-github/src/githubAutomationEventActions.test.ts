@@ -1,3 +1,4 @@
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
@@ -13,6 +14,7 @@ import {
   resetGithubRepositoryEventHistoryGap,
   setupGithubRepositoryEventSource,
   setupGithubPullRequestChecksSource,
+  setupGithubDeploymentReviewEventSource,
 } from './githubAutomationEventActions.js';
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -53,12 +55,125 @@ function automationContext(params: Readonly<{
     // Boundary fixture intentionally supplies only the Action services exercised here.
     services: {
       connectedAccounts: params.connectedAccounts,
-      http: params.http,
+      http: createPluginHttpFixture({ request: params.http.request }),
     } as unknown as PluginInvocationContext['services'],
   };
 }
 
 describe('GitHub Automation Event source setup', () => {
+  it('enrolls the selected Machine native login without fabricating an Account or execution recipe', async () => {
+    const service = { pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' };
+    const materialize = vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer native-login' } }));
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const base = automationContext({ connectedAccounts: { materialize }, http });
+    const context = { ...base, services: { ...base.services, connectedAccounts: { ...base.services.connectedAccounts, getBinding: async () => null },
+      actions: { ...base.services.actions, getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home-1', machineId: 'native-machine', pluginId: GITHUB_PLUGIN_ID }) } } };
+    const result = await setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', nativeService: service }, context);
+    expect(result).toMatchObject({ observationOnly: { kind: 'observationOnly' }, webhookDelivery: 'automatic',
+      sourceConfig: { credentialRef: null, deploymentReview: { monitoringMachineId: 'native-machine' } } });
+    expect(materialize).toHaveBeenCalledWith(GITHUB_CONNECTED_ACCOUNT_PURPOSE, expect.anything(), expect.objectContaining({ nativeService: service }));
+  });
+  it('retains enrollment delivery preferences through the selected-Machine setup', async () => {
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account' } })) };
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const base = automationContext({ connectedAccounts, http });
+    const context = { ...base, services: { ...base.services, actions: { ...base.services.actions,
+      getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home-1', machineId: 'selected-watcher', pluginId: GITHUB_PLUGIN_ID }),
+    } } };
+    const selection = { monitoringMachineId: 'selected-watcher', deliveryMode: 'polling', pollingIntervalMs: 150000 };
+    const result = await setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT,
+      deploymentReview: selection }, context);
+    expect(result.sourceConfig).toMatchObject({ deploymentReview: selection });
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
+  it('derives deployment monitoring placement only from the current explicitly selected setup executor', async () => {
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account' } })) };
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const base = automationContext({ connectedAccounts, http });
+    const context = { ...base, services: { ...base.services, actions: { ...base.services.actions,
+      getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home-1', machineId: 'selected-watcher', pluginId: GITHUB_PLUGIN_ID }),
+    } } };
+    const result = await setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT }, context);
+    expect(result).toMatchObject({ sourceConfig: { credentialRef: GITHUB_ACCOUNT,
+      deploymentReview: { monitoringMachineId: 'selected-watcher' } } });
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([null, { serverIdentityId: 'home-1', machineId: 'retired-machine', pluginId: 'other.plugin' }])(
+    'refuses unavailable setup placement before account materialization: %j', async routing => {
+      const connectedAccounts = { materialize: vi.fn() };
+      const http = { request: vi.fn() };
+      const base = automationContext({ connectedAccounts, http });
+      const context = { ...base, services: { ...base.services, actions: { ...base.services.actions,
+        getCurrentExecutionRouting: async () => routing,
+      } } };
+      await expect(setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT }, context))
+        .rejects.toMatchObject({ code: 'github_deployment_monitoring_placement_unavailable' });
+      expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+      expect(http.request).not.toHaveBeenCalled();
+    });
+
+  it('refuses an explicit monitoring Machine that differs from the selected setup executor', async () => {
+    const connectedAccounts = { materialize: vi.fn() };
+    const http = { request: vi.fn() };
+    const base = automationContext({ connectedAccounts, http });
+    const context = { ...base, services: { ...base.services, actions: { ...base.services.actions,
+      getCurrentExecutionRouting: async () => ({ serverIdentityId: 'home-1', machineId: 'selected-watcher', pluginId: GITHUB_PLUGIN_ID }),
+    } } };
+    await expect(setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT,
+      deploymentReview: { monitoringMachineId: 'other-machine' } }, context))
+      .rejects.toMatchObject({ code: 'github_deployment_monitoring_placement_unavailable' });
+    expect(http.request).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+  });
+
+  it('does not return enrollment facts when the selected watcher retires during repository resolution', async () => {
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account' } })) };
+    let current = true;
+    const http = { request: vi.fn(async () => {
+      current = false;
+      return jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } });
+    }) };
+    const base = automationContext({ connectedAccounts, http });
+    const context = { ...base, services: { ...base.services, actions: { ...base.services.actions,
+      getCurrentExecutionRouting: async () => current
+        ? { serverIdentityId: 'home-1', machineId: 'selected-watcher', pluginId: GITHUB_PLUGIN_ID } : null,
+    } } };
+    await expect(setupGithubDeploymentReviewEventSource({ repository: 'acme/widgets', credentialRef: GITHUB_ACCOUNT }, context))
+      .rejects.toMatchObject({ code: 'github_deployment_monitoring_placement_unavailable' });
+    expect(http.request).toHaveBeenCalledTimes(1);
+  });
+  it('retains explicit deployment monitoring placement through the existing source setup without starting observation', async () => {
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer selected-account' } })) };
+    const http = { request: vi.fn(async (_request: Readonly<{ url: string }>) => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    const result = await setupGithubRepositoryEventSource({
+      credentialRef: GITHUB_ACCOUNT,
+      repository: 'acme/widgets',
+      deploymentReview: { monitoringMachineId: 'machine-1' },
+    }, automationContext({ connectedAccounts, http }));
+    expect(PluginEventAutomationSetupResultV1Schema.parse(result)).toMatchObject({
+      sourceInstanceId: 'github:repository:77:deployment-review',
+      sourceConfig: { deploymentReview: { monitoringMachineId: 'machine-1' } },
+    });
+    // Enrollment preparation resolves only this repository. The definition
+    // writer acknowledges placement before the observer may read waiting runs.
+    expect(http.request).toHaveBeenCalledTimes(1);
+    expect(http.request.mock.calls[0]?.[0]).toMatchObject({ url: 'https://api.github.com/repos/acme/widgets' });
+  });
+
+  it.each([null, {}, { monitoringMachineId: '' }, { monitoringMachineId: 'machine-1', failover: true },
+    // Endpoint identity belongs to the canonical observation transport, not a second private input.
+    { monitoringMachineId: 'machine-1', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw' },
+  ])('rejects malformed deployment monitoring before materialization or HTTP: %j', async (deploymentReview) => {
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer selected-account' } })) };
+    const http = { request: vi.fn(async () => jsonResponse({ id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } })) };
+    await expect(setupGithubRepositoryEventSource({ credentialRef: GITHUB_ACCOUNT, repository: 'acme/widgets', deploymentReview },
+      automationContext({ connectedAccounts, http }))).rejects.toMatchObject({ code: 'github_setup_input_invalid' });
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
+  });
+
   it.each(['repository', 'checks'] as const)('resolves the %s source through the exact selected account without returning materialized credentials', async (kind) => {
     const connectedAccounts = {
       materialize: vi.fn(async () => ({
@@ -422,9 +537,7 @@ describe('GitHub Automation Event history-gap reset', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http: {
-          request: vi.fn(async () => jsonResponse([])),
-        },
+        http: createPluginHttpFixture({ request: vi.fn(async () => jsonResponse([])) }),
         storage: { account: { collection: vi.fn(() => collection) } },
       },
     } as unknown as PluginInvocationContext;

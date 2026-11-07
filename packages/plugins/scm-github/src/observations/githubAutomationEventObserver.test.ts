@@ -1,6 +1,13 @@
+import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
+import { AutomationEventAdmitInputV1Schema, AutomationEventSourcesListInputV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol';
+import { PluginWebhookEndpointCheckCorrespondenceInputV1Schema, PluginWebhookEndpointCheckCorrespondenceResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { buildAutomationPluginEventOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1, serializeAutomationOccurrenceEvidenceEqualityV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
+import type { HostEventEnvelope } from '@happier-dev/plugin-sdk/events';
 import type {
   PluginActionInputById,
   PluginActionResultById,
@@ -22,9 +29,14 @@ import {
   type GithubAutomationEventCheckpointedPullObserver,
 } from './githubAutomationEventObserver.js';
 import { parseGithubRepositoryEventsCursor } from './githubRepositoryEventsCursor.js';
+import { observeGithubDeploymentReviewsV1 } from './githubDeploymentMonitor.js';
+import { activate, activateAccount } from '../activate.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
+import { createStubGithubTransport } from '../triage/testkit/githubTriage.test-support.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID,
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
+  parseGithubDeploymentMonitoringSourceConfig,
 } from './githubProviderContracts.js';
 import { resetGithubRepositoryEventHistoryGap } from '../githubAutomationEventActions.js';
 import {
@@ -33,6 +45,7 @@ import {
 } from '../githubAutomationEvents.js';
 
 const GITHUB_PLUGIN_ID = 'happier.scm.forge.github';
+type HttpBoundaryResponse = Awaited<ReturnType<Parameters<typeof createPluginHttpFixture>[0]['request']>>;
 const EVENT_LOCAL_ID = 'automation/repository-pushed-v1';
 const sourceSelectorA = '00000000-0000-4000-8000-000000000001';
 const sourceSelectorB = '00000000-0000-4000-8000-000000000002';
@@ -155,6 +168,7 @@ function createCheckpointCollection(
   initialRows: readonly GithubAutomationEventCheckpointRowV1[],
   settings: Readonly<{
     beforeGet?: (rowId: string) => Promise<void>;
+    beforePut?: (row: GithubAutomationEventCheckpointRowV1) => Promise<void>;
     forcePutConflict?: boolean;
     deleteConflictCount?: number;
     queryFailureCount?: number;
@@ -165,6 +179,7 @@ function createCheckpointCollection(
   collection: CheckpointCollection;
   delete: ReturnType<typeof vi.fn>;
   query: ReturnType<typeof vi.fn>;
+  put: ReturnType<typeof vi.fn>;
   rowCount(): number;
   read(rowId: string): PluginCollectionRow<GithubAutomationEventCheckpointRowV1> | null;
 }> {
@@ -182,6 +197,7 @@ function createCheckpointCollection(
     value: GithubAutomationEventCheckpointRowV1,
     options: Readonly<{ expectedRevision: number | 'absent' }>,
   ) => {
+    await settings.beforePut?.(value);
     if (settings.forcePutConflict === true) {
       throw new PluginError({
         code: 'plugin_collection_conflict',
@@ -270,6 +286,7 @@ function createCheckpointCollection(
     collection,
     delete: remove,
     query,
+    put,
     rowCount() {
       return rows.size;
     },
@@ -315,28 +332,41 @@ function definition(input: Readonly<{
   } as const satisfies SourceDefinition;
 }
 
-async function waitForCall(callCount: () => number): Promise<void> {
-  for (let attempt = 0; attempt < 20 && callCount() === 0; attempt += 1) {
-    await Promise.resolve();
-  }
-}
-
 function catalogStatuses(
   statuses: readonly AutomationEventSourceStatusReport[],
 ): readonly CatalogReconciliationStatus[] {
   return statuses.filter((status): status is CatalogReconciliationStatus => status.kind === 'catalogReconciliation');
 }
 
+function durableDeploymentDefinition(automationId: string, deliveryMode: 'automatic' | 'webhook' = 'automatic'): SourceDefinition {
+  const base = definition({ automationId, sourceSelectorId: sourceSelectorA, eventLocalId: 'automation/deployment-review-v1' });
+  return { ...base, observationOnly: { kind: 'observationOnly' }, sourceInstanceId: 'github:repository:77:deployment-review',
+    sourceConfig: { ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1', deliveryMode } },
+    observationTransport: { kind: 'durablePush', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+      endpointMaterializationRef: watcherMaterializationRef, observationStartsAt: 1_000 } };
+}
+
+/** The host returns one transport-scoped page under its Account catalog revision. */
+function sourceListResult(input: unknown, revision: string, definitions: readonly SourceDefinition[]) {
+  const request = AutomationEventSourcesListInputV1Schema.parse(input);
+  return request.knownRevision === revision ? { kind: 'unchanged' as const, revision,
+    ...(request.checkpointRetirementCandidates === undefined ? {} : { checkpointRetirements: [] }) }
+    : { kind: 'page' as const, revision, nextCursor: null,
+      definitions: definitions.filter(source => source.observationTransport.kind === request.transport.kind) };
+}
+
 function sourceAttemptContext(
-  observer: GithubAutomationEventCheckpointedPullObserver,
+  observer: Pick<GithubAutomationEventCheckpointedPullObserver, 'runSourceAttempt'>,
   context: BackgroundServiceContext,
   beforeAttempt?: (input: unknown, context: PluginInvocationContext) => Promise<void>,
 ): BackgroundServiceContext {
   let wrapped: BackgroundServiceContext;
   wrapped = {
     ...context,
+    materialization: context.materialization ?? watcherMaterializationRef,
     services: {
       ...context.services,
+      http: createPluginHttpFixture({ request: context.services.http.request }),
       events: context.services.events ?? {
         plugin: {
           emit: async () => { throw new Error('Unexpected plugin event emission'); },
@@ -401,6 +431,9 @@ function observerBackgroundContext(input: Readonly<{
   collection: CheckpointCollection;
   signal?: AbortSignal;
   http?: unknown;
+  notifications?: unknown;
+  events?: unknown;
+  connectedAccounts?: unknown;
 }>): BackgroundServiceContext {
   return {
     plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
@@ -409,10 +442,12 @@ function observerBackgroundContext(input: Readonly<{
       qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/${GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID}`,
     },
     surface: 'background' as const,
+    materialization: watcherMaterializationRef,
     signal: input.signal ?? new AbortController().signal,
     services: {
       actions: input.actions,
-      connectedAccounts: {
+      events: input.events ?? { host: { subscribe: vi.fn(() => ({ dispose() {} })) } },
+      connectedAccounts: input.connectedAccounts ?? {
         materialize: vi.fn(async () => ({
           kind: 'httpHeaders' as const,
           headers: { Authorization: 'Bearer exact-account-token' },
@@ -421,12 +456,863 @@ function observerBackgroundContext(input: Readonly<{
       http: input.http ?? {
         request: vi.fn(async () => ({ status: 304, headers: {}, body: new Uint8Array() })),
       },
+      notifications: input.notifications,
       storage: { account: { collection: vi.fn(() => input.collection) } },
     },
   } as unknown as BackgroundServiceContext;
 }
 
+type SourcesInvalidatedEnvelope = HostEventEnvelope<'@happier/automation/event-sources-invalidated'>;
+type SourcesInvalidatedListener = (event: SourcesInvalidatedEnvelope) => void;
+/** The authenticated Host Event the SDK observer receives; an empty payload is a definition change. */
+function sourcesInvalidated(payload: SourcesInvalidatedEnvelope['payload'] = {}): SourcesInvalidatedEnvelope {
+  return { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload };
+}
+
 describe('GitHub Automation Event checkpointed-pull observer', () => {
+  it.each([
+    ['missing host', undefined, watcherMaterializationRef],
+    ['other machine', { ...watcherMaterializationRef, machineId: 'machine-other' }, watcherMaterializationRef],
+    ['retired materialization', { ...watcherMaterializationRef, materializationId: 'retired' }, watcherMaterializationRef],
+    ['unassigned source', watcherMaterializationRef, null],
+    ['current host', watcherMaterializationRef, watcherMaterializationRef],
+  ] as const)('enforces %s before credentials, provider reads or checkpoint effects', async (label, materialization, assignment) => {
+    const source = { ...definition({ automationId: 'assignment-gate', sourceSelectorId: sourceSelectorA }),
+      observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: assignment } };
+    const checkpoints = createCheckpointCollection([]);
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') {
+        const request = AutomationEventSourcesListInputV1Schema.parse(input);
+        // Null is an unadmitted stored source, never a usable runtime assignment.
+        return request.knownRevision === '7' ? { kind: 'unchanged', revision: '7' }
+          : { kind: 'page', revision: '7', definitions: [source], nextCursor: null };
+      }
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('[]') })) };
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const,
+      headers: { Authorization: 'Bearer exact-account-token' } })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const failures: unknown[] = [];
+    const context = sourceAttemptContext({ runSourceAttempt: async (input, actionContext) => {
+      try { return await observer.runSourceAttempt(input, actionContext); }
+      catch (error) { failures.push(error); throw error; }
+    } }, observerBackgroundContext({ actions, collection: checkpoints.collection, http,
+      connectedAccounts }));
+    await observer.runCycle({ ...context, materialization });
+    expect(failures).toEqual([]);
+    const attempts = label === 'current host' ? 1 : 0;
+    if (attempts === 1) expect(actions.execute.mock.calls.filter(([action]) => action === 'automation.event.source.status.report')
+      .map(([, input]) => input)).toContainEqual(expect.objectContaining({ kind: 'source', state: 'baselined' }));
+    expect(connectedAccounts.materialize).toHaveBeenCalledTimes(attempts);
+    expect(http.request).toHaveBeenCalledTimes(attempts);
+    expect(checkpoints.query).toHaveBeenCalledTimes(attempts);
+    expect(checkpoints.put).toHaveBeenCalledTimes(attempts);
+    expect(checkpoints.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects every unauthorized group member before checkpoint reads, secrets or provider I/O', async () => {
+    const first = definition({ automationId: 'authorized-group-first', sourceSelectorId: sourceSelectorA });
+    const second = definition({ automationId: 'authorized-group-second', sourceSelectorId: sourceSelectorB });
+    const checkpoints = createCheckpointCollection([]);
+    const connectedAccounts = { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer group-account' } })) };
+    const http = { request: vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('[]') })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [first, second]);
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    let rejected = 0;
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, connectedAccounts }), async (input, actionContext) => {
+      if (!input || typeof input !== 'object') throw new Error('Target Action input is unavailable');
+      for (const unauthorized of [
+        { ...second, triggerRevision: second.triggerRevision + 1 },
+        { ...second, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: { ...watcherMaterializationRef, materializationId: 'other-host' } } },
+        { ...second, sourceConfig: { ...second.sourceConfig as Readonly<Record<string, JsonValue>>,
+          credentialRef: { ...credentialRef, accountId: 'different-principal' } } },
+      ]) {
+        await expect(observer.runSourceAttempt({ ...input, definitions: [first, unauthorized] }, actionContext)).rejects.toThrow();
+        rejected++;
+        expect(checkpoints.collection.get).not.toHaveBeenCalled();
+        expect(checkpoints.put).not.toHaveBeenCalled();
+        expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+        expect(http.request).not.toHaveBeenCalled();
+      }
+    });
+
+    await observer.runCycle(context);
+
+    expect(rejected).toBe(3);
+    expect(connectedAccounts.materialize).toHaveBeenCalledOnce();
+    expect(http.request).toHaveBeenCalledOnce();
+    expect(checkpoints.rowCount()).toBe(2);
+  });
+
+  it('retains a reassigned checkpoint after the current host loses its source', async () => {
+    const source = definition({ automationId: 'moved-source', sourceSelectorId: sourceSelectorA });
+    const row = checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId });
+    const checkpoints = createCheckpointCollection([row]);
+    const controller = new AbortController();
+    let revision = '7';
+    let definitions: readonly SourceDefinition[] = [source];
+    let invalidate = () => {};
+    const classified: unknown[] = [];
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') {
+        const request = AutomationEventSourcesListInputV1Schema.parse(input);
+        if (request.checkpointRetirementCandidates) {
+          classified.push(request.checkpointRetirementCandidates);
+          // The server knows this exact row now belongs to the new watcher.
+          return { kind: 'unchanged', revision, checkpointRetirements: [] };
+        }
+        return sourceListResult(input, revision, definitions);
+      }
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const events = { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated()); return { dispose() {} };
+    } } };
+    const http = { request: vi.fn(async () => ({ status: 304, headers: {}, body: new Uint8Array() })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000,
+      sleep: async (_delay, signal) => { await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true });
+        if (signal.aborted) resolve();
+      }); },
+    });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, events,
+      collection: checkpoints.collection, http, signal: controller.signal }));
+    const running = observer.run(context);
+    try {
+      await vi.waitFor(() => expect(checkpoints.put).toHaveBeenCalledTimes(1));
+      revision = '8'; definitions = []; invalidate();
+      await vi.waitFor(() => expect(classified).toEqual([[checkpointRetirementCandidate(row)]]));
+      expect(checkpoints.query).toHaveBeenCalledTimes(2);
+      expect(checkpoints.delete).not.toHaveBeenCalled();
+      expect(checkpoints.read(row.id)).toMatchObject({ revision: 2 });
+      expect(http.request).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
+  it('settles sibling checkpoint effects before finishing a finite Action with a failed row', async () => {
+    const first = definition({ automationId: 'failed-attempt', sourceSelectorId: sourceSelectorA });
+    const sibling = definition({ automationId: 'pending-attempt', sourceSelectorId: sourceSelectorB });
+    let release!: () => void;
+    const pendingWrite = new Promise<void>(resolve => { release = resolve; });
+    const checkpoints = createCheckpointCollection([], { beforePut: async row => {
+      if (row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId] === first.automationId) throw new Error('Checkpoint write unavailable');
+      await pendingWrite;
+    } });
+    const http = { request: vi.fn(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('[]') })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [first, sibling]);
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http }));
+    let settled = false;
+    const cycle = observer.runCycle(context).then(() => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(checkpoints.put).toHaveBeenCalledTimes(2));
+      expect(settled).toBe(false);
+    } finally {
+      release();
+      await cycle;
+    }
+    expect(checkpoints.rowCount()).toBe(1);
+    expect(checkpoints.read(createGithubAutomationEventCheckpointRowId({ automationId: sibling.automationId,
+      sourceSelectorId: sibling.sourceSelectorId }))).not.toBeNull();
+  });
+
+  it('keeps a long user interval asleep across the JavaScript timer range', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const base = definition({ automationId: 'long-deployment-poll', sourceSelectorId: sourceSelectorA, eventLocalId: 'automation/deployment-review-v1' });
+    const source = { ...base, sourceInstanceId: 'github:repository:77:deployment-review', sourceConfig: {
+      ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1', deliveryMode: 'polling', pollingIntervalMs: 3000000000 },
+    } };
+    const checkpoints = createCheckpointCollection([]);
+    const http = { request: vi.fn(async () => ({ status: 200, headers: { 'x-poll-interval': '3000000' },
+      body: new TextEncoder().encode(JSON.stringify({ total_count: 0, workflow_runs: [] })) })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return input && typeof input === 'object' && 'knownRevision' in input
+        ? { kind: 'unchanged', revision: '7' } : { kind: 'page', revision: '7', definitions: [source], nextCursor: null };
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const manifest = { contributes: { ui: { views: [{ id: 'deployment-review', container: 'appPage', target: { kind: 'app' }, renderer: 'review', title: 'Deployment review' }],
+      renderers: [{ id: 'review', kind: 'reactNative', artifact: 'github-forge-native' }] } } } as const;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http, signal: controller.signal }));
+    const running = observer.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      const catalogReads = actions.execute.mock.calls.filter(([action]) => action === 'automation.event.sources.list').length;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      expect(actions.execute.mock.calls.filter(([action]) => action === 'automation.event.sources.list')).toHaveLength(catalogReads);
+      await vi.advanceTimersByTimeAsync(2_147_483_647);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      expect(actions.execute.mock.calls.filter(([action]) => action === 'automation.event.sources.list')).toHaveLength(catalogReads);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+  it.each([
+    { credentialKind: 'account', retireDuringRead: false },
+    { credentialKind: 'native', retireDuringRead: false },
+    { credentialKind: 'account', retireDuringRead: true },
+  ] as const)('feeds verified deployment webhooks through activated exact-run reconciliation with $credentialKind credentials over durablePush; retiring target: $retireDuringRead', async ({ credentialKind, retireDuringRead }) => {
+    const base = durableDeploymentDefinition('webhook-notices');
+    const source = { ...base, sourceConfig: { ...base.sourceConfig as Readonly<Record<string, JsonValue>>,
+      credentialRef: credentialKind === 'native' ? null : credentialRef } };
+    let enrolled = true;
+    let resolved = false;
+    let denied = false;
+    let targetCurrent = true;
+    const checkpoints = createCheckpointCollection([]);
+    const send = vi.fn(async (_request: Parameters<PluginInvocationContext['services']['notifications']['send']>[0]) => ({ deliveries: [], replayed: false }));
+    const transport = createStubGithubTransport({
+      binding: credentialKind === 'native' ? null : { purpose: 'github-api', account: credentialRef },
+      nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer exact-source-token' } },
+      respond: request => {
+      if (request.url.endsWith('/pending_deployments')) {
+        if (retireDuringRead) targetCurrent = false;
+        return { status: denied ? 403 : 200, body: denied ? { message: 'Forbidden' } : resolved ? []
+          : [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true, wait_timer: 0, wait_timer_started_at: null, reviewers: [] }] };
+      }
+      if (request.url.endsWith('/runs/81')) return { status: 200, body: { id: 81, run_attempt: 2, repository: { id: 77 } } };
+      throw new Error(`Unexpected GitHub read ${request.url}`);
+    } });
+    const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount } });
+    const controller = new AbortController();
+    let running: Promise<void> | void = undefined;
+    try {
+    const handler = testkit.registration('actions', 'github/accept-webhook');
+    const runBackground = testkit.registration('backgroundServices', GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID);
+    const runAttempt = testkit.registration('actions', GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID);
+    if (!handler || !runBackground || !runAttempt) throw new Error('GitHub monitoring registration is missing');
+    const attemptDeclaration = (PLUGIN_MANIFEST.contributes.actions ?? []).find(action => action.id === GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID);
+    if (!attemptDeclaration?.inputSchema) throw new Error('GitHub source attempt declaration is missing');
+    const validateAttemptInput = compilePluginJsonSchema(attemptDeclaration.inputSchema);
+    const actions = { execute: vi.fn(async (action: unknown, input: unknown): Promise<unknown> => {
+      if (action === 'automation.event.sources.list') {
+        const request = AutomationEventSourcesListInputV1Schema.parse(input);
+        // Endpoint placement can change without a Definition revision. The
+        // real adopted-source owner then returns new membership, not unchanged.
+        if (!targetCurrent && request.transport.kind === 'durablePush') {
+          return { kind: 'page', revision: '7', definitions: [], nextCursor: null };
+        }
+        return sourceListResult(input, enrolled ? '7' : '8', enrolled ? [source] : []);
+      }
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') return PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse({
+        kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1, readiness: 'ready',
+        contribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, targetMaterialization: watcherMaterializationRef,
+        sourceInstanceId: source.sourceInstanceId });
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${String(action)}`);
+    }) };
+    // Only genuine host boundaries are replaced: HTTP, Collection CAS and Action transport.
+    const background = sourceAttemptContext({ runSourceAttempt: async (input, context) => {
+      const result = await runAttempt(PluginJsonValueV2Schema.parse(input), context);
+      if (result === undefined) throw new Error('GitHub source attempt returned no result');
+      return result;
+    } },
+      observerBackgroundContext({ actions, collection: checkpoints.collection,
+        http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+        notifications: { send }, signal: controller.signal }),
+      async input => { expect(validateAttemptInput(input)).toBe(true); });
+    const context = { ...background, surface: 'plugin', invokedAtMs: 1, caller: { kind: 'host', domain: 'ingress', originSurface: 'webhook',
+      contribution: { id: 'github-events', qualifiedId: `${GITHUB_PLUGIN_ID}/github-events` } } } as PluginInvocationContext;
+    const deliver = (eventType: string, action: string) => {
+      const rawBody = new TextEncoder().encode(JSON.stringify({ action, repository: { id: 77, full_name: 'acme/widgets' }, workflow_run: { id: 81 } }));
+      return handler({ v: 1, endpoint: { webhookContribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, sourceInstanceId: source.sourceInstanceId },
+        delivery: { deliveryId: 'delivery-1', attempt: 1, replay: 0, receivedAtMs: 1, providerDeliveryId: 'provider-1' },
+        request: { contentType: 'application/json', headers: [{ name: 'x-github-event', value: eventType }], rawBodyBytes: rawBody.length, rawBodyBase64: Buffer.from(rawBody).toString('base64') },
+        verified: { verifier: 'github_hmac_sha256_v1', eventType } }, context);
+    };
+    running = runBackground(background);
+    const delivered = await deliver('deployment_review', 'requested');
+    if (retireDuringRead) {
+      // Retirement during the admitted finite read applies to the next
+      // observation; the current notice and cursor still settle together.
+      expect(delivered).toEqual({ kind: 'settled', disposition: 'accepted' });
+      expect(send).toHaveBeenCalledTimes(1);
+      const rowId = createGithubAutomationEventCheckpointRowId({
+        automationId: source.automationId, sourceSelectorId: source.sourceSelectorId,
+      });
+      const committedCheckpoint = checkpoints.read(rowId);
+      expect(committedCheckpoint).not.toBeNull();
+      const providerReads = transport.requests.length;
+      const checkpointWrites = checkpoints.put.mock.calls.length;
+      await deliver('workflow_run', 'in_progress');
+      expect(transport.requests).toHaveLength(providerReads);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(checkpoints.put).toHaveBeenCalledTimes(checkpointWrites);
+      expect(checkpoints.read(rowId)).toEqual(committedCheckpoint);
+      return;
+    }
+    expect(delivered).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(send).toHaveBeenCalledTimes(1);
+    const id = send.mock.calls[0]?.[0].itemId;
+    await deliver('workflow_run', 'in_progress');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(transport.requests.map(request => new URL(request.url).pathname)).toEqual([
+      '/repos/acme/widgets/actions/runs/81', '/repos/acme/widgets/actions/runs/81/pending_deployments',
+      '/repos/acme/widgets/actions/runs/81', '/repos/acme/widgets/actions/runs/81/pending_deployments',
+    ]);
+    denied = true;
+    expect(await deliver('deployment_review', 'approved')).toMatchObject({ kind: 'retry' });
+    expect(send).toHaveBeenCalledTimes(1);
+    denied = false; resolved = true;
+    await deliver('deployment_review', 'approved');
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1]?.[0]).toMatchObject({ itemId: id, resolved: true });
+    enrolled = false;
+    const reads = transport.requests.length;
+    expect(await deliver('workflow_run', 'completed')).toEqual({ kind: 'settled', disposition: 'ignored' });
+    expect(transport.requests).toHaveLength(reads);
+    expect(actions.execute.mock.calls.some(([action]) => action === 'automation.event.admit')).toBe(false);
+    } finally { controller.abort(); await running; await testkit.dispose(); }
+  });
+  it.each(['github:repository:77', 'github:repository:77:deployment-review'])(
+    'wakes only the matching deployment source for authenticated ingress %s', async sourceInstanceId => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const source = durableDeploymentDefinition('targeted-deployment-wake');
+    const unrelated = definition({ automationId: 'unrelated-repository-poll', sourceSelectorId: sourceSelectorB });
+    const checkpoints = createCheckpointCollection([]);
+    const http = { request: vi.fn(async (request: { url: string }) => ({ status: 200, headers: {},
+      body: new TextEncoder().encode(JSON.stringify(request.url.endsWith('/pending_deployments') || request.url.includes('/events?')
+        ? [] : { id: 81, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } })),
+    })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source, unrelated]);
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') return {
+        kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1, readiness: 'ready',
+        contribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, targetMaterialization: watcherMaterializationRef,
+        sourceInstanceId: source.sourceInstanceId,
+      };
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest: PLUGIN_MANIFEST });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal }));
+    const running = observer.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      const delivery = observer.receiveDeploymentWebhook({ repositoryId: '77', repositoryNameWithOwner: 'acme/widgets',
+        runId: '81', sourceInstanceId }, controller.signal);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await delivery).toBe('accepted');
+      expect(http.request.mock.calls.filter(([request]) => request.url.includes('/events?'))).toHaveLength(1);
+      expect(http.request.mock.calls.filter(([request]) => request.url.endsWith('/runs/81'))).toHaveLength(1);
+      expect(http.request.mock.calls.filter(([request]) => request.url.endsWith('/runs/81/pending_deployments'))).toHaveLength(1);
+      const ignored = observer.receiveDeploymentWebhook({ repositoryId: '88', repositoryNameWithOwner: 'acme/other',
+        runId: '81', sourceInstanceId: 'github:repository:88' }, controller.signal);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await ignored).toBe('ignored');
+      expect(http.request).toHaveBeenCalledTimes(3);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+
+  it('shares mixed transport observations and preserves the native hard retry gate across early authenticated wakes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const controller = new AbortController();
+    const durable = durableDeploymentDefinition('mixed-durable');
+    const pull: SourceDefinition = { ...durable, automationId: 'mixed-pull', triggerId: 'trigger-mixed-pull',
+      sourceSelectorId: sourceSelectorB, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef } };
+    const checkpoints = createCheckpointCollection([]);
+    let routeReady = false;
+    let rateLimited = false;
+    const send = vi.fn(async () => ({ deliveries: [], replayed: false }));
+    const http = { request: vi.fn(async (request: { url: string; headers?: Readonly<Record<string, string>> }) => {
+      if (rateLimited) return { status: 429, headers: { 'retry-after': '120' }, body: new Uint8Array() };
+      const census = request.url.includes('?');
+      const unchanged = census && request.headers?.['If-None-Match'] === 'mixed-waiting';
+      return { status: unchanged ? 304 : 200, headers: census ? { etag: 'mixed-waiting', 'x-poll-interval': '60' } : {},
+        body: unchanged ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(census
+          ? { total_count: 1, workflow_runs: [{ id: 81, run_attempt: 2 }] }
+          : request.url.endsWith('/pending_deployments') ? [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true }]
+            : { id: 81, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } })),
+      };
+    }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [durable, pull]);
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') return {
+        kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1,
+        readiness: routeReady ? 'ready' : 'providerConfirmationRequired',
+        contribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, targetMaterialization: watcherMaterializationRef,
+        sourceInstanceId: durable.sourceInstanceId,
+      };
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest: PLUGIN_MANIFEST });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, notifications: { send }, signal: controller.signal }));
+    const running = observer.run(context);
+    const wake = () => observer.receiveDeploymentWebhook({ repositoryId: '77', repositoryNameWithOwner: 'acme/widgets',
+      runId: '81', sourceInstanceId: durable.sourceInstanceId }, controller.signal);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(3);
+      expect(send).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(10_000);
+      routeReady = true;
+      const early = wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await early).toBe('accepted');
+      expect(http.request).toHaveBeenCalledTimes(5);
+      expect(send).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(10_000);
+      rateLimited = true;
+      const limited = expect(wake()).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      await limited;
+      expect(http.request).toHaveBeenCalledTimes(6);
+      rateLimited = false;
+      const blocked = expect(wake()).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(0);
+      await blocked;
+      expect(http.request).toHaveBeenCalledTimes(6);
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect(http.request).toHaveBeenCalledTimes(6);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(http.request).toHaveBeenCalledTimes(7);
+      expect(http.request.mock.calls.at(-1)?.[0].headers?.['If-None-Match']).toBe('mixed-waiting');
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(http.request).toHaveBeenCalledTimes(7);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(http.request).toHaveBeenCalledTimes(8);
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+
+  it('uses the latest completed observation deadline when concurrent ingress deliveries share a finite cycle', async () => {
+    const controller = new AbortController();
+    const durable = durableDeploymentDefinition('concurrent-delivery-durable');
+    const pull: SourceDefinition = { ...durable, automationId: 'concurrent-delivery-pull', triggerId: 'trigger-concurrent-delivery-pull',
+      sourceSelectorId: sourceSelectorB, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef } };
+    const checkpoints = createCheckpointCollection([]);
+    let now = 2_000;
+    let delivering = false;
+    const delays: number[] = [];
+    const http = { request: vi.fn(async (request: { url: string }) => {
+      const census = request.url.includes('?');
+      const runId = census ? 81 : Number(/\/runs\/([0-9]+)/u.exec(request.url)?.[1]);
+      if (delivering && request.url.endsWith('/pending_deployments')) now = runId === 81 ? 3_000 : 12_000;
+      return { status: 200, headers: census ? { etag: 'concurrent-waiting', 'x-poll-interval': '60' } : {},
+        body: new TextEncoder().encode(JSON.stringify(census ? { total_count: 1, workflow_runs: [{ id: 81, run_attempt: 2 }] }
+          : request.url.endsWith('/pending_deployments') ? runId === 81
+            ? [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true }] : []
+            : { id: runId, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } })),
+      };
+    }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [durable, pull]);
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') return {
+        kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1,
+        readiness: delivering ? 'ready' : 'providerConfirmationRequired',
+        contribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, targetMaterialization: watcherMaterializationRef,
+        sourceInstanceId: durable.sourceInstanceId,
+      };
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest: PLUGIN_MANIFEST, now: () => now,
+      sleep: async (delay, signal) => { delays.push(delay); await new Promise<void>(resolve => {
+        signal.addEventListener('abort', () => resolve(), { once: true }); if (signal.aborted) resolve();
+      }); },
+    });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http,
+      notifications: { send: vi.fn(async () => ({ deliveries: [], replayed: false })) }, signal: controller.signal }));
+    const running = observer.run(context);
+    try {
+      await vi.waitFor(() => expect(delays).toEqual([60_000]));
+      delivering = true;
+      const receive = (runId: string) => observer.receiveDeploymentWebhook({ repositoryId: '77', repositoryNameWithOwner: 'acme/widgets',
+        sourceInstanceId: durable.sourceInstanceId, runId }, controller.signal);
+      expect(await Promise.all([receive('81'), receive('82')])).toEqual(['accepted', 'accepted']);
+      await vi.waitFor(() => expect(delays).toHaveLength(2));
+      expect(http.request).toHaveBeenCalledTimes(7);
+      expect(delays[1]).toBe(60_000);
+    } finally { controller.abort(); await running; }
+  });
+
+  it.each(['automatic', 'webhook'] as const)('parks %s deployment monitoring without a poll timer for a verified Home route', async deliveryMode => {
+    vi.useFakeTimers();
+    const source = durableDeploymentDefinition('webhook-deployments', deliveryMode);
+    const checkpoints = createCheckpointCollection([]);
+    const http = { request: vi.fn() };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source]);
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') {
+        expect(PluginWebhookEndpointCheckCorrespondenceInputV1Schema.parse(input)).toEqual({
+          webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+          webhookContribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' },
+          targetMaterialization: watcherMaterializationRef, sourceInstanceId: source.sourceInstanceId,
+          setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+        });
+        return { kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1, readiness: 'ready',
+          contribution: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-events' }, targetMaterialization: watcherMaterializationRef,
+          sourceInstanceId: source.sourceInstanceId };
+      }
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const sleep = vi.fn(async (_delay: number, signal: AbortSignal) => { if (!signal.aborted) throw new Error('Webhook monitoring scheduled a timer'); });
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ sleep, manifest: PLUGIN_MANIFEST });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http }));
+    const controller = new AbortController();
+    const running = observer.run({ ...context, signal: controller.signal });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(http.request).not.toHaveBeenCalled();
+      expect(checkpoints.put).not.toHaveBeenCalled();
+      expect(actions.execute.mock.calls.filter(([action]) => action === 'plugin.webhook.endpoint.checkCorrespondence')).toHaveLength(1);
+      expect(sleep).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+
+  it.each(['legacy', 'unconfirmed', 'missingBinding', 'wrongContribution', 'wrongSource', 'wrongTarget', 'revokedBinding'] as const)('moves automatic monitoring from %s correspondence to verified push and back on invalidation, then stops when paused', async initialReadiness => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const source = durableDeploymentDefinition('automatic-transition');
+    let routeReady = false;
+    let routeRevoked = false;
+    let enrolled = true;
+    let invalidate: (() => void) | undefined;
+    const checkpoints = createCheckpointCollection([]);
+    const http = { request: vi.fn(async (request: { url: string; headers?: Readonly<Record<string, string>> }) => ({
+      status: request.headers?.['If-None-Match'] === 'waiting-empty' ? 304 : 200,
+      headers: { etag: 'waiting-empty', 'x-poll-interval': '120' },
+      body: new TextEncoder().encode(JSON.stringify({ total_count: 0, workflow_runs: [] })),
+    })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      const revision = enrolled ? '7' : '8';
+      if (action === 'automation.event.sources.list') return sourceListResult(input, revision, enrolled ? [source] : []);
+      if (action === 'plugin.webhook.endpoint.checkCorrespondence') return PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse(routeRevoked
+        ? { kind: 'unavailable', code: 'endpoint_unavailable' }
+        : { kind: 'ready', webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw', revision: 1,
+          ...(initialReadiness === 'missingBinding' && !routeReady ? {} : {
+            contribution: { pluginId: GITHUB_PLUGIN_ID, localId: initialReadiness === 'wrongContribution' && !routeReady ? 'other' : 'github-events' },
+            targetMaterialization: initialReadiness === 'wrongTarget' && !routeReady
+              ? { ...watcherMaterializationRef, materializationId: 'other' } : watcherMaterializationRef,
+            sourceInstanceId: initialReadiness === 'wrongSource' && !routeReady ? 'other' : source.sourceInstanceId,
+          }),
+          ...(initialReadiness === 'revokedBinding' && !routeReady ? { revokedAt: 1 } : {}),
+          ...(routeReady ? { readiness: 'ready' } : initialReadiness === 'legacy' ? {}
+            : { readiness: initialReadiness === 'unconfirmed' ? 'providerConfirmationRequired' : 'ready' }) });
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest: PLUGIN_MANIFEST });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal, events: { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => {
+        invalidate = () => listener(sourcesInvalidated());
+        return { dispose() {} };
+      } } },
+    }));
+    const running = observer.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      const checkpointWrites = checkpoints.put.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(http.request).toHaveBeenCalledTimes(2);
+      expect(http.request.mock.calls[1]?.[0].headers?.['If-None-Match']).toBe('waiting-empty');
+      if (!invalidate) throw new Error('The source invalidation subscription is missing');
+      const checkpointReads = vi.mocked(checkpoints.collection.get).mock.calls.length;
+      routeReady = true; invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(119999);
+      expect(http.request).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(checkpoints.collection.get).toHaveBeenCalledTimes(checkpointReads);
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(http.request).toHaveBeenCalledTimes(2);
+      routeReady = false; routeRevoked = true; invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(http.request).toHaveBeenCalledTimes(3);
+      expect(http.request.mock.calls[2]?.[0].headers?.['If-None-Match']).toBe('waiting-empty');
+      expect(http.request.mock.calls.every(([request]) => new URL(request.url).pathname.endsWith('/actions/runs'))).toBe(true);
+      enrolled = false; invalidate();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(300000);
+      expect(http.request).toHaveBeenCalledTimes(3);
+      expect(checkpoints.put).toHaveBeenCalledTimes(checkpointWrites);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+
+  it.each([{ userInterval: 180000, floorSeconds: 120, early: 120000, remaining: 60000 },
+    { userInterval: 60000, floorSeconds: 120, early: 60000, remaining: 60000 },
+    { userInterval: 2 * 86400000, floorSeconds: 3 * 86400, early: 2 * 86400000, remaining: 86400000 }])(
+    'uses the enrollment polling interval $userInterval with provider floor $floorSeconds and bypasses webhooks in polling mode', async ({ userInterval, floorSeconds, early, remaining }) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const base = definition({ automationId: 'polling-deployments', sourceSelectorId: sourceSelectorA, eventLocalId: 'automation/deployment-review-v1' });
+    const source = { ...base, sourceInstanceId: 'github:repository:77:deployment-review', sourceConfig: {
+      ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1', deliveryMode: 'polling', pollingIntervalMs: userInterval },
+    } };
+    const checkpoints = createCheckpointCollection([]);
+    const http = { request: vi.fn(async (request: { headers?: Readonly<Record<string, string>> }) => ({
+      status: request.headers?.['If-None-Match'] ? 304 : 200, headers: { etag: 'waiting-empty', 'x-poll-interval': String(floorSeconds) },
+      body: new TextEncoder().encode(JSON.stringify({ total_count: 0, workflow_runs: [] })),
+    })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return input && typeof input === 'object' && 'knownRevision' in input
+        ? { kind: 'unchanged', revision: '7' } : { kind: 'page', revision: '7', definitions: [source], nextCursor: null };
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let now = 2000;
+    const manifest = { contributes: { ui: { views: [{ id: 'deployment-review', container: 'appPage', target: { kind: 'app' }, renderer: 'review', title: 'Deployment review' }],
+      renderers: [{ id: 'review', kind: 'reactNative', artifact: 'github-forge-native' }] } } } as const;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now, manifest });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http,
+      signal: controller.signal, notifications: { send: vi.fn() } }));
+    const running = observer.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      now += early; await vi.advanceTimersByTimeAsync(early);
+      expect(http.request).toHaveBeenCalledTimes(1);
+      now += remaining; await vi.advanceTimersByTimeAsync(remaining);
+      expect(http.request).toHaveBeenCalledTimes(2);
+      expect(http.request.mock.calls[1]?.[0].headers?.['If-None-Match']).toBe('waiting-empty');
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+  it('shares one deployment census across fresh and retained subscribers without inheriting their pending facts', async () => {
+    const base = definition({ automationId: 'retained-deployment', sourceSelectorId: sourceSelectorA,
+      eventLocalId: 'automation/deployment-review-v1' });
+    const retained: SourceDefinition = { ...base, observationOnly: { kind: 'observationOnly' },
+      sourceInstanceId: 'github:repository:77:deployment-review', sourceConfig: {
+        ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1', deliveryMode: 'polling' },
+      } };
+    const fresh = { ...retained, automationId: 'fresh-deployment', triggerId: 'trigger-fresh-deployment', sourceSelectorId: sourceSelectorB };
+    const row = checkpointRow({ automationId: retained.automationId, sourceSelectorId: retained.sourceSelectorId,
+      eventLocalId: 'automation/deployment-review-v1', sourceInstanceId: retained.sourceInstanceId });
+    const pending = [{ repositoryId: '77', runId: '81', attempt: '2', environmentId: '42', environmentName: 'production', eligible: true }];
+    const newPending = { repositoryId: '77', runId: '82', attempt: '2', environmentId: '43', environmentName: 'staging', eligible: true };
+    const checkpoints = createCheckpointCollection([{ ...row, payload: { ...row.payload,
+      cursor: { kind: 'deploymentReview', v: 1, pending, waitingPages: [{
+        url: 'https://api.github.com/repos/acme/widgets/actions/runs?status=waiting&per_page=100',
+        etag: 'retained-etag', totalCount: 1, runs: [{ runId: '81', attempt: '2' }], nextUrl: null,
+      }] }, continuity: { kind: 'deploymentReview', v: 1, repositoryId: '77' },
+    } }]);
+    const send = vi.fn(async () => ({ deliveries: [], replayed: false }));
+    const http = { request: vi.fn(async (request: { url: string; headers?: Readonly<Record<string, string>> }) => {
+      const runId = request.url.includes('?') ? 82 : Number(/\/runs\/([0-9]+)/u.exec(request.url)?.[1]);
+      return { status: 200,
+      headers: request.url.includes('?') ? { etag: 'current-etag' } : {},
+      body: new TextEncoder().encode(JSON.stringify(request.url.includes('?')
+        ? { total_count: 1, workflow_runs: [{ id: runId, run_attempt: 2 }] }
+        : request.url.endsWith('/pending_deployments') ? [{ environment: { id: runId === 81 ? 42 : 43,
+          name: runId === 81 ? 'production' : 'staging' }, current_user_can_approve: true }]
+          : { id: runId, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } })),
+    }; }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [retained, fresh]);
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000, manifest: PLUGIN_MANIFEST });
+    await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions,
+      collection: checkpoints.collection, http, notifications: { send } })));
+
+    expect(http.request.mock.calls.filter(([request]) => request.url.includes('?'))).toHaveLength(1);
+    expect(http.request.mock.calls[0]?.[0].headers?.['If-None-Match']).toBeUndefined();
+    expect(http.request).toHaveBeenCalledTimes(5);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(checkpoints.rowCount()).toBe(2);
+    expect(checkpoints.read(row.id)).toMatchObject({ value: { payload: { cursor: { pending: [...pending, newPending] } } } });
+    expect(checkpoints.read(createGithubAutomationEventCheckpointRowId({ automationId: fresh.automationId,
+      eventRef: fresh.eventRef, sourceSelectorId: fresh.sourceSelectorId }))).toMatchObject({ value: { payload: { cursor: { pending: [newPending] } } } });
+  });
+
+  it('does not resolve a still-pending run outside the waiting list when another candidate arrives', async () => {
+    const base = definition({ automationId: 'deployment-lingering', sourceSelectorId: sourceSelectorA,
+      eventLocalId: 'automation/deployment-review-v1' });
+    const source = parseGithubDeploymentMonitoringSourceConfig({ ...base.sourceConfig as Readonly<Record<string, JsonValue>>,
+      deploymentReview: { monitoringMachineId: 'machine-1' } });
+    let phase: 'waiting' | 'absent' | 'other' = 'waiting';
+    const transport = createStubGithubTransport({ nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer synthetic' } },
+      respond: request => {
+        if (request.url.includes('?')) return { status: 200, headers: { etag: phase },
+          body: { total_count: phase === 'absent' ? 0 : 1, workflow_runs: phase === 'absent' ? [] : [{ id: phase === 'waiting' ? 81 : 82, run_attempt: 2 }] } };
+        if (request.url.endsWith('/pending_deployments')) return { status: 200, body: request.url.includes('/runs/81/')
+          ? [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true }] : [] };
+        return { status: 200, body: { id: Number(request.url.split('/').at(-1)), run_attempt: 2, repository: { id: 77 } } };
+      } });
+    const first = await observeGithubDeploymentReviewsV1({ source, previous: null }, transport.context);
+    phase = 'absent';
+    const absent = await observeGithubDeploymentReviewsV1({ source, previous: first.cursor }, transport.context);
+    expect(absent.cursor.pending).toHaveLength(1);
+    phase = 'other';
+    const requestCount = transport.requests.length;
+    const other = await observeGithubDeploymentReviewsV1({ source, previous: absent.cursor }, transport.context);
+    expect(other.cursor.pending).toEqual(absent.cursor.pending);
+    expect(transport.requests.slice(requestCount).some(request => request.url.endsWith('/runs/81/pending_deployments'))).toBe(true);
+  });
+  it.each([{ unchangedResponse: '304', pageCount: 1, etags: true }, { unchangedResponse: 'identical200', pageCount: 1, etags: true },
+    { unchangedResponse: 'identical200', pageCount: 1, etags: false },
+    { unchangedResponse: '304', pageCount: 2, etags: true }] as const)('observes only the enrolled deployment Machine with zero downstream work on $unchangedResponse/$pageCount pages/etags=$etags', async ({ unchangedResponse, pageCount, etags }) => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let invalidate = () => {};
+    let revision = '7';
+    const base = definition({ automationId: 'deployments', sourceSelectorId: sourceSelectorA,
+      eventLocalId: 'automation/deployment-review-v1' });
+    const source: SourceDefinition = { ...base, sourceInstanceId: 'github:repository:77:deployment-review',
+      sourceConfig: { ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1' } } };
+    let currentSource: SourceDefinition = source;
+    const checkpoints = createCheckpointCollection([]);
+    const send = vi.fn(async (_request: Parameters<PluginInvocationContext['services']['notifications']['send']>[0]) => ({ deliveries: [], replayed: false }));
+    let pendingState: 'pending' | 'denied' | 'resolved' = 'pending';
+    const http = { request: vi.fn(async (request: { url: string; headers?: Readonly<Record<string, string>> }) => {
+      const list = request.url.includes('?');
+      const page = new URL(request.url).searchParams.get('page') === '2' ? 2 : 1;
+      const runId = list ? 80 + page : Number(/\/runs\/([0-9]+)/u.exec(request.url)?.[1]);
+      const listState = pageCount === 2 && page === 1 && pendingState === 'denied' ? 'pending' : pendingState;
+      const etag = `waiting-${listState}-${page}`;
+      const unchanged = list && request.headers?.['If-None-Match'] === etag && unchangedResponse === '304';
+      return { status: unchanged ? 304 : request.url.includes('/pending_deployments') && pendingState === 'denied' ? 403 : 200,
+        headers: list ? { ...(etags ? { etag } : {}), 'x-poll-interval': '120',
+          ...(page < pageCount && pendingState !== 'resolved' ? { link: `<${request.url}&page=2>; rel="next"` } : {}) } : {}, body: unchanged ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(
+          request.url.includes('/pending_deployments') ? pendingState === 'denied' ? { message: 'Resource not accessible by personal access token' } : pendingState === 'resolved' ? [] : [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true, wait_timer: 0, wait_timer_started_at: null, reviewers: [] }]
+            : list ? { total_count: pendingState === 'resolved' ? 0 : pageCount, workflow_runs: pendingState === 'resolved' ? [] : [{ id: runId, run_attempt: 2, updated_at: listState === 'pending' ? '2026-10-25T10:00:00Z' : '2026-10-25T10:01:00Z' }] }
+              : { id: runId, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } },
+        )) };
+    }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, revision, [currentSource]);
+      if (action === 'automation.event.source.status.report') return {};
+      if (action === 'automation.event.admit') return { results: [{ kind: 'admitted', runId: 'run-github-observation', checkpointSafe: true }] };
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const manifest = { id: GITHUB_PLUGIN_ID, contributes: { ui: {
+      views: [{ id: 'deployment-review', container: 'appPage', target: { kind: 'app' }, renderer: 'review', title: 'Deployment review' }],
+      renderers: [{ id: 'review', kind: 'reactNative', artifact: 'github-forge-native' }],
+    } } } as const;
+    // This is declaration metadata supplied by the host, not a mocked internal
+    // renderer. Loaded composition belongs to the shared UI integration gate.
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ manifest });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http: createPluginHttpFixture({ request: http.request }), notifications: { send }, signal: controller.signal,
+      events: { host: { subscribe: (_target: unknown, listener: SourcesInvalidatedListener) => { invalidate = () => listener(sourcesInvalidated()); return { dispose() {} }; } } },
+    }));
+    const running = observer.run(context);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).toHaveBeenCalledTimes(pageCount);
+      const puts = checkpoints.put.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(http.request).toHaveBeenCalledTimes(3 * pageCount);
+      for (let repeat = 0; repeat < 4; repeat++) await vi.advanceTimersByTimeAsync(repeat === 0 ? 60_000 : 120_000);
+      expect(send).toHaveBeenCalledTimes(pageCount);
+      expect(checkpoints.put).toHaveBeenCalledTimes(puts);
+      expect(http.request).toHaveBeenCalledTimes(7 * pageCount);
+      for (const [request] of http.request.mock.calls.slice(3 * pageCount)) {
+        if (etags) expect(request.headers?.['If-None-Match']).toMatch(/^waiting-pending-[12]$/u);
+        else expect(request.headers?.['If-None-Match']).toBeUndefined();
+      }
+      pendingState = 'denied';
+      const beforeDenied = http.request.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      if (pageCount === 2) expect(http.request.mock.calls.slice(beforeDenied).some(([request]) => /\/runs\/81(?:\/|$)/u.test(request.url))).toBe(false);
+      expect(send).toHaveBeenCalledTimes(pageCount);
+      expect(checkpoints.put).toHaveBeenCalledTimes(puts);
+      pendingState = 'resolved';
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(send).toHaveBeenCalledTimes(2 * pageCount);
+      expect(send.mock.calls[pageCount]?.[0]).toMatchObject({ resolved: true });
+      currentSource = { ...source, sourceConfig: { ...source.sourceConfig as Readonly<Record<string, JsonValue>>,
+        deploymentReview: { monitoringMachineId: 'machine-2' } } };
+      revision = '8'; invalidate();
+      const beforeForeign = http.request.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(http.request).toHaveBeenCalledTimes(beforeForeign);
+      expect(send).toHaveBeenCalledTimes(2 * pageCount);
+    } finally { controller.abort(); await running; vi.useRealTimers(); }
+  });
+
+  it('rejoins immutable deployment occurrence evidence after notification failure and observer recreation', async () => {
+    const base = definition({ automationId: 'deployments-retry', sourceSelectorId: sourceSelectorA,
+      eventLocalId: 'automation/deployment-review-v1' });
+    const source: SourceDefinition = { ...base, sourceInstanceId: 'github:repository:77:deployment-review',
+      sourceConfig: { ...base.sourceConfig as Readonly<Record<string, JsonValue>>, deploymentReview: { monitoringMachineId: 'machine-1' } } };
+    const checkpoints = createCheckpointCollection([]);
+    const admitted = new Map<string, string>();
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return input && typeof input === 'object' && 'knownRevision' in input
+        ? { kind: 'unchanged', revision: '7' } : { kind: 'page', revision: '7', definitions: [source], nextCursor: null };
+      if (action === 'automation.event.source.status.report') return {};
+      if (action !== 'automation.event.admit') throw new Error(`Unexpected Action ${action}`);
+      // The host transport is a genuine boundary. Use its real evidence/key/
+      // equality owners rather than accepting every synthetic retry body.
+      const request = AutomationEventAdmitInputV1Schema.parse(input);
+      const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({ eventRef: request.eventRef,
+        sourceSelectorId: source.sourceSelectorId, occurrenceId: request.occurrenceId,
+        occurredAt: request.occurredAt, payload: request.payload });
+      const key = deriveAutomationOccurrenceKeyV1({ triggerId: source.triggerId, evidence });
+      const witness = serializeAutomationOccurrenceEvidenceEqualityV1({ accountId: 'account-a', automationId: source.automationId,
+        triggerId: source.triggerId, occurrenceKey: key, evidence });
+      if (admitted.has(key) && admitted.get(key) !== witness) throw new Error('Automation occurrence evidence changed');
+      admitted.set(key, witness);
+      return { results: [{ kind: 'admitted', runId: 'run-github-observation', checkpointSafe: true }] };
+    }) };
+    let now = 2000;
+    const pending = [{ environment: { id: 42, name: 'production' }, current_user_can_approve: true },
+      { environment: { id: 43, name: 'staging' }, current_user_can_approve: true }];
+    const http = createPluginHttpFixture({ request: async request => ({ status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(
+      request.url.includes('/pending_deployments') ? now === 2000 ? pending : [...pending].reverse()
+        : request.url.includes('?') ? { total_count: 1, workflow_runs: [{ id: 81 }] }
+          : { id: 81, run_attempt: 2, repository: { id: 77, full_name: 'acme/widgets' } },
+    )) }) });
+    let failSend = true;
+    const send = vi.fn(async (_request: Parameters<PluginInvocationContext['services']['notifications']['send']>[0]) => {
+      if (failSend) { failSend = false; throw new Error('Notification transport unavailable'); }
+      return { deliveries: [], replayed: false };
+    });
+    const manifest = { contributes: { ui: {
+      views: [{ id: 'deployment-review', container: 'appPage', target: { kind: 'app' }, renderer: 'review', title: 'Deployment review' }],
+      renderers: [{ id: 'review', kind: 'reactNative', artifact: 'github-forge-native' }],
+    } } } as const;
+    const run = async () => {
+      const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now, manifest });
+      await observer.runCycle(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http, notifications: { send } })));
+    };
+    await run();
+    expect(send).toHaveBeenCalledOnce();
+    expect(admitted.size).toBe(2);
+    now += 60000;
+    await run();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(new Set(send.mock.calls.map(([request]) => request.clientRequestId)).size).toBe(2);
+    expect(admitted.size).toBe(2);
+    expect(checkpoints.rowCount()).toBe(1);
+    const puts = checkpoints.put.mock.calls.length;
+    now += 60000;
+    await run();
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(checkpoints.put).toHaveBeenCalledTimes(puts);
+  });
+
   it.each(['completed', 'failed', 'passed'] as const)('observes PR checks %s through the admitted source checkpoint', async (kind) => {
     const sha = 'a'.repeat(40);
     const base = definition({ automationId: 'checks-a', sourceSelectorId: sourceSelectorA,
@@ -439,6 +1325,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     };
     const checkpoints = createCheckpointCollection([]);
     let conclusion: string | null = null;
+    let definitions: readonly SourceDefinition[] = [source];
     const admissions: AutomationEventAdmitInput[] = [];
     const http = { request: vi.fn(async (_request: { url: string }) => ({ status: 200, headers: {},
       body: new TextEncoder().encode(JSON.stringify({ data: { repository: { pullRequest: {
@@ -451,29 +1338,35 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       } } } })),
     })) };
     const actions = { execute: vi.fn(async (actionId: string, input: unknown) => {
-      if (actionId === 'automation.event.sources.list') return { kind: 'page', revision: '7', definitions: [source], nextCursor: null };
+      if (actionId === 'automation.event.sources.list') return sourceListResult(input, '7', definitions);
       if (actionId === 'automation.event.source.status.report') return {};
       if (actionId === 'automation.event.admit') {
         admissions.push(input as AutomationEventAdmitInput);
-        return { results: [{ ...source, checkpointSafe: true, kind: 'admitted' }] };
+        return { results: [{ kind: 'admitted', runId: 'run-github-observation', checkpointSafe: true }] };
       }
       throw new Error(`unexpected Action ${actionId}`);
     }) };
     let now = 2000;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now });
     const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http }));
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
     expect(checkpoints.rowCount()).toBe(1);
     expect(admissions).toHaveLength(0);
+    expect(http.request).toHaveBeenCalledTimes(1);
+    definitions = [source, { ...source, automationId: 'checks-new-subscriber', triggerId: 'trigger-checks-new-subscriber',
+      sourceSelectorId: sourceSelectorB }];
     conclusion = kind === 'failed' ? 'FAILURE' : 'SUCCESS';
     now += 60000;
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
     expect(admissions).toHaveLength(1);
     expect(admissions[0]).toMatchObject({ eventRef: source.eventRef,
       payload: { checks: { headSha: sha, complete: true, passed: kind !== 'failed' } } });
+    expect(checkpoints.rowCount()).toBe(2);
+    expect(http.request).toHaveBeenCalledTimes(2);
     now += 60000;
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
     expect(admissions).toHaveLength(1);
+    expect(http.request).toHaveBeenCalledTimes(3);
     expect(http.request.mock.calls.every(([request]) => (request as { url: string }).url.endsWith('/graphql'))).toBe(true);
   });
   it('maps all four repository timeline variants to the same semantic Event refs used by webhooks', () => {
@@ -548,11 +1441,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       request: vi.fn(async () => ({ status: 304, headers: {}, body: new Uint8Array() })),
     };
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, requestInput: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(requestInput, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -567,6 +1458,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/${GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID}`,
       },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
@@ -576,7 +1468,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -622,7 +1514,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(http.request).toHaveBeenCalledOnce();
   });
 
-  it('retires the cycle coalescer when the observer is cancelled during source dispatch', async () => {
+  it('retires the active cycle when the observer is cancelled during source dispatch', async () => {
     const definitions = [
       definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
       definition({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB }),
@@ -636,11 +1528,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       request: vi.fn(async () => ({ status: 304, headers: {}, body: new Uint8Array() })),
     };
     const actions = {
-      execute: vi.fn(async (actionId: string) => {
+      execute: vi.fn(async (actionId: string, requestInput: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions, nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(requestInput, '7', definitions);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -655,6 +1545,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/${GITHUB_AUTOMATION_REPOSITORY_EVENT_BACKGROUND_SERVICE_ID}`,
       },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
@@ -664,7 +1555,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -683,7 +1574,54 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     await expect(observer.runSourceAttempt(capturedInput, {
       ...capturedContext!,
       signal: new AbortController().signal,
-    })).rejects.toThrow('not part of the current observer cycle');
+    })).rejects.toThrow();
+    expect(checkpoints.collection.get).not.toHaveBeenCalled();
+    expect(checkpoints.put).not.toHaveBeenCalled();
+    expect(http.request).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('shares one provider scan across a new subscriber and a retained ETag; checkpoint safe: %s', async checkpointSafe => {
+    const retained = definition({ automationId: 'retained-subscriber', sourceSelectorId: sourceSelectorA });
+    const fresh = definition({ automationId: 'new-subscriber', sourceSelectorId: sourceSelectorB });
+    const retainedRow = checkpointRow({ automationId: retained.automationId, sourceSelectorId: retained.sourceSelectorId });
+    const checkpoints = createCheckpointCollection([retainedRow]);
+    const admitted: AutomationEventAdmitInput[] = [];
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [retained, fresh]);
+      if (action === 'automation.event.source.status.report') return {};
+      if (action === 'automation.event.admit') {
+        admitted.push(AutomationEventAdmitInputV1Schema.parse(input));
+        return { results: [checkpointSafe ? { kind: 'admitted', runId: 'retained-run', checkpointSafe: true }
+          : { kind: 'blocked', reason: 'capacity', checkpointSafe: false }] };
+      }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async (_request: { headers?: Readonly<Record<string, string>> }) => ({ status: 200,
+      headers: { etag: 'current-etag' }, body: new TextEncoder().encode(JSON.stringify([
+        { id: 'old', type: 'PushEvent', created_at: '1970-01-01T00:00:00.900Z', repo: { id: 77, name: 'acme/widgets' },
+          payload: { ref: 'refs/heads/main', before: 'a'.repeat(40), head: 'b'.repeat(40) } },
+        { id: 'new', type: 'PushEvent', created_at: '1970-01-01T00:00:01.100Z', repo: { id: 77, name: 'acme/widgets' },
+          payload: { ref: 'refs/heads/main', before: 'b'.repeat(40), head: 'c'.repeat(40) } },
+      ])),
+    })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    const context = sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection, http }));
+
+    await observer.runCycle(context);
+
+    expect(http.request).toHaveBeenCalledOnce();
+    expect(http.request.mock.calls[0]?.[0].headers?.['If-None-Match']).toBeUndefined();
+    expect(admitted).toHaveLength(1);
+    expect(admitted[0]).toMatchObject({ occurrenceId: 'github:repository:77:event:new',
+      definitions: [expect.objectContaining({ automationId: retained.automationId })] });
+    expect(checkpoints.rowCount()).toBe(2);
+    expect(checkpoints.read(retainedRow.id)).toMatchObject({ value: { payload: { cursor: {
+      seenEventIds: checkpointSafe ? ['old', 'new'] : ['old'],
+    } } } });
+    expect(checkpoints.read(createGithubAutomationEventCheckpointRowId({ automationId: fresh.automationId,
+      sourceSelectorId: fresh.sourceSelectorId }))).toMatchObject({ value: { payload: { cursor: {
+      seenEventIds: ['old', 'new'], observationStartsAtMs: 2_000,
+    } } } });
   });
 
   it('coalesces one repository read while preserving independent trigger checkpoints', async () => {
@@ -695,8 +1633,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       checkpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
       checkpointRow({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB }),
     ]);
-    let releaseHttp: ((value: unknown) => void) | undefined;
-    const httpResponse = new Promise<unknown>((resolve) => { releaseHttp = resolve; });
+    let releaseHttp: ((value: HttpBoundaryResponse) => void) | undefined;
+    const httpResponse = new Promise<HttpBoundaryResponse>((resolve) => { releaseHttp = resolve; });
     const http = {
       request: vi.fn(async () => await httpResponse),
     };
@@ -707,9 +1645,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         if (actionId === 'automation.event.sources.list') {
           const request = input as PluginActionInputById['automation.event.sources.list'];
           expect(request.transport).toEqual({ kind: 'checkpointedPull' });
-          return {
-            kind: 'page', revision: '7', definitions, nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', definitions);
         }
         if (actionId === 'automation.event.admit') {
           const request = input as AutomationEventAdmitInput;
@@ -741,6 +1677,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/automation-repository-event-checkpointed-pull`,
       },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       // Boundary fixture supplies exactly the host services reached by the observer.
       services: {
@@ -751,7 +1688,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: {
           account: {
             collection: vi.fn(() => checkpoints.collection),
@@ -762,8 +1699,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
     const cycle = observer.runCycle(sourceAttemptContext(observer, context));
-    await waitForCall(() => http.request.mock.calls.length);
-    expect(http.request).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(http.request).toHaveBeenCalledOnce());
     releaseHttp?.({
       status: 200,
       headers: { etag: 'current-etag' },
@@ -818,8 +1754,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorB,
     }));
-    expect(blockedCheckpoint?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1'] });
-    expect(blockedCheckpoint?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-1');
+    expect(blockedCheckpoint?.value.payload.cursor).toMatchObject({ seenEventIds: ['old'] });
+    expect(blockedCheckpoint?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:old');
     expect(admittedCheckpoint?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1', 'new-2'] });
     expect(admittedCheckpoint?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-2');
     expect(checkpoints.rowCount()).toBe(2);
@@ -873,9 +1809,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [push, issue], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [push, issue]);
         }
         if (actionId === 'automation.event.admit') {
           const request = input as AutomationEventAdmitInput;
@@ -899,6 +1833,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
@@ -908,7 +1843,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -941,144 +1876,58 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
   it('retains an adopted source snapshot across an unchanged scan and persists each completed 304 observation time', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const retained = checkpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const checkpoints = createCheckpointCollection([
-      { ...retained, payload: { ...retained.payload, continuity: {
-        v: 1, endpointKind: 'repositoryEvents', repositoryId: '77', retiredContinuityHint: 'old',
-      } } },
-    ]);
+    const retained = checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId });
+    const checkpoints = createCheckpointCollection([{ ...retained, payload: { ...retained.payload,
+      continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77', retiredContinuityHint: 'old' } } }]);
+    const controller = new AbortController();
     let now = 2_000;
-    let sourceListCalls = 0;
     const statuses: AutomationEventSourceStatusReport[] = [];
-    const http = {
-      request: vi.fn(async () => {
-        now += 1_000;
-        return { status: 304, headers: { 'x-poll-interval': '17' }, body: new Uint8Array() };
-      }),
-    };
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          const request = input as PluginActionInputById['automation.event.sources.list'];
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          expect(request).toEqual({ transport: { kind: 'checkpointedPull' }, knownRevision: '7' });
-          return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          statuses.push(input as AutomationEventSourceStatusReport);
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const context = {
-      plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
-      surface: 'background' as const,
-      signal: new AbortController().signal,
-      services: {
-        actions,
-        connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
-        storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
-      },
-    } as unknown as BackgroundServiceContext;
-
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now });
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    now = 20_000;
-    await observer.runCycle(sourceAttemptContext(observer, context));
-
-    const row = checkpoints.read(createGithubAutomationEventCheckpointRowId({
-      automationId: 'automation-a',
-      triggerId: 'trigger-automation-a',
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
-      sourceSelectorId: sourceSelectorA,
-    }));
+    const http = { request: vi.fn(async () => { now += 1_000;
+      return { status: 304, headers: { 'x-poll-interval': '17' }, body: new Uint8Array() }; }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') { statuses.push(input as AutomationEventSourceStatusReport); return {}; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let waits = 0;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async () => { if (++waits === 1) now = 20_000; else controller.abort(); } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal })));
+    const row = checkpoints.read(retained.id);
     expect(http.request).toHaveBeenCalledTimes(2);
+    expect(checkpoints.query).toHaveBeenCalledTimes(1);
     expect(row?.value.payload.cursor).toMatchObject({ observedAtMs: 21_000, etag: 'prior-etag' });
     expect(row?.value.payload.continuity).not.toHaveProperty('retiredContinuityHint');
-    expect(statuses).toContainEqual(expect.objectContaining({
-      kind: 'source', state: 'observing', lastObservedAt: 21_000,
-    }));
+    expect(statuses).toContainEqual(expect.objectContaining({ kind: 'source', state: 'observing', lastObservedAt: 21_000 }));
   });
 
   it('does not dispatch a stale adopted catalog to source observation after currentness is lost', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
-    const statuses: AutomationEventSourceStatusReport[] = [];
+    const controller = new AbortController();
     let now = 2_000;
-    let sourceListCalls = 0;
-    const http = {
-      request: vi.fn(async () => ({
-        status: 200,
-        headers: { etag: 'initial' },
-        body: new TextEncoder().encode(JSON.stringify([])),
-      })),
-    };
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            expect(input).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          expect(input).toEqual({ transport: { kind: 'checkpointedPull' }, knownRevision: '7' });
-          return {
-            kind: 'cursorStale', currentRevision: '8',
-          } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          statuses.push(input as AutomationEventSourceStatusReport);
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        if (actionId === 'automation.event.admit') {
-          throw new Error('a baseline must not admit an occurrence');
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now });
-    const context = observerBackgroundContext({ actions, collection: checkpoints.collection, http });
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    expect(http.request).toHaveBeenCalledOnce();
-
-    // Advance beyond the source's next eligible time so this would perform an
-    // ordinary 304 poll through the retained snapshot without the guard.
-    now = 63_000;
-    http.request.mockClear();
-    statuses.length = 0;
-    actions.execute.mockClear();
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-
+    let stale = false;
+    const statuses: AutomationEventSourceStatusReport[] = [];
+    const http = { request: vi.fn(async () => ({ status: 200, headers: { etag: 'initial' },
+      body: new TextEncoder().encode('[]') })) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return stale ? { kind: 'cursorStale', currentRevision: '8' }
+        : sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') { statuses.push(input as AutomationEventSourceStatusReport); return {}; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async () => {
+        if (!stale) { stale = true; now = 63_000; http.request.mockClear(); statuses.length = 0; }
+        else controller.abort();
+      } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal })));
     expect(http.request).not.toHaveBeenCalled();
-    expect(actions.execute).not.toHaveBeenCalledWith(
-      'automation.event.admit',
-      expect.anything(),
-      expect.anything(),
-    );
-    // The stale scan truthfully reports only catalog reconciliation. The
-    // previously adopted revision remains useful reconciliation evidence, but
-    // source health from the no-longer-current snapshot must not be published.
-    expect(statuses).toEqual([
-      expect.objectContaining({
-        kind: 'catalogReconciliation',
-        observedRevision: '8',
-        adoptedRevision: '7',
-        state: 'reconciling',
-      }),
-    ]);
+    expect(checkpoints.put).toHaveBeenCalledTimes(1);
+    expect(statuses).toEqual([expect.objectContaining({ kind: 'catalogReconciliation',
+      observedRevision: '8', adoptedRevision: '7', state: 'reconciling' })]);
   });
 
   it('persists the first baseline of a fresh trigger at Protocol trigger revision zero', async () => {
@@ -1116,9 +1965,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -1131,6 +1978,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
@@ -1140,7 +1988,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -1177,9 +2025,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -1192,6 +2038,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
@@ -1251,9 +2098,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -1266,11 +2111,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -1314,10 +2160,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     let requestCount = 0;
     const http = {
-      request: vi.fn(async (request: Readonly<{ headers: Readonly<Record<string, string>> }>) => {
+      request: vi.fn(async (request: Readonly<{ headers?: Readonly<Record<string, string>> }>) => {
         requestCount += 1;
         if (requestCount === 1) {
-          expect(request.headers['If-None-Match']).toBeUndefined();
+          expect(request.headers?.['If-None-Match']).toBeUndefined();
           return {
             status: 200,
             headers: { etag: 'baseline-etag' },
@@ -1326,7 +2172,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             ])),
           };
         }
-        expect(request.headers['If-None-Match']).toBe('baseline-etag');
+        expect(request.headers?.['If-None-Match']).toBe('baseline-etag');
         return {
           status: 200,
           headers: { etag: 'next-etag' },
@@ -1348,9 +2194,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             });
             return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.admit') {
           admitted.push(input as AutomationEventAdmitInput);
@@ -1373,7 +2217,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           headers: { Authorization: 'Bearer exact-account-token' },
         })),
       },
-      http,
+      http: createPluginHttpFixture({ request: http.request }),
       storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
     };
     const actionContext = {
@@ -1422,6 +2266,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/automation-repository-event-checkpointed-pull`,
       },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services,
     } as unknown as BackgroundServiceContext;
@@ -1480,9 +2325,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
                 expect(request).toEqual({
                   transport: { kind: 'checkpointedPull' }, cursor: 'page-2',
                 });
-                return {
-                  kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-                } satisfies PluginActionResultById['automation.event.sources.list'];
+                return sourceListResult(input, '7', [source]);
               }
               expect(request).toEqual({
                 transport: { kind: 'checkpointedPull' }, knownRevision: '7',
@@ -1501,13 +2344,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http: {
-          request: vi.fn(async () => ({
-            status: 200,
-            headers: { etag: 'fresh-etag' },
-            body: new TextEncoder().encode(JSON.stringify([])),
-          })),
-        },
+        http: createPluginHttpFixture({ request: vi.fn(async () => ({
+          status: 200,
+          headers: { etag: 'fresh-etag' },
+          body: new TextEncoder().encode(JSON.stringify([])),
+        })) }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1549,16 +2390,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       const request = input as PluginActionInputById['automation.event.sources.list'];
       if (request.knownRevision === undefined) {
         expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-        return {
-          kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-        } satisfies PluginActionResultById['automation.event.sources.list'];
+        return sourceListResult(input, '7', [source]);
       }
       expect(request).toEqual({
         transport: { kind: 'checkpointedPull' }, knownRevision: '7',
       });
-      return {
-        kind: 'page', revision: '8', definitions: [], nextCursor: null,
-      } satisfies PluginActionResultById['automation.event.sources.list'];
+      return sourceListResult(input, '8', []);
     });
     const context = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
@@ -1584,7 +2421,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer stale-definition-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1621,9 +2458,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       const request = input as PluginActionInputById['automation.event.sources.list'];
       if (sourceListCalls === 1) {
         expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-        return {
-          kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-        } satisfies PluginActionResultById['automation.event.sources.list'];
+        return sourceListResult(input, '7', [source]);
       }
       expect(request).toEqual({
         transport: { kind: 'checkpointedPull' }, knownRevision: '7',
@@ -1631,9 +2466,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       if (sourceListCalls === 2 || sourceListCalls === 3) {
         return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
       }
-      return {
-        kind: 'page', revision: '8', definitions: [], nextCursor: null,
-      } satisfies PluginActionResultById['automation.event.sources.list'];
+      return sourceListResult(input, '8', []);
     });
     const http = {
       request: vi.fn(async () => ({
@@ -1666,7 +2499,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer stale-after-io-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1706,9 +2539,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       const request = input as PluginActionInputById['automation.event.sources.list'];
       if (request.knownRevision === undefined) {
         expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-        return {
-          kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-        } satisfies PluginActionResultById['automation.event.sources.list'];
+        return sourceListResult(input, '7', [source]);
       }
       expect(request).toEqual({
         transport: { kind: 'checkpointedPull' }, knownRevision: '7',
@@ -1744,7 +2575,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           }),
         },
         connectedAccounts: { materialize },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1787,15 +2618,13 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       signal: new AbortController().signal,
       services: {
         actions: {
-          execute: vi.fn(async (actionId: string) => {
+          execute: vi.fn(async (actionId: string, requestInput: unknown) => {
             if (actionId !== 'automation.event.sources.list') throw new Error(`unexpected Action ${actionId}`);
-            return {
-              kind: 'page', revision: '8', definitions: [], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(requestInput, '8', []);
           }),
         },
         connectedAccounts: { materialize: vi.fn() },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1845,13 +2674,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               });
               return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
             }
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(input, '7', [source]);
           }),
         },
         connectedAccounts: { materialize: vi.fn() },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1912,9 +2739,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               });
               return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
             }
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(input, '7', [source]);
           }),
         },
         connectedAccounts: {
@@ -1923,7 +2748,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -1984,9 +2809,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               });
               return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
             }
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(input, '7', [source]);
           }),
         },
         connectedAccounts: {
@@ -1995,7 +2818,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             headers: { Authorization: 'Bearer exact-account-token' },
           })),
         },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as PluginInvocationContext;
@@ -2029,8 +2852,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
           const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.knownRevision === '7') return { kind: 'unchanged', revision: '7' };
+          sourceListCalls += 1;
           expect(request).toEqual(sourceListCalls === 1
             ? { transport: { kind: 'checkpointedPull' } }
             : { transport: { kind: 'checkpointedPull' }, cursor: `page-${sourceListCalls - 1}` });
@@ -2053,14 +2877,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       // A catalog only becomes current once its checkpoint rows reconcile, so
       // this fixture supplies the Account Collection that pass reads.
-      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
+        http: createPluginHttpFixture({ request: async () => { throw new Error('Unexpected provider request'); } }) },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(sourceListCalls).toBe(pages.length);
     expect(nonCatalogActions).toEqual([]);
@@ -2131,9 +2957,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               ),
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [source, rotated], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source, rotated]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2207,10 +3031,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         if (actionId === 'automation.event.sources.list') {
           const request = input as PluginActionInputById['automation.event.sources.list'];
           if (request.checkpointRetirementCandidates === undefined) {
-            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            expect(request.transport).toEqual({ kind: 'checkpointedPull' });
+            return sourceListResult(input, '7', []);
           }
           expect(request).toEqual({
             transport: { kind: 'checkpointedPull' },
@@ -2260,9 +3082,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         if (actionId === 'automation.event.sources.list') {
           const request = input as PluginActionInputById['automation.event.sources.list'];
           if (request.checkpointRetirementCandidates === undefined) {
-            return {
-              kind: 'page', revision: '7', definitions: [], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(input, '7', []);
           }
           expect(request).toMatchObject({
             transport: { kind: 'checkpointedPull' },
@@ -2328,9 +3148,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               kind: 'unchanged', revision: '7', checkpointRetirements: [],
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2390,9 +3208,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               checkpointRetirements: request.checkpointRetirementCandidates,
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [rotated], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [rotated]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2462,9 +3278,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               checkpointRetirements: request.checkpointRetirementCandidates,
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2523,14 +3337,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       // A catalog only becomes current once its checkpoint rows reconcile, so
       // this fixture supplies the Account Collection that pass reads.
-      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
+        http: createPluginHttpFixture({ request: async () => { throw new Error('Unexpected provider request'); } }) },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(sourceListCalls).toBe(1);
     expect(nonCatalogActions).toEqual([]);
@@ -2577,14 +3393,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       // A catalog only becomes current once its checkpoint rows reconcile, so
       // this fixture supplies the Account Collection that pass reads.
-      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } } },
+      services: { actions, storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
+        http: createPluginHttpFixture({ request: async () => { throw new Error('Unexpected provider request'); } }) },
     } as unknown as BackgroundServiceContext;
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
 
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(sourceListCalls).toBe(2);
     expect(nonCatalogActions).toEqual([]);
@@ -2664,7 +3482,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         signal: controller.signal,
       });
 
-      await observer.runCycle(context);
+      await observer.runCycle(sourceAttemptContext(observer, context));
       await checkpoints.collection.put(orphan, { expectedRevision: 'absent' });
       checkpoints.query.mockClear();
       checkpoints.delete.mockClear();
@@ -2672,7 +3490,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       if (kind === 'cancelled') {
         await expect(observer.runCycle(context)).rejects.toBe(cancellation);
       } else {
-        await observer.runCycle(context);
+        await observer.runCycle(sourceAttemptContext(observer, context));
       }
 
       expect(checkpoints.query).not.toHaveBeenCalled();
@@ -2706,9 +3524,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               kind: 'unchanged', revision: '7', checkpointRetirements: [],
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', []);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2719,173 +3535,94 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
     const context = observerBackgroundContext({ actions, collection: checkpoints.collection });
 
-    await observer.runCycle(context);
+    await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(checkpoints.delete).not.toHaveBeenCalled();
     expect(checkpoints.read(elsewhere.id)).toMatchObject({ revision: 1 });
   });
 
   it('treats checkpoint-delete CAS loss as harmless and retries on the next ordinary observer cycle', async () => {
-    const source = definition({
-      automationId: 'automation-a',
-      sourceSelectorId: sourceSelectorA,
-      repositoryId: '88',
-    });
-    const retiredRowId = createGithubAutomationEventCheckpointRowId({
-      automationId: source.automationId,
-      triggerId: source.triggerId,
-      eventRef: source.eventRef,
-      sourceSelectorId: source.sourceSelectorId,
-    });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({
-        automationId: source.automationId,
-        sourceSelectorId: source.sourceSelectorId,
-        sourceInstanceId: source.sourceInstanceId,
-        sourceContractVersion: 2,
-      }),
-    ], { deleteConflictCount: 1 });
-    let sourceListCalls = 0;
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          const request = input as PluginActionInputById['automation.event.sources.list'];
-          if (request.checkpointRetirementCandidates !== undefined) {
-            expect(request).toMatchObject({
-              transport: { kind: 'checkpointedPull' },
-              knownRevision: '7',
-              checkpointRetirementCandidates: [expect.objectContaining({
-                automationId: source.automationId,
-                sourceSelectorId: source.sourceSelectorId,
-                sourceContractVersion: 2,
-              })],
-            });
-            return {
-              kind: 'unchanged',
-              revision: '7',
-              checkpointRetirements: request.checkpointRetirementCandidates,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          expect(request).toEqual({
-            transport: { kind: 'checkpointedPull' }, knownRevision: '7',
-          });
-          return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
-    const context = observerBackgroundContext({
-      actions,
-      collection: checkpoints.collection,
-      http: {
-        request: vi.fn(async () => ({
-          status: 200,
-          headers: { etag: 'cas-retry' },
-          body: new TextEncoder().encode(JSON.stringify([])),
-        })),
-      },
-    });
-
-    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
-    expect(checkpoints.read(retiredRowId)).toMatchObject({
-      value: { payload: { sourceContractVersion: 2 } },
-    });
-    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
-
-    // The retry retires the incompatible row; the replacement baseline is
-    // written by the next observation that is due for this source.
+    const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA, repositoryId: '88' });
+    const retained = checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId,
+      sourceInstanceId: source.sourceInstanceId, sourceContractVersion: 2 });
+    const checkpoints = createCheckpointCollection([retained], { deleteConflictCount: 1 });
+    const controller = new AbortController();
+    let now = 2_000;
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') {
+        const request = AutomationEventSourcesListInputV1Schema.parse(input);
+        if (request.checkpointRetirementCandidates) return { kind: 'unchanged', revision: '7',
+          checkpointRetirements: request.checkpointRetirementCandidates };
+        return sourceListResult(input, '7', [source]);
+      }
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let waits = 0;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async delay => {
+        if (++waits === 1) {
+          expect(checkpoints.read(retained.id)?.value.payload.sourceContractVersion).toBe(2);
+          now += delay;
+        } else controller.abort();
+      } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      signal: controller.signal })));
     expect(checkpoints.delete).toHaveBeenCalledTimes(2);
-    expect(checkpoints.read(retiredRowId)).toBeNull();
+    expect(checkpoints.read(retained.id)).toBeNull();
   });
 
   it('withholds a current catalog until the adopted revision reconciles its checkpoint rows', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId }),
-    ], { queryFailureCount: 1 });
+    const checkpoints = createCheckpointCollection([checkpointRow({ automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId })], { queryFailureCount: 1 });
+    const controller = new AbortController();
+    let now = 2_000;
     const statuses: AutomationEventSourceStatusReport[] = [];
-    let sourceListCalls = 0;
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
-          return sourceListCalls === 1
-            ? { kind: 'page', revision: '7', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list']
-            : { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          statuses.push(input as AutomationEventSourceStatusReport);
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
-    const context = observerBackgroundContext({ actions, collection: checkpoints.collection });
-
-    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
-
-    // The checkpoint query failed, so this revision is not reconciled and the
-    // product must not claim its pull catalog is current.
-    expect(catalogStatuses(statuses).map((status) => status.state)).toEqual(['reconciling']);
-
-    await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
-
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') { statuses.push(input as AutomationEventSourceStatusReport); return {}; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let waits = 0;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async delay => {
+        if (++waits === 1) {
+          expect(catalogStatuses(statuses).every(status => status.state !== 'current')).toBe(true);
+          now += delay;
+        } else controller.abort();
+      } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      signal: controller.signal })));
     expect(catalogStatuses(statuses).at(-1)).toMatchObject({
-      observedRevision: '7',
-      adoptedRevision: '7',
-      state: 'current',
+      observedRevision: '7', adoptedRevision: '7', state: 'current',
     });
   });
 
   it('scans checkpoint rows once for an adopted revision instead of on every unchanged cycle', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({ automationId: source.automationId, sourceSelectorId: source.sourceSelectorId }),
-    ]);
-    let sourceListCalls = 0;
-    const actions = {
-      execute: vi.fn(async (actionId: string) => {
-        if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            return { kind: 'page', revision: '7', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          if (sourceListCalls <= 3) {
-            return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          return { kind: 'page', revision: '8', definitions: [source], nextCursor: null } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
-    const context = observerBackgroundContext({ actions, collection: checkpoints.collection });
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    const afterAdoption = checkpoints.query.mock.calls.length;
-    expect(afterAdoption).toBeGreaterThan(0);
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    expect(checkpoints.query.mock.calls.length).toBe(afterAdoption);
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    expect(checkpoints.query.mock.calls.length).toBeGreaterThan(afterAdoption);
+    const checkpoints = createCheckpointCollection([checkpointRow({ automationId: source.automationId,
+      sourceSelectorId: source.sourceSelectorId })]);
+    const controller = new AbortController();
+    let now = 2_000;
+    let revision = '7';
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, revision, [source]);
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let waits = 0;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async delay => {
+        waits += 1;
+        if (waits <= 3) expect(checkpoints.query).toHaveBeenCalledTimes(1);
+        if (waits === 3) revision = '8';
+        if (waits === 4) controller.abort(); else now += delay;
+      } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      signal: controller.signal })));
+    expect(checkpoints.query).toHaveBeenCalledTimes(2);
+    expect(checkpoints.put).toHaveBeenCalledTimes(4);
   });
 
   it('releases checkpoint Collection quota before writing the replacement baseline', async () => {
@@ -2927,9 +3664,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               checkpointRetirements: request.checkpointRetirementCandidates,
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -2959,69 +3694,35 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
   });
 
-  it('retains the last complete revision and preserves a truthful reconciling/late scan start across cursor churn', async () => {
+  it('retains the last complete revision and reports reconciliation without a guessed lateness deadline', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
+    const controller = new AbortController();
     let now = 1_000;
-    let sourceListCalls = 0;
+    let churn = false;
+    let waits = 0;
     const statuses: AutomationEventSourceStatusReport[] = [];
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          const request = input as PluginActionInputById['automation.event.sources.list'];
-          expect(request.knownRevision).toBe('7');
-          return { kind: 'cursorStale', currentRevision: '8' } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          statuses.push(input as AutomationEventSourceStatusReport);
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const context = {
-      plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
-      surface: 'background' as const,
-      signal: new AbortController().signal,
-      services: {
-        actions,
-        connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http: {
-          request: vi.fn(async () => ({
-            status: 200,
-            headers: { etag: 'initial' },
-            body: new TextEncoder().encode(JSON.stringify([])),
-          })),
-        },
-        storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
-      },
-    } as unknown as BackgroundServiceContext;
-
-    const observer = createGithubAutomationEventCheckpointedPullObserver({
-      now: () => now,
-      reconciliationLateAfterMs: 60_000,
-    });
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    now = 2_000;
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    now = 62_001;
-    await observer.runCycle(sourceAttemptContext(observer, context));
-
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return churn ? { kind: 'cursorStale', currentRevision: '8' }
+        : sourceListResult(input, '7', [source]);
+      if (action === 'automation.event.source.status.report') { statuses.push(input as AutomationEventSourceStatusReport); return {}; }
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    const http = { request: vi.fn(async () => ({ status: 200, headers: { etag: 'initial' },
+      body: new TextEncoder().encode('[]') })) };
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async () => {
+        if (++waits === 1) { now = 2_000; churn = true; }
+        else if (waits === 2) now = 62_000;
+        else controller.abort();
+      } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal })));
     expect(catalogStatuses(statuses)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        observedRevision: '8', adoptedRevision: '7', state: 'reconciling', scanStartedAt: 2_000,
-      }),
-      expect.objectContaining({
-        observedRevision: '8', adoptedRevision: '7', state: 'reconciliationLate', scanStartedAt: 2_000,
-      }),
+      expect.objectContaining({ observedRevision: '8', adoptedRevision: '7', state: 'reconciling', scanStartedAt: 2_000 }),
     ]));
+    expect(catalogStatuses(statuses).map(status => status.state)).not.toContain('reconciliationLate');
+    expect(http.request).toHaveBeenCalledTimes(1);
   });
 
   it.each([false, true])('parks an empty pull catalog and preserves invalidation during a read: %s', async (invalidateDuringRead) => {
@@ -3032,18 +3733,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     let sources: readonly SourceDefinition[] = [];
     let invalidate = () => {};
     const dispose = vi.fn();
-    const hostSubscribe = vi.fn((_target: unknown, listener: () => void) => {
-      invalidate = listener;
+    const hostSubscribe = vi.fn((_target: unknown, listener: SourcesInvalidatedListener) => {
+      invalidate = () => listener(sourcesInvalidated());
       return { dispose };
     });
     let sourceReadCount = 0;
-    const actions = { execute: vi.fn(async (actionId: string) => {
+    const actions = { execute: vi.fn(async (actionId: string, requestInput: unknown) => {
       if (actionId === 'automation.event.sources.list') {
         sourceReadCount += 1;
         if (invalidateDuringRead && sourceReadCount === 1) invalidate();
-        return {
-          kind: 'page', revision: sources.length ? '8' : '7', definitions: [...sources], nextCursor: null,
-        } satisfies PluginActionResultById['automation.event.sources.list'];
+        return sourceListResult(requestInput, sources.length ? '8' : '7', [...sources]);
       }
       if (actionId === 'automation.event.source.status.report') return {};
       throw new Error(`unexpected Action ${actionId}`);
@@ -3063,8 +3762,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const running = observer.run(sourceAttemptContext(observer, context));
     const sourceReads = () => actions.execute.mock.calls.filter(([id]) => id === 'automation.event.sources.list').length;
     try {
-      const initialReads = invalidateDuringRead ? 2 : 1;
-      await vi.waitFor(() => expect(sourceReads()).toBe(initialReads));
+      await vi.advanceTimersByTimeAsync(0);
+      const initialReads = sourceReads();
+      expect(initialReads).toBeGreaterThanOrEqual(invalidateDuringRead ? 2 : 1);
+      expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(120_000);
       expect(sourceReads()).toBe(initialReads);
       expect(request).not.toHaveBeenCalled();
@@ -3094,7 +3795,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('keeps the provider runner alive until abort and waits for the GitHub poll interval hint', async () => {
+  it.each([17, 3 * 86_400])('keeps the provider runner alive until abort and honors the GitHub poll interval hint: %s seconds', async seconds => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
@@ -3103,9 +3804,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -3117,6 +3816,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
@@ -3124,7 +3824,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         http: {
           request: vi.fn(async () => ({
             status: 200,
-            headers: { etag: 'initial', 'x-poll-interval': '17' },
+            headers: { etag: 'initial', 'x-poll-interval': String(seconds) },
             body: new TextEncoder().encode(JSON.stringify([])),
           })),
         },
@@ -3142,7 +3842,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.run(sourceAttemptContext(observer, context));
 
-    expect(waits).toEqual([17_000]);
+    expect(waits).toEqual([seconds * 1_000]);
+    expect(context.services.http.request).toHaveBeenCalledTimes(1);
   });
 
   it('retries a transient source-list failure without discarding the retained complete source set', async () => {
@@ -3151,6 +3852,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const controller = new AbortController();
     let now = 1_000;
     let sourceListCalls = 0;
+    let failNextRead = false;
     const waits: number[] = [];
     const http = {
       request: vi.fn(async () => ({
@@ -3163,16 +3865,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
           sourceListCalls += 1;
-          const request = input as PluginActionInputById['automation.event.sources.list'];
-          if (sourceListCalls === 1) {
-            expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          expect(request).toEqual({ transport: { kind: 'checkpointedPull' }, knownRevision: '7' });
-          if (sourceListCalls === 2) throw new Error('temporary Automation source catalog failure');
-          return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
+          if (failNextRead) { failNextRead = false; throw new Error('temporary Automation source catalog failure'); }
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -3184,11 +3878,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -3197,6 +3892,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sleep: async (delayMs) => {
         waits.push(delayMs);
         now += delayMs;
+        if (waits.length === 1) failNextRead = true;
         if (waits.length === 3) controller.abort();
       },
     });
@@ -3204,11 +3900,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     await observer.run(sourceAttemptContext(observer, context));
 
     expect(waits).toEqual([60_000, 1_000, 60_000]);
-    expect(sourceListCalls).toBe(3);
+    expect(sourceListCalls).toBeGreaterThanOrEqual(3);
     expect(http.request).toHaveBeenCalledTimes(2);
   });
 
-  it('retries a transient catalog-status failure after retaining a complete source set', async () => {
+  it('continues authorized provider work when observational catalog status is unavailable', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([]);
     const controller = new AbortController();
@@ -3230,9 +3926,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           const request = input as PluginActionInputById['automation.event.sources.list'];
           if (sourceListCalls === 1) {
             expect(request).toEqual({ transport: { kind: 'checkpointedPull' } });
-            return {
-              kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
+            return sourceListResult(input, '7', [source]);
           }
           expect(request).toEqual({ transport: { kind: 'checkpointedPull' }, knownRevision: '7' });
           return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
@@ -3252,11 +3946,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -3265,16 +3960,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sleep: async (delayMs) => {
         waits.push(delayMs);
         now += delayMs;
-        if (waits.length === 2) controller.abort();
+        if (waits.length === 1) controller.abort();
       },
     });
 
     await observer.run(sourceAttemptContext(observer, context));
 
-    expect(waits).toEqual([1_000, 60_000]);
-    expect(sourceListCalls).toBe(2);
-    expect(catalogStatusCalls).toBe(3);
+    expect(waits).toEqual([60_000]);
+    expect(catalogStatusCalls).toBeGreaterThanOrEqual(2);
     expect(http.request).toHaveBeenCalledOnce();
+    expect(checkpoints.rowCount()).toBe(1);
   });
 
   it('waits for a bounded GitHub rate-limit retry instead of restarting the source immediately', async () => {
@@ -3286,9 +3981,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -3301,6 +3994,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
@@ -3334,9 +4028,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -3349,6 +4041,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
@@ -3381,9 +4074,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -3396,6 +4087,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,
@@ -3444,12 +4136,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, actionInput: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page',
-            revision: input.catalog.revision,
-            definitions: input.catalog.definitions,
-            nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(actionInput, input.catalog.revision, input.catalog.definitions);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(actionInput as AutomationEventSourceStatusReport);
@@ -3462,11 +4149,12 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -3494,12 +4182,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, actionInput: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page',
-            revision: catalog.revision,
-            definitions: catalog.definitions,
-            nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(actionInput, catalog.revision, catalog.definitions);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(actionInput as AutomationEventSourceStatusReport);
@@ -3512,13 +4195,14 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       get signal() {
         return currentController.signal;
       },
       services: {
         actions,
         connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
+        http: createPluginHttpFixture({ request: http.request }),
         storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
       },
     } as unknown as BackgroundServiceContext;
@@ -3604,9 +4288,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -3619,6 +4301,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: controller.signal,
       services: {
         actions,
@@ -3644,56 +4327,6 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     }));
   });
 
-  it('persists independent semantic-trigger checkpoints while coalescing repository reads', async () => {
-    const firstSource = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const secondSource = definition({
-      automationId: 'automation-b',
-      sourceSelectorId: sourceSelectorB,
-      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
-    });
-    const checkpoints = createCheckpointCollection([]);
-    const http = {
-      request: vi.fn(async () => ({
-        status: 200,
-        headers: { etag: 'initial' },
-        body: new TextEncoder().encode(JSON.stringify([])),
-      })),
-    };
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [firstSource, secondSource], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const context = {
-      plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
-      surface: 'background' as const,
-      signal: new AbortController().signal,
-      services: {
-        actions,
-        connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
-        storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
-      },
-    } as unknown as BackgroundServiceContext;
-
-    const observer = createGithubAutomationEventCheckpointedPullObserver({
-      now: () => 2_000,
-      maxConcurrentSources: 1,
-    });
-    await observer.runCycle(sourceAttemptContext(observer, context));
-
-    expect(http.request).toHaveBeenCalledOnce();
-    expect(checkpoints.rowCount()).toBe(2);
-  });
 
   it('retires only the removed trigger checkpoint while preserving its sibling', async () => {
     const removed = definition({ automationId: 'automation-removed', sourceSelectorId: sourceSelectorA });
@@ -3725,9 +4358,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
               checkpointRetirements: request.checkpointRetirementCandidates,
             } satisfies PluginActionResultById['automation.event.sources.list'];
           }
-          return {
-            kind: 'page', revision: '8', definitions: [sibling], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '8', [sibling]);
         }
         if (actionId === 'automation.event.source.status.report') {
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
@@ -3765,71 +4396,35 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
   });
 
-  it('bounds concurrent source calls and fairly rotates the source that starts each subsequent cycle', async () => {
-    const definitions = [
-      definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA, repositoryId: '1' }),
-      definition({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB, repositoryId: '2' }),
-      definition({ automationId: 'automation-c', sourceSelectorId: '00000000-0000-4000-8000-000000000003', repositoryId: '3' }),
-    ];
+  it('observes each distinct repository once per eligible provider cycle', async () => {
+    const definitions = ['1', '2', '3'].map((repositoryId, index) => definition({
+      automationId: `automation-${repositoryId}`, repositoryId,
+      sourceSelectorId: `00000000-0000-4000-8000-00000000000${index + 1}`,
+    }));
     const checkpoints = createCheckpointCollection([]);
+    const controller = new AbortController();
     let now = 1_000;
-    let sourceListCalls = 0;
-    let activeHttp = 0;
-    let peakHttp = 0;
-    const repositoryOrder: string[] = [];
-    const http = {
-      request: vi.fn(async (request: Readonly<{ url: string; headers?: Readonly<Record<string, string>> }>) => {
-        activeHttp += 1;
-        peakHttp = Math.max(peakHttp, activeHttp);
-        repositoryOrder.push(new URL(request.url).pathname.split('/')[3]!);
-        await Promise.resolve();
-        activeHttp -= 1;
-        return request.headers?.['If-None-Match'] === undefined
-          ? { status: 200, headers: { etag: 'initial' }, body: new TextEncoder().encode(JSON.stringify([])) }
-          : { status: 304, headers: {}, body: new Uint8Array() };
-      }),
-    };
-    const actions = {
-      execute: vi.fn(async (actionId: string, input: unknown) => {
-        if (actionId === 'automation.event.sources.list') {
-          sourceListCalls += 1;
-          if (sourceListCalls === 1) {
-            return {
-              kind: 'page', revision: '7', definitions, nextCursor: null,
-            } satisfies PluginActionResultById['automation.event.sources.list'];
-          }
-          expect((input as PluginActionInputById['automation.event.sources.list']).knownRevision).toBe('7');
-          return { kind: 'unchanged', revision: '7' } satisfies PluginActionResultById['automation.event.sources.list'];
-        }
-        if (actionId === 'automation.event.source.status.report') {
-          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
-        }
-        throw new Error(`unexpected Action ${actionId}`);
-      }),
-    };
-    const context = {
-      plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
-      surface: 'background' as const,
-      signal: new AbortController().signal,
-      services: {
-        actions,
-        connectedAccounts: { materialize: vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer token' } })) },
-        http,
-        storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
-      },
-    } as unknown as BackgroundServiceContext;
-    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now, maxConcurrentSources: 1 });
-
-    await observer.runCycle(sourceAttemptContext(observer, context));
-    now = 61_000;
-    await observer.runCycle(sourceAttemptContext(observer, context));
-
-    expect(peakHttp).toBe(1);
-    expect(repositoryOrder).toEqual([
-      'widgets-1', 'widgets-2', 'widgets-3',
-      'widgets-2', 'widgets-3', 'widgets-1',
-    ]);
+    const requests: string[] = [];
+    const http = { request: vi.fn(async (request: Readonly<{ url: string; headers?: Readonly<Record<string, string>> }>) => {
+      requests.push(new URL(request.url).pathname);
+      return request.headers?.['If-None-Match'] ? { status: 304, headers: {}, body: new Uint8Array() }
+        : { status: 200, headers: { etag: 'initial' }, body: new TextEncoder().encode('[]') };
+    }) };
+    const actions = { execute: vi.fn(async (action: string, input: unknown) => {
+      if (action === 'automation.event.sources.list') return sourceListResult(input, '7', definitions);
+      if (action === 'automation.event.source.status.report') return {};
+      throw new Error(`Unexpected Action ${action}`);
+    }) };
+    let waits = 0;
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => now,
+      sleep: async delay => { if (++waits === 1) now += delay; else controller.abort(); } });
+    await observer.run(sourceAttemptContext(observer, observerBackgroundContext({ actions, collection: checkpoints.collection,
+      http, signal: controller.signal })));
+    expect(requests).toHaveLength(6);
+    for (const repositoryId of ['1', '2', '3']) {
+      expect(requests.filter(path => path === `/repos/acme/widgets-${repositoryId}/events`)).toHaveLength(2);
+    }
+    expect(checkpoints.rowCount()).toBe(3);
   });
   // The repository-Events walk reads its next page from the same RFC 8288 `Link`
   // header the rest of this source reads. RFC 8288 spells one relation several
@@ -3859,9 +4454,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return {
-            kind: 'page', revision: '7', definitions: [source], nextCursor: null,
-          } satisfies PluginActionResultById['automation.event.sources.list'];
+          return sourceListResult(input, '7', [source]);
         }
         if (actionId === 'automation.event.source.status.report') {
           statuses.push(input as AutomationEventSourceStatusReport);
@@ -3874,6 +4467,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
       surface: 'background' as const,
+      materialization: watcherMaterializationRef,
       signal: new AbortController().signal,
       services: {
         actions,

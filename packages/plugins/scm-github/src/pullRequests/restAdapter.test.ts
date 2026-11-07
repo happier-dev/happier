@@ -34,6 +34,123 @@ function jsonResponse(body: unknown, init?: Readonly<{
 }
 
 describe('GitHub REST pull request adapter', () => {
+  it('keeps host-admitted accounts separate even when credential bytes match', async () => {
+    const otherProvider = { ...githubProvider, id: 'scm.github.other' };
+    let requests = 0;
+    const adapter = createGithubRestAdapter({
+      fetcher: async () => {
+        requests += 1;
+        return requests === 1
+          ? jsonResponse({ message: 'Secondary rate limit' }, { status: 403, headers: { 'retry-after': '60' } })
+          : jsonResponse([]);
+      },
+    });
+    const runtimeServices: HostingProviderRuntimeServices = {
+      resolveScmHostingTokenMaterialization: async ({ providerId }) => ({
+        kind: 'available',
+        token: 'matching-credential-bytes',
+        account: {
+          service: { pluginId: 'happier.scm-github', localId: 'github-account' },
+          accountId: providerId,
+        },
+      }),
+    };
+
+    await expect(adapter.listPullRequests({ provider: githubProvider, head: 'topic', runtimeServices }))
+      .rejects.toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    await expect(adapter.listPullRequests({ provider: otherProvider, head: 'topic', runtimeServices })).resolves.toEqual([]);
+    expect(requests).toBe(2);
+  });
+
+  it('blocks later adapter invocations after GitHub throttles the account', async () => {
+    let requests = 0;
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'backoff-token', profileKey: 'github:backoff' }),
+      fetcher: async () => {
+        requests += 1;
+        return jsonResponse({ message: 'Secondary rate limit' }, {
+          status: 403,
+          headers: { 'retry-after': '60' },
+        });
+      },
+    });
+    const input = { provider: githubProvider, head: 'topic' };
+
+    await expect(adapter.listPullRequests(input)).rejects.toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    await expect(adapter.listPullRequests(input)).rejects.toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
+    expect(requests).toBe(1);
+  });
+
+  it('shares simultaneous safe reads but sends a fresh read after settlement', async () => {
+    let requests = 0;
+    let release = () => {};
+    let notifyStarted = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'coalesced-token', profileKey: 'github:coalesced' }),
+      fetcher: async () => {
+        requests += 1;
+        notifyStarted();
+        await pending;
+        return jsonResponse([]);
+      },
+    });
+    const input = { provider: githubProvider, head: 'topic' };
+    const first = adapter.listPullRequests(input);
+    const second = adapter.listPullRequests(input);
+    await started;
+    release();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([[], []]);
+    expect(requests).toBe(1);
+    await expect(adapter.listPullRequests(input)).resolves.toEqual([]);
+    expect(requests).toBe(2);
+  });
+
+  it('preserves an injected HTTP boundary that supplies JSON without readable text', async () => {
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'json-only-token' }),
+      fetcher: async () => ({
+        ...jsonResponse([]),
+        text: async () => { throw new Error('Text is unavailable at this HTTP boundary'); },
+      }),
+    });
+
+    await expect(adapter.listPullRequests({ provider: githubProvider, head: 'topic' })).resolves.toEqual([]);
+  });
+
+  it('cancels one shared-read caller without aborting the peer HTTP request', async () => {
+    let release = () => {};
+    let notifyStarted = () => {};
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    let transportSignal: AbortSignal | null | undefined;
+    const adapter = createGithubRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'cancel-peer-token' }),
+      fetcher: async (_url, init) => {
+        transportSignal = init?.signal;
+        notifyStarted();
+        await pending;
+        return jsonResponse([]);
+      },
+    });
+    const controller = new AbortController();
+    const cancelled = adapter.listPullRequests({ provider: githubProvider, head: 'topic', signal: controller.signal })
+      .catch((error: unknown) => error);
+    const peer = adapter.listPullRequests({ provider: githubProvider, head: 'topic' });
+    await started;
+    controller.abort(new DOMException('Cancelled', 'AbortError'));
+    try {
+      expect(transportSignal?.aborted).toBe(false);
+    } finally {
+      release();
+      await peer;
+    }
+    expect(await cancelled).toMatchObject({ name: 'AbortError' });
+    await expect(peer).resolves.toEqual([]);
+  });
+
   it('cancels pending host credential materialization before making an HTTP request', async () => {
     const controller = new AbortController();
     const abortReason = new DOMException('Cancelled', 'AbortError');
@@ -148,7 +265,7 @@ describe('GitHub REST pull request adapter', () => {
       Authorization: ['Bearer', 'redacted-test-token'].join(' '),
       'X-GitHub-Api-Version': GITHUB_API_VERSION,
     });
-    expect(requests[0]?.init?.signal).toBe(controller.signal);
+    expect(requests[0]?.init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('uses operation-scoped runtime token materialization when constructor token resolver is absent', async () => {
@@ -324,14 +441,18 @@ describe('GitHub REST pull request adapter', () => {
     });
   });
 
-  it('does not turn an unhinted throttle into a forge-provided retry instant', async () => {
+  it('preserves the classifier minimum retry deadline for an unhinted throttle', async () => {
     const adapter = createGithubRestAdapter({
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
       fetcher: async () => jsonResponse({ message: 'API rate limit exceeded.' }, { status: 429 }),
     });
+    const before = Date.now();
     const error = await adapter.listPullRequests({ provider: githubProvider, head: 'feature/throttled' }).catch((error: unknown) => error);
-    expect(error).toMatchObject({ errorCode: 'REMOTE_RATE_LIMITED' });
-    expect(error).not.toMatchObject({ retryNotBeforeMs: expect.any(Number) });
+    expect(error).toMatchObject({
+      errorCode: 'REMOTE_RATE_LIMITED',
+      retryNotBeforeMs: expect.any(Number),
+    });
+    expect((error as { retryNotBeforeMs: number }).retryNotBeforeMs).toBeGreaterThanOrEqual(before + 60_000);
   });
 
   it('still reports an unthrottled GitHub 403 as remote authentication required', async () => {

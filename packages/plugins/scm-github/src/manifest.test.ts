@@ -6,20 +6,30 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import * as tar from 'tar';
-import { createPluginActionPresentUserGate, ingestPluginManifestV2, PluginActionContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
+import { createPluginActionPresentUserGate, ingestPluginManifestV2, normalizePluginActionInputHintsV2, PluginActionContributionV2Schema, PluginNotificationCategoryContributionV2Schema, pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { assertTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
 
 import { resolveWindowsCommandInvocation } from '../../../../scripts/pipeline/lib/windows/resolveWindowsCommandInvocation.mjs';
 import {
   GITHUB_BRAND_RESOURCE_ID,
+  GITHUB_SECURITY_ALERT_ACTION_IDS_V1,
   GITHUB_TRIAGE_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   PLUGIN_MANIFEST,
 } from './manifest.js';
+import { GITHUB_CI_ACTION_IDS_V1 } from './actions/actionIds.js';
+import { GITHUB_DEPLOYMENT_MONITORING_OPEN_ACTION_ID } from './actions/deploymentMonitoring.js';
+import { GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID } from './actions/deploymentReviewProtocol.js';
+import { LOCAL_ACT_ACTION_IDS } from './actions/local/contracts.js';
+import { GITHUB_CI_MOUNTED_ACTION_ID_V1 } from './actions/mounted.js';
+import { GITHUB_OVERVIEW_TARGET_ACTION_ID } from './actions/overviewContracts.js';
+import { GITHUB_RELEASE_ACTION_IDS_V1, GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 } from './releases/contracts.js';
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from './observations/githubProviderContracts.js';
+import { GITHUB_NATIVE_READ_ACTIONS } from './triage/readActions.js';
+import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from './triage/fileViewedContracts.js';
 
 // Records the selection basis; it does not make the external source or terms immutable.
 const GITHUB_BRAND_ASSET_PROVENANCE = {
@@ -34,6 +44,12 @@ const GITHUB_BRAND_ASSET_PROVENANCE = {
 } as const;
 
 const BRAND_ASSET_ARCHIVE_PATH = 'assets/brand.png';
+it('leaves review placement to the host without removing the agent workspace input', () => {
+  const action = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace);
+  expect(action).toBeDefined();
+  expect(normalizePluginActionInputHintsV2(action?.inputHints, action?.inputSchema)?.fields).toEqual([]);
+  expect(normalizePluginActionInputHintsV2(undefined, action?.inputSchema)?.fields?.some(field => field.path === 'workspace')).toBe(true);
+});
 it('takes the person’s own press as consent for the review workspace while agents and a saved Ask still ask', () => {
   const action = PluginActionContributionV2Schema.parse(PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace));
   // Owner ruling "Agent actions: one shared flow" (2026-11-07): no second approval for the checkout the person asked for.
@@ -90,6 +106,91 @@ async function readPackedGitHubBrandAsset(): Promise<Buffer> {
 }
 
 describe('GitHub SCM manifest', () => {
+  it('registers CI resource navigation on its real destinations without claiming Triage’s SCM card slot', () => {
+    const views = PLUGIN_MANIFEST.contributes.ui!.views!;
+    expect(views.filter(view => view.container === 'scmPullRequest')).toEqual([]);
+    for (const targetKind of ['session', 'app'] as const) {
+      const handlers = views.filter(view => view.target.kind === targetKind && 'resourceLinks' in view && view.resourceLinks?.some(link => link.kind === 'ciRun'));
+      expect(handlers).toHaveLength(1);
+      const handler = handlers[0]!;
+      expect(handler.container).toBe(targetKind === 'session' ? 'detailsTab' : 'appPage');
+      expect('resourceLinks' in handler && handler.resourceLinks).toEqual([{ kind: 'ciRun',
+        urlPattern: expect.any(String), destination: handler.id }]);
+      const link = 'resourceLinks' in handler ? handler.resourceLinks?.[0] : undefined;
+      const url = 'https://github.com/octo-org/example-app/actions/runs/42?tab=checks#logs';
+      expect(link && new RegExp(link.urlPattern).exec(url)?.[0]).toBe(url);
+    }
+  });
+
+  it('opens deployment review from both localized notification buttons without a decision Action or page override', () => {
+    const category = PluginNotificationCategoryContributionV2Schema.parse(
+      PLUGIN_MANIFEST.contributes.notifications?.find(category => category.id === 'github-deployment-review'),
+    );
+    expect(category.buttons).toEqual([
+      { id: 'allow', label: { key: 'plugins.github.deploymentReview.allow', fallback: 'Allow' }, effect: { kind: 'open' } },
+      { id: 'deny', label: { key: 'plugins.github.deploymentReview.deny', fallback: 'Deny' }, effect: { kind: 'open' } },
+    ]);
+  });
+
+  it('admits the complete published manifest with every purpose binding and event delivery contract', () => {
+    const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    const diagnostics = result.ok ? [] : result.diagnostics.map(diagnostic => ({
+      ...diagnostic,
+      actionId: diagnostic.path?.[0] === 'contributes' && diagnostic.path[1] === 'actions'
+        && typeof diagnostic.path[2] === 'number'
+        ? PLUGIN_MANIFEST.contributes.actions?.[diagnostic.path[2]]?.id : undefined,
+    }));
+    expect(diagnostics).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('ingests native nullable Channels transport setup without an Account-only form hint', () => {
+    const setup = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === 'github/prepare-repository');
+    expect(setup).toBeDefined();
+    expect(PluginActionContributionV2Schema.safeParse(setup).success).toBe(true);
+    expect(setup?.connectedAccountPurposeBindings).toEqual([{ path: 'credentialRef', purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE }]);
+  });
+  it.each([
+    ['github/pull-request/merge', {}, true],
+    ['github/pull-request/merge', { intent: 'withoutWaiting' }, true],
+    ['github/pull-request/enqueue', {}, false],
+    ['github/pull-request/dequeue', {}, false],
+    ['github/pull-request/auto-merge-set', { enabled: true }, true],
+    ['github/pull-request/auto-merge-set', { enabled: false }, false],
+    ['github/dependabot-alert/dismiss', { reason: 'not_used' }, false],
+    ['github/dependabot-alert/reopen', {}, false],
+    ['github/code-scanning-alert/dismiss', { reason: 'false positive' }, false],
+    ['github/code-scanning-alert/reopen', {}, false],
+  ] as const)('uses host-proved person confirmation for %s %j', async (id, input, confirms) => {
+    const declaration = PLUGIN_MANIFEST.contributes.actions?.find((action) => action.id === id);
+    expect(declaration).toBeDefined();
+    const action = PluginActionContributionV2Schema.parse(declaration);
+    const makeGate = (approvalRequiredByActionSettings?: boolean) => createPluginActionPresentUserGate({ resolve: () => ({
+      status: 'resolved' as const, action,
+      policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${id}`, occurrenceId: 'source-occurrence',
+        dangerLevel: action.dangerLevel, scopes: action.scopes, surfaces: action.surfaces,
+        ...(action.confirmation === undefined ? {} : { confirmation: action.confirmation }),
+        ...(action.confirmationWhen === undefined ? {} : { confirmationWhen: action.confirmationWhen }),
+        ...(approvalRequiredByActionSettings === undefined ? {} : { approvalRequiredByActionSettings }),
+        authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+          resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] },
+      },
+    }) });
+    const gate = makeGate();
+    expect(await gate.admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input }))
+      .toMatchObject(confirms ? { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' } : { status: 'admitted' });
+    for (const surface of ['agent', 'mcp', 'cli'] as const) {
+      expect(await gate.admit({ surface, invocationSurface: surface, input }))
+        .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+    }
+    // A UI route alone is not proof that a person is present.
+    expect(await gate.admit({ surface: 'ui', invocationSurface: 'ui', input }))
+      .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+    expect(await makeGate(true).admit({ surface: 'ui', invocationSurface: 'ui', invocationAuthority: 'present_user', input }))
+      .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+    expect(await makeGate(false).admit({ surface: 'agent', invocationSurface: 'agent', input }))
+      .toMatchObject({ status: 'admitted' });
+  });
   it('declares one conforming Triage source contribution with GitHub vocabulary', () => {
     // Declaring the role Actions without their contribution is the loud
     // "registered but never declared" failure this assertion exists to catch.
@@ -100,7 +201,7 @@ describe('GitHub SCM manifest', () => {
       | Readonly<{ kinds?: readonly Readonly<{ id: string }>[] }>
       | undefined)?.kinds ?? [];
     expect(contributionKinds.map((kind) => kind.id))
-      .toEqual(['pull-request', 'issue']);
+      .toEqual(['pull-request', 'issue', 'dependabot-alert', 'code-scanning-alert']);
     // Flattening another forge's word into GitHub's is the first step toward
     // flattening the rest of its vocabulary.
     expect(JSON.stringify(contribution?.descriptor)).not.toContain('merge-request');
@@ -183,23 +284,44 @@ describe('GitHub SCM manifest', () => {
     }
   });
 
-  it('declares the exact mounted-only placement for its UI-reachable reads', () => {
+  it('declares the exact mounted-only placement for its contextual UI Actions', () => {
     const actions = new Map(
       (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
 
-    // Discovery also admits automation through the shared Protocol role;
-    // authoritative reads retain their targeted-plugin path. All reads declare the same
-    // mounted-only placement: the explicit empty list withdraws them from
+    // Reads and writes retain their contextual UI/Protocol entry points.
+    // The explicit empty list withdraws them from
     // global placement discovery without disabling any invocation surface.
     const mountedOnly = [
       GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
       GITHUB_TRIAGE_ACTION_IDS_V1.get,
       GITHUB_TRIAGE_ACTION_IDS_V1.readPullRequestStatus,
+      GITHUB_TRIAGE_ACTION_IDS_V1.linkSession,
+      GITHUB_TRIAGE_ACTION_IDS_V1.readSessionLinks,
+      GITHUB_TRIAGE_ACTION_IDS_V1.readFixPullRequests,
       ...Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1),
+      ...Object.values(GITHUB_FILE_VIEWED_ACTION_IDS_V1),
       GITHUB_TRIAGE_ACTION_IDS_V1.create,
       GITHUB_TRIAGE_ACTION_IDS_V1.edit,
       GITHUB_TRIAGE_ACTION_IDS_V1.transition,
+      ...Object.values(GITHUB_CI_ACTION_IDS_V1),
+      GITHUB_CI_MOUNTED_ACTION_ID_V1,
+      ...Object.values(LOCAL_ACT_ACTION_IDS),
+      ...Object.values(GITHUB_RELEASE_ACTION_IDS_V1),
+      GITHUB_RELEASE_MOUNTED_ACTION_ID_V1,
+      GITHUB_OVERVIEW_TARGET_ACTION_ID,
+      GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID,
+      GITHUB_DEPLOYMENT_MONITORING_OPEN_ACTION_ID,
+      // Plan 07's exact selected-alert/detail reads, not global commands.
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.read,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.listLocations,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.readLocation,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.readFixPullRequest,
+      // The selected-resource resolver behind deep links, opened from context only.
+      GITHUB_TRIAGE_ACTION_IDS_V1.resolveResource,
+      // Each read's Machine-native companion is a plugin-internal execution target
+      // (surfaces: ['plugin']), never a globally placed command.
+      ...Object.keys(GITHUB_NATIVE_READ_ACTIONS),
     ];
     for (const id of mountedOnly) {
       expect(actions.get(id)?.placementBindings, id).toEqual([]);
@@ -337,20 +459,30 @@ describe('GitHub SCM manifest', () => {
 
     // Task roles reach exactly the same named Actions. Existing native writes
     // remain source-owned detail operations outside those roles.
-    const roleBound = JSON.stringify(PLUGIN_MANIFEST.contributes.targetedPluginContributions);
+    const roleBound = JSON.stringify(PLUGIN_MANIFEST.contributes.targetedPluginContributions?.map(contribution => contribution.operations));
     for (const id of declared) {
       if (taskRoles.has(id)) expect(roleBound).toContain(id);
       else expect(roleBound).not.toContain(id);
     }
 
-    // And the details-panel list is exact: these eighteen and nothing else.
+    // Plan 07 extends the same selected-entry detail actions to findings.
+    const alertMutations = [
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissDependabot,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenDependabot,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.dismissCodeScanning,
+      GITHUB_SECURITY_ALERT_ACTION_IDS_V1.reopenCodeScanning,
+    ];
+    for (const id of alertMutations) {
+      expect(actions.get(id)?.placementBindings, id).toEqual(['detailsPanel']);
+    }
+    // Keep the full inventory exact so an accidental global/detail placement fails.
     expect(
       (PLUGIN_MANIFEST.contributes.actions ?? [])
         .filter((action) => Array.isArray(action.placementBindings)
           && action.placementBindings.includes('detailsPanel'))
         .map((action) => action.id)
         .sort(),
-    ).toEqual(declared.filter((id) => !taskRoles.has(id)).sort());
+    ).toEqual([...declared.filter((id) => !taskRoles.has(id)), ...alertMutations].sort());
   });
 
   it.each(['agent', 'mcp', 'cli'] as const)('admits discovery and detail reads but requires current intent for a %s issue write', async (surface) => {
@@ -405,7 +537,7 @@ describe('GitHub SCM manifest', () => {
 
   it('declares and packages the official GitHub brand mark through the generic Resource owner', async () => {
     expect(PLUGIN_MANIFEST.brand).toEqual({ iconResourceId: GITHUB_BRAND_RESOURCE_ID, monochrome: true });
-    expect(PLUGIN_MANIFEST.contributes.resources).toEqual([{
+    expect(PLUGIN_MANIFEST.contributes.resources?.filter(({ id }) => id === GITHUB_BRAND_RESOURCE_ID)).toEqual([{
       id: GITHUB_BRAND_RESOURCE_ID,
       kind: 'asset',
       path: 'assets/brand.png',

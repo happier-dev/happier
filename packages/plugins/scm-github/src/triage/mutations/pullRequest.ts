@@ -1,4 +1,4 @@
-import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriagePullRequestStatusV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type {
   ReviewCommentClaimPublicationDispatchResponseV1,
   ReviewCommentPublicationEntryV1,
@@ -13,14 +13,10 @@ import {
 } from '@happier-dev/plugin-sdk/reviews';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
-import type {
-  GithubApiMethodV1,
-  GithubApiResponseV1,
-} from '../../observations/githubApiClient.js';
+import { sendGithubRestRequest as send } from './http.js';
 
 import {
   classifyGithubResponseFailure,
-  classifyGithubTransportFailure,
   isGithubSuccessStatus,
   isGithubWriteResponseAmbiguous,
 } from '../errors.js';
@@ -42,10 +38,18 @@ import {
 } from '../reviews.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
 import { readGithubRepositoryIdFromCollisionScope } from '../identity.js';
+import { readGithubPullRequestStatusForAdmittedEntry } from '../detailOperations.js';
+import {
+  classifyGithubPullRequestMergeRequirementsV1,
+  githubMergeRequirementAcknowledgementMatchesV1,
+} from './mergeRequirements.js';
 
 import type {
   GithubMergeMethodV1,
   GithubPullRequestReviewVerdictV1,
+  GithubPullRequestMergeResultV1,
+  GithubPullRequestNativeMergeResultV1,
+  GithubSkippedRequirementV1,
 } from './contracts.js';
 import { sendGithubGraphqlRequest } from './graphql.js';
 import {
@@ -70,7 +74,7 @@ import {
  * observation is what a refusal hands back so the host re-renders what is true
  * now rather than prompting a blind retry.
  *
- * The head pin is carried only by `merge`, and it is compared, never filled. The
+ * Head-pinned transitions compare the user's pin, never fill it. The
  * three forbidden softenings are the whole reason this module reads before it
  * writes: filling the pin from a fresh read reintroduces the exact race, an
  * automatic retry after the head moved re-decides on the user's behalf, and a
@@ -114,17 +118,9 @@ type Uncertain = Readonly<{
 }>;
 type Failed = Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>;
 
-export type GithubMergeRefusalReasonV1 =
-  | 'head_advanced'
-  | 'state_changed'
-  | 'not_mergeable'
-  | 'merge_method_not_allowed';
+export type GithubMergeRefusalReasonV1 = Extract<GithubPullRequestMergeResultV1, { kind: 'refused' }>['reason'];
 
-export type GithubPullRequestMergeOutcomeV1 =
-  | Applied
-  | Refused<GithubMergeRefusalReasonV1>
-  | Uncertain
-  | Failed;
+export type GithubPullRequestMergeOutcomeV1 = GithubPullRequestMergeResultV1;
 
 export type GithubPullRequestStateOutcomeV1 =
   | Applied
@@ -181,6 +177,7 @@ type Current =
     ok: true;
     facts: GithubPullRequestFactsV1;
     observation: ProjectedObservation;
+    overview: GithubPullRequestReadV1['overview'];
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
@@ -190,6 +187,7 @@ function reduce(read: GithubPullRequestReadV1): Current {
       ok: true as const,
       facts: read.facts,
       observation: toTriageObservation(read.observation),
+      overview: read.overview,
     });
   }
   if (read.observation.kind === 'unresolved') {
@@ -205,32 +203,6 @@ function reduce(read: GithubPullRequestReadV1): Current {
 
 function pullRequestUrl(route: GithubRepositoryRouteV1, entryNumber: string): string {
   return buildGithubApiUrl(['repos', route.owner, route.name, 'pulls', entryNumber]);
-}
-
-/** One write request, with its JSON body encoded here and nowhere else. */
-async function send(
-  dependencies: GithubMutationDependenciesV1,
-  request: Readonly<{ url: string; method: GithubApiMethodV1; body: Readonly<Record<string, unknown>> }>,
-): Promise<
-  | Readonly<{ ok: true; response: GithubApiResponseV1 }>
-  | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>
-> {
-  try {
-    return Object.freeze({
-      ok: true as const,
-      response: await dependencies.client.request({
-        url: request.url,
-        method: request.method,
-        headers: { 'content-type': 'application/json' },
-        body: new TextEncoder().encode(JSON.stringify(request.body)),
-      }),
-    });
-  } catch (error) {
-    return Object.freeze({
-      ok: false as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(error)),
-    });
-  }
 }
 
 /**
@@ -276,6 +248,9 @@ function alreadySatisfied(current: Current & Readonly<{ ok: true }>): Applied {
     observation: current.observation,
   });
 }
+
+// Sibling PR content edits share the same read reduction and wire writer.
+export { reduce as reduceGithubPullRequestMutationRead, send as sendGithubPullRequestMutation };
 
 function openResolver(dependencies: GithubMutationDependenciesV1): GithubRepositoryReaderV1 {
   return dependencies.repositories
@@ -634,6 +609,15 @@ export async function publishGithubPullRequestReview(
           return `${entry.body}\n\n${formatReviewCommentPublicationMarkerV1('entry', correlation)}`;
         }),
         ...(claim.instructions.verdict === 'dispatch' && verdictMarker !== null ? [verdictMarker] : []),
+        // A partial retry can post new inline entries with an already settled
+        // verdict. Mark that new review body with its dispatched entries, never
+        // the settled verdict's marker, so both intake and reconciliation keep
+        // their existing canonical publication identities.
+        ...(claim.instructions.verdict === 'dispatch' ? [] : input.publicationPlan.entries.flatMap((entry, index) => (
+          claim.instructions.entries[index] === 'dispatch' && !verdictSummaryEntryIndexes.has(index)
+            ? [formatReviewCommentPublicationMarkerV1('entry', correlationByCommentId.get(entry.happierCommentId)!)]
+            : []
+        ))),
       ].join('\n\n'),
       comments,
     },
@@ -917,13 +901,14 @@ export async function mergeGithubPullRequest(
     mergeMethod: GithubMergeMethodV1;
     commitTitle?: string;
     commitMessage?: string;
+    intent?: 'normal' | 'withoutWaiting';
+    skippedRequirements?: readonly GithubSkippedRequirementV1[];
   }>,
   dependencies: GithubMutationDependenciesV1,
 ): Promise<GithubPullRequestMergeOutcomeV1> {
   const repositories = openResolver(dependencies);
-  const current = reduce(
-    await readGithubPullRequest(input.localRef, input.route, repositories, dependencies),
-  );
+  const freshRead = await readGithubPullRequest(input.localRef, input.route, repositories, dependencies);
+  const current = reduce(freshRead);
   if (!current.ok) return Object.freeze({ kind: 'failed' as const, failure: current.failure });
 
   // Merging a merged pull request converges on the same state, so it is answered
@@ -948,6 +933,37 @@ export async function mergeGithubPullRequest(
       reason: 'merge_method_not_allowed' as const,
       observation: current.observation,
     });
+  }
+
+  const status = await readGithubPullRequestStatusForAdmittedEntry({
+    localRef: input.localRef, route: input.route, client: dependencies.client, signal: dependencies.signal,
+  }, freshRead, { includeBranchRules: input.intent === 'withoutWaiting' });
+  dependencies.signal.throwIfAborted();
+  if (status.kind === 'unavailable') {
+    return { kind: 'failed', failure: status.failure };
+  }
+  if (status.branch?.headRevision !== undefined
+    && status.branch.headRevision !== input.headRevision) {
+    return { kind: 'refused', reason: 'head_advanced', observation: current.observation };
+  }
+  const requirements = classifyGithubPullRequestMergeRequirementsV1(status);
+  if (requirements.structuralRefusal !== undefined) {
+    return { kind: 'refused', reason: 'not_mergeable', observation: current.observation };
+  }
+  if (input.intent === 'withoutWaiting') {
+    if (status.merge?.canMergeWithoutWaiting !== true) {
+      return { kind: 'refused', reason: 'bypass_not_allowed', observation: current.observation };
+    }
+    if (!requirements.complete) {
+      return { kind: 'refused', reason: 'requirements_unknown', observation: current.observation };
+    }
+    if (!githubMergeRequirementAcknowledgementMatchesV1(input.skippedRequirements ?? [], requirements.unmetRequirements)) {
+      return { kind: 'refused', reason: 'requirements_changed',
+        unmetRequirements: [...requirements.unmetRequirements], observation: current.observation };
+    }
+  } else if (requirements.unmetRequirements.length > 0) {
+    return { kind: 'refused', reason: 'requirements_unmet',
+      unmetRequirements: [...requirements.unmetRequirements], observation: current.observation };
   }
 
   const written = await send(dependencies, {
@@ -1001,6 +1017,137 @@ export async function mergeGithubPullRequest(
   });
 }
 
+/* ------------------------------------------------------ native merge controls */
+
+type GithubNativeMergeTransitionV1 =
+  | Readonly<{ kind: 'enqueue'; expectedHeadSha: string }>
+  | Readonly<{ kind: 'dequeue' }>
+  | Readonly<{ kind: 'autoMerge'; expectedHeadSha: string; enabled: boolean; mergeMethod?: GithubMergeMethodV1 }>;
+
+function nativeMergeTransitionSatisfied(
+  transition: GithubNativeMergeTransitionV1,
+  status: TriagePullRequestStatusV1,
+  facts: GithubPullRequestFactsV1,
+): boolean {
+  switch (transition.kind) {
+    case 'enqueue': return status.merge?.queue !== undefined && status.merge.queue !== null;
+    case 'dequeue': return status.merge?.queue === null;
+    case 'autoMerge': {
+      const autoMerge = status.merge?.autoMerge;
+      return transition.enabled && facts.merged
+        || autoMerge !== undefined && autoMerge !== null && autoMerge.enabled === transition.enabled
+          && (!transition.enabled || transition.mergeMethod === undefined || autoMerge.method === transition.mergeMethod);
+    }
+  }
+}
+
+/** GitHub owns execution; each explicit native transition is dispatched once. */
+async function transitionGithubNativeMerge(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1 }>,
+  transition: GithubNativeMergeTransitionV1,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  const repositories = openResolver(dependencies);
+  const freshRead = await readGithubPullRequest(input.localRef, input.route, repositories, dependencies);
+  const current = reduce(freshRead);
+  if (!current.ok) return { kind: 'failed', failure: current.failure };
+  if ('expectedHeadSha' in transition && current.facts.headRevision !== transition.expectedHeadSha) {
+    return { kind: 'refused', reason: 'head_advanced', observation: current.observation };
+  }
+  if (transition.kind === 'autoMerge' && transition.enabled && current.facts.merged) return alreadySatisfied(current);
+  const status = await readGithubPullRequestStatusForAdmittedEntry({
+    ...input, client: dependencies.client, signal: dependencies.signal,
+  }, freshRead);
+  dependencies.signal.throwIfAborted();
+  if (status.kind !== 'status') return { kind: 'failed', failure: status.failure };
+  if ('expectedHeadSha' in transition && status.branch?.headRevision !== transition.expectedHeadSha) {
+    return { kind: 'refused', reason: 'head_advanced', observation: current.observation };
+  }
+  if (nativeMergeTransitionSatisfied(transition, status, current.facts)) return alreadySatisfied(current);
+  if (transition.kind === 'autoMerge' && transition.enabled && status.merge?.autoMerge?.enabled === true) {
+    return { kind: 'refused', reason: 'state_changed', observation: current.observation };
+  }
+  if (current.facts.state !== 'open' || current.facts.merged) {
+    return { kind: 'refused', reason: 'state_changed', observation: current.observation };
+  }
+  if ((transition.kind === 'enqueue' || transition.kind === 'autoMerge' && transition.enabled)
+    && classifyGithubPullRequestMergeRequirementsV1(status).structuralRefusal !== undefined) {
+    return { kind: 'refused', reason: 'not_mergeable', observation: current.observation };
+  }
+  const merge = status.merge;
+  const allowed = transition.kind === 'autoMerge'
+    ? transition.enabled ? merge?.viewerCanEnableAutoMerge : merge?.viewerCanDisableAutoMerge
+    : merge?.viewerCanUpdate;
+  if (allowed !== true || !merge?.nodeId) {
+    return { kind: 'refused', reason: 'operation_not_allowed', observation: current.observation };
+  }
+  if (transition.kind === 'autoMerge' && transition.enabled && merge.queueRequired !== true) {
+    const repository = await repositories.read(input.route);
+    if (repository.kind === 'readable' && repository.mergeSettings[transition.mergeMethod ?? 'merge'] === false) {
+      return { kind: 'refused', reason: 'merge_method_not_allowed', observation: current.observation };
+    }
+  }
+  const operation = transition.kind === 'enqueue' ? 'enqueuePullRequest'
+    : transition.kind === 'dequeue' ? 'dequeuePullRequest'
+      : transition.enabled ? 'enablePullRequestAutoMerge' : 'disablePullRequestAutoMerge';
+  const inputType = transition.kind === 'enqueue' ? 'EnqueuePullRequestInput'
+    : transition.kind === 'dequeue' ? 'DequeuePullRequestInput'
+      : transition.enabled ? 'EnablePullRequestAutoMergeInput' : 'DisablePullRequestAutoMergeInput';
+  const providerInput = {
+    pullRequestId: merge.nodeId,
+    ...('expectedHeadSha' in transition && (transition.kind === 'enqueue' || transition.enabled)
+      ? { expectedHeadOid: transition.expectedHeadSha } : {}),
+    ...(transition.kind === 'autoMerge' && transition.enabled && transition.mergeMethod !== undefined
+      ? { mergeMethod: transition.mergeMethod.toUpperCase() } : {}),
+  };
+  // Dequeue and disable expose no atomic head guard. Their exact PR/node and
+  // current head were re-admitted above; this does not claim provider CAS.
+  dependencies.signal.throwIfAborted();
+  const written = await sendGithubGraphqlRequest({
+    query: `mutation GithubNativeMerge($input: ${inputType}!) { ${operation}(input: $input) { clientMutationId } }`,
+    variables: { input: providerInput },
+  }, dependencies);
+  if (!written.ok && !written.mayHaveChanged) return { kind: 'failed', failure: written.failure };
+
+  const confirmedRead = await readGithubPullRequest(input.localRef, input.route, repositories, dependencies);
+  const confirmed = reduce(confirmedRead);
+  if (!confirmed.ok) return { kind: 'uncertain', failure: confirmed.failure };
+  if (transition.kind === 'autoMerge' && transition.enabled && confirmed.facts.merged) {
+    return { kind: 'applied', effect: 'changed', observation: confirmed.observation };
+  }
+  const confirmedStatus = await readGithubPullRequestStatusForAdmittedEntry({
+    ...input, client: dependencies.client, signal: dependencies.signal,
+  }, confirmedRead);
+  return confirmedStatus.kind === 'status' && nativeMergeTransitionSatisfied(transition, confirmedStatus, confirmed.facts)
+    ? { kind: 'applied', effect: 'changed', observation: confirmed.observation }
+    : { kind: 'uncertain', observation: confirmed.observation,
+      ...(confirmedStatus.kind === 'unavailable' ? { failure: confirmedStatus.failure }
+        : !written.ok ? { failure: written.failure } : {}) };
+}
+
+export async function enqueueGithubPullRequest(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1; expectedHeadSha: string }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  return transitionGithubNativeMerge(input, { kind: 'enqueue', expectedHeadSha: input.expectedHeadSha }, dependencies);
+}
+
+export async function dequeueGithubPullRequest(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1 }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  return transitionGithubNativeMerge(input, { kind: 'dequeue' }, dependencies);
+}
+
+export async function setGithubPullRequestAutoMerge(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1;
+    expectedHeadSha: string; enabled: boolean; mergeMethod?: GithubMergeMethodV1 }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestNativeMergeResultV1> {
+  return transitionGithubNativeMerge(input, { kind: 'autoMerge', expectedHeadSha: input.expectedHeadSha,
+    enabled: input.enabled, ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }) }, dependencies);
+}
+
 /* ----------------------------------------------------------------- mark ready */
 
 /**
@@ -1016,6 +1163,30 @@ export async function mergeGithubPullRequest(
 const MARK_READY_MUTATION = 'mutation MarkReady($pullRequestId: ID!) {'
   + ' markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId })'
   + ' { pullRequest { id isDraft } } }';
+
+const CONVERT_TO_DRAFT_MUTATION = 'mutation ConvertToDraft($pullRequestId: ID!) {'
+  + ' convertPullRequestToDraft(input: { pullRequestId: $pullRequestId })'
+  + ' { pullRequest { id isDraft } } }';
+
+/** Withdraws ready status without pinning a commit set or summoning reviewers. */
+export async function convertGithubPullRequestToDraft(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1 }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestStateOutcomeV1> {
+  const repositories = openResolver(dependencies);
+  const current = reduce(await readGithubPullRequest(input.localRef, input.route, repositories, dependencies));
+  if (!current.ok) return { kind: 'failed', failure: current.failure };
+  if (current.facts.draft) return alreadySatisfied(current);
+  if (current.facts.state !== 'open' || current.facts.merged) {
+    return { kind: 'refused', reason: 'state_changed', observation: current.observation };
+  }
+  if (current.facts.nodeId === null) return { kind: 'failed', failure: ENTITY_ID_UNAVAILABLE_FAILURE };
+  const written = await sendGithubGraphqlRequest({
+    query: CONVERT_TO_DRAFT_MUTATION, variables: { pullRequestId: current.facts.nodeId },
+  }, dependencies);
+  if (!written.ok && !written.mayHaveChanged) return { kind: 'failed', failure: written.failure };
+  return settle(await confirm(input.localRef, input.route, repositories, dependencies), facts => facts.draft);
+}
 
 /** The confirming read observed the entity, but it carried no GraphQL node id. */
 const ENTITY_ID_UNAVAILABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({

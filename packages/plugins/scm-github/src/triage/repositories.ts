@@ -7,16 +7,49 @@ import { classifyGithubResponseFailure, classifyGithubTransportFailure, isGithub
 import { buildGithubApiUrl, buildGithubRepositoryKey, parseGithubRoutingToken, type GithubRepositoryRouteV1 } from './locator.js';
 import { buildGithubCollisionScope, readGithubRepositoryIdFromCollisionScope } from './identity.js';
 import type { GithubTriageFailureV1 } from './types.js';
+import { readValidatedGithubFollowUpPage } from './scan/link.js';
+
+export type GithubRepositoryDirectoryPageV1 = Readonly<{
+  kind: 'page';
+  repositories: readonly Extract<GithubRepositoryReadV1, { kind: 'readable' }>[];
+  nextUrl: string | null;
+  partial: boolean;
+}> | Readonly<{ kind: 'failed'; failure: GithubTriageFailureV1 }>;
+
+/** Shared by source Settings discovery and the explicit All alert walk. */
+export async function readGithubRepositoryDirectoryPage(input: Readonly<{
+  client: GithubApiClientV1; url: string; now: () => number;
+}>): Promise<GithubRepositoryDirectoryPageV1> {
+  try {
+    const response = await input.client.request({ url: input.url });
+    if (!isGithubSuccessStatus(response.status)) return { kind: 'failed', failure: classifyGithubResponseFailure(response, input.now()) };
+    const body = decodeGithubJsonResponse(response);
+    const search = isRecord(body) ? body : null;
+    const rows = new URL(input.url).pathname === '/search/repositories' ? search?.items : body;
+    if (!Array.isArray(rows) || rows.length > Number(new URL(input.url).searchParams.get('per_page'))) {
+      return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'github_repository_directory_invalid' } };
+    }
+    const repositories = rows.flatMap(row => {
+      const repository = decodeGithubRepositoryMetadata(row);
+      return repository?.repositoryKey === null || repository === null ? [] : [repository];
+    });
+    const next = readValidatedGithubFollowUpPage(response.headers, input.url);
+    return { kind: 'page', repositories, nextUrl: next.kind === 'next' ? next.url : null,
+      partial: repositories.length !== rows.length || next.kind === 'invalid' || search?.incomplete_results === true
+        || (typeof search?.total_count === 'number' && next.kind !== 'next'
+          && search.total_count > Number(new URL(input.url).searchParams.get('page') ?? '1') * Number(new URL(input.url).searchParams.get('per_page'))) };
+  } catch (error) {
+    return { kind: 'failed', failure: classifyGithubTransportFailure(error) };
+  }
+}
 
 /**
  * Repository reads that identity and absence depend on.
  *
- * Two callers need this, for different reasons:
- *  - scan, because a `/search/issues` item is not guaranteed to carry the numeric
- *    repository id the collision scope is built from, and identity may not be guessed
- *    from the mutable `owner/name` path;
- *  - get, because a bare `404`/`410` is permission-masked, so absence needs a private
- *    confirming read of the repository with the SAME credential.
+ * Exact entry reads, mutations and security-alert scans consume this reader.
+ * A bare `404`/`410` is permission-masked, so absence needs a private confirming
+ * read of the repository with the SAME credential. The involvement inbox acquires
+ * repository identity alongside current PR checks through checksCondition's batch.
  *
  * Results are memoized for the invocation only. Nothing here is cached across
  * invocations, and no credential is captured: the client owns that, once.
@@ -31,16 +64,17 @@ import type { GithubTriageFailureV1 } from './types.js';
  * prohibition would refuse a merge the repository actually allows, which is the
  * reasonless refusal this vertical exists to avoid.
  */
-export type GithubRepositoryMergeSettingsV1 = Readonly<{
-  merge: boolean | null;
-  squash: boolean | null;
-  rebase: boolean | null;
-}>;
+export type GithubRepositoryMergeSettingsV1 = Readonly<Record<
+  (typeof import('@happier-dev/triage-protocol/v1').TRIAGE_PULL_REQUEST_MERGE_METHODS_V1)[number],
+  boolean | null
+>>;
 
 export type GithubRepositoryReadV1 =
   | Readonly<{
     kind: 'readable';
     repositoryId: string;
+    /** Native GraphQL id from this same repository DTO, when GitHub supplied it. */
+    nodeId?: string | null;
     repositoryKey: string | null;
     mergeSettings: GithubRepositoryMergeSettingsV1;
     archived: boolean | null;
@@ -49,7 +83,7 @@ export type GithubRepositoryReadV1 =
   | Readonly<{ kind: 'unreadable'; failure: GithubTriageFailureV1 }>;
 
 export type GithubRepositoryReaderV1 = Readonly<{
-  read(route: GithubRepositoryRouteV1): Promise<GithubRepositoryReadV1>;
+  read(route: GithubRepositoryRouteV1 | Readonly<{ repositoryId: string }>): Promise<GithubRepositoryReadV1>;
 }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -76,6 +110,7 @@ export function decodeGithubRepositoryMetadata(body: unknown): Extract<GithubRep
   const route = isRecord(body) ? parseGithubRoutingToken(body.full_name) : null;
   return {
     kind: 'readable', repositoryId, repositoryKey: route === null ? null : buildGithubRepositoryKey(route),
+    nodeId: isRecord(body) && typeof body.node_id === 'string' && body.node_id !== '' ? body.node_id : null,
     mergeSettings: readMergeSettings(body),
     archived: isRecord(body) ? readDeclaredBoolean(body.archived) : null,
     hasIssues: isRecord(body) ? readDeclaredBoolean(body.has_issues) : null,
@@ -136,7 +171,10 @@ export function createGithubRepositoryReader(input: Readonly<{
   };
 
   return Object.freeze({
-    read(route: GithubRepositoryRouteV1): Promise<GithubRepositoryReadV1> {
+    read(route: GithubRepositoryRouteV1 | Readonly<{ repositoryId: string }>): Promise<GithubRepositoryReadV1> {
+      if ('repositoryId' in route) {
+        return readCached(`id:${route.repositoryId}`, buildGithubApiUrl(['repositories', route.repositoryId]));
+      }
       const key = `${route.owner.toLowerCase()}/${route.name.toLowerCase()}`;
       return readCached(key, buildGithubApiUrl(['repos', route.owner, route.name]));
     },

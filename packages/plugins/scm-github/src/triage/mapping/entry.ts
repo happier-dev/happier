@@ -353,6 +353,12 @@ export function projectGithubEntry(
   const author = view.authorLogin === null
     ? null
     : projectTriageDisplayTextV1(view.authorLogin, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  const assignees = Array.isArray(view.state.assignees) ? view.state.assignees : undefined;
+  const assigneeNames = assignees?.flatMap(value => {
+    const login = isRecord(value) ? readTrimmedString(value.login) : null;
+    return login === null ? [] : [login];
+  });
+  const assignee = assigneeNames === undefined ? undefined : projectTriageDisplayTextV1(assigneeNames.join(', '));
   // The number as GitHub writes it, one bounded display line; presentation only.
   const designation = projectTriageDisplayTextV1(`#${view.number}`, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const facts = buildGithubRowFacts({
@@ -381,6 +387,8 @@ export function projectGithubEntry(
       scopeLabel: scopeLabel.value,
       ...(scopeDisplayName.value === '' ? {} : { scopeDisplayName: scopeDisplayName.value }),
       ...(author === null || author.value === '' ? {} : { authorLabel: author.value }),
+      ...(assignees?.length === 0 ? { assigneeLabel: null }
+        : assignee === undefined || assignee.value === '' ? {} : { assigneeLabel: assignee.value }),
       ...(designation.value === '' ? {} : { designation: designation.value }),
       webUrl: locator.webUrl,
       nameWithOwner: buildGithubNameWithOwner(view.owner, view.name),
@@ -392,7 +400,7 @@ export function projectGithubEntry(
       ...(children === undefined ? {} : { relations: { children } }),
       rowFacts: facts.rowFacts,
       projectionTruncated: title.truncated || scopeLabel.truncated || scopeDisplayName.truncated || author?.truncated === true
-        || designation.truncated || facts.truncated,
+        || designation.truncated || facts.truncated || assignee?.truncated === true,
     }),
   });
 }

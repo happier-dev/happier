@@ -20,6 +20,19 @@ const issueCommentPayload = {
 const defaultReceivedAtMs = Date.parse('2026-08-10T12:10:00Z');
 
 describe('GitHub webhook normalization', () => {
+  it.each(['requested', 'approved', 'rejected'])('projects deployment_review/%s only to its exact delivered run', action => {
+    const delivery = normalizeGithubWebhookDelivery({ eventType: 'deployment_review', providerDeliveryId: 'review-1', receivedAtMs: defaultReceivedAtMs,
+      rawBody: new TextEncoder().encode(JSON.stringify({ action, repository: { id: 77, full_name: 'acme/widgets' }, workflow_run: { id: 81 } })) });
+    expect(delivery).toHaveProperty('deploymentRun', { repositoryId: '77', repositoryNameWithOwner: 'acme/widgets', runId: '81' });
+    expect(delivery.automationEvent).toBeNull();
+  });
+
+  it('projects workflow_run completion to the same exact-run wake and ignores a nullable deployment run', () => {
+    const normalize = (eventType: string, workflow_run: unknown) => normalizeGithubWebhookDelivery({ eventType, providerDeliveryId: 'run-1', receivedAtMs: defaultReceivedAtMs,
+      rawBody: new TextEncoder().encode(JSON.stringify({ action: 'completed', repository: { id: 77, full_name: 'acme/widgets' }, workflow_run })) });
+    expect(normalize('workflow_run', { id: 81 })).toHaveProperty('deploymentRun', { repositoryId: '77', repositoryNameWithOwner: 'acme/widgets', runId: '81' });
+    expect(normalize('deployment_review', null).automationEvent).toBeNull();
+  });
   it('parses a verified delivery exactly once and exposes one top-level pull-request discussion comment', () => {
     const parseJson = vi.fn(() => issueCommentPayload);
     const rawBody = new TextEncoder().encode('{"not":"reparsed"}');

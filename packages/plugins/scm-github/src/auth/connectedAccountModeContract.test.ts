@@ -5,6 +5,7 @@ import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { githubConnectedAccountRuntime } from './connectedAccountRuntime.js';
+import { beginGithubAccountRequestOccurrenceV1, getGithubAccountRequestOwnerV1 } from '../observations/githubApiClient.js';
 import * as processBoundary from '@happier-dev/cli-common/process';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -80,6 +81,35 @@ describe('GitHub CLI login import', () => {
 });
 
 describe('GitHub Connected Account mode contract', () => {
+  it.each(['primary', 'secondary'] as const)('shares %s rate parking with real account requests and resumes only on demand', async kind => {
+    const dispose = beginGithubAccountRequestOccurrenceV1();
+    let clock = 1_000_000;
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    const account = { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'rate-test' };
+    const headers: Readonly<Record<string, string>> = kind === 'primary'
+      ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1120' }
+      : { 'retry-after': '120' };
+    const request = vi.fn(async () => ({ status: 403, headers, body: encodeJson({ message: 'API rate limit exceeded' }) }));
+    // HTTP and credential storage are external boundaries; internal rate ownership stays real.
+    const context = { account, signal: new AbortController().signal, credentials: { get: async () => 'fixture-rate-token' },
+      services: { http: { request } } } as unknown as Parameters<typeof githubConnectedAccountRuntime.status>[0];
+    try {
+      await expect(githubConnectedAccountRuntime.status(context)).resolves.toMatchObject({ status: 'unavailable' });
+      const owner = getGithubAccountRequestOwnerV1({ accountScope: JSON.stringify([account.service.pluginId, account.service.localId, account.accountId]),
+        credentialScope: 'Bearer fixture-rate-token', executionOrigin: 'https://api.github.com' });
+      await expect(owner.request({ url: 'https://api.github.com/repos/test/repo' }, { transport: request })).resolves.toMatchObject({ status: 429 });
+      await expect(githubConnectedAccountRuntime.refresh({ ...context,
+        operation: { operationId: 'rate-check', configurationRevision: 'fixture-configuration' },
+        stagedCredentials: { get: async () => null, set: async () => {}, delete: async () => {} },
+      })).resolves.toMatchObject({ status: 'unavailable' });
+      expect(request).toHaveBeenCalledTimes(1);
+      clock += 120_000;
+      expect(request).toHaveBeenCalledTimes(1);
+      await githubConnectedAccountRuntime.status(context);
+      expect(request).toHaveBeenCalledTimes(2);
+    } finally { dispose(); time.mockRestore(); }
+  });
+
   it('declares a manual fine-grained PAT mode without reusing Happier login OAuth', () => {
     const descriptor = (PLUGIN_MANIFEST.contributes.connectedAccountDescriptors ?? [])[0];
 
@@ -110,6 +140,7 @@ describe('GitHub Connected Account mode contract', () => {
     const cleanup = await activate({
       actions: { register: vi.fn() },
       backgroundServices: { register: vi.fn() },
+      resources: { registerDynamicResource: vi.fn() },
       scm: {
         registerHostingProvider() {
           return { dispose() {} };
@@ -215,6 +246,7 @@ describe('GitHub Connected Account mode contract', () => {
     const cleanup = await activate({
       actions: { register: vi.fn() },
       backgroundServices: { register: vi.fn() },
+      resources: { registerDynamicResource: vi.fn() },
       scm: {
         registerHostingProvider() {
           return { dispose() {} };

@@ -56,6 +56,22 @@ export function readGithubNamedMembers(
   }));
 }
 
+/** One projection of the native operands shared by facts and the detail editor. */
+export function readGithubEntryMetadataFields(raw: Readonly<Record<string, unknown>>):
+  Pick<GithubIssueOverviewV1, 'milestoneNumber' | 'issueType' | 'locked' | 'lockReason'> {
+  const milestone = raw.milestone === null ? null : isRecord(raw.milestone)
+    && typeof raw.milestone.number === 'number' && Number.isSafeInteger(raw.milestone.number) && raw.milestone.number >= 1
+    ? raw.milestone.number : undefined;
+  const issueType = raw.type === null ? null : isRecord(raw.type) && typeof raw.type.name === 'string' ? raw.type.name : undefined;
+  const lockReason = raw.active_lock_reason === null || typeof raw.active_lock_reason === 'string' ? raw.active_lock_reason : undefined;
+  return {
+    ...(milestone === undefined ? {} : { milestoneNumber: milestone }),
+    ...(issueType === undefined ? {} : { issueType }),
+    ...(typeof raw.locked === 'boolean' ? { locked: raw.locked } : {}),
+    ...(lockReason === undefined ? {} : { lockReason }),
+  };
+}
+
 function projectCommon(raw: Readonly<Record<string, unknown>>) {
   const title = typeof raw.title === 'string' ? raw.title : null;
   const state = readTrimmed(raw.state);
@@ -77,6 +93,7 @@ function projectCommon(raw: Readonly<Record<string, unknown>>) {
       : undefined;
 
   return Object.freeze({
+    ...readGithubEntryMetadataFields(raw),
     ...(title === null ? {} : { title }),
     ...(state === null ? {} : { state }),
     ...(author === null ? {} : { author }),

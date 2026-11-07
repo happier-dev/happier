@@ -1,5 +1,5 @@
-import { MAX_TRIAGE_ROW_FACTS_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { TriageSourceEntrySnapshotV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import {
   GITHUB_ISSUE_RESPONSE,
@@ -16,6 +16,7 @@ import {
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
 import { readGithubPullRequest, runGithubTriageGet } from './get.js';
+import { toTriageSnapshot } from './mapping/protocol.js';
 import { createGithubRepositoryReader } from './repositories.js';
 import type { GithubTriageEntryLocalRefV1 } from './types.js';
 
@@ -61,7 +62,7 @@ async function runGet(input: Readonly<{
 }>) {
   const transport = createStubGithubTransport({ respond: input.respond });
   const client = await createTestGithubApiClient(transport);
-  const observation = await runGithubTriageGet(
+  const { observation } = await runGithubTriageGet(
     {
       localRef: input.localRef,
       routingToken: 'routingToken' in input ? input.routingToken : ROUTING_TOKEN,
@@ -72,8 +73,8 @@ async function runGet(input: Readonly<{
 }
 
 describe('GitHub triage get', () => {
-  it('does not synthesize a locator when the stored routing token is missing or malformed', async () => {
-    for (const routingToken of [null, '', 'https://api.github.com/repos/octo-org/example-app', 'octo-org', 'a/b/c']) {
+  it('does not replace a malformed supplied routing token with another route', async () => {
+    for (const routingToken of ['', 'https://api.github.com/repos/octo-org/example-app', 'octo-org', 'a/b/c']) {
       const { observation, transport } = await runGet({
         localRef: PULL_REQUEST_REF,
         routingToken,
@@ -104,12 +105,27 @@ describe('GitHub triage get', () => {
     expect(observation.localRef).toEqual(PULL_REQUEST_REF);
     expect(observation.snapshot.nativeRevision)
       .toBe('9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29');
-    // An authoritative `get` resolves the diff stat a scan row answers `detailOnly`,
-    // and the row it projects stays inside the published fact count. Which facts a
-    // bounded row keeps is `mapping/facts.ts`'s contract and is tested there.
-    expect(observation.snapshot.rowFacts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
+    // An authoritative `get` resolves the diff stat a scan row answers `detailOnly`.
+    expect(observation.snapshot.rowFacts.length).toBeGreaterThan(4);
     expect(observation.snapshot.rowFacts.every((fact) => fact.value.kind !== 'detailOnly'))
       .toBe(true);
+  });
+
+  it('publishes the pull request\'s head and base branch names from the same read, through the public snapshot', async () => {
+    const { observation } = await runGet({
+      localRef: PULL_REQUEST_REF,
+      respond: (request) => (request.url.endsWith('/pulls/1284')
+        ? { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE }
+        : undefined),
+    });
+
+    expect(observation.kind).toBe('present');
+    if (observation.kind !== 'present') return;
+    // The strict consumer reads the producer's own public projection, not a hand-built shape.
+    const published = TriageSourceEntrySnapshotV1Schema.parse(
+      toTriageSnapshot(observation.snapshot, observation.locator, observation.localRef.entryId),
+    );
+    expect(published.branches).toEqual({ head: 'frame-pump', base: 'main' });
   });
 
   it('retains the validated provider pull-request number for canonical reread consumers', async () => {
@@ -489,6 +505,8 @@ describe('GitHub triage get', () => {
       && forbidden.observation.failure).toEqual({
       class: 'permission',
       code: 'insufficient_scope',
+      detail: 'pull_requests=read',
+      requiredPermissions: 'pull_requests=read',
     });
   });
 
@@ -497,9 +515,6 @@ describe('GitHub triage get', () => {
       localRef: PULL_REQUEST_REF,
       respond: () => ({
         status: 200,
-        // A pull request with no author frees a row slot, so the mergeability fact
-        // this test is about is inside the published fact count rather than bounded
-        // out of the row by generic metadata.
         body: {
           ...GITHUB_PULL_REQUEST_RESPONSE,
           user: null,

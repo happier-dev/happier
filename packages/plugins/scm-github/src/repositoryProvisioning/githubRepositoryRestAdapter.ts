@@ -15,12 +15,11 @@ import type {
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
-
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
-import { readGithubDecodedResponseFacts, readGithubRetryAfterMs } from '../observations/githubApiClient.js';
+import { readGithubDecodedResponseFacts, type GithubApiMethodV1 } from '../observations/githubApiClient.js';
+import { requestGithubAccountForgeJsonV1 } from '../observations/githubForgeHttpFetcher.js';
 import {
   classifyGithubResponseFacts,
   isGithubInaccessibleResourceFailure,
@@ -136,9 +135,7 @@ function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext, anonymo
   );
   switch (failure.class) {
     case 'rateLimit': {
-      // The classifier's fallback is a retry policy, not a forge-provided instant.
-      const retryAfterMs = readGithubRetryAfterMs(context.response.headers, now);
-      throw createGithubRepositoryRateLimitedError(retryAfterMs === null ? undefined : now + retryAfterMs, anonymous);
+      throw createGithubRepositoryRateLimitedError(failure.retryNotBeforeMs, anonymous);
     }
     case 'authentication':
       throw createGithubRepositoryAuthRequiredError(
@@ -229,6 +226,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
 }>): GithubRepositoryRestAdapter {
   const fetcher = params?.fetcher ?? defaultFetcher;
   const tokenResolver = params?.resolveToken ?? defaultRuntimeTokenResolver;
+  const adapterLifetime = {};
 
   async function resolveToken(
     provider: ScmHostingProviderRef,
@@ -258,7 +256,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
   async function requestJson(
     provider: ScmHostingProviderRef,
     path: string,
-    init?: Omit<RequestInit, 'headers'>,
+    init?: Readonly<{ method?: GithubApiMethodV1; body?: string }>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
     resolvedAuth?: Readonly<{ token?: string; profileKey?: string; account?: ConnectedAccountRef }>,
@@ -268,13 +266,14 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     account?: ConnectedAccountRef;
   }>> {
     const auth = resolvedAuth ?? await resolveToken(provider, runtimeServices);
-    const raw = await requestScmForgeJson({
+    const raw = await requestGithubAccountForgeJsonV1({
       url: `${resolveGithubRepositoryApiBaseUrl(provider)}${path}`,
-      init: {
-        ...init,
-        ...(signal ? { signal } : {}),
-        headers: buildHeaders(auth.token),
-      },
+      ...init,
+      ...(signal ? { signal } : {}),
+      headers: buildHeaders(auth.token),
+      auth,
+      executionOrigin: new URL(resolveGithubRepositoryApiBaseUrl(provider)).origin,
+      lifetime: adapterLifetime,
       fetcher,
       mapError: context => mapGithubRepositoryRestError(context, !auth.token),
     });

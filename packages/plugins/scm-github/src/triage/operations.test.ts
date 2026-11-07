@@ -1,20 +1,23 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TriageGetResultV1Schema,
   TriageListScopeUnitsResultV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanResultV1Schema,
   TriageVerifyReviewWorkspaceResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
+  type TriageScanInputV1,
   type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { activate } from '../activate.js';
+import { activate, activateAccount } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { GITHUB_TRIAGE_ACTION_IDS_V1 } from './contribution.js';
+import { runTriageScanPass } from '../../../triage/src/projection/scanPass.js';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -26,13 +29,12 @@ import {
   GITHUB_FIXTURE_REPOSITORY,
   GITHUB_FIXTURE_REPOSITORY_ID,
   GITHUB_PULL_REQUEST_RESPONSE,
+  GITHUB_REPOSITORY_RESPONSE,
   GITHUB_ISSUE_RESPONSE,
   GITHUB_SEARCH_PULL_REQUEST_ITEM,
+  GITHUB_SEARCH_ISSUE_ITEM,
   githubSearchResponse,
   githubChangedFile,
-  githubCheckRun,
-  githubCheckRunsResponse,
-  githubCombinedStatusResponse,
 } from './__fixtures__/githubResponses.js';
 import { listGithubChangedFiles } from './detailOperations.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
@@ -45,6 +47,7 @@ import {
 } from './operations.js';
 import {
   createStubGithubTransport,
+  githubChecksBatchResponse,
   fixedClock,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
@@ -98,17 +101,366 @@ describe('registered GitHub REST → Triage source contract', () => {
     expect(JSON.stringify(result)).not.toContain('private');
   });
 
+  it('forwards text search from the strict scan Action to GitHub for selected repositories', async () => {
+    const instance = configuredInstance({ scope: 'repository' });
+    const transport = createStubGithubTransport({ respond: request => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
+      const query = new URL(request.url).searchParams.get('q') ?? '';
+      return { status: 200, body: githubSearchResponse({ items: query.includes('"crash"')
+        ? [{ ...GITHUB_SEARCH_ISSUE_ITEM, title: 'Older crash fix' }] : [] }) };
+    } });
+    const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance,
+      query: 'crash', page: { kind: 'initial', limit: 64 } }, transport.context));
+    expect(result.kind).toBe('complete');
+    if (result.kind === 'failed') throw new Error(result.failure.code);
+    expect(result.observations.some(row => row.kind === 'present' && row.snapshot.title === 'Older crash fix')).toBe(true);
+    const searches = transport.requests.filter(request => new URL(request.url).pathname === '/search/issues');
+    expect(searches).toHaveLength(5);
+    expect(searches.every(request => new URL(request.url).searchParams.get('q')?.includes(`repo:${REPOSITORY_KEY}`))).toBe(true);
+  });
+
+  it.each(['healthy', 'rejected', 'ceiling'] as const)('groups selected repository searches with isolated %s frontiers', async (mode) => {
+    const unitIds = ['org/first', 'org/second', 'org/third'];
+    const configured = configuredInstance({ scope: 'repository' });
+    const instance = { ...configured, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname !== '/search/issues') return undefined;
+      const repositories = [...(url.searchParams.get('q') ?? '').matchAll(/repo:([^\s)]+)/gu)].map(match => match[1]!);
+      if (mode === 'rejected' && repositories.includes('org/second')) return { status: 422, body: { message: 'Validation Failed' } };
+      const items = repositories.map(repository => ({ ...GITHUB_SEARCH_ISSUE_ITEM,
+        repository_url: `https://api.github.com/repos/${repository}`, url: `https://api.github.com/repos/${repository}/issues/7`,
+        html_url: `https://github.com/${repository}/issues/7`, repository: { id: 9000 + unitIds.indexOf(repository),
+          full_name: repository, name: repository.split('/')[1], owner: { login: 'org' } },
+      }));
+      return { status: 200, body: githubSearchResponse({ items,
+        ...(mode === 'ceiling' && repositories.length > 1 ? { totalCount: 1001 } : {}) }) };
+    } });
+    let page: TriageScanInputV1['page'] = { kind: 'initial', limit: 64 };
+    const observations: unknown[] = [];
+    let result: TriageScanResultV1;
+    do {
+      result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance, page }, transport.context));
+      if (result.kind === 'failed') throw new Error(`Selected walk failed: ${result.failure.code}`);
+      observations.push(...result.observations);
+      if (result.kind === 'page') page = { kind: 'continuation', continuation: result.continuation };
+    } while (result.kind === 'page');
+    const searches = transport.requests.filter(request => new URL(request.url).pathname === '/search/issues');
+    expect(searches).toHaveLength(mode === 'healthy' ? 5 : 20);
+    expect(observations).toHaveLength(mode === 'rejected' ? 10 : 15);
+    expect(result.evidence).toMatchObject({ kind: mode === 'rejected' ? 'partial' : 'walkFinished' });
+    const queries = searches.map(request => new URL(request.url).searchParams.get('q')!);
+    expect(queries.slice(0, 5).every(query => unitIds.every(id => query.includes(`repo:${id}`)))).toBe(true);
+  });
+
+  it.each([false, true])('resumes grouped repository paging fairly, including isolated rejection=%s', async (rejected) => {
+    const unitIds = ['org/first', 'org/second', 'org/third'];
+    const configured = configuredInstance({ scope: 'repository' });
+    const instance = { ...configured, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname !== '/search/issues') return undefined;
+      const repositories = [...(url.searchParams.get('q') ?? '').matchAll(/repo:([^\s)]+)/gu)].map(match => match[1]!);
+      if (rejected && repositories.includes('org/second')) return { status: 422, body: { message: 'Validation Failed' } };
+      const perPage = Number(url.searchParams.get('per_page'));
+      const offset = (Number(url.searchParams.get('page')) - 1) * perPage;
+      const items = repositories.slice(offset, offset + perPage).map(repository => ({ ...GITHUB_SEARCH_ISSUE_ITEM,
+        repository_url: `https://api.github.com/repos/${repository}`, html_url: `https://github.com/${repository}/issues/7`,
+        repository: { id: 9000 + unitIds.indexOf(repository), name: repository.split('/')[1], owner: { login: 'org' } },
+      }));
+      const next = new URL(url); next.searchParams.set('page', String(Number(url.searchParams.get('page')) + 1));
+      return { status: 200, body: githubSearchResponse({ items, totalCount: repositories.length }),
+        ...(offset + perPage < repositories.length ? { headers: { link: `<${next}>; rel="next"` } } : {}) };
+    } });
+    let page: TriageScanInputV1['page'] = { kind: 'initial', limit: 2 };
+    const rows: unknown[] = [];
+    let result: TriageScanResultV1;
+    do {
+      result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance, page }, transport.context));
+      if (result.kind === 'failed') throw new Error(result.failure.code);
+      expect(result.observations.length).toBeLessThanOrEqual(2);
+      rows.push(...result.observations);
+      if (result.kind === 'page') {
+        const count = transport.requests.length;
+        const changed = { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1,
+          selection: { kind: 'selected', unitIds: ['org/other'] } }) } };
+        expect(await scanGithubTriageSource({ v: 1, instance: changed,
+          page: { kind: 'continuation', continuation: result.continuation } }, transport.context)).toMatchObject({ kind: 'failed' });
+        expect(transport.requests).toHaveLength(count);
+        page = { kind: 'continuation', continuation: result.continuation };
+      }
+    } while (result.kind === 'page');
+    expect(rows).toHaveLength(rejected ? 10 : 15);
+    expect(transport.requests).toHaveLength(rejected ? 20 : 10);
+    const queries = transport.requests.slice(0, 5).map(request => new URL(request.url).searchParams.get('q')!);
+    for (const qualifier of ['review-requested:@me', 'assignee:@me', 'mentions:@me', 'reviewed-by:@me', 'author:@me']) {
+      expect(queries.some(query => query.includes(qualifier))).toBe(true);
+    }
+  });
+
+  it.each([undefined, Date.UTC(2026, 9, 30)])('sizes repository groups from GitHub Boolean limits with completedSince=%s', async (sinceMs) => {
+    const configured = configuredInstance({ scope: 'repository' });
+    const unitIds = Array.from({ length: 7 }, (_, index) => `org/repository-${index}`);
+    const instance = { ...configured, configuration: { v: 1, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds } }) } };
+    const transport = createStubGithubTransport({ respond: () => ({ status: 200, body: githubSearchResponse({ items: [] }) }) });
+    const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance,
+      page: { kind: 'initial', limit: 64 }, ...(sinceMs === undefined ? {} : { completed: { kindIds: ['issue'], sinceMs } }),
+    }, transport.context));
+    expect(result).toMatchObject({ kind: 'complete', evidence: { kind: 'walkFinished' } });
+    expect(transport.requests).toHaveLength(10);
+    const queries = transport.requests.map(request => new URL(request.url).searchParams.get('q')!);
+    expect(queries.every(query => [...query.matchAll(/\b(?:AND|OR|NOT)\b/gu)].length <= 5)).toBe(true);
+    for (const id of unitIds) expect(queries.some(query => query.includes(`repo:${id}`))).toBe(true);
+  });
+
+  it('keeps continuation work proportional to the current repository group', async () => {
+    const configured = configuredInstance({ scope: 'repository' });
+    // Two vs five provider-sized groups fit the configured-source envelope;
+    // selection must not multiply the retained native frontier by every group.
+    const unitIds = Array.from({ length: 30 }, (_, index) => `org/repository-${index}`);
+    const transport = createStubGithubTransport({ respond: () => ({ status: 200,
+      body: githubSearchResponse({ items: [GITHUB_SEARCH_ISSUE_ITEM] }),
+    }) });
+    const read = async (selected: readonly string[]) => {
+      const instance = { ...configured, configuration: { v: 1, token: JSON.stringify({ v: 1,
+        selection: { kind: 'selected', unitIds: selected } }) } };
+      const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance,
+        page: { kind: 'initial', limit: 1 } }, transport.context));
+      if (result.kind !== 'page') throw new Error(JSON.stringify(result.kind === 'failed' ? result.failure : result.evidence));
+      expect(result.observations).toHaveLength(1);
+      return result.continuation.token.length;
+    };
+    const small = await read(unitIds.slice(0, 7));
+    const large = await read(unitIds);
+    expect(large).toBe(small);
+    expect(transport.requests).toHaveLength(2);
+  });
+
+  it('fills a single aggregate Refresh from short review-requested and later authored lanes', async () => {
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const url = new URL(request.url);
+      if (url.pathname !== '/search/issues') return undefined;
+      const query = url.searchParams.get('q') ?? '';
+      const authored = query.includes('author:@me');
+      const count = query.includes('review-requested:@me') ? 2 : authored ? 54 : 0;
+      return { status: 200, body: githubSearchResponse({ items: Array.from({ length: count }, (_, index) => ({
+        ...GITHUB_SEARCH_ISSUE_ITEM, id: 5000 + index, number: (authored ? 100 : 1) + index,
+      })) }) };
+    } });
+    const instance = configuredInstance({ scope: 'repository' });
+    const result = await runTriageScanPass({ lanes: [{
+      source: instance.instance.source,
+      sourceInstanceId: instance.instance.sourceInstanceId,
+      configured: instance,
+      declaredKindIds: ['pull-request', 'issue'],
+      scan: (input) => scanGithubTriageSource(input, transport.context, { now: fixedClock(1000) }),
+    }], pageLimit: 56, observationBudget: 56, nowMs: fixedClock(1000) });
+    expect(result.observations).toHaveLength(56);
+    expect(result.stopped).toEqual([]);
+    expect(result.observations.filter((row) => row.outcome.kind === 'present'
+      && row.outcome.viewer.involvement.includes('author'))).toHaveLength(54);
+  });
+  it.each(['present', 'denied', 'mismatch'] as const)('resolves a locator-free pin through the registered exact get: %s', async (outcome) => {
+    const transport = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path === `/repositories/${GITHUB_FIXTURE_REPOSITORY_ID}`) return outcome === 'denied'
+        ? { status: 404, body: {} }
+        : { status: 200, body: { ...GITHUB_REPOSITORY_RESPONSE,
+            ...(outcome === 'mismatch' ? { id: 999 } : {}) } };
+      if (path === `/repos/${REPOSITORY_KEY}/pulls/1284`) return { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    const localRef = { kindId: 'pull-request', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '1284' };
+    try {
+      const result = TriageGetResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get,
+        { v: 1, instance: configuredInstance({ scope: 'account' }), localRef }, { surface: 'plugin' }));
+      expect(result).toMatchObject({ kind: outcome === 'present' ? 'present' : 'unresolved', localRef });
+      if (outcome === 'present') expect(result).toMatchObject({ locator: { routingToken: REPOSITORY_KEY } });
+      expect(transport.requests.map(request => new URL(request.url).pathname)).toEqual([
+        `/repositories/${GITHUB_FIXTURE_REPOSITORY_ID}`,
+        ...(outcome === 'present' ? [`/repos/${REPOSITORY_KEY}/pulls/1284`] : []),
+      ]);
+      expect(transport.materializeCount()).toBe(1);
+    } finally { await plugin.dispose(); }
+  });
+  it('cancels a hidden native scope before issuing its alert request', async () => {
+    const controller = new AbortController();
+    const instance = configuredInstance({ scope: 'repository' });
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: false } }) } };
+    const transport = createStubGithubTransport({ signal: controller.signal, respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/search/issues') return { status: 200, body: githubSearchResponse({ items: [] }) };
+      if (path === `/repos/${REPOSITORY_KEY}`) controller.abort(new DOMException('Scope hidden', 'AbortError'));
+      return undefined;
+    } });
+    const first = await scanGithubTriageSource({ v: 1, instance: enabled, page: { kind: 'initial', limit: 64 } }, transport.context);
+    if (first.kind !== 'page') throw new Error('Native demand remains');
+    await expect(scanGithubTriageSource({ v: 1, instance: enabled,
+      page: { kind: 'continuation', continuation: first.continuation } }, transport.context)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(transport.requests.some(request => new URL(request.url).pathname.endsWith('/alerts'))).toBe(false);
+  });
+  it('names both denied native families without claiming a complete empty scope', async () => {
+    const instance = configuredInstance({ scope: 'repository' });
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds: [REPOSITORY_KEY] }, alerts: { dependabot: true, codeScanning: true } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      return path === '/search/issues' ? { status: 200, body: githubSearchResponse({ items: [] }) }
+        : path.endsWith('/alerts') ? { status: 403, headers: { 'x-accepted-github-permissions': 'vulnerability_alerts=read',
+          'X-GitHub-Request-Id': 'A89C:E6813:2EE25D2:4481C49:6AEB94CC' }, body: { message: 'Resource not accessible' } } : undefined;
+    } });
+    let current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+      page: { kind: 'initial', limit: 64 } }, transport.context));
+    while (current.kind === 'page') current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+      page: { kind: 'continuation', continuation: current.continuation } }, transport.context));
+    expect(current).toMatchObject({ kind: 'complete', observations: [], evidence: { kind: 'partial' } });
+    if (current.kind !== 'complete' || current.evidence.kind !== 'partial') throw new Error('Partial coverage');
+    expect(current.evidence.reason).toContain('dependabot-permission');
+    expect(current.evidence.reason).toContain('code-scanning-permission');
+    expect(current.evidence).toMatchObject({ failure: { class: 'permission', code: 'insufficient_scope',
+      requiredPermissions: 'vulnerability_alerts=read', detail: expect.stringContaining('Dependabot') } });
+    expect(current.evidence).toMatchObject({ failure: { detail: expect.stringContaining('security_events') } });
+    expect(current.evidence).toMatchObject({ failure: { detail: expect.stringContaining('A89C:E6813:2EE25D2:4481C49:6AEB94CC') } });
+  });
+  it('walks explicit All repository pages with a compact cursor and refuses family reconfiguration', async () => {
+    const instance = configuredInstance({ scope: 'account' });
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'all' }, alerts: { dependabot: true, codeScanning: false } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/search/issues') return { status: 200, body: githubSearchResponse({ items: [] }) };
+      if (url.pathname === '/user/repos') {
+        const page = Number(url.searchParams.get('page') ?? '1');
+        const next = new URL(url); next.searchParams.set('page', '2');
+        return { status: 200, body: [{ id: page, full_name: `org/repo-${page}` }],
+          ...(page === 1 ? { headers: { link: `<${next}>; rel="next"` } } : {}) };
+      }
+      const repository = /^\/repos\/org\/repo-([12])$/u.exec(url.pathname);
+      if (repository !== null) return { status: 200, body: { id: Number(repository[1]), full_name: `org/repo-${repository[1]}` } };
+      if (url.pathname.endsWith('/dependabot/alerts')) return { status: 200, body: [{ number: 1, state: 'fixed',
+        created_at: '2026-10-01T00:00:00Z', security_advisory: { summary: 'Retained history', severity: 'low' } }] };
+      return undefined;
+    } });
+    const first = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+      page: { kind: 'initial', limit: 64 } }, transport.context));
+    if (first.kind !== 'page') throw new Error('All alert traversal remains open');
+    const before = transport.requests.length;
+    expect(await scanGithubTriageSource({ v: 1, instance: { ...enabled, configuration: { v: 1,
+      token: enabled.configuration.token.replace('"codeScanning":false', '"codeScanning":true') } },
+      page: { kind: 'continuation', continuation: first.continuation } }, transport.context)).toMatchObject({ kind: 'failed' });
+    expect(transport.requests).toHaveLength(before);
+    let current: TriageScanResultV1 = first;
+    const identities: string[] = [];
+    while (current.kind === 'page') {
+      current = TriageScanResultV1Schema.parse(await scanGithubTriageSource({ v: 1, instance: enabled,
+        page: { kind: 'continuation', continuation: current.continuation } }, transport.context));
+      if (current.kind === 'failed') throw new Error('Readable repository walk');
+      identities.push(...current.observations.filter(observation => observation.kind === 'present')
+        .map(observation => observation.localRef.collisionScope));
+    }
+    expect(identities).toEqual(['github:1', 'github:2']);
+    expect(current.evidence).toEqual({ kind: 'walkFinished' });
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/user/repos')).toHaveLength(2);
+    // The directory row this same invocation just read with this credential is the
+    // repository's identity proof; a second repository read would re-prove it.
+    expect(transport.requests.filter(request => /^\/repos\/org\/repo-[12]$/u.test(new URL(request.url).pathname))).toHaveLength(0);
+    expect(transport.requests.some(request => new URL(request.url).pathname.endsWith('/code-scanning/alerts'))).toBe(false);
+  });
+
+  it('pages ten thousand all-state native findings without issue-search ceilings or per-row detail reads', async () => {
+    const nativeTotal = 10_000;
+    const perRepositoryTotal = nativeTotal / 2;
+    const secondRepositoryKey = `${GITHUB_FIXTURE_OWNER}/second-repository`.toLowerCase();
+    const instance = configuredInstance({ scope: 'repository' });
+    const enabled = { ...instance, configuration: { v: 1 as const, token: JSON.stringify({ v: 1,
+      selection: { kind: 'selected', unitIds: [REPOSITORY_KEY, secondRepositoryKey] }, alerts: { dependabot: true, codeScanning: true } }) } };
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/search/issues') return { status: 200, body: githubSearchResponse({ items: [] }) };
+      if (url.pathname === `/repos/${secondRepositoryKey}`) return { status: 200, body: { id: 100, full_name: secondRepositoryKey } };
+      if (url.pathname.endsWith('/code-scanning/alerts')) return { status: 403, body: { message: 'Resource not accessible' } };
+      if (!url.pathname.endsWith('/dependabot/alerts')) return undefined;
+      expect(url.searchParams.get('state')).toBe('open,dismissed,fixed,auto_dismissed');
+      expect(url.searchParams.has('severity')).toBe(false);
+      const perPage = Number(url.searchParams.get('per_page'));
+      expect(perPage).toBeGreaterThan(0);
+      expect(perPage).toBeLessThanOrEqual(64);
+      const offset = Number(url.searchParams.get('after') ?? '0');
+      const count = Math.min(perPage, perRepositoryTotal - offset);
+      const next = new URL(url);
+      next.searchParams.set('after', String(offset + count));
+      return { status: 200,
+        ...(offset + count < perRepositoryTotal ? { headers: { link: `<${next}>; rel="next"` } } : {}),
+        body: Array.from({ length: count }, (_, index) => ({ number: offset + index + 1,
+          state: ['open', 'dismissed', 'fixed', 'auto_dismissed'][(offset + index) % 4],
+          created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-02T00:00:00Z',
+          security_advisory: { summary: `Finding ${offset + index + 1}`, severity: 'high' },
+          dependency: { package: { name: 'package', ecosystem: 'npm' }, manifest_path: 'package.json' },
+        })) };
+    } });
+    let page: Parameters<typeof scanGithubTriageSource>[0] = { v: 1, instance: enabled, page: { kind: 'initial', limit: 64 } };
+    const seen: string[] = [];
+    const nativeStates = new Set<string>();
+    let result: TriageScanResultV1;
+    do {
+      result = TriageScanResultV1Schema.parse(await scanGithubTriageSource(page, transport.context));
+      expect(result.kind).not.toBe('failed');
+      if (result.kind === 'failed') throw new Error('Native scan must retain readable family');
+      expect(result.observations.length).toBeLessThanOrEqual(64);
+      for (const observation of result.observations) {
+        if (observation.kind !== 'present') continue;
+        seen.push(`${observation.localRef.collisionScope}/${observation.localRef.entryId}`);
+        nativeStates.add(observation.snapshot.state.presentation);
+      }
+      if (result.kind === 'page') {
+        page = { v: 1, instance: enabled, page: { kind: 'continuation', continuation: result.continuation } };
+      }
+    } while (result.kind === 'page');
+    expect(new Set(transport.requests.filter(request => new URL(request.url).pathname.endsWith('/dependabot/alerts'))
+      .map(request => new URL(request.url).searchParams.get('state')))).toEqual(new Set(['open,dismissed,fixed,auto_dismissed']));
+    expect(transport.requests.filter(request => new URL(request.url).pathname.endsWith('/code-scanning/alerts'))
+      .every(request => !new URL(request.url).searchParams.has('state'))).toBe(true);
+    expect(seen).toHaveLength(nativeTotal);
+    expect(new Set(seen).size).toBe(nativeTotal);
+    expect(nativeStates).toEqual(new Set(['active', 'resolved', 'suppressed']));
+    expect(result.evidence).toMatchObject({ kind: 'partial' });
+    const paths = transport.requests.map(request => new URL(request.url).pathname);
+    expect(paths.filter(path => path === '/user/repos')).toHaveLength(0);
+    expect(paths.filter(path => path.endsWith('/code-scanning/alerts'))).toHaveLength(2);
+    expect(paths.every(path => path === '/search/issues' || path === `/repos/${REPOSITORY_KEY}`
+      || path === `/repos/${secondRepositoryKey}` || path.endsWith('/dependabot/alerts') || path.endsWith('/code-scanning/alerts'))).toBe(true);
+  });
+
+  it('does zero native discovery for legacy tokens', async () => {
+    const transport = createStubGithubTransport({ respond: request => new URL(request.url).pathname === '/search/issues'
+      ? { status: 200, body: githubSearchResponse({ items: [] }) } : undefined });
+    const instance = configuredInstance({ scope: 'account' });
+    let current = await scanGithubTriageSource({ v: 1, instance, page: { kind: 'initial', limit: 64 } }, transport.context);
+    while (current.kind === 'page') current = await scanGithubTriageSource({ v: 1, instance,
+      page: { kind: 'continuation', continuation: current.continuation } }, transport.context);
+    expect(current).toMatchObject({ kind: 'complete', observations: [] });
+    expect(transport.requests.every(request => new URL(request.url).pathname === '/search/issues')).toBe(true);
+  });
+
   it('reads open work and recently closed task kinds through registered HTTP paging while ordinary scans stay open-only', async () => {
     const sinceMs = Date.parse('2026-10-19T00:00:00Z');
     const transport = createStubGithubTransport({ respond: (request) => {
       const url = new URL(request.url);
+      if (url.pathname === '/graphql') return githubChecksBatchResponse(request);
       if (url.pathname !== '/search/issues') return undefined;
       const query = url.searchParams.get('q') ?? '';
       return { status: 200, body: githubSearchResponse({ items: query.includes('closed:>=2026-10-19') && query.includes('assignee:@me')
         ? [{ ...GITHUB_ISSUE_RESPONSE, state: 'closed', state_reason: 'completed', closed_at: '2026-10-20T09:00:00Z',
           repository_url: `https://api.github.com/repos/${REPOSITORY_KEY}` }] : [] }) };
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const instance = configuredInstance({ scope: 'repository' });
@@ -139,7 +491,7 @@ describe('registered GitHub REST → Triage source contract', () => {
   it('keeps a retained repository selection and the current directory on one native unit id', async () => {
     const transport = createStubGithubTransport({ respond: (request) => new URL(request.url).pathname === '/user/repos'
       ? { status: 200, body: [{ id: 11, full_name: 'org/app' }] } : undefined });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const instance = configuredInstance({ scope: 'account' });
@@ -163,7 +515,7 @@ describe('registered GitHub REST → Triage source contract', () => {
         total_count: 2, incomplete_results: false, items: [{ id: second ? 22 : 11, full_name: second ? 'octo-org/api' : 'octo-org/app' }],
       } };
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const configured = configuredInstance({ scope: 'account' });
@@ -189,7 +541,7 @@ describe('registered GitHub REST → Triage source contract', () => {
   });
   it('projects configured repository selection for filters through a registered safe Action without provider reads', async () => {
     const transport = createStubGithubTransport({ respond: () => { throw new Error('Configured projection must not read GitHub'); } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const instance = configuredInstance({ scope: 'account' });
@@ -208,7 +560,7 @@ describe('registered GitHub REST → Triage source contract', () => {
   it('scans both selected repositories through the registered Action without an account-wide query', async () => {
     const transport = createStubGithubTransport({ respond: (request) => new URL(request.url).pathname === '/search/issues'
       ? { status: 200, body: githubSearchResponse({ items: [] }) } : undefined });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const instance = { ...configuredInstance({ scope: 'account' }), configuration: {
@@ -233,14 +585,15 @@ describe('registered GitHub REST → Triage source contract', () => {
   });
   it('loads exact task fields despite honest row-fact truncation through the registered get Action', async () => {
     const body = 'Full task body\n\nKeep the Markdown whitespace.  \n';
-    const issue = { ...GITHUB_ISSUE_RESPONSE, number: 7, title: '界'.repeat(1000), body,
+    // One three-byte character past the display bound, so the row title must truncate.
+    const issue = { ...GITHUB_ISSUE_RESPONSE, number: 7, title: '界'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 3) + 1), body,
       labels: [{ name: ' preserve label whitespace ' }], assignees: [{ login: 'octocat' }],
       url: `https://api.github.com/repos/${REPOSITORY_KEY}/issues/7`,
       repository_url: `https://api.github.com/repos/${REPOSITORY_KEY}`,
       html_url: `https://github.com/${REPOSITORY_KEY}/issues/7` };
     const transport = createStubGithubTransport({ respond: (request) => request.url.endsWith('/issues/7')
       ? { status: 200, body: issue } : undefined });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
@@ -260,22 +613,24 @@ describe('registered GitHub REST → Triage source contract', () => {
     { name: 'readable empty', checkStatus: 200, empty: true, headStatus: 200, failureCode: null },
     { name: 'checks denied', checkStatus: 403, empty: false, headStatus: 200, failureCode: 'github_forbidden' },
     { name: 'head denied', checkStatus: 200, empty: false, headStatus: 403, failureCode: 'github_forbidden' },
-    { name: 'checks throttled', checkStatus: 429, empty: false, headStatus: 200, failureCode: 'github_rate_limited' },
   ])('preserves the PR and distinguishes $name Checks through the registered strict consumer', async ({ checkStatus, empty, headStatus, failureCode }) => {
     const transport = createStubGithubTransport({ respond: (request) => {
       const url = new URL(request.url);
       if (url.pathname === '/search/issues') return { status: 200, body: githubSearchResponse({
         items: /review-requested:|mentions:/u.test(url.searchParams.get('q') ?? '') ? [GITHUB_SEARCH_PULL_REQUEST_ITEM] : [],
       }) };
-      if (url.pathname.endsWith('/pulls/1284')) return { status: headStatus, body: GITHUB_PULL_REQUEST_RESPONSE };
-      if (url.pathname.endsWith('/check-runs')) return { status: checkStatus,
-        ...(checkStatus === 429 ? { headers: { 'retry-after': '60' } } : {}), body: githubCheckRunsResponse({
-        runs: empty ? [] : [githubCheckRun({ id: 1, name: 'unit', status: 'completed', conclusion: 'failure' })],
-      }) };
-      if (url.pathname.endsWith('/status')) return { status: 200, body: githubCombinedStatusResponse({ state: 'success', statuses: [] }) };
+      if (url.pathname === '/graphql') return githubChecksBatchResponse(request, {
+        reviewDecision: 'APPROVED',
+        nodes: empty ? [] : [{ __typename: 'CheckRun', id: 'check-1', name: 'unit', status: 'COMPLETED',
+          conclusion: 'FAILURE', isRequired: true, detailsUrl: null, startedAt: null, completedAt: null,
+          checkSuite: { createdAt: '2026-08-10T11:59:59Z' } }],
+        ...(headStatus === 403 ? { pullRequest: null, errors: [{ type: 'FORBIDDEN', path: ['row0', 'pullRequest'] }] }
+          : checkStatus === 403 ? { pullRequest: { headRefOid: 'a'.repeat(40), reviewDecision: 'APPROVED', commits: null },
+            errors: [{ type: 'FORBIDDEN', path: ['row0', 'pullRequest', 'commits'] }] } : {}),
+      });
       return undefined;
     } });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
@@ -292,11 +647,65 @@ describe('registered GitHub REST → Triage source contract', () => {
         failureCode !== null ? { kind: 'status', value: 'Checks unavailable', tone: 'warning' }
           : empty ? undefined : { kind: 'status', value: '1 failing', tone: 'danger' },
       );
+      expect(row.snapshot.facts.find(fact => fact.id === 'github/review-decision')?.value).toEqual(
+        headStatus === 403 ? undefined : { kind: 'status', value: 'Approved', tone: 'success' },
+      );
       expect(result.evidence).toEqual(failureCode === null
         ? { kind: 'walkFinished' } : { kind: 'partial', reason: failureCode });
-      expect(transport.requests.filter((request) => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
+      expect(transport.requests.filter((request) => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
+      expect(transport.materializeCount()).toBe(1);
     } finally {
       await plugin.dispose();
+    }
+  });
+
+  it('keeps every searched lane when the page batch of optional Checks parks the account', async () => {
+    const startedAtMs = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAtMs);
+    let batchReads = 0;
+    const transport = createStubGithubTransport({ respond: (request): StubHttpResponse | undefined => {
+      const url = new URL(request.url);
+      if (url.pathname === '/search/issues') {
+        const query = url.searchParams.get('q') ?? '';
+        const review = query.includes('review-requested:');
+        const first = url.searchParams.get('page') === '1';
+        const next = new URL(url); next.searchParams.set('page', '2');
+        return { status: 200, ...(review && first ? { headers: { link: `<${next}>; rel="next"` } } : {}),
+          body: githubSearchResponse({ items: first && (review || query.includes('mentions:')) ? [GITHUB_SEARCH_PULL_REQUEST_ITEM] : [] }) };
+      }
+      if (url.pathname === '/graphql') return ++batchReads === 1
+        ? { status: 429, headers: { 'retry-after': '60' }, body: { message: 'Too many requests' } }
+        : githubChecksBatchResponse(request);
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    try {
+      const instance = configuredInstance({ scope: 'repository' });
+      const invoke = async (page: TriageScanInputV1['page']) =>
+        TriageScanResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.scan, { v: 1, instance, page },
+          { surface: 'agent', sessionId: 'triage-audit-session' }));
+      const first = await invoke({ kind: 'initial', limit: 200 });
+      // The page's one Checks batch follows its last search, so the park refuses no
+      // search: the walk finishes and every lane's rows survive as partial evidence.
+      expect(first).toMatchObject({ kind: 'complete', evidence: { kind: 'partial', reason: 'github_rate_limited' },
+        observations: [{ kind: 'present', localRef: { entryId: '1284' }, viewer: { involvement: ['reviewRequested'] } },
+          { kind: 'present', localRef: { entryId: '1284' }, viewer: { involvement: ['mentioned'] } }] });
+      if (first.kind === 'failed') throw new Error('Optional Checks must retain the searched rows');
+      expect(first.observations[0]?.kind === 'present' && first.observations[0].snapshot.facts.find(fact => fact.id === 'github/checks')?.value)
+        .toEqual({ kind: 'status', value: 'Checks unavailable', tone: 'warning' });
+      const searches = transport.requests.filter(request => new URL(request.url).pathname === '/search/issues').map(request => new URL(request.url));
+      expect(searches.map(url => [url.searchParams.get('q')?.split(' ').at(-1), url.searchParams.get('page')])).toEqual([
+        ['review-requested:@me', '1'], ['assignee:@me', '1'], ['mentions:@me', '1'],
+        ['reviewed-by:@me', '1'], ['author:@me', '1'], ['review-requested:@me', '2'],
+      ]);
+      expect(transport.requests.at(-1)?.url).toContain('/graphql');
+      expect(batchReads).toBe(1);
+      expect(transport.materializations.every(materialization => materialization.account.accountId === CONFIGURED_ACCOUNT.accountId)).toBe(true);
+    } finally {
+      await plugin.dispose();
+      clock.mockRestore();
     }
   });
 
@@ -305,7 +714,7 @@ describe('registered GitHub REST → Triage source contract', () => {
     const transport = createStubGithubTransport({ respond: (request) => (
       request.url.endsWith('/pulls/1284') ? { status: 200, body: response } : undefined
     ) });
-    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     const input = {
@@ -486,6 +895,7 @@ function configuredInstance(input: Readonly<{
 function searchTransport() {
   return createStubGithubTransport({
     respond: (request): StubHttpResponse | undefined => {
+      if (new URL(request.url).pathname === '/graphql') return githubChecksBatchResponse(request);
       if (!request.url.startsWith('https://api.github.com/search/issues')) return undefined;
       return {
         status: 200,
@@ -498,7 +908,7 @@ function searchTransport() {
 
 describe('GitHub Triage source operations', () => {
   it('reports a lost machine login with its typed authentication repair without contacting GitHub', async () => {
-    const stub = createStubGithubTransport({ respond: () => undefined });
+    const stub = createStubGithubTransport({ binding: null, respond: () => undefined });
     const instance = {
       ...configuredInstance({ scope: 'repository' }),
       binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native' as const, service: CONFIGURED_ACCOUNT.service },
@@ -513,8 +923,10 @@ describe('GitHub Triage source operations', () => {
   it('uses the machine login for a native configured source without returning credential material', async () => {
     const nativeToken = 'native-source-token-must-not-be-returned';
     const stub = createStubGithubTransport({
+      binding: null,
       nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: `Bearer ${nativeToken}` } },
-      respond: (request) => request.url.startsWith('https://api.github.com/search/issues')
+      respond: (request) => new URL(request.url).pathname === '/graphql' ? githubChecksBatchResponse(request)
+        : request.url.startsWith('https://api.github.com/search/issues')
         ? { status: 200, body: githubSearchResponse({ items: [GITHUB_SEARCH_PULL_REQUEST_ITEM] }) }
         : undefined,
     });
@@ -525,11 +937,24 @@ describe('GitHub Triage source operations', () => {
 
     const result = await scanGithubTriageSource({ v: 1, instance, page: { kind: 'initial', limit: 64 } }, stub.context);
 
-    expect(result.kind).toBe('page');
+    expect(result.kind).toBe('complete');
     expect(stub.requests[0]?.headers.Authorization).toBe(`Bearer ${nativeToken}`);
     expect(stub.materializations).toEqual([]);
     expect(JSON.stringify(result)).not.toContain(nativeToken);
     expect(JSON.stringify(instance)).not.toContain(nativeToken);
+  });
+
+  it('refuses explicit machine login while the host purpose still selects an Account', async () => {
+    const nativeMaterialization = vi.fn((): never => { throw new Error('A selected Account cannot grant native materialization'); });
+    const stub = createStubGithubTransport({ nativeMaterialization, respond: () => undefined });
+    const instance = {
+      ...configuredInstance({ scope: 'repository' }),
+      binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native' as const, service: CONFIGURED_ACCOUNT.service },
+    };
+    expect(await openGithubTriageClient(instance, stub.context)).toEqual({ ok: false,
+      failure: { class: 'authentication', code: 'github_credential_mismatch' } });
+    expect(nativeMaterialization).not.toHaveBeenCalled();
+    expect(stub.requests).toEqual([]);
   });
 
   it('projects a GitHub scan onto the strict source ABI as one settled result with no continuation', async () => {
@@ -542,14 +967,10 @@ describe('GitHub Triage source operations', () => {
     }, stub.context, { now: fixedClock(1_700_000_000_000) });
 
     expect(() => TriageScanResultV1Schema.parse(result)).not.toThrow();
-    // One whole native page spends the ABI-capped budget, so this call settles the
-    // PAGE arm with the source's own continuation and the rotation resumes at the
-    // second involvement lane — every lane is reached inside the one refresh.
-    expect(result.kind).toBe('page');
-    if (result.kind !== 'page') throw new Error('unreachable');
-    expect(result.continuation.v).toBe(1);
-    expect(typeof result.continuation.token).toBe('string');
-    expect(result.observations).toHaveLength(1);
+    // All five short initial lane pages fit; the source preserves each involvement encounter.
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('expected the completed source walk');
+    expect(result.observations).toHaveLength(5);
     const observation = result.observations[0];
     if (observation?.kind !== 'present') throw new Error('expected a present observation');
     expect(observation.localRef).toEqual({
@@ -563,10 +984,8 @@ describe('GitHub Triage source operations', () => {
     // not, and this projection is the only place that rename happens.
     const numberFact = observation.snapshot.facts.find((fact) => fact.id === 'github/number');
     expect(numberFact?.value).toEqual({ kind: 'text', value: '#1284' });
-    // `projection-budget` describes this PAGE's shape — it is not a claim that the
-    // walk stopped early, because the continuation carries it forward.
-    expect(result.evidence).toEqual({ kind: 'partial', reason: 'projection-budget' });
-    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/search/issues')).toHaveLength(1);
+    expect(result.evidence).toEqual({ kind: 'walkFinished' });
+    expect(stub.requests.filter((request) => new URL(request.url).pathname === '/search/issues')).toHaveLength(5);
   });
 
   it('materializes only the exact configured account and never a caller-supplied one', async () => {
@@ -1065,7 +1484,7 @@ describe('GitHub Triage source operations', () => {
     // never a resume point this source will honour.
     expect(result).toEqual({
       kind: 'failed',
-      failure: { class: 'unsupportedContract', code: 'triage_scope_continuation_invalid' },
+      failure: { class: 'unsupportedContract', code: 'github_scan_continuation_unrecognized' },
     });
     expect(stub.requests).toHaveLength(0);
   });
@@ -1077,7 +1496,7 @@ describe('GitHub Triage source operations', () => {
     let request: Parameters<typeof scanGithubTriageSource>[0] = {
       v: 1,
       instance,
-      page: { kind: 'initial', limit: 64 },
+      page: { kind: 'initial', limit: 1 },
     };
 
     for (let page = 0; page < 8; page += 1) {
@@ -1201,7 +1620,6 @@ describe('GitHub Triage source operations', () => {
   });
 
   it.each([
-    ['missing', undefined],
     ['malformed', { v: 1 as const, routingToken: 'https://api.github.com/repos/octo-org/example-app' }],
   ] as const)('does not guess an exact route from repository configuration when the locator is %s', async (
     _case,
@@ -1218,7 +1636,7 @@ describe('GitHub Triage source operations', () => {
       v: 1,
       instance: configuredInstance({ scope: 'repository' }),
       localRef,
-      ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
+      lastKnownLocator,
     }, stub.context, { now: fixedClock(1_700_000_000_000) });
 
     expect(result).toEqual({
@@ -1230,11 +1648,11 @@ describe('GitHub Triage source operations', () => {
     expect(stub.materializations).toHaveLength(0);
   });
 
-  it('answers unresolved without an outbound call when the configured instance carries no route', async () => {
+  it('answers unresolved without an outbound call when the locator-free ref has no GitHub repository identity', async () => {
     const stub = searchTransport();
     const localRef = {
       kindId: 'pull-request',
-      collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`,
+      collisionScope: 'unknown-repository',
       entryId: '1284',
     } as const;
 
@@ -1244,9 +1662,7 @@ describe('GitHub Triage source operations', () => {
       localRef,
     }, stub.context, { now: fixedClock(1_700_000_000_000) });
 
-    // An account-scoped instance names no repository and the target has never
-    // observed this entry, so there is no route. The answer is the contract's
-    // `unresolved`, and no path is guessed from identity or display text.
+    // Neither configuration nor display text supplies a missing repository identity.
     expect(result).toEqual({
       kind: 'unresolved',
       localRef,

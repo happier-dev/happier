@@ -2,6 +2,7 @@ import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { GITHUB_PLUGIN_ID } from './observations/githubProviderContracts.js';
 import type { GithubChecksConditionSnapshotV1 } from './triage/checksCondition.js';
+import { GithubDeploymentReviewEventV1Schema } from './actions/deploymentReviewProtocol.js';
 
 export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   issueOpened: 'automation/issue-opened-v1',
@@ -11,6 +12,7 @@ export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
   checksCompleted: 'automation/pull-request-checks-completed-v1',
   checksFailed: 'automation/pull-request-checks-failed-v1',
   checksPassed: 'automation/pull-request-checks-passed-v1',
+  deploymentReview: 'automation/deployment-review-v1',
 } as const);
 
 export type GithubAutomationEventKindV1 = keyof typeof GITHUB_AUTOMATION_EVENT_LOCAL_IDS;
@@ -27,6 +29,7 @@ export type GithubAutomationEventRepositoryV1 = Readonly<{
 }>;
 
 export type GithubAutomationEventPayloadV1 =
+  | Readonly<{ repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; checks: GithubChecksConditionSnapshotV1 }>
   | Readonly<{
       repository: GithubAutomationEventRepositoryV1;
@@ -48,6 +51,7 @@ export type GithubAutomationEventPayloadV1 =
     }>;
 
 export type GithubAutomationEventFactsV1 =
+  | Readonly<{ kind: 'deploymentReview'; repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
   | Readonly<{ kind: 'checksCompleted' | 'checksFailed' | 'checksPassed'; repository: GithubAutomationEventRepositoryV1; checks: GithubChecksConditionSnapshotV1 }>
   | Readonly<{
       kind: 'push';
@@ -144,6 +148,10 @@ export const GITHUB_CHECKS_SNAPSHOT_SCHEMA = {
 } satisfies PluginJsonSchema;
 
 export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
+  Object.freeze({ kind: 'deploymentReview' as const, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.deploymentReview,
+    title: 'GitHub deployment review changed', description: 'A monitored deployment environment needs review or has resolved.',
+    payloadSchema: payloadSchema({ deploymentReview: GithubDeploymentReviewEventV1Schema.jsonSchema }, ['deploymentReview']),
+  }),
   ...(['checksCompleted', 'checksFailed', 'checksPassed'] as const).map((kind) => Object.freeze({
     kind, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS[kind],
     title: `GitHub pull request checks ${kind === 'checksCompleted' ? 'completed' : kind === 'checksFailed' ? 'failed' : 'passed'}`,
@@ -205,6 +213,8 @@ export function normalizeGithubAutomationEvent(input: GithubAutomationEventFacts
 }> {
   const eventRef = githubAutomationEventRef(input.kind);
   switch (input.kind) {
+    case 'deploymentReview':
+      return Object.freeze({ eventRef, payload: Object.freeze({ repository: input.repository, deploymentReview: input.deploymentReview }) });
     case 'checksCompleted':
     case 'checksFailed':
     case 'checksPassed':

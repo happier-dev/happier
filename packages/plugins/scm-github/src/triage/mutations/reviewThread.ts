@@ -1,13 +1,13 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { GithubGetDependenciesV1 } from '../get.js';
-import { readGithubRepositoryIdFromCollisionScope } from '../identity.js';
 import type { GithubRepositoryRouteV1 } from '../locator.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
 import { GITHUB_MAX_PAGE_SIZE_V1 } from '../types.js';
 
 import type { GithubObservedReviewThreadV1 } from './contracts.js';
 import { sendGithubGraphqlRequest } from './graphql.js';
+import { decodeGithubNodeEntry, githubNodeEntryMatches, type GithubNodeEntryV1 } from './nodeEntry.js';
 
 /**
  * Resolving and reopening one line-anchored review thread.
@@ -132,13 +132,8 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 }
 
 /** One read thread, reduced to the two facts a write decision needs. */
-type ReadThread = Readonly<{
+type ReadThread = GithubNodeEntryV1 & Readonly<{
   thread: GithubObservedReviewThreadV1;
-  /** The entry the thread actually hangs on, in GitHub's own casing. */
-  repositoryId: string;
-  owner: string;
-  repository: string;
-  entryNumber: string;
 }>;
 
 /**
@@ -154,27 +149,12 @@ function decodeReviewThread(data: Readonly<Record<string, unknown>>): ReadThread
   if (!id || typeof node.isResolved !== 'boolean') return null;
 
   const pullRequest = node.pullRequest;
-  if (!isRecord(pullRequest) || typeof pullRequest.number !== 'number') return null;
-  const repository = pullRequest.repository;
-  if (!isRecord(repository) || typeof repository.name !== 'string') return null;
-  const repositoryId = typeof repository.databaseId === 'number'
-    && Number.isSafeInteger(repository.databaseId)
-    && repository.databaseId >= 1
-    ? String(repository.databaseId)
-    : typeof repository.databaseId === 'string'
-      && /^[1-9][0-9]*$/u.test(repository.databaseId.trim())
-      ? repository.databaseId.trim()
-      : null;
-  if (repositoryId === null) return null;
-  const owner = repository.owner;
-  if (!isRecord(owner) || typeof owner.login !== 'string') return null;
+  const entry = decodeGithubNodeEntry(pullRequest, isRecord(pullRequest) ? pullRequest.repository : null);
+  if (entry === null) return null;
 
   return Object.freeze({
     thread: Object.freeze({ id, isResolved: node.isResolved }),
-    repositoryId,
-    owner: owner.login,
-    repository: repository.name,
-    entryNumber: String(pullRequest.number),
+    ...entry,
   });
 }
 
@@ -210,28 +190,6 @@ async function readGithubReviewThread(
   return Object.freeze({ ok: true as const, read });
 }
 
-/**
- * Whether the thread GitHub answered with hangs on the entry this invocation was
- * admitted for.
- *
- * Owner and repository are compared case-insensitively because GitHub answers in
- * its own canonical casing while the routing token is lowercased, and a
- * case-sensitive comparison would refuse every legitimate thread. The entry
- * number is compared as the exact digits the local ref carries.
- */
-function belongsToEntry(
-  read: ReadThread,
-  localRef: GithubTriageEntryLocalRefV1,
-  route: GithubRepositoryRouteV1,
-): boolean {
-  const expectedRepositoryId = readGithubRepositoryIdFromCollisionScope(localRef.collisionScope);
-  return expectedRepositoryId !== null
-    && read.repositoryId === expectedRepositoryId
-    && read.owner.toLowerCase() === route.owner.toLowerCase()
-    && read.repository.toLowerCase() === route.name.toLowerCase()
-    && read.entryNumber === localRef.entryId;
-}
-
 /** Exact GraphQL identity preflight shared by resolution and publication. */
 export async function preflightGithubReviewThread(
   input: Readonly<{
@@ -243,7 +201,7 @@ export async function preflightGithubReviewThread(
 ): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>> {
   const current = await readGithubReviewThread(input.threadId, dependencies);
   if (!current.ok) return current;
-  return belongsToEntry(current.read, input.localRef, input.route)
+  return githubNodeEntryMatches(current.read, input.localRef, input.route)
     ? Object.freeze({ ok: true as const })
     : Object.freeze({ ok: false as const, failure: THREAD_NOT_ON_ENTRY_FAILURE });
 }
@@ -289,7 +247,7 @@ export async function readGithubReviewThreadReplyPublicationRecords(
       return Object.freeze({ comments: Object.freeze(comments), failure: answered.failure, incomplete: true });
     }
     const read = decodeReviewThread(answered.data);
-    if (read === null || !belongsToEntry(read, input.localRef, input.route)) {
+    if (read === null || !githubNodeEntryMatches(read, input.localRef, input.route)) {
       return Object.freeze({ comments: Object.freeze(comments), failure: THREAD_NOT_ON_ENTRY_FAILURE, incomplete: true });
     }
     const node = answered.data.node;
@@ -335,7 +293,7 @@ export async function setGithubReviewThreadResolution(
   const current = await readGithubReviewThread(input.threadId, dependencies);
   if (!current.ok) return Object.freeze({ kind: 'failed' as const, failure: current.failure });
 
-  if (!belongsToEntry(current.read, input.localRef, input.route)) {
+  if (!githubNodeEntryMatches(current.read, input.localRef, input.route)) {
     return Object.freeze({ kind: 'failed' as const, failure: THREAD_NOT_ON_ENTRY_FAILURE });
   }
 

@@ -15,10 +15,11 @@ import type {
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
-import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk/scm/hosting';
+import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
-import { readGithubDecodedResponseFacts, readGithubRetryAfterMs } from '../observations/githubApiClient.js';
+import { readGithubDecodedResponseFacts, type GithubApiMethodV1 } from '../observations/githubApiClient.js';
+import { requestGithubAccountForgeJsonV1 } from '../observations/githubForgeHttpFetcher.js';
 import {
   classifyGithubResponseFacts,
   isGithubInaccessibleResourceFailure,
@@ -42,6 +43,7 @@ export type GithubRestTokenResolution =
     kind: 'available';
     token: string;
     profileKey?: string;
+    account?: ConnectedAccountRef;
   }>
   | Readonly<{
     kind: 'missing';
@@ -86,6 +88,7 @@ async function defaultRuntimeTokenResolver(input: Parameters<GithubRestTokenReso
     kind: 'available',
     token: result.token,
     ...(result.profileKey ? { profileKey: result.profileKey } : {}),
+    ...(result.account ? { account: result.account } : {}),
   };
 }
 
@@ -168,7 +171,7 @@ async function resolveToken(
   resolver: GithubRestTokenResolver,
   runtimeServices?: ScmHostingProviderRuntimeServices,
   signal?: AbortSignal,
-): Promise<Readonly<{ token: string; profileKey?: string }>> {
+): Promise<Readonly<{ token: string; profileKey?: string; account?: ConnectedAccountRef }>> {
   const host = resolveProviderHost(provider);
   if (!host) {
     throw createGithubAuthRequiredError('GitHub requires a valid HTTPS repository origin');
@@ -186,6 +189,7 @@ async function resolveToken(
   return {
     token: result.token.trim(),
     ...(result.profileKey ? { profileKey: result.profileKey } : {}),
+    ...(result.account ? { account: result.account } : {}),
   };
 }
 
@@ -208,9 +212,8 @@ function mapGithubRestError(context: ScmForgeHttpErrorContext): Error {
   );
   // A withheld permission stays an authentication repair here: the owner fixes it
   // by reconnecting an account whose scopes cover the operation.
-  const retryAfterMs = failure.class === 'rateLimit' ? readGithubRetryAfterMs(context.response.headers, now) : null;
   const error = failure.class === 'rateLimit'
-    ? createGithubRateLimitedError(retryAfterMs === null ? undefined : now + retryAfterMs)
+    ? createGithubRateLimitedError(failure.retryNotBeforeMs)
     : failure.class === 'authentication' || failure.class === 'permission'
       ? createGithubAuthRequiredError('GitHub REST authentication failed')
       : isGithubInaccessibleResourceFailure(failure)
@@ -266,23 +269,25 @@ export function createGithubRestAdapter(params?: Readonly<{
   const fetcher = params?.fetcher ?? defaultFetcher;
   const tokenResolver = params?.resolveToken ?? defaultRuntimeTokenResolver;
   const profileKeyByProvider = new Map<string, string | null>();
+  const adapterLifetime = {};
 
   async function requestJson(
     provider: ScmHostingProviderRef,
     url: string,
-    init?: Omit<RequestInit, 'headers'>,
+    init?: Readonly<{ method?: GithubApiMethodV1; body?: string }>,
     runtimeServices?: ScmHostingProviderRuntimeServices,
     signal?: AbortSignal,
   ): Promise<unknown> {
     const auth = await resolveToken(provider, tokenResolver, runtimeServices, signal);
     profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
-    return requestScmForgeJson({
+    return requestGithubAccountForgeJsonV1({
       url,
-      init: {
-        ...init,
-        ...(signal ? { signal } : {}),
-        headers: buildHeaders(auth.token),
-      },
+      ...init,
+      ...(signal ? { signal } : {}),
+      headers: buildHeaders(auth.token),
+      auth,
+      executionOrigin: new URL(apiBaseUrl(provider)).origin,
+      lifetime: adapterLifetime,
       fetcher,
       mapError: mapGithubRestError,
     });

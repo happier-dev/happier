@@ -3,7 +3,6 @@ import {
   type GithubApiClientV1,
   type GithubApiResponseV1,
 } from '../../observations/githubApiClient.js';
-import { readGithubPullRequestChecks, type GithubChecksSurfaceV1 } from '../checks.js';
 import {
   classifyGithubResponseFailure,
   classifyGithubTransportFailure,
@@ -302,76 +301,6 @@ export async function readGithubPullRequestComparisonBeforeOid(
   const beforeOid = (mergeBase as Readonly<Record<string, unknown>>)['sha'];
   if (typeof beforeOid !== 'string' || !/^[a-f0-9]{40}$/u.test(beforeOid)) return failed(RESPONSE_SHAPE_INVALID);
   return succeeded(beforeOid);
-}
-
-/* --------------------------------------------------------------------- checks */
-
-export type GithubChecksReadV1 = Readonly<{
-  /** The head revision the two check reads were issued against. */
-  headRevision: string;
-  surface: GithubChecksSurfaceV1;
-}>;
-
-const HEAD_REVISION_UNREADABLE: GithubTriageFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'github_head_revision_unreadable',
-});
-
-/**
- * The checks plane's whole read.
- *
- * It begins with the pull request itself because check runs and commit statuses
- * are keyed by COMMIT. Reading them against a head revision remembered from an
- * earlier observation would answer for a commit the pull request has already
- * moved past and present that answer as the current state — the exact race the
- * head revision exists to close. The revision is therefore read here, now, and
- * the two check reads are issued against it.
- */
-export async function readGithubChecksSurface(
-  input: Readonly<{
-    route: GithubRepositoryRouteV1;
-    entryNumber: string;
-    repositoryId?: string;
-  }>,
-  dependencies: GithubDetailReadDependenciesV1 & Readonly<{ signal: AbortSignal }>,
-): Promise<GithubDetailReadResultV1<GithubChecksReadV1>> {
-  let url: string;
-  try {
-    url = buildGithubPullRequestUrl(input);
-  } catch {
-    return failed(REQUEST_INVALID);
-  }
-
-  let response: GithubApiResponseV1;
-  try {
-    response = await dependencies.client.request({ url });
-  } catch (error) {
-    return failed(classifyGithubTransportFailure(error));
-  }
-  const decoded = decodeBody(response, dependencies.now());
-  if (!decoded.ok) return failed(decoded.failure);
-
-  const view = decodeGithubPullRequestBody(decoded.body);
-  if (view === null || view.number !== input.entryNumber
-    || (input.repositoryId !== undefined && view.repositoryId !== input.repositoryId)) {
-    return failed(RESPONSE_SHAPE_INVALID);
-  }
-  const headRevision = view.nativeRevision;
-  if (headRevision === null) {
-    // A pull request whose head this source cannot read is not a pull request
-    // with no checks: there is no commit to ask about, and saying so is the
-    // honest answer.
-    return failed(HEAD_REVISION_UNREADABLE);
-  }
-
-  const surface = await readGithubPullRequestChecks({ route: input.route, headSha: headRevision,
-    repositoryId: input.repositoryId ?? view.repositoryId,
-  }, {
-    client: dependencies.client,
-    now: dependencies.now,
-    signal: dependencies.signal,
-  });
-  return succeeded(Object.freeze({ headRevision, surface }));
 }
 
 /* -------------------------------------------------------------------- reviews */

@@ -25,14 +25,23 @@ function isRecord(value: unknown): value is JsonRecord {
 export function parseGithubRepositorySetupInput(
   value: unknown,
   pluginId: string,
-): GithubRepositorySetupInputV1 {
+): GithubRepositorySetupInputV1;
+export function parseGithubRepositorySetupInput(
+  value: unknown, pluginId: string, allowNativeService: true,
+): Readonly<{ repository: string; credentialRef: ConnectedAccountRef | null }>;
+export function parseGithubRepositorySetupInput(
+  value: unknown, pluginId: string, allowNativeService?: true,
+): Readonly<{ repository: string; credentialRef: ConnectedAccountRef | null }> {
   if (!isRecord(value) || Object.keys(value).length !== 2) {
     throw new PluginError({
       code: 'github_setup_input_invalid',
       message: 'GitHub setup requires a repository and exact Connected Account.',
     });
   }
-  if (!isGithubConnectedAccountRef(value.credentialRef, pluginId)) {
+  let credentialRef: ConnectedAccountRef | null;
+  if (allowNativeService === true && value.credentialRef === null) credentialRef = null;
+  else if (isGithubConnectedAccountRef(value.credentialRef, pluginId)) credentialRef = value.credentialRef;
+  else {
     throw new PluginError({
       code: 'github_setup_credential_invalid',
       message: 'GitHub setup requires this plugin’s exact Connected Account.',
@@ -54,7 +63,7 @@ export function parseGithubRepositorySetupInput(
     });
   }
   return Object.freeze({
-    credentialRef: value.credentialRef,
+    credentialRef,
     repository,
   });
 }

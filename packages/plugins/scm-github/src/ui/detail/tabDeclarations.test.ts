@@ -1,6 +1,7 @@
+import { readPluginTranslationResources } from '../../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
-import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from '../additionalTranslations.js';
 
 import {
   GITHUB_DEFAULT_DETAIL_TAB_V1,
@@ -10,7 +11,13 @@ import {
   githubVisibleDetailTabs,
 } from './tabDeclarations.js';
 
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../../', import.meta.url));
+
 describe('GitHub detail tab declarations', () => {
+  it('gives alerts only their native detail planes', () => {
+    expect(githubVisibleDetailTabs('dependabot-alert').map(tab => tab.id)).toEqual(['overview']);
+    expect(githubVisibleDetailTabs('code-scanning-alert').map(tab => tab.id)).toEqual(['overview', 'locations']);
+  });
   it('states a lifetime and a scroll owner on every tab', () => {
     // The shared tab primitive treats an omitted retention as `discard`, so a
     // panel that says nothing acquires a lifetime by accident.
@@ -37,8 +44,8 @@ describe('GitHub detail tab declarations', () => {
     // nothing fails.
     for (const tab of GITHUB_DETAIL_TABS_V1) {
       expect(tab.titleKey, tab.id).toMatch(/^plugins\.github\.ui\.tab\./u);
-      expect(GITHUB_ADDITIONAL_UI_TRANSLATIONS.en[
-        tab.titleKey as keyof typeof GITHUB_ADDITIONAL_UI_TRANSLATIONS.en
+      expect(PACKAGED_UI_TRANSLATIONS.en[
+        tab.titleKey as keyof typeof PACKAGED_UI_TRANSLATIONS.en
       ], tab.id).toEqual(tab.title);
     }
   });

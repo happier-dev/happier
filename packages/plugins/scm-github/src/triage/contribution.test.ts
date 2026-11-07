@@ -1,4 +1,4 @@
-import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceDescriptorV1Schema, type TriageSourceScopeSelectionV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from '../observations/githubProviderContracts.js';
@@ -23,7 +23,7 @@ describe('GitHub Triage source declaration', () => {
     expect(parsed.success).toBe(true);
     expect(GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.purpose).toBe(GITHUB_CONNECTED_ACCOUNT_PURPOSE);
     const kindIds = GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.map((kind) => kind.id);
-    expect(kindIds).toEqual(['pull-request', 'issue']);
+    expect(kindIds).toEqual(['pull-request', 'issue', 'dependabot-alert', 'code-scanning-alert']);
     expect(new Set(kindIds).size).toBe(kindIds.length);
     for (const kindId of [...kindIds, GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1]) {
       expect(CONTRIBUTION_LOCAL_ID_PATTERN.test(kindId)).toBe(true);
@@ -31,16 +31,23 @@ describe('GitHub Triage source declaration', () => {
     // GitHub's workflow subjects are the source-neutral ones; only `pullRequest`
     // admits the optional review-workspace operation.
     expect(GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.map((kind) => kind.workflowSubject))
-      .toEqual(['pullRequest', 'issue']);
+      .toEqual(['pullRequest', 'issue', 'errorIssue', 'errorIssue']);
     expect(GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds[0]?.detailTabs?.find((tab) => tab.id === 'files'))
       .toMatchObject({ summaryFact: 'github/changed-files' });
-    expect(GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.find(kind => kind.id === 'issue')?.taskCapabilities)
-      .toMatchObject({ completingTransitionId: 'completed' });
+    const issueCapabilities = GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.find(kind => kind.id === 'issue')?.taskCapabilities;
+    expect(issueCapabilities).not.toHaveProperty('completingTransitionId');
+    expect(issueCapabilities?.transitions?.map(transition => transition.id)).toEqual(['open', 'completed', 'not_planned']);
+    for (const kind of GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.kinds.filter(kind => kind.workflowSubject === 'errorIssue')) {
+      expect(kind.task).toBeUndefined();
+      expect(kind.taskCapabilities).toBeUndefined();
+    }
   });
 
   it('admits only its own declared kinds', () => {
     expect(readGithubTriageKindId('pull-request')).toBe('pull-request');
     expect(readGithubTriageKindId('issue')).toBe('issue');
+    expect(readGithubTriageKindId('dependabot-alert')).toBe('dependabot-alert');
+    expect(readGithubTriageKindId('code-scanning-alert')).toBe('code-scanning-alert');
     // Another forge's vocabulary is never flattened onto GitHub's.
     expect(readGithubTriageKindId('merge-request')).toBeNull();
     expect(readGithubTriageKindId('pullRequest')).toBeNull();
@@ -49,6 +56,16 @@ describe('GitHub Triage source declaration', () => {
 });
 
 describe('GitHub Triage configured-instance token', () => {
+  it('preserves opt-in families for All and selected scopes and rejects malformed switches', () => {
+    const selections: TriageSourceScopeSelectionV1[] = [{ kind: 'all' }, { kind: 'selected', unitIds: ['org/app'] }];
+    for (const selection of selections) {
+      const configuration = { v: 1 as const, selection, alerts: { dependabot: true, codeScanning: false } };
+      expect(decodeGithubTriageConfiguration(encodeGithubTriageConfiguration(configuration)))
+        .toEqual({ ok: true, configuration });
+    }
+    expect(decodeGithubTriageConfiguration(JSON.stringify({ v: 1, selection: { kind: 'all' },
+      alerts: { dependabot: 'yes', codeScanning: false } })).ok).toBe(false);
+  });
   it('reads a non-empty repository set and rejects an empty set instead of silently scanning everything', () => {
     const selection = { kind: 'selected', unitIds: ['octo-org/app', 'octo-org/api'] };
     const decoded = decodeGithubTriageConfiguration(JSON.stringify({ v: 1, selection }));

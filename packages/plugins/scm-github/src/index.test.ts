@@ -1,4 +1,3 @@
-import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk/host/registration';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { describe, expect, it } from 'vitest';
 
@@ -17,10 +16,7 @@ describe('GitHub plugin daemon entry', () => {
       throw new Error('The GitHub manifest must parse before its migrations can be projected.');
     }
 
-    const projection = normalizePluginAccountCollectionMigrationRuntimeProjection(
-      entry.collectionMigrations,
-      parsed.manifest.contributes.accountCollections,
-    );
+    const projection = entry.collectionMigrations;
 
     expect(Object.keys(projection)).toEqual([GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID]);
     for (const declaration of parsed.manifest.contributes.accountCollections) {
@@ -30,6 +26,9 @@ describe('GitHub plugin daemon entry', () => {
       expect(projection[declaration.id]?.map((migration) => migration.id)).toEqual(
         declaredMigrations.map((migration) => migration.id),
       );
+      expect(projection[declaration.id]?.map(({ migrate: _migrate, ...metadata }) => metadata))
+        .toEqual(declaration.migrations ?? []);
+      for (const migration of projection[declaration.id] ?? []) expect(migration.migrate).toBeTypeOf('function');
     }
   });
 });

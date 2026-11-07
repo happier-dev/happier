@@ -1,4 +1,6 @@
-import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { projectTriageDisplayTextV1, readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { GithubMergeMethodV1 } from './mutations/contracts.js';
 
 import {
   decodeGithubJsonResponse,
@@ -14,7 +16,7 @@ import {
   GITHUB_ROUTE_BODY_MISMATCH_FAILURE,
   isGithubSuccessStatus,
 } from './errors.js';
-import { buildGithubCollisionScope, buildGithubEntryLocalRef } from './identity.js';
+import { buildGithubCollisionScope, buildGithubEntryLocalRef, readGithubRepositoryIdFromCollisionScope } from './identity.js';
 import { buildGithubApiUrl, parseGithubRoutingToken, type GithubRepositoryRouteV1 } from './locator.js';
 import {
   decodeGithubIssueBody,
@@ -22,7 +24,9 @@ import {
   projectGithubEntry,
   type GithubRawEntityViewV1,
 } from './mapping/entry.js';
+import { mapGithubMergeability } from './mapping/state.js';
 import {
+  readGithubEntryMetadataFields,
   projectGithubIssueOverview,
   projectGithubPullRequestOverview,
   readGithubNamedMembers,
@@ -31,15 +35,19 @@ import {
 } from './detail/overview.js';
 import { createGithubRepositoryReader, type GithubRepositoryReaderV1 } from './repositories.js';
 import { readGithubIssueRelations } from './relations.js';
+import { readGithubNativeSecurityAlert } from './securityAlerts/reads.js';
+import { projectGithubSecurityAlertDispatchEvidence } from './securityAlerts/dispatchEvidence.js';
 import type {
   GithubTriageEntryLocalRefV1,
+  GithubTriageEntrySnapshotV1,
   GithubTriageFailureV1,
   GithubTriageObservationV1,
   GithubTriageReviewRevisionV1,
 } from './types.js';
 
 /**
- * `get` is the ONLY operation that can conclude absence, and it fails closed.
+ * This reader owns absence conclusions and fails closed. A successful native
+ * issue-deletion payload is reduced here too; a masked 404 is not deletion proof.
  *
  * The ref says WHICH entry; the locator says WHERE TO KNOCK. A locator can be stale —
  * that is what a locator is — so a bare `200` never proves that the requested route
@@ -208,7 +216,41 @@ async function confirmRepositoryIdentity(
     : 'reassigned';
 }
 
+/** The exact native read also supplies dispatch evidence without a second provider acquisition. */
 export async function runGithubTriageGet(
+  input: GithubGetInputV1,
+  dependencies: GithubGetDependenciesV1,
+): Promise<Readonly<{ observation: GithubTriageObservationV1; dispatchEvidence?: SessionInputForgeEvidenceV1 }>> {
+  // A pin retains identity, not provider routing. Ask GitHub for the current
+  // locator by its immutable repository id, then use the ordinary exact ladder.
+  // Malformed supplied locators remain refusals rather than alternate routing.
+  if (input.routingToken == null) {
+    const repositoryId = readGithubRepositoryIdFromCollisionScope(input.localRef.collisionScope);
+    if (repositoryId === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+    const repositories = dependencies.repositories ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
+    const repository = await repositories.read({ repositoryId });
+    if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure) };
+    if (repository.repositoryId !== repositoryId) return { observation: unresolved(input.localRef, GITHUB_ROUTE_BODY_MISMATCH_FAILURE) };
+    if (repository.repositoryKey === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+    input = { ...input, routingToken: repository.repositoryKey };
+    dependencies = { ...dependencies, repositories };
+  }
+  if (input.localRef.kindId !== 'dependabot-alert' && input.localRef.kindId !== 'code-scanning-alert') {
+    return { observation: await readGithubNonAlertTriageGet(input, dependencies) };
+  }
+  const route = parseGithubRoutingToken(input.routingToken);
+  if (route === null) return { observation: unresolved(input.localRef, GITHUB_MISSING_LOCATOR_FAILURE) };
+  const repositories = dependencies.repositories ?? createGithubRepositoryReader({ client: dependencies.client, now: dependencies.now });
+  const repository = await repositories.read(route);
+  if (repository.kind !== 'readable') return { observation: unresolved(input.localRef, repository.failure) };
+  const read = await readGithubNativeSecurityAlert({ localRef: input.localRef, route,
+    repositoryId: repository.repositoryId, repositoryKey: repository.repositoryKey ?? `${route.owner}/${route.name}` }, dependencies);
+  return read.kind === 'readable'
+    ? { observation: read.observation, dispatchEvidence: projectGithubSecurityAlertDispatchEvidence(read.alert) }
+    : { observation: unresolved(input.localRef, read.failure) };
+}
+
+async function readGithubNonAlertTriageGet(
   input: GithubGetInputV1,
   dependencies: GithubGetDependenciesV1,
 ): Promise<GithubTriageObservationV1> {
@@ -223,6 +265,7 @@ export async function runGithubTriageGet(
   if (input.localRef.kindId === 'pull-request') {
     return (await readGithubPullRequest(input.localRef, route, repositories, dependencies)).observation;
   }
+  if (input.localRef.kindId !== 'issue') return unresolved(input.localRef, { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' });
   const observation = (await readGithubIssue(input.localRef, route, repositories, dependencies)).observation;
   if (observation.kind !== 'present') return observation;
   const currentRoute = parseGithubRoutingToken(observation.locator.routingToken);
@@ -252,7 +295,7 @@ export type GithubPullRequestSourceTipV1 = Readonly<{
   sourceHeadSha: string;
 }>;
 
-export type GithubPullRequestFactsV1 = Readonly<{
+export type GithubPullRequestFactsV1 = GithubIssueFactsV1 & Readonly<{
   /** The validated provider pull-request number from this reread. */
   number: number;
   /** GitHub's own `state`, trimmed: `open` or `closed`. */
@@ -280,6 +323,8 @@ export type GithubPullRequestFactsV1 = Readonly<{
    * question a write must not get two answers to.
    */
   nodeId: string | null;
+  /** Same REST response: null means unavailable, not a disabled request. */
+  autoMerge?: Readonly<{ enabled: boolean | null; method: GithubMergeMethodV1 | null }> | null;
 }>;
 
 export type GithubPullRequestReadV1 = Readonly<{
@@ -338,8 +383,8 @@ function readGithubPullRequestFacts(
   const mergedAt = typeof raw.merged_at === 'string' ? raw.merged_at.trim() : '';
   const reviewRevision = readGithubPullRequestReviewRevision(raw, headRevision);
   return Object.freeze({
+    ...readGithubIssueFacts(raw),
     number,
-    state: typeof raw.state === 'string' && raw.state.trim() ? raw.state.trim() : null,
     // GitHub publishes both; either one alone is enough to prove the merge happened,
     // and requiring both would report an already-merged pull request as unmerged.
     merged: raw.merged === true || mergedAt !== '',
@@ -349,8 +394,12 @@ function readGithubPullRequestFacts(
     headRevision,
     reviewRevision,
     sourceTip: reviewRevision === null ? null : readGithubPullRequestSourceTip(raw, reviewRevision),
-    nodeId: typeof raw.node_id === 'string' && raw.node_id.trim() ? raw.node_id.trim() : null,
-  });
+    autoMerge: raw.auto_merge === null ? { enabled: false, method: null }
+      : isRecord(raw.auto_merge) ? { enabled: true,
+        method: raw.auto_merge.merge_method === 'merge' || raw.auto_merge.merge_method === 'squash'
+          || raw.auto_merge.merge_method === 'rebase' ? raw.auto_merge.merge_method : null }
+        : null,
+  } satisfies GithubPullRequestFactsV1);
 }
 
 /**
@@ -441,19 +490,40 @@ export async function readGithubPullRequest(
   }
 
   const facts = readGithubPullRequestFacts(record, view.nativeRevision, number);
+  const overview = projectGithubPullRequestOverview(record);
+  const branches = readGithubPullRequestBranches(overview);
   return Object.freeze({
     observation: Object.freeze({
       kind: 'present' as const,
       localRef: projection.localRef,
       locator: projection.locator,
-      snapshot: facts.reviewRevision === null
+      snapshot: facts.reviewRevision === null && branches === null
         ? projection.snapshot
-        : Object.freeze({ ...projection.snapshot, reviewRevision: facts.reviewRevision }),
+        : Object.freeze({
+          ...projection.snapshot,
+          ...(facts.reviewRevision === null ? {} : { reviewRevision: facts.reviewRevision }),
+          ...(branches === null ? {} : { branches: branches.value }),
+          ...(branches?.truncated === true ? { projectionTruncated: true } : {}),
+        }),
       viewer: Object.freeze({ involvement: Object.freeze([]) }),
     }),
     facts,
-    overview: projectGithubPullRequestOverview(record),
+    overview,
   });
+}
+
+/**
+ * The head → base branch names the detail header says, from the overview this read already
+ * projected (one reader of `head.ref`/`base.ref`). Both or neither: half a pair names no merge.
+ */
+function readGithubPullRequestBranches(
+  overview: GithubPullRequestOverviewV1,
+): Readonly<{ value: NonNullable<GithubTriageEntrySnapshotV1['branches']>; truncated: boolean }> | null {
+  if (overview.headBranch === undefined || overview.baseBranch === undefined) return null;
+  const head = projectTriageDisplayTextV1(overview.headBranch);
+  const base = projectTriageDisplayTextV1(overview.baseBranch);
+  if (head.value === '' || base.value === '') return null;
+  return { value: Object.freeze({ head: head.value, base: base.value }), truncated: head.truncated || base.truncated };
 }
 
 /**
@@ -466,6 +536,8 @@ export async function readGithubPullRequest(
  * confirms the exact members it named against exactly what GitHub reported.
  */
 export type GithubIssueFactsV1 = Readonly<{
+  /** Native GraphQL identity from the same validated REST entity. */
+  nodeId: string | null;
   title: string | null;
   body: string | null;
   /** GitHub's own `state`, trimmed: `open` or `closed`. */
@@ -474,6 +546,10 @@ export type GithubIssueFactsV1 = Readonly<{
   stateReason: string | null;
   labels: readonly string[];
   assignees: readonly string[];
+  milestoneNumber: number | null | undefined;
+  issueType: string | null | undefined;
+  locked: boolean | null;
+  lockReason: string | null;
 }>;
 
 export type GithubIssueReadV1 = Readonly<{
@@ -484,13 +560,24 @@ export type GithubIssueReadV1 = Readonly<{
   overview: GithubIssueOverviewV1 | null;
 }>;
 
+/** Positive native deletion acknowledgement, never inferred from a subsequent masked 404. */
+export function projectGithubIssueDeletion(
+  localRef: GithubTriageEntryLocalRefV1, payload: unknown,
+): Extract<GithubTriageObservationV1, { kind: 'absent' }> | null {
+  if (!isRecord(payload) || !isRecord(payload.repository)
+    || String(payload.repository.databaseId) !== readGithubRepositoryIdFromCollisionScope(localRef.collisionScope)) return null;
+  return { kind: 'absent', localRef };
+}
+
 /** Reads one string member off each element of a GitHub actor/label collection. */
 function readNamedMembers(value: unknown, member: string): readonly string[] {
   return readGithubNamedMembers(value, member) ?? Object.freeze([]);
 }
 
 function readGithubIssueFacts(raw: Readonly<Record<string, unknown>>): GithubIssueFactsV1 {
+  const metadata = readGithubEntryMetadataFields(raw);
   return Object.freeze({
+    nodeId: readNonEmptyString(raw.node_id),
     title: typeof raw.title === 'string' ? raw.title : null,
     body: typeof raw.body === 'string' ? raw.body : raw.body === null ? '' : null,
     state: typeof raw.state === 'string' && raw.state.trim() ? raw.state.trim() : null,
@@ -502,11 +589,27 @@ function readGithubIssueFacts(raw: Readonly<Record<string, unknown>>): GithubIss
     // silently saw no labels would report every removal as already satisfied.
     labels: readNamedMembers(raw.labels, 'name'),
     assignees: readNamedMembers(raw.assignees, 'login'),
+    milestoneNumber: metadata.milestoneNumber,
+    issueType: metadata.issueType,
+    locked: metadata.locked ?? null,
+    lockReason: metadata.lockReason ?? null,
   });
 }
 
 function observedIssue(observation: GithubTriageObservationV1): GithubIssueReadV1 {
   return Object.freeze({ observation, facts: null, overview: null });
+}
+
+/** Shared metadata uses the canonical entity reader for its admitted kind. */
+export async function readGithubEntryMetadata(
+  localRef: GithubTriageEntryLocalRefV1,
+  route: GithubRepositoryRouteV1,
+  repositories: GithubRepositoryReaderV1,
+  dependencies: GithubGetDependenciesV1,
+): Promise<GithubIssueReadV1> {
+  return localRef.kindId === 'pull-request'
+    ? readGithubPullRequest(localRef, route, repositories, dependencies)
+    : readGithubIssue(localRef, route, repositories, dependencies);
 }
 
 /**
@@ -740,21 +843,6 @@ async function followIssueTransfer(
   }
 
   return observedIssue(Object.freeze({ kind: 'merged', localRef: input.localRef, successor }));
-}
-
-/**
- * `Computing` is a REAL GitHub state: mergeability is asynchronously derived and
- * `mergeable` is `null` until GitHub finishes. It means "ask again shortly" and must not
- * be collapsed into unresolved, which means "we cannot determine this at all".
- */
-export function mapGithubMergeability(
-  raw: Readonly<Record<string, unknown>>,
-): 'conflicts' | 'blocked' | 'computing' | null {
-  const state = typeof raw.mergeable_state === 'string' ? raw.mergeable_state.trim() : '';
-  if (raw.mergeable === null || state === 'unknown' || state === '') return 'computing';
-  if (raw.mergeable === false || state === 'dirty') return 'conflicts';
-  if (state === 'blocked') return 'blocked';
-  return null;
 }
 
 function readAdditionsDeletions(

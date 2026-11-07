@@ -42,6 +42,14 @@ export type GithubNormalizedWebhookDeliveryV1 = Readonly<{
   eventType: string;
   comment: GithubIssueCommentWebhookObservationV1 | null;
   automationEvent: GithubAutomationWebhookObservationV1 | null;
+  deploymentRun?: GithubDeploymentWebhookRunV1;
+}>;
+
+/** A signed delivery is a wake, never authority that a review resolved. */
+export type GithubDeploymentWebhookRunV1 = Readonly<{
+  repositoryId: string;
+  repositoryNameWithOwner: string;
+  runId: string;
 }>;
 
 export type GithubWebhookJsonParser = (rawBody: Uint8Array) => unknown;
@@ -293,9 +301,21 @@ export function normalizeGithubWebhookDelivery(input: Readonly<{
     );
   }
   const payload = readObject(parsed, 'payload');
+  let deploymentRun: GithubDeploymentWebhookRunV1 | undefined;
+  if ((input.eventType === 'deployment_review' && ['requested', 'approved', 'rejected'].includes(String(payload.action)))
+    || (input.eventType === 'workflow_run' && ['requested', 'in_progress', 'completed'].includes(String(payload.action)))) {
+    // GitHub's deployment_review contract explicitly permits a null run.
+    if (payload.workflow_run !== null) {
+      const repository = readRepository(payload.repository);
+      const run = readObject(payload.workflow_run, 'workflow_run');
+      deploymentRun = Object.freeze({ repositoryId: repository.id, repositoryNameWithOwner: repository.nameWithOwner,
+        runId: String(readPositiveInteger(run, 'id')) });
+    }
+  }
   return Object.freeze({
     providerDeliveryId: input.providerDeliveryId,
     eventType: input.eventType,
+    ...(deploymentRun === undefined ? {} : { deploymentRun }),
     comment: input.eventType === 'issue_comment' && input.consumesIssueComments !== false
       ? normalizeIssueComment(payload)
       : null,

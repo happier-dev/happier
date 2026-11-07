@@ -11,11 +11,9 @@ import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js
 import {
   GithubCapabilitiesResultV1Schema,
   GithubChangedFilesResultV1Schema,
-  GithubChecksResultV1Schema,
   GithubFeedbackResultV1Schema,
-  GithubOverviewResultV1Schema,
+  type GithubFeedbackInputV1,
   GithubTimelineResultV1Schema,
-  type GithubOverviewResultV1,
   type GithubPatchEvidenceV1,
 } from '../../triage/detail/contracts.js';
 import type { GithubRepositoryCapabilitiesV1 } from '../../triage/capabilities.js';
@@ -43,22 +41,21 @@ import {
   type GithubPagedStateV1,
   type GithubReadStateV1,
 } from './panelState.js';
+import { dispatchFailure, ROUTE_UNAVAILABLE, UNREADABLE_RESULT, useGithubRoutingToken, type ExecuteResult } from './readBoundary.js';
+import type { GithubOverviewControllerV1 } from './overviewReader.js';
+
+export { useGithubRoutingToken } from './readBoundary.js';
+export { useGithubOverview, type GithubOverviewControllerV1, type GithubOverviewValueV1 } from './overviewReader.js';
 
 /**
  * The panel-owned readers behind the GitHub detail body.
  *
- * Each reader's lifetime is the lifetime declared by the TAB that owns its
- * data, and `tabDeclarations.ts` is the only place that decides which. A tab
- * that declares `discard` behaves exactly as before: leaving aborts the request,
- * rejects a late result, and resets the reducer, so returning re-reads from the
- * first page. A tab that declares `retain` keeps the pages the reader already
- * walked and their place among them, and asks GitHub for none of them again.
- *
- * That difference is not a nicety on the one panel that declares it. A pull
- * request may change up to three thousand files, so a reader who walked nine
- * pages and glanced at Checks has spent nine pages of GitHub's rate budget;
- * restarting them at page one charges the whole walk twice for one glance away
- * and loses their position in it.
+ * The checks, changed-files, timeline and feedback readers live for the open
+ * detail, not for a tab: `resourceOwners.tsx` mounts each once and every panel
+ * renders from it, so a tab's `discard`/`retain` declaration decides only whether
+ * its subtree stays mounted, never whether GitHub is asked again. A reader that
+ * walked nine changed-file pages keeps them and its place among them across any
+ * number of tab switches.
  *
  * That lifetime is also the rate budget. GitHub involvement scanning already
  * issues real provider work, and four planes each with paging could multiply it
@@ -72,41 +69,11 @@ import {
  * projector.
  */
 
-/** A result the surface could not read is a contract break, not an empty read. */
-const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
-  class: 'unsupportedContract',
-  code: 'github-detail-result-unreadable',
-});
-
-/**
- * The observation carried no route for this entry, so no plane can be read.
- *
- * It is a stated failure rather than an empty panel: a path is never guessed
- * from identity, display text or a git remote.
- */
-const ROUTE_UNAVAILABLE: TriageSourceFailureV1 = Object.freeze({
-  class: 'unknown',
-  code: 'github_locator_unusable',
-});
-
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending' ? 'github-detail-read-not-dispatched' : code,
-  });
-}
-
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
-
-/** The source-private route the target observed for this entry, if it has one. */
-export function useGithubRoutingToken(input: TriageDetailSurfaceInputV1): string | null {
-  return input.observation.locator.routingToken ?? null;
-}
-
-/** One mount-owned repository capability read shared by every write control. */
+/** Share Overview's complete repository facts; read only the remainder once per mount. */
 export function useGithubCapabilities(
   input: TriageDetailSurfaceInputV1,
   activity?: ReturnType<typeof useTabPanelActivity>,
+  overview?: GithubOverviewControllerV1,
 ): GithubReadStateV1<GithubRepositoryCapabilitiesV1> {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID,
@@ -121,6 +88,8 @@ export function useGithubCapabilities(
   const [state, setState] = useState<GithubReadStateV1<GithubRepositoryCapabilitiesV1>>(
     { kind: 'loading' },
   );
+  const shared = overview?.value?.kindId === 'pull-request' ? overview.value.capabilities : undefined;
+  const summaryPending = overview !== undefined && overview.value === null && overview.failure === null;
   const authority = useMemo(() => ({ request, routingToken }), [request, routingToken]);
   const previousAuthority = useRef(authority);
   const settledAuthority = useRef<typeof authority | null>(null);
@@ -129,7 +98,8 @@ export function useGithubCapabilities(
     setState({ kind: 'loading' });
   }
   useEffect(() => {
-    if (!active || activeSignal.aborted || settledAuthority.current === authority) return undefined;
+    if (!active || activeSignal.aborted || shared !== undefined || summaryPending
+      || settledAuthority.current === authority) return undefined;
     const controller = new AbortController();
     const abort = () => controller.abort();
     activeSignal.addEventListener('abort', abort);
@@ -144,8 +114,8 @@ export function useGithubCapabilities(
         settledAuthority.current = authority;
         if (execution.status !== 'success') {
           setState({ kind: 'unavailable', failure: dispatchFailure(
-            execution.status,
-            execution.code ?? 'github-capabilities-read-failed',
+            execution,
+            'github-capabilities-read-failed',
           ) });
           return;
         }
@@ -159,120 +129,16 @@ export function useGithubCapabilities(
         }
       });
     return () => { activeSignal.removeEventListener('abort', abort); controller.abort(); };
-  }, [active, activeSignal, authority, execute, instance, localRef, routingToken]);
-  return state;
+  }, [active, activeSignal, authority, execute, instance, localRef, routingToken, shared, summaryPending]);
+  return useMemo(() => shared === undefined ? state : { kind: 'ready' as const, value: shared }, [shared, state]);
 }
 
 /* -------------------------------------------------------------------- overview */
 
-export type GithubOverviewValueV1 = Extract<GithubOverviewResultV1, { kind: 'overview' }>;
-
-export type GithubOverviewControllerV1 = Readonly<{
-  /** `null` means the reader is still showing only its launch observation. */
-  value: GithubOverviewValueV1 | null;
-  refreshing: boolean;
-  /** A warm failure sits beside `value`; it never erases a prior exact read. */
-  failure: TriageSourceFailureV1 | null;
-  refresh: () => Promise<void>;
-}>;
-
-/**
- * The Overview's one exact entity read.
- *
- * By default no effect invokes it: the launch observation is useful immediately
- * and only pressing Refresh spends a provider call. The story rail (`readWhenActive`)
- * has no Refresh control, so it reads once when it becomes active and again only
- * when GitHub reports the entry changed (`sourceUpdatedAtMs`), the way the other
- * sources' overviews read on activation. A retained Overview keeps the exact body
- * model, while its active-interval signal owns cancellation and its transient
- * busy/error state is cleared when the tab becomes inactive.
- */
-export function useGithubOverview(
-  input: TriageDetailSurfaceInputV1,
-  options: Readonly<{ readWhenActive?: boolean; activity?: ReturnType<typeof useTabPanelActivity> }> = {},
-): GithubOverviewControllerV1 {
-  const action = useMemo(() => ({
-    pluginId: GITHUB_PLUGIN_ID,
-    localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
-  }), []);
-  const { execute } = useExecutePluginAction(action);
-  const { instance, localRef } = useTriageDetailRequest(input);
-  const routingToken = useGithubRoutingToken(input);
-  const tabActivity = useTabPanelActivity();
-  const { active, activeSignal } = options.activity ?? tabActivity;
-  const [state, setState] = useState<Readonly<{
-    value: GithubOverviewValueV1 | null;
-    refreshing: boolean;
-    failure: TriageSourceFailureV1 | null;
-  }>>({ value: null, refreshing: false, failure: null });
-
-  useEffect(() => {
-    if (active) return undefined;
-    setState((current) => current.refreshing || current.failure !== null
-      ? Object.freeze({ ...current, refreshing: false, failure: null })
-      : current);
-    return undefined;
-  }, [active]);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    if (!active || state.refreshing) return;
-    if (routingToken === null) {
-      setState((current) => Object.freeze({
-        ...current,
-        refreshing: false,
-        failure: ROUTE_UNAVAILABLE,
-      }));
-      return;
-    }
-    setState((current) => Object.freeze({ ...current, refreshing: true, failure: null }));
-    const execution: ExecuteResult = await execute(
-      { v: 1, instance, localRef, routingToken },
-      { signal: activeSignal },
-    );
-    if (activeSignal.aborted) return;
-    if (execution.status !== 'success') {
-      setState((current) => Object.freeze({
-        ...current,
-        refreshing: false,
-        failure: dispatchFailure(
-          execution.status,
-          execution.code ?? 'github-overview-read-failed',
-        ),
-      }));
-      return;
-    }
-    const parsed = GithubOverviewResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) {
-      setState((current) => Object.freeze({
-        ...current,
-        refreshing: false,
-        failure: UNREADABLE_RESULT,
-      }));
-    } else if (parsed.data.kind === 'unavailable') {
-      const failure = parsed.data.failure;
-      setState((current) => Object.freeze({
-        ...current,
-        refreshing: false,
-        failure,
-      }));
-    } else {
-      setState(Object.freeze({ value: parsed.data, refreshing: false, failure: null }));
-    }
-  }, [active, activeSignal, execute, instance, localRef, routingToken, state.refreshing]);
-
-  const readWhenActive = options.readWhenActive === true;
-  const readFor = useRef<string | null>(null);
-  const revision = `${routingToken ?? ''}|${localRef.entryId}|${input.observation.sourceUpdatedAtMs ?? ''}`;
-  useEffect(() => {
-    if (!readWhenActive || !active || readFor.current === revision) return;
-    readFor.current = revision;
-    void refresh();
-  }, [active, readWhenActive, refresh, revision]);
-
-  return useMemo(() => ({ ...state, refresh }), [refresh, state]);
-}
-
 /* ------------------------------------------------------------- paged planes */
+
+/** The interval a detail-lifetime reader may read in: the detail's, while a consumer demands it. */
+export type GithubReaderActivityV1 = ReturnType<typeof useTabPanelActivity>;
 
 export type GithubPagedControllerV1<TRow> = Readonly<{
   state: GithubPagedStateV1<TRow>;
@@ -287,7 +153,7 @@ export type GithubPagedControllerV1<TRow> = Readonly<{
   refresh: () => void;
 }>;
 
-type PageReader<TRow> = (
+export type GithubPageReaderV1<TRow> = (
   continuation: string | null,
   signal: AbortSignal,
 ) => Promise<Readonly<{ kind: 'page'; page: GithubPagedPageV1<TRow> }>
@@ -301,18 +167,25 @@ type PageReader<TRow> = (
  * the panel read it forever, and the read module's own non-advancing guard only
  * sees one response at a time.
  */
-function useGithubPagedWalk<TRow>(
-  readPage: PageReader<TRow>,
+export function useGithubPagedWalk<TRow>(
+  readPage: GithubPageReaderV1<TRow>,
   enabled: boolean,
   disabledFailure: TriageSourceFailureV1,
   firstContinuation: string | null = null,
+  options: Readonly<{ activity?: ReturnType<typeof useTabPanelActivity>; authority?: unknown }> = {},
 ): GithubPagedControllerV1<TRow> {
   const [state, dispatch] = useReducer(
     githubPagedReducer<TRow>,
     undefined,
     githubPagedInitialState<TRow>,
   );
-  const { active, activeSignal } = useTabPanelActivity();
+  const tabActivity = useTabPanelActivity();
+  const { active, activeSignal } = options.activity ?? tabActivity;
+  const previousAuthority = useRef(options.authority);
+  if (previousAuthority.current !== options.authority) {
+    previousAuthority.current = options.authority;
+    dispatch({ kind: 'panelLeft' });
+  }
   const interval = useRef<AbortSignal | null>(null);
   const requested = useRef<Set<string>>(new Set());
   /**
@@ -381,8 +254,11 @@ function useGithubPagedWalk<TRow>(
   useEffect(() => {
     // A plane's first request is issued here — when its tab becomes active — and
     // never on mount of the detail surface.
-    if (!active) return undefined;
-    interval.current = activeSignal;
+    if (!active || activeSignal.aborted) return undefined;
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    activeSignal.addEventListener('abort', abort, { once: true });
+    interval.current = controller.signal;
     // The non-advancing guard is scoped to ONE interval: a retained walk that
     // resumes may legitimately re-ask for the position its previous interval was
     // cut off at, and only a provider that kept advertising the same page inside
@@ -394,8 +270,11 @@ function useGithubPagedWalk<TRow>(
     // `retain` panel stays mounted, and this reader's job is simply not to throw
     // away what that panel is being kept for. Re-deciding retention here would
     // be a second owner of one declaration.
-    if (current.current.rows.length === 0) {
-      startWalk(activeSignal);
+    // A provider-stated empty walk is an answer like any other: it is kept, not
+    // re-asked. Only a walk with no answer yet (or a failed first page) starts.
+    const answeredEmpty = current.current.kind === 'ready' && !current.current.pending;
+    if (current.current.rows.length === 0 && !answeredEmpty) {
+      startWalk(controller.signal);
     } else if (current.current.pending) {
       nextToken.current += 1;
       void runPage(
@@ -404,7 +283,7 @@ function useGithubPagedWalk<TRow>(
         // retained continuation belongs to the last-known-good walk, so
         // resuming that continuation would silently turn Refresh into append.
         current.current.refreshing ? firstContinuation : current.current.continuation,
-        activeSignal,
+        controller.signal,
         current.current.refreshing ? 'refresh' : 'append',
       );
     }
@@ -415,8 +294,10 @@ function useGithubPagedWalk<TRow>(
       // to.
       interval.current = null;
       requested.current = new Set();
+      activeSignal.removeEventListener('abort', abort);
+      controller.abort();
     };
-  }, [active, activeSignal, runPage, startWalk]);
+  }, [active, activeSignal, options.authority, runPage, startWalk]);
 
   const loadMore = useCallback(() => {
     const pageSignal = interval.current;
@@ -457,8 +338,10 @@ function toPage<TRow>(result: PagedResultShape<TRow>): GithubPagedPageV1<TRow> {
 
 /* ------------------------------------------------------------------ timeline */
 
-export function useGithubTimeline(
+/** The detail-lifetime timeline walk; consumers read it through `resourceOwners.tsx`. */
+export function useGithubTimelineReader(
   input: TriageDetailSurfaceInputV1,
+  activity: GithubReaderActivityV1,
 ): GithubPagedControllerV1<GithubProjectedTimelineRowV1> {
   const action = useMemo(
     () => ({
@@ -470,8 +353,10 @@ export function useGithubTimeline(
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGithubRoutingToken(input);
+  // A walk answers for one exact entry and route: another one clears its rows in the reader itself.
+  const authority = useMemo(() => ({ instance, localRef, routingToken }), [instance, localRef, routingToken]);
 
-  const readPage: PageReader<GithubProjectedTimelineRowV1> = useCallback(async (
+  const readPage: GithubPageReaderV1<GithubProjectedTimelineRowV1> = useCallback(async (
     continuation,
     signal,
   ) => {
@@ -486,7 +371,7 @@ export function useGithubTimeline(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'github-detail-read-failed'),
+        failure: dispatchFailure(execution, 'github-detail-read-failed'),
       };
     }
     const parsed = GithubTimelineResultV1Schema.safeParse(execution.result);
@@ -497,7 +382,7 @@ export function useGithubTimeline(
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, instance, localRef, routingToken]);
 
-  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
+  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, null, { activity, authority });
 }
 
 /* ------------------------------------------------------------ changed files */
@@ -507,8 +392,10 @@ export type GithubChangedFileViewV1 = GithubProjectedChangedFileRowV1 & Readonly
   diffContinuation: string | null;
 }>;
 
-export function useGithubChangedFiles(
+/** The detail-lifetime changed-files walk; consumers read it through `resourceOwners.tsx`. */
+export function useGithubChangedFilesReader(
   input: TriageDetailSurfaceInputV1,
+  activity: GithubReaderActivityV1,
 ): GithubPagedControllerV1<GithubChangedFileViewV1> {
   const action = useMemo(
     () => ({
@@ -520,8 +407,10 @@ export function useGithubChangedFiles(
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGithubRoutingToken(input);
+  // A walk answers for one exact entry and route: another one clears its rows in the reader itself.
+  const authority = useMemo(() => ({ instance, localRef, routingToken }), [instance, localRef, routingToken]);
 
-  const readPage: PageReader<GithubChangedFileViewV1> = useCallback(async (
+  const readPage: GithubPageReaderV1<GithubChangedFileViewV1> = useCallback(async (
     continuation,
     signal,
   ) => {
@@ -536,7 +425,7 @@ export function useGithubChangedFiles(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'github-detail-read-failed'),
+        failure: dispatchFailure(execution, 'github-detail-read-failed'),
       };
     }
     const parsed = GithubChangedFilesResultV1Schema.safeParse(execution.result);
@@ -549,7 +438,7 @@ export function useGithubChangedFiles(
     }) };
   }, [execute, instance, localRef, routingToken]);
 
-  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
+  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, null, { activity, authority });
 }
 
 export type GithubChangedFileDiffV1 = Readonly<{
@@ -619,11 +508,12 @@ export function useGithubChangedFileDiffLoader(
 
 /* ------------------------------------------------------------------ feedback */
 
-type GithubFeedbackRootConnectionV1 = 'comments' | 'threads' | 'reviews' | 'requests';
 
 function normalizeFeedbackComment(
   row: Readonly<{
     id: string; body: string; author?: string; createdAtMs?: number; url?: string; truncated?: true;
+    editable?: true;
+    suggestions?: GithubFeedbackCommentV1['suggestions'];
   }>,
 ): GithubFeedbackCommentV1 {
   return Object.freeze({
@@ -633,12 +523,18 @@ function normalizeFeedbackComment(
     createdAtMs: row.createdAtMs ?? null,
     url: row.url ?? null,
     ...(row.truncated === true ? { truncated: true as const } : {}),
+    ...(row.editable === true ? { editable: true as const } : {}),
+    ...(row.suggestions ? { suggestions: row.suggestions } : {}),
   });
 }
 
-function useGithubFeedbackConnection<TRow>(
+export type GithubFeedbackRootConnectionV1 = Exclude<GithubFeedbackInputV1['connection'], 'threadReplies'>;
+
+/** One detail-lifetime feedback connection walk; consumers read it through `resourceOwners.tsx`. */
+export function useGithubFeedbackConnectionReader<TRow>(
   input: TriageDetailSurfaceInputV1,
   connection: GithubFeedbackRootConnectionV1,
+  activity: GithubReaderActivityV1,
 ): GithubPagedControllerV1<TRow> & Readonly<{
   reviewDecision: 'approved' | 'changes-requested' | 'review-required' | null;
 }> {
@@ -655,8 +551,10 @@ function useGithubFeedbackConnection<TRow>(
   >(null);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGithubRoutingToken(input);
+  // A walk answers for one exact entry and route: another one clears its rows in the reader itself.
+  const authority = useMemo(() => ({ instance, localRef, routingToken }), [instance, localRef, routingToken]);
 
-  const readPage: PageReader<TRow> = useCallback(async (continuation, signal) => {
+  const readPage: GithubPageReaderV1<TRow> = useCallback(async (continuation, signal) => {
     const execution = await execute({
       v: 1,
       instance,
@@ -668,7 +566,7 @@ function useGithubFeedbackConnection<TRow>(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'github-feedback-read-failed'),
+        failure: dispatchFailure(execution, 'github-feedback-read-failed'),
       };
     }
     const parsed = GithubFeedbackResultV1Schema.safeParse(execution.result);
@@ -710,6 +608,7 @@ function useGithubFeedbackConnection<TRow>(
             submittedAtMs: row.submittedAtMs ?? null,
             url: row.url ?? null,
             ...(row.truncated === true ? { truncated: true as const } : {}),
+            ...(row.editable === true ? { editable: true as const } : {}),
           }))
           : parsed.data.rows;
     return {
@@ -726,37 +625,11 @@ function useGithubFeedbackConnection<TRow>(
     };
   }, [connection, execute, instance, localRef, routingToken]);
 
-  const controller = useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
+  const controller = useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE, null, { activity, authority });
   return useMemo(
     () => ({ ...controller, reviewDecision }),
     [controller, reviewDecision],
   );
-}
-
-export function useGithubFeedbackComments(
-  input: TriageDetailSurfaceInputV1,
-): GithubPagedControllerV1<GithubFeedbackCommentV1> {
-  return useGithubFeedbackConnection(input, 'comments');
-}
-
-export function useGithubFeedbackThreads(
-  input: TriageDetailSurfaceInputV1,
-): GithubPagedControllerV1<GithubFeedbackThreadV1> {
-  return useGithubFeedbackConnection(input, 'threads');
-}
-
-export function useGithubFeedbackReviews(
-  input: TriageDetailSurfaceInputV1,
-): GithubPagedControllerV1<GithubFeedbackReviewV1> & Readonly<{
-  reviewDecision: 'approved' | 'changes-requested' | 'review-required' | null;
-}> {
-  return useGithubFeedbackConnection(input, 'reviews');
-}
-
-export function useGithubFeedbackRequests(
-  input: TriageDetailSurfaceInputV1,
-): GithubPagedControllerV1<GithubFeedbackRequestV1> {
-  return useGithubFeedbackConnection(input, 'requests');
 }
 
 export function useGithubFeedbackThreadReplies(
@@ -771,7 +644,9 @@ export function useGithubFeedbackThreadReplies(
   const { execute } = useExecutePluginAction(action);
   const { instance, localRef } = useTriageDetailRequest(input);
   const routingToken = useGithubRoutingToken(input);
-  const readPage: PageReader<GithubFeedbackCommentV1> = useCallback(async (continuation, signal) => {
+  // A walk answers for one exact entry and route: another one clears its rows in the reader itself.
+  const authority = useMemo(() => ({ instance, localRef, routingToken }), [instance, localRef, routingToken]);
+  const readPage: GithubPageReaderV1<GithubFeedbackCommentV1> = useCallback(async (continuation, signal) => {
     const execution = await execute({
       v: 1,
       instance,
@@ -784,7 +659,7 @@ export function useGithubFeedbackThreadReplies(
     if (execution.status !== 'success') {
       return {
         kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'github-feedback-read-failed'),
+        failure: dispatchFailure(execution, 'github-feedback-read-failed'),
       };
     }
     const parsed = GithubFeedbackResultV1Schema.safeParse(execution.result);
@@ -809,6 +684,7 @@ export function useGithubFeedbackThreadReplies(
     routingToken !== null,
     ROUTE_UNAVAILABLE,
     firstCursor,
+    { authority },
   );
 }
 
@@ -842,10 +718,12 @@ export type GithubChecksControllerV1 = Readonly<{
   failure: TriageSourceFailureV1 | null;
   /** The one whole-surface checks read is still in flight. */
   pending: boolean;
+  /** The unavailable checks are the Overview read's own failure, already disclosed beside it. */
+  overviewFailure?: boolean;
   refresh: () => void;
 }>;
 
-type GithubSettledReader<T> = (
+export type GithubSettledReader<T> = (
   signal: AbortSignal,
 ) => Promise<Readonly<{ kind: 'ready'; value: T }>
 | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>>;
@@ -857,10 +735,11 @@ type GithubSettledReader<T> = (
  * walk. This lifecycle keeps explicit refresh, cancellation and late-result
  * rejection together without giving the panel another source of truth.
  */
-function useGithubSettledRead<T>(
+export function useGithubSettledRead<T>(
   read: GithubSettledReader<T>,
   active: boolean,
   activeSignal: AbortSignal,
+  options: Readonly<{ retain?: boolean }> = {},
 ): Readonly<{
   state: GithubReadStateV1<T>;
   failure: TriageSourceFailureV1 | null;
@@ -875,6 +754,7 @@ function useGithubSettledRead<T>(
   const previousReader = useRef(read);
   const previousRead = useRef<Promise<void> | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const settled = useRef<Readonly<{ read: GithubSettledReader<T>; attempt: number }> | null>(null);
 
   if (previousReader.current !== read) {
     previousReader.current = read;
@@ -886,16 +766,17 @@ function useGithubSettledRead<T>(
   }
 
   useEffect(() => {
-    if (active) return;
+    if (active || options.retain) return;
     inFlight.current = false;
     lastKnownGood.current = null;
     setState({ kind: 'loading' });
     setFailure(null);
     setPending(false);
-  }, [active]);
+  }, [active, options.retain]);
 
   useEffect(() => {
     if (!active || activeSignal.aborted) return undefined;
+    if (options.retain && settled.current?.read === read && settled.current.attempt === attempt) return undefined;
     const controller = new AbortController();
     const abort = () => controller.abort();
     activeSignal.addEventListener('abort', abort, { once: true });
@@ -914,6 +795,7 @@ function useGithubSettledRead<T>(
       if (controller.signal.aborted) return;
       const outcome = await read(controller.signal);
       if (controller.signal.aborted) return;
+      settled.current = { read, attempt };
       if (outcome.kind === 'ready') {
         lastKnownGood.current = outcome.value;
         setState({ kind: 'ready', value: outcome.value });
@@ -930,7 +812,7 @@ function useGithubSettledRead<T>(
       activeSignal.removeEventListener('abort', abort);
       controller.abort();
     };
-  }, [active, activeSignal, attempt, read]);
+  }, [active, activeSignal, attempt, options.retain, read]);
 
   const refresh = useCallback(() => {
     if (!active || inFlight.current) return;
@@ -945,47 +827,3 @@ function useGithubSettledRead<T>(
   );
 }
 
-export function useGithubChecks(
-  input: TriageDetailSurfaceInputV1,
-): GithubChecksControllerV1 {
-  const action = useMemo(
-    () => ({
-      pluginId: GITHUB_PLUGIN_ID,
-      localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks,
-    }),
-    [],
-  );
-  const { execute } = useExecutePluginAction(action);
-  const { active, activeSignal } = useTabPanelActivity();
-  const { instance, localRef } = useTriageDetailRequest(input);
-  const routingToken = useGithubRoutingToken(input);
-  const read: GithubSettledReader<GithubChecksViewV1> = useCallback(async (signal) => {
-    if (routingToken === null) {
-      return { kind: 'failed', failure: ROUTE_UNAVAILABLE };
-    }
-    const execution = await execute({
-      v: 1,
-      instance,
-      localRef,
-      routingToken,
-    }, { signal });
-    if (execution.status !== 'success') {
-      const code = execution.status === 'error' || execution.status === 'outcomeUnknown'
-        ? execution.code
-        : 'github-detail-read-failed';
-      return {
-        kind: 'failed',
-        failure: dispatchFailure(execution.status, code),
-      };
-    }
-    const parsed = GithubChecksResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed', failure: UNREADABLE_RESULT };
-    if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed', failure: parsed.data.failure };
-    }
-    const { kind: _kind, ...view } = parsed.data;
-    return { kind: 'ready', value: view };
-  }, [execute, instance, localRef, routingToken]);
-
-  return useGithubSettledRead(read, active, activeSignal);
-}

@@ -21,6 +21,10 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
     packageSourceRoot: resolve(repoRoot, 'packages/cli-common/src'),
   },
   {
+    packageName: '@happier-dev/forge-ci',
+    packageSourceRoot: resolve(repoRoot, 'packages/forge-ci/src'),
+  },
+  {
     packageName: '@happier-dev/channels-protocol',
     packageSourceRoot: resolve(repoRoot, 'packages/channels-protocol/src'),
   },

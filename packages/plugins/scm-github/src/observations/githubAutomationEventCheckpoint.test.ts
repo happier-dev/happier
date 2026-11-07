@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PluginAccountCollectionMigration } from '@happier-dev/plugin-sdk/collections';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import {
   compilePluginJsonSchema,
@@ -7,7 +8,6 @@ import {
 
 import { PLUGIN_MANIFEST, collectionMigrations } from '../manifest.js';
 import { collectionMigrations as portableMigrations } from '../collectionMigrationArtifact.js';
-import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@happier-dev/plugin-sdk/host/registration';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
@@ -169,7 +169,11 @@ describe('GitHub Automation Event checkpoint identity', () => {
     // Real compiled-payload validation lives in collectionMigrationArtifact.test.
     const parsed = parsePluginManifest(PLUGIN_MANIFEST);
     if (!parsed.ok) throw new Error('Expected the canonical migration manifest to parse');
-    const projection = normalizePluginAccountCollectionMigrationRuntimeProjection(portable, parsed.manifest.contributes.accountCollections);
+    const projection: Readonly<Record<string, readonly PluginAccountCollectionMigration[]>> = portable;
+    for (const declaration of parsed.manifest.contributes.accountCollections) {
+      expect(projection[declaration.id]?.map(({ migrate: _migrate, ...metadata }) => metadata)).toEqual(declaration.migrations);
+      for (const migration of projection[declaration.id] ?? []) expect(migration.migrate).toBeTypeOf('function');
+    }
     expect(projection[GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION.id]?.[0])
       .toMatchObject({ fromSchemaVersion: 1, toSchemaVersion: 2, migrate: expect.any(Function) });
   });

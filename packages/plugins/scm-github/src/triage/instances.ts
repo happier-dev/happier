@@ -1,6 +1,7 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { GithubTriageInvocationContext } from './invocation.js';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 import {
+  projectTriageDisplayTextV1,
   type TriageListInstancesResultV1,
   type TriageSourceInstanceDraftV1,
   type TriageSourceCredentialBindingV1,
@@ -59,7 +60,7 @@ type CandidateOutcome =
   | Readonly<{ kind: 'candidate'; draft: TriageSourceInstanceDraftV1 }>
   | Readonly<{ kind: 'failed'; failure: GithubTriageFailureV1 }>;
 
-type GithubAccountIdentity = Readonly<{ login: string; webUrl: string | null }>;
+type GithubAccountIdentity = Readonly<{ displayName: string; login: string | null; webUrl: string | null }>;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -69,7 +70,8 @@ function readAccountIdentity(body: unknown): GithubAccountIdentity | null {
   if (!isRecord(body)) return null;
   const login = typeof body.login === 'string' ? body.login.trim() : '';
   if (!login) return null;
-  return Object.freeze({ login, webUrl: readGithubAbsoluteWebUrl(body.html_url) });
+  const name = typeof body.name === 'string' ? projectTriageDisplayTextV1(body.name).value.trim() : '';
+  return Object.freeze({ displayName: name || login, login: name ? login : null, webUrl: readGithubAbsoluteWebUrl(body.html_url) });
 }
 
 /**
@@ -79,7 +81,7 @@ function readAccountIdentity(body: unknown): GithubAccountIdentity | null {
  */
 async function readCandidate(
   binding: TriageSourceCredentialBindingV1,
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   now: () => number,
   nativeClient?: GithubApiClientV1,
 ): Promise<CandidateOutcome> {
@@ -133,7 +135,9 @@ async function readCandidate(
       configuration: Object.freeze({ v: 1 as const, token }),
       locator: Object.freeze({
         v: 1 as const,
-        displayLabel: identity.login,
+        displayLabel: identity.displayName,
+        // One identity per row: the name leads and the login is its second line; a login alone is said once.
+        ...(identity.login === null ? {} : { displayPath: identity.login }),
         ...(identity.webUrl === null ? {} : { webUrl: identity.webUrl }),
       }),
     }),
@@ -141,21 +145,10 @@ async function readCandidate(
 }
 
 export async function listGithubTriageInstances(
-  context: PluginInvocationContext,
+  context: GithubTriageInvocationContext,
   dependencies: GithubTriageInstancesDependenciesV1 = {},
 ): Promise<TriageListInstancesResultV1> {
   const now = dependencies.now ?? Date.now;
-  let nativeClient: GithubApiClientV1 | undefined;
-  let nativeFailure: GithubTriageFailureV1 | undefined;
-  try {
-    nativeClient = await createGithubNativeApiClient(context);
-  } catch (error) {
-    context.signal.throwIfAborted();
-    const failure = classifyGithubTransportFailure(error);
-    if (failure.code === 'plugin_connected_account_native_unavailable') {
-      nativeFailure = failure;
-    }
-  }
   const listing = await readTriageSourceAccountListingV1({
     connectedAccounts: context.services.connectedAccounts,
     purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -172,6 +165,19 @@ export async function listGithubTriageInstances(
           ? Object.freeze({ class: 'transient' as const, code: 'github_request_cancelled' })
           : classifyGithubTransportFailure(listing.error)),
     });
+  }
+  let nativeClient: GithubApiClientV1 | undefined;
+  let nativeFailure: GithubTriageFailureV1 | undefined;
+  if (listing.kind === 'unbound') {
+    try {
+      nativeClient = await createGithubNativeApiClient(context);
+    } catch (error) {
+      context.signal.throwIfAborted();
+      const failure = classifyGithubTransportFailure(error);
+      if (failure.code === 'plugin_connected_account_native_unavailable') {
+        nativeFailure = failure;
+      }
+    }
   }
   const listed = listing.kind === 'unbound'
     ? Object.freeze({ status: 'complete' as const, accounts: Object.freeze([]) })

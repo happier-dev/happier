@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readGithubPullRequestChecks } from './checks.js';
 import { createStubGithubTransport, createTestGithubApiClient, fixedClock } from './testkit/githubTriage.test-support.js';
+import { projectGithubCheckRows, GITHUB_DETAIL_BOUNDS_V1 } from './detail/projection.js';
+import { GithubProjectedCheckRowV1Schema } from './detail/contracts.js';
+import { readGithubChecksConditionBatch } from './checksCondition.js';
+import { readRecordedJsonBody } from './testkit/githubTriage.test-support.js';
 
 const sha = 'a'.repeat(40);
 // Synthetic response shapes from GitHub GraphQL Checks/Commits documentation,
@@ -27,6 +31,101 @@ async function observe(nodes: readonly unknown[], selection: 'all' | 'required' 
 }
 
 describe('PR checks conditions at the GitHub checks reader', () => {
+  it.each(['failure', 'head-change', 'repeated-cursor'] as const)('batches only unfinished connections and keeps %s on a later page', async (later) => {
+    const requests: Array<{ query: string; variables: Record<string, unknown> }> = [];
+    const repository = (nodes: readonly unknown[], head = sha, next: string | null = null) => ({
+      ...page(nodes, head, next).data.repository, databaseId: 4210,
+    });
+    const transport = createStubGithubTransport({ respond: request => {
+      requests.push(readRecordedJsonBody(request) as typeof requests[number]);
+      return { status: 200, body: { data: requests.length === 1 ? {
+        row0: repository([check('SUCCESS')], sha, 'next'), row1: repository([check('SUCCESS')]),
+        row2: { databaseId: 8815 },
+      } : { row0: repository([{ ...check('FAILURE'), id: 'check-2' }], later === 'head-change' ? 'b'.repeat(40) : sha,
+        later === 'repeated-cursor' ? 'next' : null) } } };
+    } });
+    const client = await createTestGithubApiClient(transport);
+    const reads = await readGithubChecksConditionBatch([
+      { route: { owner: 'octo-org', name: 'example-app' }, pullRequestNumber: 7 },
+      { route: { owner: 'octo-org', name: 'example-app' }, pullRequestNumber: 8 },
+      { route: { owner: 'octo-org', name: 'example-tools' } },
+    ], { client, now: fixedClock(1000), signal: transport.context.signal });
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.variables).toEqual({ owner0: 'octo-org', name0: 'example-app', number0: 7,
+      cursor0: 'next', includeSummary0: false, includeOutput0: false });
+    expect(reads[0]?.surface?.observation).toMatchObject({
+      state: later === 'failure' ? 'failed' : later === 'head-change' ? 'superseded' : 'unknown', passed: false,
+    });
+    expect(reads[1]?.surface?.rowState).toEqual({ kind: 'allPassing' });
+    expect(reads[2]).toEqual({ repositoryId: '8815', surface: null });
+  });
+
+  it.each([{ path: ['row0', 'pullRequest'] }, { path: [] }])('applies GraphQL errors only to their declared path $path', async ({ path }) => {
+    const transport = createStubGithubTransport({ respond: () => ({ status: 200, body: {
+      data: { row0: { databaseId: 4210, pullRequest: null }, row1: { databaseId: 4210,
+        ...page([check('SUCCESS')]).data.repository } },
+      errors: [{ type: 'FORBIDDEN', path, message: 'Resource not accessible' }],
+    } }) });
+    const client = await createTestGithubApiClient(transport);
+    const reads = await readGithubChecksConditionBatch([7, 8].map(pullRequestNumber => ({
+      route: { owner: 'octo-org', name: 'example-app' }, pullRequestNumber,
+    })), { client, now: fixedClock(1000), signal: transport.context.signal });
+    expect(reads[0]?.surface).toMatchObject({ state: 'unknown', checkRunsFailure: { code: 'github_forbidden' } });
+    expect(reads[1]?.surface?.rowState).toEqual(path.length === 0 ? null : { kind: 'allPassing' });
+    if (path.length === 0) expect(reads[1]?.surface?.checkRunsFailure?.code).toBe('github_forbidden');
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it.each(['permission', 'transport', 'malformed'] as const)('settles a %s batch with unknown facts and no invented head', async (failure) => {
+    const transport = createStubGithubTransport({ respond: () => {
+      if (failure === 'transport') throw new Error('offline');
+      return failure === 'permission' ? { status: 403, body: { message: 'Forbidden' } } : { status: 200, body: null };
+    } });
+    const client = await createTestGithubApiClient(transport);
+    const reads = await readGithubChecksConditionBatch([7, 8].map(pullRequestNumber => ({
+      route: { owner: 'octo-org', name: 'example-app' }, pullRequestNumber,
+    })), { client, now: fixedClock(1000), signal: transport.context.signal });
+    for (const read of reads) {
+      expect(read.repositoryId).toBeNull();
+      expect(read.surface).toMatchObject({ state: 'unknown', rowState: null, checkRunsFailure: {
+        class: failure === 'permission' ? 'permission' : failure === 'transport' ? 'transient' : 'unsupportedContract',
+      } });
+      expect(read.surface?.observation).toBeUndefined();
+    }
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it('cancels an unfinished connection without starting another read', async () => {
+    const controller = new AbortController();
+    let count = 0;
+    const transport = createStubGithubTransport({ signal: controller.signal, respond: () => {
+      if (++count === 2) controller.abort();
+      return { status: 200, body: { data: { row0: { ...page([check('SUCCESS')], sha, 'next').data.repository,
+        databaseId: 4210 } } } };
+    } });
+    const client = await createTestGithubApiClient(transport);
+    await expect(readGithubChecksConditionBatch([{ route: { owner: 'octo-org', name: 'example-app' }, pullRequestNumber: 7 }],
+      { client, now: fixedClock(1000), signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(transport.requests).toHaveLength(2);
+  });
+
+  it('carries exact Actions provenance and annotation total from already-demanded CheckSuite facts', async () => {
+    const native = { ...check('FAILURE'), databaseId: 701, annotations: { totalCount: 12 }, checkSuite: {
+      createdAt: '2026-08-10T11:59:59Z', app: { slug: 'github-actions' },
+      commit: { oid: sha }, repository: { nameWithOwner: 'octo-org/example-app' },
+      workflowRun: { databaseId: 81, runAttempt: 2 },
+    } };
+    const transport = createStubGithubTransport({ respond: () => ({ status: 200, body: page([native]) }) });
+    const client = await createTestGithubApiClient(transport);
+    const surface = await readGithubPullRequestChecks({ route: { owner: 'octo-org', name: 'example-app' }, headSha: sha, observation: { pullRequestNumber: 7, selection: 'all' } }, { client, now: fixedClock(1000), signal: transport.context.signal });
+    const rows = projectGithubCheckRows(surface.observations, GITHUB_DETAIL_BOUNDS_V1).rows;
+    expect(GithubProjectedCheckRowV1Schema.parse(rows[0])).toMatchObject({ annotationsCount: 12, actions: {
+      checkRunId: '701', headSha: sha, selection: { kind: 'attempt', attempt: { run: { runId: '81' }, attemptId: '2' } },
+    } });
+    expect(transport.requests).toHaveLength(1);
+    const external = await observe([{ ...native, checkSuite: { ...native.checkSuite, app: { slug: 'external-checks' } } }]);
+    expect(external.snapshot?.state).toBe('failed');
+  });
   it.each([
     ['SUCCESS', 'passed', true, true], ['FAILURE', 'failed', true, false],
     [null, 'pending', false, false], ['CANCELLED', 'neutral', true, false],
