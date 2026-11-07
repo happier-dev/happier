@@ -710,6 +710,10 @@ role and reports `plugin_action_machine_required` when no Machine is available.
 Source settings discovery and Refresh wait for the invoking requester, then
 dispatch through that same Action owner; Machine readiness cannot preempt it.
 Workspace preparation and Session relationship roles retain their native owners.
+The shared `prepareReviewWorkspace` role admits both plugin calls and the mounted
+UI press used by prepared New Session authoring. It retains `writesLocal`
+approval policy and the selected Machine; mounted callers keep UI authority.
+Final workspace verification remains plugin-only.
 Authentication/import and provider writes retain their existing placement and
 approval contracts. This placement change does not authorize a fallback from a
 failed Account credential to a machine's login.

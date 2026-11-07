@@ -255,6 +255,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       description: 'Revalidates one selected pull request and materializes its source tip locally.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      confirmation: { title: 'Prepare Azure DevOps review workspace', confirmLabel: 'Prepare workspace' },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },

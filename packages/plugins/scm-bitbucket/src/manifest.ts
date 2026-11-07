@@ -187,6 +187,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       description: 'Reauthorizes and rereads one Bitbucket Cloud pull request before preparing its selected local workspace.',
       surfaces: sources.operations.prepareReviewWorkspace.declaration.surfaces,
       dangerLevel: sources.operations.prepareReviewWorkspace.declaration.dangerLevel,
+      confirmation: { title: 'Prepare Bitbucket review workspace', confirmLabel: 'Prepare workspace' },
       // The person's own press is the consent for the checkout they asked for;
       // agents, MCP and a saved Ask keep the writes-local default.
       confirmationWhen: { presentUserUi: false },

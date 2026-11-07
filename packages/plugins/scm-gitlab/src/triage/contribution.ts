@@ -290,6 +290,8 @@ type TriageActionDeclaration = Readonly<{
   ];
   execution: typeof GITLAB_ACCOUNT_EXECUTION | Readonly<{ target: 'daemon' }>;
   dangerLevel: 'safe' | 'writesLocal';
+  confirmation?: Readonly<{ title: string; confirmLabel: string }>;
+  confirmationWhen?: Readonly<{ presentUserUi: false }>;
   inputSchema: PluginJsonSchema;
   resultSchema: PluginJsonSchema;
   hostAccess: readonly string[];
@@ -346,6 +348,10 @@ function declareOperationAction(input: Readonly<{
       ? GITLAB_REVIEW_WORKSPACE_EXECUTION
       : GITLAB_ACCOUNT_EXECUTION,
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
+    ...(input.role === 'prepareReviewWorkspace' ? {
+      confirmation: { title: 'Prepare GitLab review workspace', confirmLabel: 'Prepare workspace' },
+      confirmationWhen: { presentUserUi: false as const },
+    } : {}),
     inputSchema: TriageSourceConnectedAccountInputsV1[input.role].jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
     hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
