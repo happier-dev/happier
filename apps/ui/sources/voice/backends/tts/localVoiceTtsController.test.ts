@@ -33,6 +33,7 @@ const speechBoundary = createVoiceSpeechOutputBoundary({ getAccount: async () =>
 } });
 const { encodedAudio, machineRpc, expoSpeechSpeak, nativeSynthesize, daemonStreamStartRpc,
     speechSynthesizeRpc } = speechBoundary;
+const initialPlatform = speechBoundary.platform.value;
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
@@ -106,6 +107,8 @@ describe('localVoiceTtsController', () => {
         await retireAccount();
         speechBoundary.disposeNativeSdkBridge();
         storage.setState({ settings: initialSettings, machines: initialMachines, machineListByServerId: initialMachineLists });
+        speechBoundary.platform.value = initialPlatform;
+        vi.unstubAllGlobals();
     });
 
     it('drives opt-in waiting audio from real lifecycle pushes and retires it on phase or preference change', async () => {
@@ -154,18 +157,30 @@ describe('localVoiceTtsController', () => {
     });
 
     it.each([
-        ['device', 'local_conversation'],
-        ['local_neural', 'local_conversation'],
-        ['local_neural', 'happier.voice.xai/realtime-grok'],
-    ] as const)('reads an assistant message through the %s say Action with %s conversation, stops from presence and replays', async (provider, conversationProvider) => {
+        ['device', 'local_conversation', 'ios'],
+        ['local_neural', 'local_conversation', 'ios'],
+        ['local_neural', 'happier.voice.xai/realtime-grok', 'ios'],
+        ['local_neural', 'happier.voice.xai/realtime-grok', 'web'],
+    ] as const)('reads an assistant message through the %s say Action with %s conversation on %s, stops from presence and replays', async (provider, conversationProvider, platform) => {
+        if (speechBoundary.platform.value !== platform) {
+            // Credentials live in each platform's storage; sign in after choosing the platform.
+            await retireAccount();
+            speechBoundary.platform.value = platform;
+            await restoreAccount();
+        }
         const { localVoiceTtsController } = await import('./localVoiceTtsController');
+        // HTML audio is the browser's OS playback boundary; the playback controller stays real.
+        const browserAudio = { play: vi.fn(async () => {}), pause: vi.fn(),
+            onended: null as (() => void) | null, onerror: null as (() => void) | null };
+        if (platform === 'web') vi.stubGlobal('Audio', function Audio() { return browserAudio; });
         const playback = speechBoundary.holdNextPlayback(provider === 'device' ? 'device' : 'encoded');
         const voice = storage.getState().settings.voice;
         const local = readLocalConversationVoiceSettings(voice);
         storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: writeLocalConversationVoiceSettings({
             ...voice, providerId: conversationProvider,
         }, { ...local, tts: { ...local.tts, provider,
-            localNeural: { ...local.tts.localNeural, model: 'kokoro', execution: 'daemon' },
+            localNeural: { ...local.tts.localNeural, model: 'kokoro', execution: 'daemon',
+                assetId: 'kokoro-82m-v1.0-onnx-q8-wasm' },
         } }) }, storage.getState().settings));
         expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).tts.provider).toBe(provider);
         expect(storage.getState().settings.voice.providerId).toBe(conversationProvider);
@@ -205,10 +220,16 @@ describe('localVoiceTtsController', () => {
             const { VoiceSpeechModelCatalogRuntime } = await import('@/voice/session/VoiceSpeechModelCatalogRuntime');
             const { captureDaemonVoiceModelCatalogObservation } = await import('@/voice/settings/panels/modelCatalog/daemonVoiceModelCatalogObservation');
             refreshCatalog = () => captureDaemonVoiceModelCatalogObservation('tts-machine').invalidate();
-            // Mount the real app producer, without opening setup or preloading its catalog.
-            catalog = await renderScreen(React.createElement(InjectedAuthProvider, {
-                credentials, children: React.createElement(VoiceSpeechModelCatalogRuntime),
-            }));
+            if (platform === 'web') {
+                // RUN89 restart112: resolved Machine, Grok, daemon Kokoro, and no observed catalog.
+                // Account/Machine fixture identities differ; all selection and readiness facts are real.
+                expect(captureDaemonVoiceModelCatalogObservation('tts-machine').getSnapshot())
+                    .toEqual({ loading: false, stale: true, errorCode: null, statuses: [] });
+            } else {
+                catalog = await renderScreen(React.createElement(InjectedAuthProvider, {
+                    credentials, children: React.createElement(VoiceSpeechModelCatalogRuntime),
+                }));
+            }
         }
         const retained = buildVoicePresenceFixture('ended');
         const dismiss = vi.fn();
@@ -221,7 +242,7 @@ describe('localVoiceTtsController', () => {
         // Device speech also covers a long message; this daemon boundary returns one protocol-sized segment.
         const text = provider === 'device' ? 'A chosen progress note. '.repeat(200) : 'A chosen progress note.';
         const message = { kind: 'agent-text' as const, id: 'answer', localId: 'answer', text, createdAt: 1, seq: 1, isThinking: false };
-        const messageActions = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: wrapWithSessionTranscriptSource(React.createElement(CommittedMessageActions, {
+        const messageContent = wrapWithSessionTranscriptSource(React.createElement(CommittedMessageActions, {
             message, sessionId: 's1', serverId: account.homes.voice!.id,
             selectableText: { role: 'assistant', text }, copyText: text, isStructuredOnly: false,
             canFork: false, forkCommon: { sessionReplayEnabled: false, sessionReplayStrategy: 'recent_messages',
@@ -232,29 +253,37 @@ describe('localVoiceTtsController', () => {
             showActions: true, showPinAction: false, timestampText: null, invertTimestampAndActions: false,
             onActionsFocus: () => {}, onActionsBlur: () => {}, touchRevealKey: null,
             children: row => row,
-        }), createTestSessionTranscriptSource({ sessionId: 's1', serverId: account.homes.voice!.id })) }));
+        }), createTestSessionTranscriptSource({ sessionId: 's1', serverId: account.homes.voice!.id }));
+        // Enter through the web app's actual platform composition, not a manually mounted producer.
+        const appContent = platform === 'web'
+            ? React.createElement((await import('@/realtime/RealtimeProvider.web')).RealtimeProvider, null, messageContent)
+            : messageContent;
+        const messageActions = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: appContent }));
         const readAloudButton = () => messageActions.findAllByType(IconButton)
             .find(button => button.props.testID === 'transcript-message-readAloud:answer');
         // The rendered message control enters the real default executor; only speech/OS and network are substituted.
         try {
             expect(readLocalConversationVoiceSettings(storage.getState().settings.voice).tts.provider).toBe(provider);
-            await vi.waitFor(() => expect(readAloudButton()?.props.disabled).toBe(false));
+            await vi.waitFor(() => expect(readAloudButton()?.props.disabled, readAloudButton()?.props.disabledReason).toBe(false));
             await act(async () => {
                 messageActions.pressByTestId('transcript-message-readAloud:answer');
             });
-            await vi.waitFor(() => expect(provider === 'device' ? expoSpeechSpeak : encodedAudio.start).toHaveBeenCalled());
-            await playback.started;
+            await vi.waitFor(() => expect(provider === 'device' ? expoSpeechSpeak
+                : platform === 'web' ? browserAudio.play : encodedAudio.start).toHaveBeenCalled());
+            if (platform !== 'web') await playback.started;
             if (provider === 'device') expect(expoSpeechSpeak).toHaveBeenCalledWith(text.trim(), expect.anything());
             else expect(daemonStreamStartRpc).toHaveBeenCalledWith(expect.objectContaining({ text: text.trim() }));
             expect(localVoiceTtsController.readSay()).toBe('speaking');
             await vi.waitFor(() => expect(presence.getTextContent()).toContain(t('voicePresence.readAloud.speaking')));
             await presence.pressByTestIdAsync('voice-top-bar-read-aloud-stop');
             if (provider === 'device') expect(speechBoundary.expoSpeechStop).toHaveBeenCalledTimes(1);
+            else if (platform === 'web') expect(browserAudio.pause).toHaveBeenCalledTimes(1);
             else expect(encodedAudio.stop).toHaveBeenCalledTimes(1);
             expect(localVoiceTtsController.readSay()).toBe('idle');
             await presence.pressByTestIdAsync('voice-top-bar-transport-dismiss');
             expect(dismiss).toHaveBeenCalledTimes(1);
             expoSpeechSpeak.mockImplementation((_text, options) => { options.onStart?.(); options.onDone?.(); });
+            browserAudio.play.mockImplementation(async () => { queueMicrotask(() => browserAudio.onended?.()); });
             await messageActions.pressByTestIdAsync('transcript-message-readAloud:answer');
             if (provider === 'device') expect(expoSpeechSpeak).toHaveBeenLastCalledWith(text.trim(), expect.anything());
             else expect(daemonStreamStartRpc).toHaveBeenLastCalledWith(expect.objectContaining({ text: text.trim() }));
