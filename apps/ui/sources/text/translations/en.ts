@@ -22345,6 +22345,7 @@ const enProjects = {
     dashboardOtherHome: "On another Home",
     addressResolving: ({ machine }: { machine: string }) => `Checking the address on ${machine}…`,
     addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Couldn’t check this address on ${machine} (${code}).`,
+    addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Couldn’t check this address on ${machine} (${code}).`,
     addressUnknown: "Happier couldn’t tell which Git host this is. Check the address.",
     addressUnsupported: "This Git host isn’t supported yet.",
     addressNoMachine: "Connect a machine on this Home to check the address.",

@@ -18815,6 +18815,7 @@ settingsSession: {
         dashboardOtherHome: "別の Home にあります",
         addressResolving: ({ machine }: { machine: string }) => `${machine} でアドレスを確認しています…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `${machine} でこのアドレスを確認できませんでした（${code}）。`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `${machine} でこのアドレスを確認できませんでした（${code}）。`,
         addressUnknown: "Happier はこの Git ホストを特定できませんでした。アドレスを確認してください。",
         addressUnsupported: "この Git ホストはまだサポートされていません。",
         addressNoMachine: "アドレスを確認するには、この Home にマシンを接続してください。",

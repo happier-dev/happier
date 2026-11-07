@@ -18903,6 +18903,7 @@ settingsSession: {
         dashboardOtherHome: "Su un altro Home",
         addressResolving: ({ machine }: { machine: string }) => `Verifica dell’indirizzo su ${machine}…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Impossibile verificare questo indirizzo su ${machine} (${code}).`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Impossibile verificare questo indirizzo su ${machine} (${code}).`,
         addressUnknown: "Happier non è riuscito a capire quale host Git sia. Controlla l’indirizzo.",
         addressUnsupported: "Questo host Git non è ancora supportato.",
         addressNoMachine: "Collega una macchina su questo Home per verificare l’indirizzo.",

@@ -14010,6 +14010,7 @@ settingsSession: {
             dashboardOtherHome: "在另一個 Home 上",
             addressResolving: ({ machine }: { machine: string }) => `正在 ${machine} 上檢查位址…`,
             addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `無法在 ${machine} 上檢查此位址（${code}）。`,
+            addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `無法在 ${machine} 上檢查此位址（${code}）。`,
             addressUnknown: "Happier 無法辨識這是哪個 Git 主機。請檢查位址。",
             addressUnsupported: "尚不支援此 Git 主機。",
             addressNoMachine: "請在此 Home 上連接一台機器以檢查位址。",

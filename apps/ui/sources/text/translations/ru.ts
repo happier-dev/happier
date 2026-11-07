@@ -18854,6 +18854,7 @@ settingsSession: {
         dashboardOtherHome: "В другом Home",
         addressResolving: ({ machine }: { machine: string }) => `Проверка адреса на ${machine}…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Не удалось проверить этот адрес на ${machine} (${code}).`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Не удалось проверить этот адрес на ${machine} (${code}).`,
         addressUnknown: "Happier не смог определить Git-хост. Проверьте адрес.",
         addressUnsupported: "Этот Git-хост пока не поддерживается.",
         addressNoMachine: "Подключите машину в этом Home, чтобы проверить адрес.",

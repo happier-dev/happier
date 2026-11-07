@@ -83,6 +83,7 @@ import { readProjectOpenRouteDraft } from './projectOpenRoute';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
 import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
+import { presentProjectSourceAddressRefusal } from '../sources/resolveProjectSourceAddress';
 
 /** The source list's width beside the choices (lab `p-open` OPEN), and the narrowest choices column. */
 const SOURCE_LIST_WIDTH_PX = 300;
@@ -461,7 +462,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             onChangeSubdir={setSubdir}
             repositoryAddress={!subject && effectiveUse === 'clone' ? {
               value: repositoryAddress.resolution.kind === 'idle' ? '' : repositoryAddress.resolution.address,
-              error: repositoryAddress.refusal && repositoryAddress.refusal !== 'projects.sources.loading' ? t(repositoryAddress.refusal) : null,
+              error: repositoryAddress.refusal && repositoryAddress.refusal !== 'projects.sources.loading'
+                ? presentProjectSourceAddressRefusal(repositoryAddress.resolution, repositoryAddress.refusal, sentenceMachineName) : null,
               onCommit: (text) => { void repositoryAddress.resolve(text, machineId); },
             } : null}
           />

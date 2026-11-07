@@ -366,11 +366,11 @@ describe('Project Open rendered choices', () => {
         await act(async () => { storage.setState({ machineListStatusByServerId: { home: 'idle' } }); });
         // Settled offline inventory now supplies the real answer without retyping the address.
         await vi.waitFor(() => expect(address()!.props.error).toBe(t('projects.sources.addressNoMachine')));
-        // Choosing where to clone asks that Machine to read the address again; the Home's 503 is now the answer.
+        // Choosing where to clone asks that Machine to read the address again; its failed check is now the answer, naming that Machine.
         await act(async () => { setMachine(true); });
         const where = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.where');
         await act(async () => { where!.props.onSelect(machine.id); });
-        await vi.waitFor(() => expect(address()!.props.error).toBe(t('projects.sources.backendUnavailable')));
+        await vi.waitFor(() => expect(address()!.props.error).toBe(t('projects.sources.addressCheckFailed', { machine: machine.id, code: 'invalid_response' })));
     });
 
     it('chooses the branch from a field select whose Other entry asks for any ref', async () => {

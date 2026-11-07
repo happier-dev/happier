@@ -18901,6 +18901,7 @@ settingsSession: {
         dashboardOtherHome: "En otro Home",
         addressResolving: ({ machine }: { machine: string }) => `Comprobando la dirección en ${machine}…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `No se pudo comprobar esta dirección en ${machine} (${code}).`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `No se pudo comprobar esta dirección en ${machine} (${code}).`,
         addressUnknown: "Happier no pudo saber qué servidor Git es. Revisa la dirección.",
         addressUnsupported: "Este servidor Git aún no es compatible.",
         addressNoMachine: "Conecta una máquina en este Home para comprobar la dirección.",

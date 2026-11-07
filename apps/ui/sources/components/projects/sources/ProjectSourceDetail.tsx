@@ -57,6 +57,7 @@ import {
   readSourceTeamId,
 } from './ProjectSourcesRail';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { presentProjectSourceAddressRefusal } from './resolveProjectSourceAddress';
 
 function lastSegment(nameWithOwner: string): string {
   return nameWithOwner.split('/').filter(Boolean).pop() ?? nameWithOwner;
@@ -358,7 +359,7 @@ function describeAddressResolution(
       text: formatProjectSourceAddress(resolution.selector),
     };
   return state.addressSaveDisabledReason
-    ? { tone: 'error', text: t(state.addressSaveDisabledReason) }
+    ? { tone: 'error', text: presentProjectSourceAddressRefusal(resolution, state.addressSaveDisabledReason, machineName) }
     : null;
 }
 

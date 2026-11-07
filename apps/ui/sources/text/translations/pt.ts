@@ -19007,6 +19007,7 @@ settingsSession: {
         dashboardOtherHome: "Em outro Home",
         addressResolving: ({ machine }: { machine: string }) => `Verificando o endereço em ${machine}…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Não foi possível verificar este endereço em ${machine} (${code}).`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Não foi possível verificar este endereço em ${machine} (${code}).`,
         addressUnknown: "O Happier não conseguiu identificar o host Git. Verifique o endereço.",
         addressUnsupported: "Este host Git ainda não é compatível.",
         addressNoMachine: "Conecte uma máquina neste Home para verificar o endereço.",

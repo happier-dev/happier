@@ -10,6 +10,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineInventoryStatus } from '@/sync/domains/machines/machineInventorySnapshots';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
+import { t } from '@/text';
 
 export type ProjectSourceAddressMachines = Readonly<{
   inventoryStatus: MachineInventoryStatus;
@@ -32,7 +33,9 @@ export type ProjectSourceAddressResolution =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'waiting_for_machines'; address: string; preferredMachineId?: string | null }>
   | Readonly<{ kind: 'resolving'; address: string; machineId: string }>
-  | Readonly<{ kind: 'no_reachable_machine' | 'unavailable'; address: string }>
+  | Readonly<{ kind: 'no_reachable_machine'; address: string }>
+  /** The Home's Machine list could not be read, or the asked Machine's check failed (then it is named, with its code). */
+  | Readonly<{ kind: 'unavailable'; address: string; machineId?: string; errorCode?: string }>
   | (ScmHostingRepositoryResolveAddressResponseV1 &
       Readonly<{ address: string; machineId: string }>);
 /** Why an address cannot be used yet, as a translation key; null once it resolved. */
@@ -41,8 +44,11 @@ export type ProjectSourceAddressRefusal =
   | 'projects.sources.backendUnavailable'
   | 'projects.sources.addressUnknown'
   | 'projects.sources.addressUnsupported'
+  | 'projects.sources.addressCheckFailed'
   | 'projects.sources.addressInvalid'
   | 'projects.sources.loading';
+/** Why a Source's Save is disabled: an address refusal, or no address yet. */
+export type ProjectSourceSaveDisabledReason = ProjectSourceAddressRefusal | 'projects.sources.saveNeedsAddress';
 
 type Execute = (
   actionId: ActionId,
@@ -105,6 +111,7 @@ export async function resolveProjectSourceAddress(
       refusal: 'projects.sources.addressNoMachine',
     };
   params.onResolving?.({ kind: 'resolving', address, machineId: machine.id });
+  let failureCode = 'invalid_response';
   try {
     const outcome = await params.execute(
       'scm.hostingRepository.resolveAddress',
@@ -118,7 +125,10 @@ export async function resolveProjectSourceAddress(
       },
     );
     if (params.signal.aborted) return null;
-    if (!outcome.ok) throw new Error(outcome.errorCode);
+    if (!outcome.ok) {
+      failureCode = outcome.errorCode;
+      throw new Error(outcome.errorCode);
+    }
     const result = ScmHostingRepositoryResolveAddressResponseV1Schema.parse(
       outcome.result,
     );
@@ -135,9 +145,24 @@ export async function resolveProjectSourceAddress(
     };
   } catch {
     if (params.signal.aborted) return null;
+    // The Machine that was asked could not answer: say which one and why, never that the repository is unsupported.
     return {
-      resolution: { kind: 'unavailable', address },
-      refusal: 'projects.sources.backendUnavailable',
+      resolution: { kind: 'unavailable', address, machineId: machine.id, errorCode: failureCode },
+      refusal: 'projects.sources.addressCheckFailed',
     };
   }
+}
+
+/** The refusal in words; a failed check names the Machine asked and its code. */
+export function presentProjectSourceAddressRefusal(
+  resolution: ProjectSourceAddressResolution,
+  refusal: ProjectSourceSaveDisabledReason,
+  machineName: (machineId: string) => string,
+): string {
+  if (refusal === 'projects.sources.addressCheckFailed') {
+    return resolution.kind === 'unavailable' && resolution.machineId
+      ? t('projects.sources.addressCheckFailed', { machine: machineName(resolution.machineId), code: resolution.errorCode ?? 'invalid_response' })
+      : t('projects.sources.backendUnavailable');
+  }
+  return t(refusal);
 }

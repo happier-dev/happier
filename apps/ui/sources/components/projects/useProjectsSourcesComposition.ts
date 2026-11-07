@@ -62,7 +62,7 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
         if (!lifetime?.isCurrent() || lifetime.scope.serverId !== ref.serverId || lifetime.scope.accountId !== accountScope?.accountId)
             return { kind: 'unavailable' as const };
         creationTarget.current = { ref, lifetime };
-        sources.controller.beginCreate(draft ?? { name: resolveWorkspaceRefDisplayName(ref) });
+        sources.controller.beginCreate({ ...(draft ?? { name: resolveWorkspaceRefDisplayName(ref) }), checkoutMachineId: ref.machineId });
         if (!draft) return { kind: 'editing' as const };
         return saveSourceCreation();
     }, [accountScope?.accountId, saveSourceCreation, sources.controller]);

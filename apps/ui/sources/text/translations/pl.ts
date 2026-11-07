@@ -18726,6 +18726,7 @@ settingsSession: {
         dashboardOtherHome: "W innym Home",
         addressResolving: ({ machine }: { machine: string }) => `Sprawdzanie adresu na ${machine}…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Nie udało się sprawdzić tego adresu na ${machine} (${code}).`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `Nie udało się sprawdzić tego adresu na ${machine} (${code}).`,
         addressUnknown: "Happier nie rozpoznał hosta Git. Sprawdź adres.",
         addressUnsupported: "Ten host Git nie jest jeszcze obsługiwany.",
         addressNoMachine: "Połącz maszynę w tym Home, aby sprawdzić adres.",

@@ -11,7 +11,7 @@ import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionEx
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { randomUUID } from '@/platform/randomUUID';
 import { formatProjectSourceAddress } from './projectSourceAddress';
-import { resolveProjectSourceAddress, type ProjectSourceAddressMachines, type ProjectSourceAddressResolution } from './resolveProjectSourceAddress';
+import { resolveProjectSourceAddress, type ProjectSourceAddressMachines, type ProjectSourceAddressResolution, type ProjectSourceSaveDisabledReason } from './resolveProjectSourceAddress';
 
 export type { ProjectSourceAddressMachines, ProjectSourceAddressResolution } from './resolveProjectSourceAddress';
 
@@ -44,7 +44,7 @@ export type ProjectSourcesState = Readonly<{
     issue: string | null;
     uncertainCreate: boolean;
     addressResolution: ProjectSourceAddressResolution;
-    addressSaveDisabledReason: 'projects.sources.saveNeedsAddress' | 'projects.sources.addressNoMachine' | 'projects.sources.backendUnavailable' | 'projects.sources.addressUnknown' | 'projects.sources.addressUnsupported' | 'projects.sources.addressInvalid' | 'projects.sources.loading' | null;
+    addressSaveDisabledReason: ProjectSourceSaveDisabledReason | null;
 }>;
 type Execute = (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => Promise<ActionExecuteResult>;
 export type ProjectSourcesCatalog = Readonly<{
@@ -129,6 +129,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     let listSettlement: Promise<void> | null = null;
     let detailRequest: AbortController | null = null;
     let addressRequest: AbortController | null = null;
+    let creationCheckoutMachineId: string | null = null;
     let disposed = false;
     const publish = (patch: Partial<ProjectSourcesState>) => {
         if (disposed) return;
@@ -264,7 +265,9 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             }
             const request = new AbortController(); addressRequest = request;
             try {
-                const outcome = await resolveProjectSourceAddress({ text: address, scope, execute, machines: options, signal: request.signal,
+                const machines = !state.selectedId && state.creationDraft && creationCheckoutMachineId
+                    ? { ...options, preferredMachineId: creationCheckoutMachineId } : options;
+                const outcome = await resolveProjectSourceAddress({ text: address, scope, execute, machines, signal: request.signal,
                     onResolving: resolution => publish({ addressResolution: resolution, addressSaveDisabledReason: 'projects.sources.loading' }) });
                 if (!outcome || disposed || addressRequest !== request || request.signal.aborted) return;
                 publish({ addressResolution: outcome.resolution, addressSaveDisabledReason: outcome.refusal });
@@ -361,8 +364,10 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                 }
             } finally { if (detailRequest === request) detailRequest = null; }
         },
-        beginCreate(draft: Partial<ProjectSourceDraft> & Readonly<{ address?: string }> = {}) {
+        beginCreate(draft: Partial<ProjectSourceDraft> & Readonly<{ address?: string; checkoutMachineId?: string }> = {}) {
             detailRequest?.abort(); detailRequest = null;
+            // Saving a checkout as a Source reads its address where that checkout lives.
+            creationCheckoutMachineId = draft.checkoutMachineId ?? null;
             resetAddress();
             const repository = draft.repository ?? null;
             publish({ selectedId: null, current: null, canManage: true, detailStatus: 'ready', draft: null,

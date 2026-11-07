@@ -82,6 +82,26 @@ describe('Source editor address producer', () => {
         expect(controller.getSnapshot().creationDraft).toBeNull();
         expect(controller.getSnapshot().current).toMatchObject({ name: 'Custom', defaultRef: 'release', subdir: 'apps/mobile' });
     });
+    it("reads a checkout's address on that checkout's own Machine, over the SCM preference and the first Machine", async () => {
+        const { controller, execute } = harness(() => ({ ...inventory, preferredMachineId: 'online' }));
+        controller.beginCreate({ name: 'Repository', checkoutMachineId: 'preferred' });
+        await controller.resolveAddress('forge.test/team/repo');
+        expect(execute.mock.calls[0]?.[2]?.externalActionTarget).toEqual({ kind: 'machine', machineId: 'preferred' });
+        expect(controller.getSnapshot().addressResolution).toMatchObject({ kind: 'resolved', machineId: 'preferred' });
+        // A Source created without a checkout keeps the incumbent choice.
+        controller.discard();
+        controller.beginCreate({ name: 'Other' });
+        await controller.resolveAddress('forge.test/team/repo');
+        expect(execute.mock.calls[1]?.[2]?.externalActionTarget).toEqual({ kind: 'machine', machineId: 'online' });
+    });
+    it('says which Machine could not check the address, with its failure code, instead of blaming the repository', async () => {
+        rpc.mockRejectedValue(Object.assign(new Error('boom'), { code: 'RPC_METHOD_NOT_AVAILABLE' }));
+        const { controller } = harness();
+        controller.beginCreate({ name: 'Repository', checkoutMachineId: 'preferred' });
+        await controller.resolveAddress('forge.test/team/repo');
+        expect(controller.getSnapshot().addressResolution).toMatchObject({ kind: 'unavailable', machineId: 'preferred', errorCode: expect.any(String) });
+        expect(controller.getSnapshot().addressSaveDisabledReason).toBe('projects.sources.addressCheckFailed');
+    });
     it('prefers the selected reachable Machine and exposes resolution before saving its selector', async () => {
         let finish!: (value: unknown) => void;
         rpc.mockImplementation(async () => await new Promise(done => { finish = done; }));

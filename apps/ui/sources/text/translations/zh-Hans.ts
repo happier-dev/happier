@@ -18520,6 +18520,7 @@ settingsSession: {
         dashboardOtherHome: "在另一个 Home 上",
         addressResolving: ({ machine }: { machine: string }) => `正在 ${machine} 上检查地址…`,
         addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `无法在 ${machine} 上检查此地址（${code}）。`,
+        addressCheckFailed: ({ machine, code }: { machine: string; code: string }) => `无法在 ${machine} 上检查此地址（${code}）。`,
         addressUnknown: "Happier 无法识别这是哪个 Git 主机。请检查地址。",
         addressUnsupported: "尚不支持此 Git 主机。",
         addressNoMachine: "请在此 Home 上连接一台机器以检查地址。",
