@@ -1111,6 +1111,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     try {
       expect(await settle(`${id}.needsRepository`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.setup`)).toBeNull();
+      // One message: no empty preview list under the reason.
+      expect(screen.findByTestId('project-deployments.environment.settings.previews.empty')).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1126,7 +1128,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
     // The descriptor the backup-destinations family publishes; its identity and roles must reach the patch unchanged.
     const destination = { id: 'example.storage/bucket-store', pluginId: 'example.storage', pluginVersion: '1.0.0',
       definition: { id: 'bucket-store', title: 'Bucket store', resticTransport: 's3', locality: 'unknown',
-        credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'],
+        credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' }],
         configSchema: { type: 'object', additionalProperties: false, required: ['endpoint', 'bucket', 'prefix'],
           properties: { endpoint: { type: 'string', minLength: 1 }, bucket: { type: 'string', minLength: 1 },
             prefix: { type: 'string' }, region: { type: 'string', minLength: 1 } } },
@@ -1166,6 +1168,24 @@ describe('Environment → Settings: checks, backups, previews', () => {
         expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
         contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
         patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('leads to the Store for backup storage when no destination is available, in plain words', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'No destination', serverUrl: 'https://no-destination.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const detail = createDeploymentEnvironmentDetailV1();
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.backups.setup';
+    try {
+      expect(await settle(`${id}.store`)).not.toBeNull();
+      routerMock.spies.push.mockClear();
+      await screen.pressByTestIdAsync(`${id}.store`);
+      expect(String(JSON.stringify(routerMock.spies.push.mock.calls[0]?.[0]))).toContain('view=search');
+      expect(screen.findByTestId(`${id}.start`)).toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1374,9 +1394,15 @@ describe('Environment → Settings: checks, backups, previews', () => {
       homes.requests
         .filter((request) => request.path.split('?')[0] === path)
         .map((request) => new URLSearchParams(request.path.split('?')[1]));
+    const templateBase = createDeploymentEnvironmentDetailV1();
+    const templateDetail = createDeploymentEnvironmentDetailV1({ content: { ...templateBase.content, previewTemplate: {
+      v: 1, enabled: true, forkPreviews: 'off',
+      repository: { kind: 'github', deployment: 'https://github.example/enterprise', repository: 'owner/app' },
+      runtimeTargetLinkId: templateBase.environment.runtimeTargetLinkId ?? 'target-link', domain: null, bindingBlueprints: [], data: [],
+    } } });
     const { screen, controller, settle } = await renderTab(
       'settings',
-      createDeploymentEnvironmentDetailV1(),
+      templateDetail,
       {},
       { lifetime: account.accountLifetime },
     );

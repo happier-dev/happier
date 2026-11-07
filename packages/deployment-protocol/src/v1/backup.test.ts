@@ -141,7 +141,7 @@ describe('Environment backup content', () => {
         const descriptor = { id: 'remote', title: 'External storage',
             configSchema: { type: 'object', properties: { bucket: { type: 'string', minLength: 1 } },
                 required: ['bucket'], additionalProperties: false },
-            credentialRoles: ['repositoryPassword'], resticTransport: 's3', locality: 'offHost',
+            credentialRoles: [{ role: 'repositoryPassword' }], resticTransport: 's3', locality: 'offHost',
             actions: { test: { pluginId: 'example.storage', localId: 'test' },
                 open: { pluginId: 'example.storage', localId: 'open' } } };
         expect(validate?.({ descriptor, config: { bucket: 'recovery' } })).toBe(true);

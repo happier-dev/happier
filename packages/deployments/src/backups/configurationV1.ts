@@ -27,7 +27,7 @@ export function prepareDeploymentBackupConfigurationV1(input: Readonly<{ environ
     if (!validateDeploymentBackupDestinationConfigurationV1({ descriptor: destination.descriptor, config: configuration.config })) {
         return { ok: false, code: 'invalid_destination_config' };
     }
-    const roles = destination.descriptor.credentialRoles;
+    const roles = destination.descriptor.credentialRoles.map(entry => entry.role);
     if (configuration.credentialBindings.some(binding => !roles.includes(binding.role))) return { ok: false, code: 'unsupported_credential_role' };
     const missingRoles = configuration.credentialBindings.map(binding => binding.role).filter(role => !input.bindings.some(binding => binding.purpose === 'backupDestination'
         && binding.configKey === 'destination' && binding.role === role));

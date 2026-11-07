@@ -369,7 +369,7 @@ export function DeploymentBackupSetup(props: Readonly<{
     if (!destination) return;
     setFields({ ...Object.fromEntries(configFields.map((field) => [field.key, ''])),
       service: props.detail.content.template?.data?.service ?? '' });
-    setRoles(new Set(destination.definition.credentialRoles));
+    setRoles(new Set(destination.definition.credentialRoles.map(entry => entry.role)));
   };
   const save = async () => {
     if (!fields || !destination || !retention || !complete || saving) return;
@@ -382,7 +382,7 @@ export function DeploymentBackupSetup(props: Readonly<{
       // The host captures the destination's current occurrence when it prepares the setup.
       occurrenceId: destination.definition.id,
       config,
-      credentialBindings: destination.definition.credentialRoles.filter((role) => roles.has(role))
+      credentialBindings: destination.definition.credentialRoles.map(entry => entry.role).filter((role) => roles.has(role))
         .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
       sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
       ownership: { environmentId: props.detail.environment.id, prefix: value('prefix') },
@@ -431,7 +431,7 @@ export function DeploymentBackupSetup(props: Readonly<{
           onCommit={(text) => { setField(key)(text); return text; }}
         />
       )) : null}
-      {fields && destination ? destination.definition.credentialRoles.map((role) => (
+      {fields && destination ? destination.definition.credentialRoles.map(({ role }) => (
         <Item
           key={role}
           testID={`${id}.role.${role}`}

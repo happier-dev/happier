@@ -1,6 +1,6 @@
 import { BackupDestinationOpenV1ProtocolSchema, definePlugin } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolUniqueArray } from '@happier-dev/plugin-sdk/protocol';
-import { prepareS3Destination, S3DestinationConfigSchema, S3DestinationCredentialRoleSchema,  } from './s3.js';
+import { prepareS3Destination, S3DestinationConfigSchema, S3DestinationCredentialRoleSchema, S3_DESTINATION_CREDENTIAL_ROLES } from './s3.js';
 
 const pluginId = 'happier.backup.destinations';
 const inputSchema = defineProtocolObject({
@@ -18,7 +18,7 @@ export const plugin = definePlugin({
   backupDestinations: {
     s3: {
       title: 'S3 object storage', configSchema: S3DestinationConfigSchema.jsonSchema,
-      credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey', 'sessionToken'],
+      credentialRoles: S3_DESTINATION_CREDENTIAL_ROLES,
       resticTransport: 's3', locality: 'unknown',
       actions: {
         test: { kind: 'hostAction', actionId: 'deployments.backups.test' },

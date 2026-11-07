@@ -29,7 +29,7 @@ export type BackupDestinationContributionV1 = Readonly<{
   id: string;
   title: PluginLocalizedStringV2;
   configSchema: ReadonlyAuthorDeclaration<PluginJsonSchema>;
-  credentialRoles: readonly ProtocolSchemaOutput<typeof BackupDestinationCredentialBindingV1ProtocolSchema>['role'][];
+  credentialRoles: readonly Readonly<CanonicalBackupDestinationContributionV1['credentialRoles'][number]>[];
   resticTransport: 's3' | 'sftp' | 'local';
   /** offHost requires proof from admitted configuration; it is not a durability guarantee. */
   locality: 'local' | 'offHost' | 'unknown';

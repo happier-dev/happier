@@ -21,8 +21,12 @@ export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.stric
       context.addIssue({ code: 'custom', message: 'Invalid portable destination configuration schema.' });
     }
   })),
-  credentialRoles: z.array(z.enum(['accessKeyId', 'secretAccessKey', 'sessionToken', 'repositoryPassword', 'sshPrivateKey']))
-    .check(z.refine(roles => roles.includes('repositoryPassword') && new Set(roles).size === roles.length)),
+  credentialRoles: z.array(z.strictObject({
+    role: z.enum(['accessKeyId', 'secretAccessKey', 'sessionToken', 'repositoryPassword', 'sshPrivateKey']),
+    /** Omitted means required; optional roles may be left unbound. */
+    optional: z.optional(z.boolean()),
+  })).check(z.refine(roles => roles.some(entry => entry.role === 'repositoryPassword')
+    && new Set(roles.map(entry => entry.role)).size === roles.length)),
   resticTransport: z.enum(['s3', 'sftp', 'local']),
   locality: z.enum(['local', 'offHost', 'unknown']),
   actions: z.strictObject({
@@ -37,7 +41,7 @@ export const BackupDestinationContributionV1Schema = lazyZodSchema(() => z.stric
   const roles = descriptor.resticTransport === 'local' ? ['repositoryPassword']
     : descriptor.resticTransport === 'sftp' ? ['repositoryPassword', 'sshPrivateKey']
       : ['repositoryPassword', 'accessKeyId', 'secretAccessKey', 'sessionToken'];
-  if (descriptor.credentialRoles.some(role => !roles.includes(role))) {
+  if (descriptor.credentialRoles.some(entry => !roles.includes(entry.role))) {
     context.addIssue({ code: 'custom', path: ['credentialRoles'], message: 'Credential role is not supported by this restic transport.' });
   }
 })));

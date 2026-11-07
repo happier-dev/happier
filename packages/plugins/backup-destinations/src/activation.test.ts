@@ -15,6 +15,10 @@ describe('installed S3 destination Actions', () => {
       expect(descriptor).toBeDefined();
       if (!descriptor) throw new Error('S3 destination is missing');
       expect(descriptor.actions.open.pluginId).toBe(destinations.manifest.id);
+      expect(descriptor.credentialRoles).toEqual([
+        { role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' },
+        { role: 'sessionToken', optional: true },
+      ]);
       expect(await fixture.invokeAction(descriptor.actions.open.localId, {
         config, credentialRoles: ['sessionToken', 'repositoryPassword', 'accessKeyId', 'secretAccessKey'],
       })).toEqual({

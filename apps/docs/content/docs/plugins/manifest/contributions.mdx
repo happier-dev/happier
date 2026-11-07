@@ -551,7 +551,10 @@ const descriptor = {
     required: ['endpoint', 'bucket'],
     additionalProperties: false,
   },
-  credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'],
+  credentialRoles: [
+    { role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' },
+    { role: 'sessionToken', optional: true },
+  ],
   resticTransport: 's3',
   locality: 'unknown',
   actions: {
@@ -564,6 +567,9 @@ const descriptor = {
 Configuration is nonsecret data; close nested object schemas too. Declare
 credential roles rather than embedding values in configuration or schema
 defaults. The host's admitted binding/custody owner retains credential access.
+In 0.3 development source, each role entry may declare `optional: true`;
+omission or `false` means required. S3's session token is optional. This metadata
+travels with the same descriptor so setup can label optional credential inputs.
 Open uses a qualified contributed Action. Test accepts either a qualified
 contributed Action or `{ kind: 'hostAction', actionId: 'deployments.backups.test' }`
 for the host's read-only repository probe. The descriptor has no cleanup callback,

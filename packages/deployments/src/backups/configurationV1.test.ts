@@ -6,7 +6,7 @@ const descriptor = {
     id: 'storage', title: 'External storage',
     configSchema: { type: 'object', properties: { bucket: { type: 'string', minLength: 1 } },
         required: ['bucket'], additionalProperties: false },
-    credentialRoles: ['repositoryPassword'], resticTransport: 's3', locality: 'offHost',
+    credentialRoles: [{ role: 'repositoryPassword' }], resticTransport: 's3', locality: 'offHost',
     actions: { test: { pluginId: 'example.storage', localId: 'test' }, open: { pluginId: 'example.storage', localId: 'open' } },
 };
 const destination = { ref: { pluginId: 'example.storage', localId: 'storage' }, occurrenceId: 'occurrence-1', descriptor };
@@ -45,7 +45,7 @@ describe('backup configuration preparation', () => {
         expect(prepare({ ...input, bindings: [] })).toEqual({ ok: true, configuration,
             bindingState: 'needsBinding', missingRoles: ['repositoryPassword'] });
         expect(prepare({ ...input, destination: { ...destination,
-            descriptor: { ...descriptor, credentialRoles: ['repositoryPassword', 'awsSessionToken'] } } }))
+            descriptor: { ...descriptor, credentialRoles: [{ role: 'repositoryPassword' }, { role: 'awsSessionToken' }] } } }))
             .toEqual({ ok: true, configuration, bindingState: 'bound', missingRoles: [] });
         expect(prepare({ ...input, bindings: [createDeploymentSecretVariableBindingV1({ name: 'PASSWORD', phase: 'runtime',
             resourceId: 'secret-a', resourceRevision: 1 })] }))

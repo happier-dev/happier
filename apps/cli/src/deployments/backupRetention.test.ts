@@ -64,7 +64,7 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
     const host = { credentials, accountArtifacts: artifacts, serverHttpBaseUrl: 'https://home.test',
         acquirePluginRuntimeRegistryLease: async () => ({ registry: {
             contributes: { backupDestinations: [{ identity: configuration.destinationRef, definition: {
-                id: 'open', title: 'External storage', credentialRoles: ['repositoryPassword' as const], resticTransport: 's3' as const, locality: 'offHost' as const,
+                id: 'open', title: 'External storage', credentialRoles: [{ role: 'repositoryPassword' as const }], resticTransport: 's3' as const, locality: 'offHost' as const,
                 configSchema: { type: 'object', properties: { bucket: { type: 'string', minLength: 1 } },
                     required: ['bucket'], additionalProperties: false },
                 actions: { test: configuration.destinationRef, open: configuration.destinationRef },

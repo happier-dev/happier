@@ -1,4 +1,4 @@
-import { BackupDestinationCredentialBindingV1ProtocolSchema, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
+import { BackupDestinationCredentialBindingV1ProtocolSchema, type BackupDestinationContributionV1, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -31,6 +31,10 @@ export const S3DestinationCredentialRoleSchema = defineProtocolUnion([
 ]);
 
 const requiredRoles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const;
+/** Publish the same required roles that the S3 open owner enforces. */
+export const S3_DESTINATION_CREDENTIAL_ROLES: BackupDestinationContributionV1['credentialRoles'] = [
+  ...requiredRoles.map(role => ({ role })), { role: 'sessionToken', optional: true },
+];
 const selectedRolesSchema = defineProtocolUniqueArray(S3DestinationCredentialRoleSchema, { minItems: 3, maxItems: 4 });
 
 /** Requested role identities select existing custody; they do not prove or grant access. */

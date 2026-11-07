@@ -11,7 +11,7 @@ it('carries an external destination through admitted manifest, serving projectio
     const pluginId = 'com.acme.backups';
     const configSchema = { type: 'object', properties: { directory: { type: 'string' } }, required: ['directory'], additionalProperties: false };
     const definition = { id: 'disk', title: 'Local recovery', configSchema,
-        credentialRoles: ['repositoryPassword'], resticTransport: 'local', locality: 'local',
+        credentialRoles: [{ role: 'repositoryPassword' }, { role: 'sessionToken', optional: true }], resticTransport: 's3', locality: 'unknown',
         actions: { test: { pluginId, localId: 'test' }, open: { pluginId, localId: 'open' } } };
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Backups',
         runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' }, contributes: { backupDestinations: [definition],

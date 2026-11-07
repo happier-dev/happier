@@ -9,7 +9,7 @@ const pluginId = 'acme.backups';
 const configSchema = { type: 'object', properties: { directory: { type: 'string' } }, required: ['directory'], additionalProperties: false } as const;
 const destination = {
   id: 'disk', title: 'Recovery disk', configSchema,
-  credentialRoles: ['repositoryPassword'], resticTransport: 'local', locality: 'local',
+  credentialRoles: [{ role: 'repositoryPassword' }], resticTransport: 'local', locality: 'local',
   actions: {
     test: { pluginId, localId: 'destination/test' },
     open: { pluginId, localId: 'destination/open' },
@@ -59,7 +59,9 @@ describe('public backup destination declarations', () => {
       { ...destination, configSchema: { ...configSchema, additionalProperties: true } },
       { ...destination, configSchema: { ...configSchema, properties: { nested: { type: 'object' } } } },
       { ...destination, actions: { ...destination.actions, open: 'destination/open' } },
-      { ...destination, credentialRoles: ['repositoryPassword', 'customToken'] },
+      { ...destination, credentialRoles: [{ role: 'repositoryPassword' }, { role: 'customToken' }] },
+      { ...destination, credentialRoles: [{ role: 'repositoryPassword' }, { role: 'repositoryPassword', optional: true }] },
+      { ...destination, credentialRoles: [{ role: 'repositoryPassword', optional: 'yes' }] },
       { ...destination, locality: 'offSite' },
     ]) expect(PluginManifestV2Schema.safeParse({ ...manifest, contributes: { ...manifest.contributes, backupDestinations: [invalid] } }).success).toBe(false);
     expect(parsePluginManifest({ ...manifest, contributes: { ...manifest.contributes, actions: actions.slice(0, 1) } }).ok).toBe(false);
@@ -71,7 +73,7 @@ describe('public backup destination declarations', () => {
     for (const locality of ['offHost', 'unknown'] as const) {
       expect(parsePluginManifest({ ...manifest, contributes: { ...manifest.contributes,
         backupDestinations: [{ ...destination, resticTransport: 's3', locality,
-          credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] }] } }).ok).toBe(true);
+          credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' }] }] } }).ok).toBe(true);
     }
   });
 
@@ -102,7 +104,7 @@ describe('public backup destination declarations', () => {
     if (!declared) throw new Error('Public destination example has no descriptor');
     expect(declared).toMatchObject({
       resticTransport: 's3', locality: 'unknown',
-      credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'],
+      credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' }],
     });
     const fixture = await createPluginTestkit({ manifest: example.manifest, module: example });
     try {
