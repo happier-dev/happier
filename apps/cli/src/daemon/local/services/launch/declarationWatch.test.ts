@@ -145,7 +145,7 @@ describe('Local Service declaration observation scope', () => {
             onChanged: async (roots, _signal, options) => { if (options?.includePackageScripts) changes.push(roots); },
             onError: error => { throw error; },
         });
-        watcher.updatePackageRoots([selected]);
+        const release = watcher.observePackageRoots([selected]);
         native.starts.length = 0;
         try {
             watcher.setDemand(true);
@@ -163,6 +163,7 @@ describe('Local Service declaration observation scope', () => {
             watcher.setDemand(true);
             await vi.waitFor(() => expect(native.active.has(nested)).toBe(true));
         } finally {
+            release();
             watcher.setDemand(false);
             await vi.waitFor(() => expect(native.active.size).toBe(0));
             await rm(root, { recursive: true, force: true });

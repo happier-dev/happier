@@ -54,6 +54,69 @@ function declaredWorkspaces(roots: readonly string[]) {
 }
 
 describe('Services declaration discovery demand', () => {
+    it('releases A package demand before B or Machine observation without losing retained scripts', async () => {
+        const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-current-demand-')));
+        const a = join(base, 'a');
+        const b = join(base, 'b');
+        const writeScripts = (root: string, script: string) => writeFile(join(root, 'package.json'),
+            JSON.stringify({ name: root === a ? 'a' : 'b', packageManager: 'npm@10', scripts: { [script]: 'serve' } }));
+        for (const root of [a, b]) {
+            await mkdir(join(root, 'packages', 'child'), { recursive: true });
+            await mkdir(join(root, '.happier'));
+            await writeScripts(root, 'dev');
+        }
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false,
+            inventoryEnabled: () => true, workspaceFacts: () => declaredWorkspaces([a, b]),
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const machine = new AbortController();
+        const first = new AbortController();
+        const second = new AbortController();
+        const reopened = new AbortController();
+        const pending: Promise<unknown>[] = [];
+        let publications = 0;
+        const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
+        try {
+            pending.push(runtime.inventoryRoutes.watchSnapshot({ observationOnly: true, signal: machine.signal }));
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: a }))).toEqual(['a:dev']);
+            pending.push(runtime.inventoryRoutes.watchSnapshot({ observationOnly: true, signal: first.signal,
+                launcherScopes: [{ workspaceRoot: a }] }));
+            await vi.waitFor(() => expect(observations.attachments.has(join(a, 'packages', 'child'))).toBe(true));
+            first.abort();
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: b }))).toEqual(['b:dev']);
+            pending.push(runtime.inventoryRoutes.watchSnapshot({ observationOnly: true, signal: second.signal,
+                launcherScopes: [{ workspaceRoot: b }] }));
+            await vi.waitFor(() => expect(observations.attachments.has(join(b, 'packages', 'child'))).toBe(true));
+            await vi.waitFor(() => expect(observations.attachments.has(join(a, 'packages'))).toBe(false));
+            // Fixed Machine declarations still observe A, even after its script reader leaves.
+            expect(observations.attachments.has(join(a, '.happier'))).toBe(true);
+            await runtime.launcherRoutes.getSnapshot({ workspaceRoot: b });
+            observations.starts.length = 0;
+            observations.directories.length = 0;
+            observations.events.length = 0;
+            publications = 0;
+            await writeScripts(a, 'preview');
+            await vi.waitFor(() => expect(observations.events).toContain('package.json'));
+            await runtime.launcherRoutes.getSnapshot({ workspaceRoot: b, discovery: 'cached' });
+            expect(observations.starts.filter(path => path.startsWith(join(a, 'packages')))).toHaveLength(0);
+            expect(observations.directories.filter(path => path === a || path.startsWith(`${a}/`))).toHaveLength(0);
+            expect(publications).toBe(0);
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: a, discovery: 'cached' }))).toEqual(['a:dev']);
+            await writeScripts(b, 'start');
+            await vi.waitFor(async () => expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: b, discovery: 'cached' })))
+                .toEqual(['b:start']));
+            pending.push(runtime.inventoryRoutes.watchSnapshot({ observationOnly: true, signal: reopened.signal,
+                launcherScopes: [{ workspaceRoot: a }] }));
+            await vi.waitFor(async () => expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: a, discovery: 'cached' })))
+                .toEqual(['a:preview']));
+            second.abort(); reopened.abort();
+            await vi.waitFor(() => expect(observations.attachments.has(join(a, 'packages'))
+                || observations.attachments.has(join(b, 'packages'))).toBe(false));
+        } finally {
+            machine.abort(); first.abort(); second.abort(); reopened.abort();
+            await Promise.all(pending); unsubscribe(); await runtime.stop(); await rm(base, { recursive: true, force: true });
+        }
+    });
+
     it('does not turn a Session-only home scope into recursive native observation', async () => {
         const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-session-scope-')));
         const home = join(base, 'home');
@@ -75,6 +138,8 @@ describe('Services declaration discovery demand', () => {
             await vi.waitFor(() => expect(observations.attachments.has(project)).toBe(true));
             observations.starts.length = 0;
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ sessionId: 'raw-home' }))).toEqual(['project:dev']);
+            observing = Promise.all([observing, runtime.inventoryRoutes.watchSnapshot({ observationOnly: true,
+                signal: cancellation.signal, launcherScopes: [{ sessionId: 'raw-home' }] })]);
             await vi.waitFor(() => expect(observations.starts).toContain(join(project, '.happier')));
             expect(observations.starts.filter(path => path === join(home, '.cache') || path.startsWith(`${home}/.cache/`))).toEqual([]);
         } finally {
@@ -158,6 +223,7 @@ describe('Services declaration discovery demand', () => {
             observing = (async () => {
                 while (!cancellation.signal.aborted) await runtime.inventoryRoutes.watchSnapshot({
                     sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                    launcherScopes: [{ workspaceRoot: selected }, { workspaceRoot: sibling }],
                 });
             })();
             await vi.waitFor(() => expect(observations.attachments.has(selected) && observations.attachments.has(sibling)).toBe(true));
@@ -215,12 +281,14 @@ describe('Services declaration discovery demand', () => {
             expect(observations.attachments.has(root)).toBe(false);
             const readsBeforeMount = observations.directories.filter(path => path === root).length;
             const cursor = runtime.inventoryRegistry.getSnapshot().generatedAt;
-            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: cancellation.signal });
+            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: cancellation.signal,
+                launcherScopes: [{ workspaceRoot: root }] });
             await vi.waitFor(() => expect(observations.attachments.has(root)).toBe(true));
             await vi.waitFor(() => expect(observations.directories.filter(path => path === root).length).toBeGreaterThan(readsBeforeMount));
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             expect([...observations.attachments].filter(path => path.startsWith(join(root, 'node_modules')))).toHaveLength(0);
-            otherWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: otherCancellation.signal });
+            otherWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: otherCancellation.signal,
+                launcherScopes: [{ workspaceRoot: root }] });
             await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(2));
             cancellation.abort();
             await expect(watch).resolves.toMatchObject({ changed: false });
@@ -244,7 +312,7 @@ describe('Services declaration discovery demand', () => {
             expect(observations.directories).toHaveLength(0);
             // A new mounted watch reconciles the detached interval before it parks.
             watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: otherCancellation.signal });
+                signal: otherCancellation.signal, launcherScopes: [{ workspaceRoot: root }] });
             await expect(watch).resolves.toMatchObject({ changed: true });
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual(['watched:start']);
         } finally { cancellation.abort(); otherCancellation.abort(); await Promise.all([watch, otherWatch]); await runtime.stop(); await rm(root, { recursive: true, force: true }); }
@@ -269,7 +337,8 @@ describe('Services declaration discovery demand', () => {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: alias });
             const readsBeforeMount = observations.directories.filter(path => path === root).length;
             observations.starts.length = 0;
-            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal });
+            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }, { workspaceRoot: alias }] });
             await vi.waitFor(() => expect(observations.attachments.has(join(root, '.happier'))).toBe(true));
             await vi.waitFor(() => expect(observations.directories.filter(path => path === root).length).toBeGreaterThan(readsBeforeMount));
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
@@ -299,7 +368,8 @@ describe('Services declaration discovery demand', () => {
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const cancellation = new AbortController();
         let pending: Promise<unknown> | undefined;
-        const mount = () => runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal });
+        const mount = () => runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+            signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }] });
         try {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             const readsBeforeMount = observations.directories.filter(path => path === root).length;
@@ -350,7 +420,8 @@ describe('Services declaration discovery demand', () => {
         try {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             const readsBeforeMount = observations.directories.filter(path => path === root).length;
-            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal });
+            watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }] });
             await vi.waitFor(() => expect(observations.attachments.has(root)).toBe(true));
             await vi.waitFor(() => expect(observations.directories.filter(path => path === root).length).toBeGreaterThan(readsBeforeMount));
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
@@ -366,7 +437,7 @@ describe('Services declaration discovery demand', () => {
             // The retired filesystem read remains held: a new viewer must be
             // able to obtain fresh data without waiting for that old demand.
             reconnectWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: reconnect.signal });
+                signal: reconnect.signal, launcherScopes: [{ workspaceRoot: root }] });
             await expect(reconnectWatch).resolves.toMatchObject({ changed: true });
             freshRead = runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             expect(scripts(await freshRead)).toEqual(['retirement:start']);
@@ -390,11 +461,11 @@ describe('Services declaration discovery demand', () => {
         let pending: Promise<unknown> | undefined;
         try {
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
-            // Session facts do not demand recursive observation. The explicit
-            // Workspace read admits this missing package-discovery scope.
+            // Session facts and plain reads own no recursive observation. The
+            // mounted Workspace scope admits this missing package-discovery root.
             await runtime.launcherRoutes.getSnapshot({ workspaceRoot: missing });
             pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: cancellation.signal });
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }, { workspaceRoot: missing }] });
             await vi.waitFor(() => expect(observations.attachments.has(root)
                 || runtime.inventoryRegistry.getSnapshot().diagnostics.length > 0).toBe(true));
             expect(runtime.inventoryRegistry.getSnapshot().diagnostics).toEqual([]);
@@ -403,7 +474,7 @@ describe('Services declaration discovery demand', () => {
             await expect(pending).resolves.toMatchObject({ changed: true });
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual(['existing:preview']);
             pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: cancellation.signal });
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }, { workspaceRoot: missing }] });
             await vi.waitFor(() => expect(observations.attachments.has(root)).toBe(true));
             await mkdir(missing, { recursive: true });
             await writeFile(join(missing, 'package.json'), JSON.stringify({ name: 'restored', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
@@ -465,7 +536,7 @@ describe('Services declaration discovery demand', () => {
             vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
             let replies = 0;
             pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: cancellation.signal }).then(reply => { replies++; return reply; });
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }] }).then(reply => { replies++; return reply; });
             await vi.waitFor(() => expect(observations.directories.filter(path => path === root)).toHaveLength(1));
             observations.directories.length = 0;
             await vi.advanceTimersByTimeAsync(600_000);
@@ -479,7 +550,7 @@ describe('Services declaration discovery demand', () => {
             await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'renewal', packageManager: 'npm@10', scripts: { preview: 'serve' } }));
             cancellation = new AbortController();
             pending = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
-                signal: cancellation.signal });
+                signal: cancellation.signal, launcherScopes: [{ workspaceRoot: root }] });
             await expect(pending).resolves.toMatchObject({ changed: true });
             expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual(['renewal:preview']);
         } finally { cancellation.abort(); await pending; unsubscribe(); await runtime.stop(); vi.useRealTimers(); await rm(root, { recursive: true, force: true }); }

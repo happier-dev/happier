@@ -1,4 +1,5 @@
 import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
+import type { LocalServiceLauncherScopeV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import type { LocalServiceInventorySnapshot } from './store';
 
@@ -84,6 +85,7 @@ export type LocalServiceInventoryWatchClientInput = Readonly<{
     sinceGeneratedAt?: number | null;
     /** Own producer demand until cancellation; snapshot watches may answer and re-arm alongside it. */
     observationOnly?: true;
+    launcherScopes?: readonly LocalServiceLauncherScopeV1[];
     signal?: AbortSignal;
 }>;
 

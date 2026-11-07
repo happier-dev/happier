@@ -12,6 +12,7 @@ import { ProjectSetupReviewV1Schema } from '../../../actions/projectSetupConsent
 import { ActionSurfaceSchema } from '../../../actions/metadata.js';
 import { ActionExecuteFailureSchema } from '../../../actions/actionExecutionResult.js';
 import { PluginDiagnosticDataV1Schema } from '../../../daemon/pluginContributionIntrospection.js';
+import { projectZodProtocolSchema } from '../../../plugins/actions/internalProtocolZodAdapter.js';
 
 export const LocalServiceLaunchTargetSourceV1Schema = lazyZodSchema(() => z.enum([
   'package_script',
@@ -122,6 +123,14 @@ export const LocalServiceLaunchTargetV1Schema = lazyZodSchema(() => z.strictObje
     workspace: z.optional(WorkspaceAddressV1Schema),
     cwd: z.optional(WorkspaceRefV1WriteSchema.shape.rootPath),
     declaration: z.optional(ProjectServiceDeclarationRefV1Schema),
+    /** Admitted Environment identity; release paths and actor attribution stay host-private. */
+    environment: z.optional(z.strictObject({
+      environmentId: LocalServiceLauncherIdV1Schema,
+      environmentInstanceId: LocalServiceLauncherIdV1Schema,
+      deploymentId: LocalServiceLauncherIdV1Schema,
+      composeService: LocalServiceLauncherIdV1Schema,
+    })),
+    lifecyclePurpose: z.optional(z.enum(['development', 'deployment', 'infrastructure'])),
     // Captured by the admitted native start; omission grants no execution class.
     execution: z.optional(z.enum(['primary', 'portable'])),
     // Observed managed lifetime is separate from an available launcher action/HTTP readiness.
@@ -145,6 +154,16 @@ export const LocalServiceLaunchTargetV1Schema = lazyZodSchema(() => z.strictObje
     actions: z._default(z.array(LocalServiceLaunchTargetActionV1Schema), []),
     browserTarget: z.optional(BrowserViewTargetV1Schema),
   }).check(z.superRefine((target, ctx) => {
+    if (target.environment && (
+      target.source !== 'managed_service'
+      || target.id !== `${target.environment.environmentInstanceId}/${target.environment.composeService}`
+      || target.lifecyclePurpose !== 'deployment'
+      || target.workspace !== undefined || target.workspaceId !== undefined || target.cwd !== undefined
+      || target.declaration !== undefined || target.execution !== undefined || target.sessionId !== undefined
+      || target.startedByAccountId !== undefined
+    )) {
+      ctx.addIssue({ code: 'custom', path: ['environment'], message: 'Environment services require exact deployment identity without Workspace authority.' });
+    }
     if (target.sourceClass && target.sourceClass.kind !== target.source) {
       ctx.addIssue({
         code: "custom",
@@ -213,6 +232,12 @@ export const DaemonLocalServiceLauncherSnapshotRequestV1Schema = lazyZodSchema((
 export type DaemonLocalServiceLauncherSnapshotRequestV1 = z.infer<
   typeof DaemonLocalServiceLauncherSnapshotRequestV1Schema
 >;
+
+/** A mounted Workspace launcher contributes discovery demand to the Machine observation. */
+export const LocalServiceLauncherScopeV1Schema = lazyZodSchema(() => z.pick(
+  DaemonLocalServiceLauncherSnapshotRequestV1Schema, { sessionId: true, workspaceRoot: true },
+));
+export type LocalServiceLauncherScopeV1 = z.infer<typeof LocalServiceLauncherScopeV1Schema>;
 
 export const DaemonLocalServiceLauncherSnapshotResponseV1Schema = lazyZodSchema(() => z.strictObject({
     protocolVersion: z.literal(1),
@@ -368,3 +393,6 @@ export const DaemonLocalServiceLauncherHistoryClearResponseV1Schema = lazyZodSch
 export type DaemonLocalServiceLauncherHistoryClearResponseV1 = z.infer<
   typeof DaemonLocalServiceLauncherHistoryClearResponseV1Schema
 >;
+
+/** Same executable snapshot parser for feature protocols admitting live targets. */
+export const LocalServiceLauncherSnapshotV1ProtocolSchema = projectZodProtocolSchema(LocalServiceLauncherSnapshotV1Schema);

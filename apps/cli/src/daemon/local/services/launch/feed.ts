@@ -1,20 +1,18 @@
-import type { LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1, LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
 
 import { expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
+import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
 import { isWorkspacePathWithin } from '../inventory/provenance';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { buildLocalServicePreviewBrowserTarget, listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
-import { waitForChangeOrDeadline } from '@/daemon/lifecycle/waitForChangeOrDeadline';
+import { readProjectManagedServicePreviewEndpoint } from '../preview/projectEndpoint';
 import type { LocalServiceLauncherRunTarget, LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { selectManagedOwnedTreeEndpoint } from '@/plugins/runtime/invocation/services/managedOwnedTreeEndpoint';
-import { readProjectManagedServicePreviewEndpoint } from '../preview/projectEndpoint';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import { projectStartingServiceTargets } from './starting';
-
 
 type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'readProcessRoots'>;
 
@@ -187,6 +185,7 @@ export function createLocalServiceLauncherFeed(
     input: CreateLocalServiceLauncherFeedInput,
 ): LocalServiceLauncherFeed & Readonly<{
     refreshRunTargets(workspaceRoots?: readonly string[], signal?: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void>;
+    resolveWorkspaceScope(request?: LocalServiceLauncherFeedSnapshotRequest): Promise<readonly string[] | undefined>;
 }> {
     const now = input.now ?? (() => Date.now());
     // Custody can settle before the next scan. Retain only correlations proven
@@ -242,8 +241,15 @@ export function createLocalServiceLauncherFeed(
         discovery = read.catch(() => undefined);
         return read;
     };
+    const resolveWorkspaceScope = (request?: LocalServiceLauncherFeedSnapshotRequest) => resolveScopePaths({
+        scope: request?.scope,
+        workspaceRoot: request?.workspaceRoot,
+        resolver: input.resolveSessionWorkspacePaths,
+        sessionId: request?.sessionId ?? input.sessionId,
+    });
     return {
         refreshRunTargets,
+        resolveWorkspaceScope,
         async getSnapshot(request, observedInventoryEntries) {
             if (request?.projection === 'managed_bindings' && !input.projectManagedServices) {
                 throw Object.assign(new Error('Project Service binding owner is unavailable'), {
@@ -251,12 +257,7 @@ export function createLocalServiceLauncherFeed(
                 });
             }
             const sessionId = request?.sessionId ?? input.sessionId;
-            const workspaceScopePaths = await resolveScopePaths({
-                scope: request?.scope,
-                workspaceRoot: request?.workspaceRoot,
-                resolver: input.resolveSessionWorkspacePaths,
-                sessionId,
-            });
+            const workspaceScopePaths = await resolveWorkspaceScope(request);
             if (request?.requireWorkspaceScope && !workspaceScopePaths?.length) {
                 throw Object.assign(new Error('Local service workspace scope is unavailable'), {
                     code: 'local_service_workspace_scope_unavailable',
@@ -296,7 +297,8 @@ export function createLocalServiceLauncherFeed(
                 ...(workspaceScopePaths?.length === 1 ? { workspaceRoot: workspaceScopePaths[0] } : {}) })
                 : input.projectManagedServices?.listProjectServices() ?? [];
             const managed = handles
-                .filter(handle => (!bindingsOnly || handle.isCurrent()) && (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === input.machineId
+                .filter(handle => (!bindingsOnly || handle.isCurrent())
+                    && (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === input.machineId
                     && (!workspaceScopePaths || handle.kind === 'workspace' && workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
                 .map(handle => {
                     const nativeTarget = managedTarget(handle);

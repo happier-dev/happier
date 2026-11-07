@@ -1,4 +1,5 @@
 import { projectLocalServiceMachineSummaryV1, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory/v1';
+import type { LocalServiceLauncherScopeV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { createParkWatch, type ParkWatchResult } from '@/daemon/lifecycle/parkWatch';
 
@@ -29,6 +30,7 @@ export type LocalServiceInventoryRoutes = Readonly<{
         sinceGeneratedAt?: number;
         /** Retain producer demand until cancellation, across material value replies. */
         observationOnly?: boolean;
+        launcherScopes?: readonly LocalServiceLauncherScopeV1[];
         signal?: AbortSignal;
     }>): Promise<LocalServiceInventoryWatchResult>;
     /** Live count of parked watchers. The scan loop follows this rather than running unconditionally. */
@@ -53,6 +55,7 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
     ensureFreshSnapshot?: () => Promise<void>;
     /** Fired whenever the parked-watcher count changes, so the runtime can follow demand. */
     onWatcherCountChanged?: (count: number) => void;
+    observeLauncherScopes?: (scopes: readonly LocalServiceLauncherScopeV1[], signal?: AbortSignal) => Promise<() => void>;
 }>): LocalServiceInventoryRoutes {
     const watches = createParkWatch({ onWatcherCountChanged: input.onWatcherCountChanged });
 
@@ -68,24 +71,28 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
         },
         async watchSnapshot(request = {}) {
             if (request.signal?.aborted) return { changed: false };
-            if (request.observationOnly) {
-                // The same parking owner counts this mounted lifetime. Material
-                // events wake value readers, never release the consumer's demand.
+            const release = request.launcherScopes?.length
+                ? await input.observeLauncherScopes?.(request.launcherScopes, request.signal) : undefined;
+            try {
+                if (request.observationOnly) {
+                    // The same parking owner counts this mounted lifetime. Material
+                    // events wake value readers, never release the consumer's demand.
+                    return await watches.parkWatch({
+                        isNewer: () => false,
+                        subscribe: () => () => {},
+                        read: input.registry.getSnapshot,
+                        signal: request.signal,
+                    });
+                }
+                if (input.ensureFreshSnapshot) await input.ensureFreshSnapshot();
                 return await watches.parkWatch({
-                    isNewer: () => false,
-                    subscribe: () => () => {},
+                    isNewer: () => typeof request.sinceGeneratedAt === 'number'
+                        && input.registry.getSnapshot().generatedAt > request.sinceGeneratedAt,
+                    subscribe: input.registry.subscribe,
                     read: input.registry.getSnapshot,
                     signal: request.signal,
                 });
-            }
-            if (input.ensureFreshSnapshot) await input.ensureFreshSnapshot();
-            return await watches.parkWatch({
-                isNewer: () => typeof request.sinceGeneratedAt === 'number'
-                    && input.registry.getSnapshot().generatedAt > request.sinceGeneratedAt,
-                subscribe: input.registry.subscribe,
-                read: input.registry.getSnapshot,
-                signal: request.signal,
-            });
+            } finally { release?.(); }
         },
         watcherCount() {
             return watches.watcherCount();

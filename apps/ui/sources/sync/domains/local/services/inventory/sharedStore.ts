@@ -43,6 +43,7 @@ export type LocalServiceInventoryStoreKeyInput = Readonly<{
     sessionId?: string | null;
     accountId?: string | null;
     credentialKey?: string | null;
+    launcherScopes?: LocalServiceInventoryWatchClientInput['launcherScopes'];
 }>;
 
 type NormalizedLocalServiceInventoryStoreKeyInput = Readonly<{
@@ -51,6 +52,7 @@ type NormalizedLocalServiceInventoryStoreKeyInput = Readonly<{
     sessionId: string | null;
     accountId: string | null;
     credentialKey: string | null;
+    launcherScopes?: LocalServiceInventoryWatchClientInput['launcherScopes'];
 }>;
 
 export const EMPTY_LOCAL_SERVICE_INVENTORY_STATE: LocalServiceInventoryState = createLocalServiceInventoryState();
@@ -71,6 +73,7 @@ function normalizeInput(input: LocalServiceInventoryStoreKeyInput): NormalizedLo
         sessionId: null,
         accountId: input.accountId ?? null,
         credentialKey: input.credentialKey ?? null,
+        launcherScopes: input.launcherScopes,
     };
 }
 
@@ -93,6 +96,11 @@ export function subscribeLocalServiceCredentialRetirement(
     });
 }
 
+// The daemon keeps its inventory within its own scan interval, so returning demand
+// (a widget shown again, a foreground return, a recovered transport) reads it. Only
+// an explicit refresh asks the daemon to scan now.
+const rescanRequested = new Set<string>();
+
 const store = createSharedSubscriptionStore<
     LocalServiceInventoryStoreKeyInput,
     LocalServiceInventoryState,
@@ -113,17 +121,34 @@ const store = createSharedSubscriptionStore<
     ),
     refresh: async ({ input, state, snapshotClient, signal }) => {
         const receivedAt = state.generatedAt;
+        const receivedSummary = state.summary;
+        const receivedSource = readLocalServiceInventoryMachineSummarySource(state);
         const result = await snapshotClient({
             machineId: input.machineId,
             serverId: input.serverId,
             accountId: input.accountId,
             sessionId: input.sessionId,
-            refresh: true,
+            refresh: rescanRequested.delete(storeKey(input)),
             signal,
         });
-        return (current: LocalServiceInventoryState) => result.ok
-            ? applyLocalServiceInventorySnapshot(current, result.snapshot)
-            : current.generatedAt !== receivedAt ? current : applyLocalServiceInventoryRefreshFailed(current, input.machineId);
+        return (current: LocalServiceInventoryState) => {
+            if (!result.ok) {
+                if (current.generatedAt !== receivedAt) return current;
+                // A current census may arrive before this older read fails. Preserve
+                // its recovery wake just as publishSummary does after an error.
+                if (current.summary?.state === 'ready' && (current.summary !== receivedSummary
+                    || readLocalServiceInventoryMachineSummarySource(current) !== receivedSource)) {
+                    store.invalidate(input);
+                    return current;
+                }
+                return applyLocalServiceInventoryRefreshFailed(current, input.machineId);
+            }
+            const next = applyLocalServiceInventorySnapshot(current, result.snapshot);
+            // A retained Browser may outlive hidden inventory demand. Its next
+            // read closes that observation gap before the new watch cursor parks.
+            if (next.generatedAt !== current.generatedAt) invalidateLocalServicePreviewStore(input);
+            return next;
+        };
     },
     failRefresh: (state, input) => (
         applyLocalServiceInventoryRefreshFailed(state, input.machineId)
@@ -138,12 +163,14 @@ const store = createSharedSubscriptionStore<
     },
     defaultWatchClient,
     watchAfterRefresh: true,
+    // One cancellation-owned observation spans every snapshot answer/re-arm gap.
     observeWatch: async ({ input, watchClient, signal }) => {
         await watchClient({
             machineId: input.machineId,
             serverId: input.serverId,
             accountId: input.accountId,
             observationOnly: true,
+            launcherScopes: input.launcherScopes,
             signal,
         });
     },
@@ -246,7 +273,19 @@ export function subscribeLocalServiceInventoryStore(
     return store.subscribe(input, listener, options);
 }
 
+/** Renew only the mounted launcher demand; the Machine snapshot and value cursor still apply. */
+export function reconfigureLocalServiceInventoryLauncherScopes(input: LocalServiceInventoryStoreKeyInput): void {
+    store.reconfigure(input, { refresh: false });
+}
+
+/** An explicit refresh: the daemon rescans now. */
 export function invalidateLocalServiceInventoryStore(input: LocalServiceInventoryStoreKeyInput): void {
+    rescanRequested.add(storeKey(normalizeInput(input)));
+    store.invalidate(input);
+}
+
+/** Re-read the daemon's current inventory and restart the watch, without forcing a scan. */
+export function revalidateLocalServiceInventoryStore(input: LocalServiceInventoryStoreKeyInput): void {
     store.invalidate(input);
 }
 
@@ -258,5 +297,6 @@ export function publishLocalServiceInventorySnapshot(
 }
 
 export function resetLocalServiceInventoryStoreForTests(): void {
+    rescanRequested.clear();
     store.reset();
 }

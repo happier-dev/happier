@@ -139,7 +139,7 @@ export type SharedSubscriptionStore<
     ): () => void;
     invalidate(input: TInput): void;
     /** Change a demanded facet at the same resource key, retiring its old transport but keeping content. */
-    reconfigure(input: TInput): void;
+    reconfigure(input: TInput, options?: Readonly<{ refresh: false }>): void;
     publish(input: TInput, snapshot: TSnapshot, options?: Readonly<{ resumeWatch?: boolean }>): void;
     reset(): void;
 }>;
@@ -312,6 +312,23 @@ export function createSharedSubscriptionStore<
         if (entry.watchRetired) stopWatch(entry);
         if (entry.watchRetired && config.failWatch) setState(entry, config.failWatch(entry.state, entry.input));
     };
+    const runObservation = (entry: Entry): void => {
+        if (!entry.watching || !config.observeWatch || entry.observationAbortController
+            || typeof AbortController === 'undefined') return;
+        const observationController = new AbortController();
+        entry.observationAbortController = observationController;
+        const observationEnded = () => {
+            if (observationController.signal.aborted || entry.observationAbortController !== observationController) return;
+            retireWatch(entry);
+            // A recovery that preceded the old transport's terminal reply renews once.
+            if (!entry.watchRetired) {
+                stopWatch(entry);
+                void runWatchLoop(entry);
+            }
+        };
+        void config.observeWatch({ input: entry.input, state: entry.state, watchClient: entry.watchClient,
+            nowMs: entry.nowMs, signal: observationController.signal }).then(observationEnded, observationEnded);
+    };
     const runWatchLoop = (entry: Entry): Promise<void> => {
         const watch = config.watch;
         // A coalesced recovery read may already have started when the previous
@@ -323,21 +340,7 @@ export function createSharedSubscriptionStore<
         entry.watching = true;
         entry.watchRecoveryRequested = false;
         entry.watchRecoveryNeedsRefresh = false;
-        if (config.observeWatch && !entry.observationAbortController && typeof AbortController !== 'undefined') {
-            const observationController = new AbortController();
-            entry.observationAbortController = observationController;
-            const observationEnded = () => {
-                if (observationController.signal.aborted || entry.observationAbortController !== observationController) return;
-                retireWatch(entry);
-                // A recovery that preceded the old transport's terminal reply renews once.
-                if (!entry.watchRetired) {
-                    stopWatch(entry);
-                    void runWatchLoop(entry);
-                }
-            };
-            void config.observeWatch({ input: entry.input, state: entry.state, watchClient: entry.watchClient,
-                nowMs: entry.nowMs, signal: observationController.signal }).then(observationEnded, observationEnded);
-        }
+        runObservation(entry);
         const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
         entry.watchAbortController = abortController;
         let dispatched = Promise.resolve();
@@ -538,11 +541,18 @@ export function createSharedSubscriptionStore<
                 }
             };
         },
-        reconfigure(input) {
+        reconfigure(input, options) {
             const normalized = config.normalizeInput(input);
             const entry = entries.get(config.storeKey(normalized));
             if (!entry || entry.input === normalized) return;
             entry.input = normalized;
+            if (options?.refresh === false) {
+                // Observation metadata does not change the snapshot or its cursor.
+                entry.observationAbortController?.abort();
+                entry.observationAbortController = null;
+                runObservation(entry);
+                return;
+            }
             entry.abortController?.abort();
             entry.abortController = null;
             entry.inFlight = null;
@@ -577,11 +587,12 @@ export function createSharedSubscriptionStore<
             const normalized = config.normalizeInput(input);
             const matchesPublish = config.matchesPublish;
             const snapshotCoversEntry = config.snapshotCoversEntry;
-            for (const entry of entries.values()) {
-                const matches = matchesPublish
-                    ? matchesPublish(entry.input, input)
-                    : config.storeKey(entry.input) === config.storeKey(normalized);
-                if (!matches) {
+            // Entries are keyed by `storeKey` of their input (reconfigure keeps the key), so a keyed
+            // publication reaches its one entry directly; only a broader matcher scans the entries.
+            const keyed = matchesPublish ? undefined : entries.get(config.storeKey(normalized));
+            const targets = matchesPublish ? entries.values() : keyed ? [keyed] : [];
+            for (const entry of targets) {
+                if (matchesPublish && !matchesPublish(entry.input, input)) {
                     continue;
                 }
                 if (snapshotCoversEntry && !snapshotCoversEntry(entry.input, snapshot, input)) {

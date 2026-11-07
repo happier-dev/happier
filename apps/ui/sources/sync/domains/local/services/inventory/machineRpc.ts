@@ -89,6 +89,7 @@ export async function watchLocalServiceInventorySnapshotViaMachineRpc(
         const payload = DaemonLocalServiceInventoryWatchRequestV1Schema.parse({
             machineId: input.machineId,
             ...(input.observationOnly ? { observationOnly: true } : {}),
+            ...(input.launcherScopes?.length ? { launcherScopes: input.launcherScopes } : {}),
             ...(typeof input.sinceGeneratedAt === 'number'
                 ? { sinceGeneratedAt: input.sinceGeneratedAt }
                 : {}),

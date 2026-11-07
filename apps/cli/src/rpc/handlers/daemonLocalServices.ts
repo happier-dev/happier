@@ -18,7 +18,8 @@ import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/
 import type { LocalServicePublicPreviewRoutes } from '@/daemon/local/services/public/routes';
 import { registerDaemonLocalServicePreviewSnapshotHandler, type DaemonLocalServicePreviewSnapshotHandlerOptions } from './daemonLocalServicePreviewSnapshot';
 import { registerActionSpecRpcHandlers, type RegisterActionSpecRpcHandlersParams } from './registerActionSpecRpcHandlers';
-import { assertLocalServiceCredentialAdmission } from '@/daemon/local/services/credentialAdmission';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol';
+import { assertLocalServiceReadCustody } from '@/daemon/local/services/credentialAdmission';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 
 export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreviewSnapshotHandlerOptions,
@@ -77,9 +78,16 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
     rpc: RpcHandlerRegistrar,
     options: DaemonLocalServicesMachineRpcRoutes = {},
 ): void {
-    const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceCredentialAdmission({
+    const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceReadCustody({
         accountId: options.accountId, machineId: options.machineId ?? '', context,
     });
+    if (options.projectManagedServices && options.machineId && options.serverId && options.resolveLauncherActionExecutor) {
+        registerActionSpecRpcHandlers({
+            rpcHandlerManager: rpc, actionIds: [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, 'machines.services.logs.read', 'machines.services.control', 'machines.services.exec'],
+            resolveActionExecutor: options.resolveLauncherActionExecutor,
+            targetMachineId: options.machineId, defaultMachineTarget: true,
+        });
+    }
     if (options.localServicesInventory) {
         rpc.registerHandler(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
@@ -130,6 +138,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                     }
                     const result = await watchSnapshot({
                         ...(request.observationOnly ? { observationOnly: true } : {}),
+                        ...(request.launcherScopes ? { launcherScopes: request.launcherScopes } : {}),
                         ...(request.sinceGeneratedAt === undefined ? {} : { sinceGeneratedAt: request.sinceGeneratedAt }),
                         ...(context ? { signal: context.signal } : {}),
                     });

@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { localServiceListenerGroupKey } from './listeners.js';
+import { LocalServiceLauncherScopeV1Schema } from '../launcher/v1.js';
 
 export const LocalServiceAddressFamilyV1Schema = lazyZodSchema(() => z.enum(['ipv4', 'ipv6', 'unknown']));
 export type LocalServiceAddressFamilyV1 = z.infer<typeof LocalServiceAddressFamilyV1Schema>;
@@ -153,6 +154,16 @@ export const LocalServiceMachineSummaryV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type LocalServiceMachineSummaryV1 = z.infer<typeof LocalServiceMachineSummaryV1Schema>;
 
+/** The process classifier emits a kind for recognized dev servers; unnamed/noisy listeners remain diagnostics. */
+export function isLocalServiceWebServerV1(entry: Readonly<{
+  classification?: unknown;
+}>): boolean {
+  const classification = entry.classification;
+  if (!classification || typeof classification !== 'object') return false;
+  return 'kind' in classification && typeof classification.kind === 'string' && classification.kind.length > 0
+    && classification.kind !== 'happier' && !('lowSignal' in classification && classification.lowSignal === true);
+}
+
 /** Shared by the daemon publication and admitted client inventory snapshots. */
 export function projectLocalServiceMachineSummaryV1(snapshot: Readonly<{
   generatedAt: number;
@@ -165,8 +176,7 @@ export function projectLocalServiceMachineSummaryV1(snapshot: Readonly<{
   if (snapshot.refreshState === 'error') return { v: 1, state: codes.includes('local_services_inventory_probe_failed') ? 'unknown' : 'error' };
   if (codes.some(code => code.startsWith('local_services_inventory_'))) return { v: 1, state: 'disabled' };
   if (snapshot.generatedAt === 0) return { v: 1, state: 'unknown' };
-  const listeners = new Set(snapshot.entries.filter(entry => entry.state === 'listening'
-    && !(entry.classification && typeof entry.classification === 'object' && 'kind' in entry.classification && entry.classification.kind === 'happier'))
+  const listeners = new Set(snapshot.entries.filter(entry => entry.state === 'listening' && isLocalServiceWebServerV1(entry))
     .map(localServiceListenerGroupKey));
   return { v: 1, state: 'ready', runningCount: listeners.size };
 }
@@ -245,6 +255,8 @@ export const DaemonLocalServiceInventoryWatchRequestV1Schema = lazyZodSchema(() 
   machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
   /** Hold observation demand until transport cancellation, independently of snapshot replies. */
   observationOnly: z.optional(z.literal(true)),
+  /** Current Workspace launchers sharing this observation; cancellation releases their demand. */
+  launcherScopes: z.optional(z.array(LocalServiceLauncherScopeV1Schema)),
   /**
    * The `generatedAt` of the snapshot the caller already holds. The daemon answers immediately
    * when it has produced a newer snapshot, which closes the gap between a caller's snapshot read

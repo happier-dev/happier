@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { DaemonLocalServiceInventoryWatchRequestV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 import { createDeferred, createRenderCommitCounter, flushHookEffects, renderHook, useRenderCommitCounter } from '@/dev/testkit';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -22,6 +23,66 @@ afterEach(() => {
     resetLocalServiceLauncherStoreForTests();
     resetLocalServiceInventoryStoreForTests();
     vi.useRealTimers();
+});
+
+it('declares only currently subscribed launcher scopes on the shared Machine observation', async () => {
+    const registry = createLocalServiceInventoryRegistry();
+    registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
+        refreshState: 'idle', entries: [], diagnostics: [] });
+    const routes = createLocalServiceInventoryRoutes({ registry });
+    const observations: { scopes: unknown; signal: AbortSignal }[] = [];
+    let inventoryReads = 0;
+    rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            if (request.payload.observationOnly) observations.push({ scopes: request.payload.launcherScopes ?? [], signal: request.signal });
+            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
+        }
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return {
+            protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', updatedAt: 1_000, targets: [] },
+        };
+        inventoryReads++;
+        return { protocolVersion: 1, snapshot: registry.getSnapshot() };
+    });
+    const machine = { machineId: 'machine-a', serverId: 'server-a' };
+    const a = { ...machine, workspaceRoot: '/workspace/a' };
+    const b = { ...machine, sessionId: 'session-b' };
+    const releaseMachine = subscribeLocalServiceInventoryStore(machine, () => {});
+    const releases: (() => void)[] = [releaseMachine];
+    const activeScopes = () => observations.filter(observation => !observation.signal.aborted).map(observation => observation.scopes);
+    try {
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[]]));
+        expect(inventoryReads).toBe(1);
+        const leaveA = subscribeLocalServiceLauncherStore(a, () => {});
+        releases.push(leaveA);
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[{ workspaceRoot: a.workspaceRoot }]]));
+        const duplicate = subscribeLocalServiceLauncherStore(a, () => {});
+        releases.push(duplicate);
+        const enrolled = observations.length;
+        leaveA();
+        await flushHookEffects();
+        expect(activeScopes()).toEqual([[{ workspaceRoot: a.workspaceRoot }]]);
+        expect(observations).toHaveLength(enrolled);
+        duplicate();
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[]]));
+        const leaveB = subscribeLocalServiceLauncherStore(b, () => {});
+        releases.push(leaveB);
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[{ sessionId: b.sessionId }]]));
+        leaveB();
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[]]));
+        releases.push(subscribeLocalServiceLauncherStore({ ...machine, scope: 'machine', workspaceRoot: a.workspaceRoot }, () => {}));
+        releases.push(subscribeLocalServiceLauncherStore({ ...a, projection: 'managed_bindings' }, () => {}));
+        await flushHookEffects();
+        expect(activeScopes()).toEqual([[]]);
+        const idleObservations = observations.length;
+        for (let index = 0; index < 75; index++) {
+            registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 2_000 + index });
+            await flushHookEffects();
+        }
+        expect(observations).toHaveLength(idleObservations);
+        expect(inventoryReads).toBe(1);
+    } finally { for (const release of releases) release(); }
+    await flushHookEffects();
+    expect(activeScopes()).toEqual([]);
 });
 
 it('keeps mounted Machine observation enrolled across 75 material inventory replies and cancels on the final unmount', async () => {

@@ -14,7 +14,7 @@ import { isWorkspacePathWithin } from '../inventory/provenance';
 import type { LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 
 // Machine discovery reads these fixed paths only. Package discovery is admitted
-// separately by an explicit declared Workspace read, never by Session facts.
+// separately by a mounted declared Workspace launcher, never by Session facts.
 const DECLARATION_FILES = [PROJECT_MANIFEST_RELATIVE_PATH,
     ...NATIVE_PROJECT_DEFINITION_FILES.filter(file => file !== 'package.json')];
 
@@ -29,8 +29,8 @@ function declarationPath(root: string, path: string, packages: boolean): boolean
         || /^\.devcontainer\/[^/]+\/devcontainer\.json$/.test(file);
 }
 
-/** Mounted inventory demand observes accepted declarations and package scopes
- * already requested by Workspace readers. Plain launcher reads own no watches. */
+/** Mounted inventory demand observes accepted declarations. Only current Workspace
+ * launcher subscriptions own recursive package scopes; retained facts own no watches. */
 export function createLocalServiceDeclarationWatch(input: Readonly<{
     readWorkspaceFacts(): Promise<LocalServiceWorkspaceFactsSnapshot>;
     onChanged(workspaceRoots: readonly string[] | undefined, signal: AbortSignal, options?: LocalServiceRunTargetDiscoveryOptions): Promise<void>;
@@ -57,6 +57,7 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
     let roots: readonly string[] = [];
     let acceptedRoots: readonly string[] = [];
     let packageRoots: readonly string[] = [];
+    const packageSubscriptions = new Set<readonly string[]>();
     let workspaceIdentities: readonly (readonly string[])[] = [];
     let dispose: (() => void) | undefined;
     let observation: AbortController | undefined;
@@ -199,15 +200,20 @@ export function createLocalServiceDeclarationWatch(input: Readonly<{
 
     return {
         updateWorkspaceFacts,
-        updatePackageRoots(requested: readonly string[]) {
-            // Match the launcher's admitted package observations across reconnects;
-            // retaining scope identities while detached owns no native watches.
-            const next = [...new Set([...packageRoots, ...requested])].filter(Boolean).sort((a, b) => a.length - b.length || a.localeCompare(b));
-            if (isDeepStrictEqual(next, packageRoots)) return;
-            packageRoots = next;
-            const lifetime = demand;
-            if (lifetime && !lifetime.signal.aborted) observeRoots([...new Set([...acceptedRoots, ...packageRoots])]
-                .sort((a, b) => a.length - b.length || a.localeCompare(b)), lifetime);
+        observePackageRoots(requested: readonly string[]) {
+            const subscription = [...requested];
+            const update = () => {
+                const next = [...new Set([...packageSubscriptions].flat())].filter(Boolean)
+                    .sort((a, b) => a.length - b.length || a.localeCompare(b));
+                if (isDeepStrictEqual(next, packageRoots)) return;
+                packageRoots = next;
+                const lifetime = demand;
+                if (lifetime && !lifetime.signal.aborted) observeRoots([...new Set([...acceptedRoots, ...packageRoots])]
+                    .sort((a, b) => a.length - b.length || a.localeCompare(b)), lifetime);
+            };
+            packageSubscriptions.add(subscription);
+            update();
+            return () => { if (packageSubscriptions.delete(subscription)) update(); };
         },
         setDemand(active: boolean) {
             if (!active) {

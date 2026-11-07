@@ -23,6 +23,7 @@ import { createLocalServiceInventoryRoutes, type LocalServiceInventoryRoutes } f
 import {
     createLocalServicePreviewRegistry,
     registerLocalServicePreview,
+    refreshManagedLocalServicePreviewOccurrences,
     type LocalServicePreviewRegistry,
 } from './preview/registry';
 import { createLocalServicePreviewRoutes, type LocalServicePreviewRoutes } from './preview/routes';
@@ -243,7 +244,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     internalEndpointUrls?: () => readonly string[];
     runTargets?: () => Promise<readonly LocalServiceLauncherRunTarget[]> | readonly LocalServiceLauncherRunTarget[];
     projectServiceStarter?: ProjectServiceDeclarationStarterInput;
-    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'>;
+    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'>
+        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity'>>;
     resolveSessionWorkspacePaths?: (sessionId: string) => Promise<readonly string[]> | readonly string[];
     hostedWebStaticAssets?: Omit<HostedWebStaticAssetLifecycleOptions, 'registerPreview' | 'unregisterPreview'>;
 }>): LocalServicesDaemonRuntime {
@@ -259,29 +261,25 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // manager writes to on spawn. The scanner consults it for deterministic, attributed
     // workspace scoping. Defaults to the process singleton; tests inject a fresh one.
     const terminalRegistry = params.terminalRegistry ?? getSharedTerminalProcessRegistry();
-    const previewRegistry = createLocalServicePreviewRegistry();
     const processEnv = params.processEnv ?? process.env;
     const now = params.now ?? (() => Date.now());
+    const previewRegistry = createLocalServicePreviewRegistry(() => {
+        // Record this change through the same publisher as scans and managed
+        // activity, so the next unchanged scan cannot announce it a second time.
+        void publishInventorySnapshot(undefined, true).catch(params.onError ?? (error => {
+            logger.debug('[DAEMON RUN] Preview inventory publication failed', error);
+        }));
+    });
     const scan = params.scan ?? scanPlatformLocalServices;
     const endpointCancellation = new AbortController();
-    const endpointEnricher = params.endpointEnricher ?? (
-        params.scan
-            ? null
-            : createLocalServiceEndpointEnricher({
-                now,
-                timeoutMs: 250,
-                concurrency: 8,
-                successTtlMs: 30_000,
-                failureTtlMs: 5_000,
-                signal: endpointCancellation.signal,
-            })
-    );
+    const endpointEnricher = params.endpointEnricher ?? (params.scan ? null : createLocalServiceEndpointEnricher({
+        now, signal: endpointCancellation.signal,
+    }));
     const workspaceFacts = params.workspaceFacts
         ?? (params.scan ? undefined : async () => await readDaemonSessionWorkspaceFacts(params.machineId));
     const readWorkspaceFacts = async (): Promise<LocalServiceWorkspaceFactsSnapshot> => {
         const source = await workspaceFacts?.();
-        if (source && 'facts' in source) return source;
-        return { facts: source ?? [], acceptedWorkspaceRefs: [], diagnostics: [] };
+        return source && 'facts' in source ? source : { facts: source ?? [], acceptedWorkspaceRefs: [], diagnostics: [] };
     };
     const staleAfterMs = params.staleAfterMs ?? DEFAULT_LOCAL_SERVICE_CAPABILITIES.inventory.staleAfterMs;
     // `localServices.inventory` is server-represented (default-allow): the server is the gate.
@@ -332,8 +330,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     const hostedWebStaticAssets: HostedWebStaticAssetLifecycle | null = params.hostedWebStaticAssets
         ? createHostedWebStaticAssetLifecycle({
             ...params.hostedWebStaticAssets,
-            registerPreview: async (resource) => {
-                const registered = registerLocalServicePreview(previewRegistry, resource);
+            registerPreview: async (resource, occurrence) => {
+                const registered = registerLocalServicePreview(previewRegistry, resource, occurrence);
                 if (!registered.ok) throw new Error(registered.reasonCode);
                 // Activation owns publication. Snapshot readers only observe its result.
                 const published = await previewRoutes.openOrCreate({
@@ -452,10 +450,12 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             diagnostics: [...result.diagnostics, ...workspaceDiagnostics],
         };
         onNative(snapshotWithDiagnostics);
-        if (endpointEnricher) {
-            snapshotWithDiagnostics = await endpointEnricher.enrich(snapshotWithDiagnostics);
-        }
+        // Inventory observes native listeners. Protocol detection belongs to the
+        // selected Preview Open and its containing cancellation lifetime.
         if (params.pageTitleEnricher) {
+            // This optional caller explicitly requests HTTP presentation. The
+            // daemon installs no page-title enricher for ordinary inventory.
+            if (endpointEnricher) snapshotWithDiagnostics = await endpointEnricher.enrich(snapshotWithDiagnostics);
             snapshotWithDiagnostics = await enrichLocalServiceInventoryPageTitles({
                 snapshot: snapshotWithDiagnostics,
                 enricher: params.pageTitleEnricher,
@@ -468,7 +468,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     // tick and the RPC manual-refresh route (`refreshSnapshot`) share this guard, so concurrent
     // callers await the same machine-wide
     // `lsof`/`/proc`/`netstat` scan and resolve to the same snapshot instead of stacking a
-    // second scan on a busy daemon. Mirrors the `runTargetsInFlight` coalescing pattern below.
+    // second scan on a busy daemon.
     type InventoryRefreshFlight = {
         nativePending: boolean;
         native: Promise<NormalizedLocalServiceInventorySnapshot>;
@@ -510,7 +510,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
                     resolveNative(snapshot);
                 });
             } catch (error) {
-                if (flight.nativePending) {
+                const nativeFailed = flight.nativePending;
+                if (nativeFailed) {
                     flight.nativePending = false;
                     rejectNative(error);
                 }
@@ -521,6 +522,10 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
                     now: now(),
                     diagnostics: [{ code: 'local_services_inventory_scan_failed', severity: 'error' }],
                 }));
+                (params.onError ?? ((error) => logger.debug('[DAEMON RUN] Local-service inventory refresh failed', error)))(error);
+                // Full readers consume the scan owner's typed failure alongside independent
+                // declarations. Native-only consumers still reject: no socket facts were read.
+                if (nativeFailed) return inventoryRegistry.getSnapshot();
                 throw error;
             } finally {
                 if (currentRefresh === flight) currentRefresh = null;
@@ -528,8 +533,8 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         }) };
         currentRefresh = flight;
         // A native-only reader returns before presentation; its remaining full phase still
-        // publishes through the existing owner and reports failures through the existing port.
-        void flight.full.catch(params.onError ?? ((error) => logger.debug('[DAEMON RUN] Local-service inventory refresh failed', error)));
+        // publishes through the existing owner. Its catch above reports failures once.
+        void flight.full.catch(() => undefined);
         return request?.stage === 'native' ? observeNative(flight.native, signal) : flight.full;
     };
 
@@ -576,24 +581,31 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
             activeInventoryWatchers = count;
             updateInventoryDemand();
         },
+        async observeLauncherScopes(scopes, signal) {
+            const paths = (await Promise.all(scopes.map(scope => scannedLauncherFeed.resolveWorkspaceScope(scope))))
+                .flatMap(roots => roots ?? []);
+            const source = await readWorkspaceFacts();
+            if (signal?.aborted) return () => {};
+            const roots = selectRequestedRoots(source, paths).filter(root =>
+                source.acceptedWorkspaceRefs.some(ref => isWorkspacePathWithin(ref.rootPath, root)));
+            return declarationWatch.observePackageRoots(roots);
+        },
     });
-    const defaultRunTargetsProvider: LocalServiceRunTargetsProvider = async (roots, options) => {
-        const source = await readWorkspaceFacts();
+    const selectRequestedRoots = (source: LocalServiceWorkspaceFactsSnapshot, roots?: readonly string[]) => {
         const knownRoots = [...new Set([
             ...source.facts.map(fact => fact.path), ...source.acceptedWorkspaceRefs.map(ref => ref.rootPath),
         ])].filter(Boolean);
         // Scope narrows the workspace authority already supplied by the daemon;
         // a caller-selected path must not enroll another filesystem root.
-        const requestedRoots = roots ? [...new Set(roots.flatMap(root => knownRoots.flatMap(known =>
+        return roots ? [...new Set(roots.flatMap(root => knownRoots.flatMap(known =>
             isWorkspacePathWithin(known, root) ? [root] : isWorkspacePathWithin(root, known) ? [known] : [])))] : knownRoots;
-        const targets = await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
+    };
+    const defaultRunTargetsProvider: LocalServiceRunTargetsProvider = async (roots, options) => {
+        const source = await readWorkspaceFacts();
+        const requestedRoots = selectRequestedRoots(source, roots);
+        return await discoverLocalServiceRunTargets({ ...options, roots: requestedRoots,
             acceptedWorkspaceRefs: source.acceptedWorkspaceRefs.filter(ref => requestedRoots.some(root =>
                 isWorkspacePathWithin(root, ref.rootPath) || isWorkspacePathWithin(ref.rootPath, root))) });
-        // Successful scoped discovery admits package observation only inside a
-        // current project Workspace. A Session ancestor never admits its whole tree.
-        if (roots && options?.includePackageScripts !== false) declarationWatch.updatePackageRoots(requestedRoots.filter(root =>
-            source.acceptedWorkspaceRefs.some(ref => isWorkspacePathWithin(ref.rootPath, root))));
-        return targets;
     };
     const runTargetsProvider = params.runTargets ?? defaultRunTargetsProvider;
     const defaultResolveSessionWorkspacePaths = async (sessionId: string): Promise<readonly string[]> =>
@@ -610,18 +622,18 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     }).state === 'enabled';
 
     const launcherHistory = createLocalServiceLauncherHistoryStore();
-const readStartOperations = () => startOperations?.store.list({ accountId: startOperations.accountId,
-        machineId: params.machineId, states: ['accepted', 'running'] }).items ?? [];
-let unsubscribeStartOperations: (() => void) | undefined;
-let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLauncherRoutes['bindStartOperations']>>[0];
+    let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLauncherRoutes['bindStartOperations']>>[0];
         accountId: string }> | undefined;
-    const scannedLauncherFeed = createLocalServiceLauncherFeed({startOperations: readStartOperations,
-
+    let unsubscribeStartOperations: (() => void) | undefined;
+    const readStartOperations = () => startOperations?.store.list({ accountId: startOperations.accountId,
+        machineId: params.machineId, states: ['accepted', 'running'] }).items ?? [];
+    const scannedLauncherFeed = createLocalServiceLauncherFeed({
         machineId: params.machineId,
         accountId: params.accountId,
         inventoryRegistry,
         previewRegistry,
         projectManagedServices: params.projectManagedServices,
+        startOperations: readStartOperations,
         history: launcherHistory,
         runTargets: runTargetsProvider,
         onRunTargetsError: params.onError,
@@ -631,7 +643,9 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
     });
     let publishedLauncherTargets: Awaited<ReturnType<typeof scannedLauncherFeed.getSnapshot>>['targets'] = [];
     let declarationObservationFailure: LocalServiceInventoryDiagnostic | undefined;
-    const publishInventorySnapshot = async (snapshot?: NormalizedLocalServiceInventorySnapshot): Promise<NormalizedLocalServiceInventorySnapshot> => {
+    const publishInventorySnapshot = async (snapshot?: NormalizedLocalServiceInventorySnapshot, previewRegistrationChanged = false): Promise<NormalizedLocalServiceInventorySnapshot> => {
+        // The daemon's existing group attaches late/replaced registry owners on read.
+        await params.projectManagedServices?.activity?.read();
         // Scan ticks project admitted declarations and endpoint-free managed occurrences. Reuse
         // the real launcher projection so suppressing observation metadata cannot hide those
         // changes, or give a second implementation authority over its material fields.
@@ -641,7 +655,9 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
         // The shared watch also serves Workspace readers, whose package changes must wake it.
         const launcher = await scannedLauncherFeed.getSnapshot({ discovery: 'cached' },
             snapshot?.entries ?? inventoryRegistry.readScannedEntries());
-        const invalidate = !isDeepStrictEqual(publishedLauncherTargets, launcher.targets);
+        // A registration's direct binding can change without changing a launcher
+        // row (for example its initial path). Preview readers still need that wake.
+        const invalidate = previewRegistrationChanged || !isDeepStrictEqual(publishedLauncherTargets, launcher.targets);
         publishedLauncherTargets = launcher.targets;
         // Only native scans replace listener facts. The registry's public snapshot
         // omits forgotten entries and cannot replace its retained scan authority.
@@ -674,6 +690,15 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
         },
     });
     updateInventoryDemand();
+    const unsubscribeManagedServiceActivity = params.projectManagedServices?.activity?.subscribe(() => {
+        // Native custody changes already have an authoritative supervisor fact. Reproject
+        // it through the same publisher and wake the existing Machine watch without a scan.
+        void refreshManagedLocalServicePreviewOccurrences(previewRegistry)
+            .then(() => publishInventorySnapshot())
+            .catch(params.onError ?? (error => {
+                logger.debug('[DAEMON RUN] Managed service inventory publication failed', error);
+            }));
+    });
     // The launcher folds inventory entries into its targets but never watches, so it is the one
     // reader that could observe an unscanned inventory once the loop follows watchers. It demands
     // freshness through the same coalescing single flight instead of owning a second cadence.
@@ -697,7 +722,12 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
         history: launcherHistory,
     });
     const declarationStarter = params.projectServiceStarter ? createProjectServiceDeclarationStarter(params.projectServiceStarter) : undefined;
-    const launcherRoutes = createLocalServiceLauncherRoutes({bindStartOperations(store, accountId) {
+    const launcherRoutes = createLocalServiceLauncherRoutes({
+        feed: launcherFeed,
+        history: launcherHistory,
+        leaves: launcherLeafRoutes,
+        ...declarationStarter,
+        bindStartOperations(store, accountId) {
             unsubscribeStartOperations?.();
             const binding = { store, accountId };
             startOperations = binding;
@@ -721,11 +751,6 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
                 publish();
             };
         },
-
-        feed: launcherFeed,
-        history: launcherHistory,
-        leaves: launcherLeafRoutes,
-        ...declarationStarter,
     });
     // The executor itself layers identity-tuple TOCTOU revalidation, graceful-then-force
     // signalling, and post-release verification over the real OS process-control adapter.
@@ -733,7 +758,8 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
     // raw platform `scan`: a terminate would otherwise stack its own machine-wide scans on top
     // of the inventory loop's instead of awaiting the in-flight one.
     const terminateDetectedService = createTerminateDetectedService(
-        createOsProcessControl({ refreshInventory: () => refreshInventoryNow({ stage: 'native' }) }),
+        createOsProcessControl({ refreshInventory: () => refreshInventoryNow({ stage: 'native' }),
+            ...(params.processOwnershipRuntime ? { processOwnershipRuntime: params.processOwnershipRuntime } : {}) }),
     );
     const actionRoutes = createLocalServiceActionRoutes({
         machineId: params.machineId,
@@ -777,12 +803,12 @@ let startOperations: Readonly<{ store: Parameters<NonNullable<LocalServiceLaunch
             await hostedWebStaticAssets?.stop();
         },
         async stop() {
-unsubscribeStartOperations?.();
-startOperations = undefined;
-
             endpointCancellation.abort();
             declarationWatch.setDemand(false);
             loop?.stop();
+            unsubscribeManagedServiceActivity?.();
+            unsubscribeStartOperations?.();
+            startOperations = undefined;
             unsubscribeInventorySummary();
             summarySubscribers.clear();
             try {
