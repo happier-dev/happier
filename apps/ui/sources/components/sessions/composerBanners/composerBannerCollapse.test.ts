@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SUPPORTED_LANGUAGE_CODES, preloadTranslations, setPreferredLanguageFromSettings } from '@/text';
 
 import {
     SESSION_COMPOSER_BANNER_KINDS,
@@ -203,5 +204,17 @@ describe('collapsible banner: banner or chip, one at a time', () => {
             variant: 'quiet',
             onPress: toggle,
         }));
+    });
+});
+
+describe('the banner Hide action', () => {
+    it('reads a translated word in every language, never its key', async () => {
+        for (const language of SUPPORTED_LANGUAGE_CODES) {
+            await preloadTranslations(language as never);
+            setPreferredLanguageFromSettings(language);
+            const label = buildComposerBannerHideAction({ bannerTestID: 'b', accessibilityLabel: 'a', onPress: () => {} }).label;
+            expect(label, language).not.toBe('common.hide');
+            expect(label.length, language).toBeGreaterThan(0);
+        }
     });
 });

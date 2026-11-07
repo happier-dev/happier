@@ -38,7 +38,6 @@ describe('overload recovery countdown', () => {
         const openAccountSwitcher = vi.fn();
         const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
             title="Usage limit" body="Wait and resume" runtimeIssue={runtimeIssue} onUseAnotherAccount={openAccountSwitcher} />);
-        expect(screen.getTextContent()).toContain('Usage limit reached');
         expect(screen.getTextContent()).toContain('resets');
         expect(screen.getTextContent()).not.toContain('req-session-quota-fixture');
         await act(async () => { screen.pressByTestId('recovery-switch-account'); });
@@ -55,6 +54,20 @@ describe('overload recovery countdown', () => {
         expect(screen.findByTestId('recovery-switch-account')).toBeNull();
         await act(async () => { screen.pressByTestId('recovery-primary'); });
         expect(openAccountSwitcher).toHaveBeenCalledTimes(2);
+    });
+    it('offers the Session\'s account recovery itself and does not repeat a generic runtime preview', async () => {
+        const runtimeIssue = SessionRuntimeIssueV1Schema.parse({
+            v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+            agentId: 'claude', occurredAt: 1_700_000_000_000, sanitizedPreview: 'Session runtime failed',
+            usageLimit: { v: 1, recoverability: 'wait', quotaScope: 'account', resetAtMs: 1_794_056_400_000, retryAfterMs: null },
+        });
+        const openAccountSwitcher = vi.fn();
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+            title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue}
+            deliveryRecovery="choose_account" onUseAnotherAccount={openAccountSwitcher} />);
+        expect(screen.getTextContent()).not.toContain('Session runtime failed');
+        await act(async () => { screen.pressByTestId('recovery-switch-account'); });
+        expect(openAccountSwitcher).toHaveBeenCalledOnce();
     });
     it('updates only the banner leaf and removes its timer when no scheduled retry remains', async () => {
         vi.useFakeTimers();

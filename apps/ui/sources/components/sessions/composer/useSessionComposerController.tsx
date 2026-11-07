@@ -6178,6 +6178,7 @@ export function useSessionComposerController({
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
                         runtimeIssue={session.lastRuntimeIssue}
+                        deliveryRecovery={sessionDeliveryFailure?.recovery ?? null}
                         onUseAnotherAccount={connectedServicesAuthRecoveryChip
                             ? () => { requestComposerActionChipOpen(connectedServicesAuthRecoveryChip.key); }
                             : undefined}
