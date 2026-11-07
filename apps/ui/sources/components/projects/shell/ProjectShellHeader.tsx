@@ -1,4 +1,5 @@
 import { PaneMainHideButton } from '@/components/appShell/panes/mainColumn/PaneMainColumnControls';
+import { usePresentedDetailNavigationChrome } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
 import * as React from 'react';
 import {
   Pressable,
@@ -15,6 +16,7 @@ import {
   isHappierFocusVisible,
 } from '@happier-dev/plugin-ui/presentation';
 import { GROUPED_SURFACE_RADIUS_PX } from '@/components/ui/lists/pageListMetrics';
+import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -22,6 +24,7 @@ import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   HEADER_BAND_HORIZONTAL_PADDING_PX,
@@ -36,6 +39,10 @@ import {
   type SegmentedTab,
 } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
+import { buildNavigationPlacementMenu, buildPlacementReorderBinding, type NavigationPlacementItem } from '@/components/ui/navigation/NavigationPlacementCustomizer';
+import { EntityFlatReorderList, EntityFlatReorderRow } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+import { resolveNavigationPlacements, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { useHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
@@ -103,6 +110,13 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
     overflowPages?: readonly ProjectShellPage[];
     orderedPageIds?: readonly string[];
     onCustomizeTabs?: () => void;
+    /** The placement owner's catalog and writer; the header only presents its menu and reorder. */
+    placement?: Readonly<{
+      items: readonly NavigationPlacementItem[];
+      preferences: NavigationPlacementPreferences;
+      scope: EntityDragScopeV1 | null;
+      onChange: (preferences: NavigationPlacementPreferences) => void | Promise<boolean>;
+    }>;
     changeCount?: number;
     onNewSession: (() => void) | null;
     menuActions: readonly PageHeaderMenuAction[];
@@ -111,10 +125,16 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
   }>,
 ) {
   const { theme } = useUnistyles();
+  const environmentNavigation = usePresentedDetailNavigationChrome()?.pageKind === 'environment';
   const atmosphereBoundary = useAtmosphereBandBoundary();
-  // Over the atmosphere band the page tabs sit on their segmented track: legible through material,
-  // never through a halo or a pocket in the picture (atmosphere DIRECTION, reading rules).
-  const overPicture = useAtmospherePictureShown() && atmosphereBoundary != null;
+  // Over atmosphere art (the picture band, or the planet behind the band) the page tabs sit on their
+  // segmented track: legible through material, never through a halo or a pocket in the picture, and
+  // never printed straight over the planet's dots (atmosphere DIRECTION, reading rules).
+  const pictureShown = useAtmospherePictureShown();
+  const overArt = atmosphereBoundary != null && (pictureShown || atmosphereBoundary.planet === true);
+  // The picture band's room belongs to the band from its first paint (the owner says a picture is chosen),
+  // never to the picture's arrival: the page below does not move when it lands.
+  const pictureRoom = atmosphereBoundary?.pictureRoom === true;
   const height = useHeaderHeight();
   const maxWidthStyle = useLayoutMaxWidthStyle();
   const [bandWidth, setBandWidth] = React.useState<number | null>(null);
@@ -150,6 +170,43 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
   const tabs = React.useMemo(() => props.pages.map(renderTab), [props.pages, renderTab]);
   const overflowTabs = React.useMemo(() => props.overflowPages?.map(renderTab), [props.overflowPages, renderTab]);
   const testID = props.testID ?? 'project-shell-header';
+  const pointer = useHoverCapablePrimaryPointer();
+  const binding = React.useMemo(() => {
+    const placement = props.placement;
+    if (!placement) return null;
+    const ordered = resolveNavigationPlacements(placement.items, placement.preferences).ordered;
+    const tabIds = new Set(props.pages.map(page => page.id));
+    // An opened More page joins the bar through SegmentedTabBar's existing selected-tab promotion.
+    if (props.overflowPages?.some(page => page.id === props.activePage)) tabIds.add(props.activePage);
+    const items = ordered.filter(item => tabIds.has(item.id));
+    const ids = items.map(item => item.id);
+    return buildPlacementReorderBinding({ scope: placement.scope, dragSurfaceId: 'projectTabBar.header', axis: 'horizontal',
+      items, moveIdsOf: () => ids, orderedIds: ordered.map(item => item.id),
+      preferences: placement.preferences, address: 'projectTabBar', onChange: placement.onChange });
+  }, [props.placement, props.pages, props.overflowPages, props.activePage]);
+  const wrapTab = React.useCallback((id: string, tab: React.ReactElement) => (
+    <EntityFlatReorderRow id={id}>{() => tab}</EntityFlatReorderRow>
+  ), []);
+  const menuAnchorRef = React.useRef<unknown>(null);
+  // DropdownMenu may deliver its selection after dismissal; retain the chosen tab beside its anchor.
+  const menuPageRef = React.useRef<string | null>(null);
+  const [menuPageId, setMenuPageId] = React.useState<string | null>(null);
+  const openTabMenu = React.useCallback((id: string, anchor: React.ElementRef<typeof Pressable> | null) => {
+    menuAnchorRef.current = anchor;
+    menuPageRef.current = id;
+    setMenuPageId(id);
+  }, []);
+  const closeTabMenu = React.useCallback((open: boolean) => { if (!open) setMenuPageId(null); }, []);
+  const menuPage = props.placement?.items.find(item => item.id === menuPageId);
+  const menu = menuPage && props.placement ? buildNavigationPlacementMenu({ item: menuPage,
+    preferences: props.placement.preferences, onChange: props.placement.onChange, onCustomize: props.onCustomizeTabs }) : null;
+  const selectTabMenu = React.useCallback((id: string) => {
+    const placement = props.placement;
+    const item = placement?.items.find(item => item.id === menuPageRef.current);
+    setMenuPageId(null);
+    if (placement && item) return buildNavigationPlacementMenu({ item, preferences: placement.preferences,
+      onChange: placement.onChange, onCustomize: props.onCustomizeTabs }).onSelect(id);
+  }, [props.placement, props.onCustomizeTabs]);
 
   const identityNode = (
     <View style={styles.identity}>
@@ -174,23 +231,34 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       testID={`${testID}.checkout`}
     />
   ) : null;
-  const pageTabs = (
+  const pageTabBar = (
     <SegmentedTabBar
-      presentation={overPicture ? 'segmented' : 'plain'}
+      presentation={overArt ? 'segmented' : 'plain'}
+      glassTrack={overArt}
       // Page tabs keep their names on the track too: a segmented bar whose tabs all carry a glyph
       // would otherwise draw glyphs alone, whatever the room.
       iconPlacement="leading"
       segmentSizing="content"
       overflow={{ label: t('common.more'), testID: `${testID}.pages.more`, items: overflowTabs, orderedIds: props.orderedPageIds,
-        footer: props.onCustomizeTabs ? <RoundButton title={t('navigationPlacement.customize')}
-          testID={`${testID}.pages.more.customize`} display="secondary" size="small" onPress={props.onCustomizeTabs} /> : undefined }}
+        actions: props.onCustomizeTabs ? [{ id: 'customize', label: t('navigationPlacement.customizeTabs'),
+          icon: <Icon name="sliders-horizontal" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
+          testID: `${testID}.pages.more.customize`, onPress: props.onCustomizeTabs }] : undefined }}
       tabs={tabs}
       activeTabId={props.activePage}
       onSelectTab={props.onSelectPage}
       accessibilityLabel={t('projects.pages.label')}
       testIDPrefix={`${testID}.pages`}
+      wrapTab={binding && pointer ? wrapTab : undefined}
+      onTabContextMenu={props.placement ? openTabMenu : undefined}
     />
   );
+  const pageTabs = environmentNavigation ? null : <>
+    {binding ? <EntityFlatReorderList binding={binding} axis="horizontal" testID={`${testID}.pages.reorder`}>{pageTabBar}</EntityFlatReorderList> : pageTabBar}
+    {menu && menuPage ? <ContextMenu testID={`${testID}.pages.menu`} anchorRef={menuAnchorRef} open={menuPageId !== null}
+      onOpenChange={closeTabMenu} items={menu.items} onSelect={selectTabMenu} separateCategories
+      popoverAccessibilityLabel={menuPage.menuTitle ?? menuPage.title}
+      header={<Text style={{ padding: theme.space.s12, color: theme.colors.text.secondary }}>{menuPage.menuTitle ?? menuPage.title}</Text>} /> : null}
+  </>;
   const actionsNode = (
     <View style={styles.actions}>
       {props.look}
@@ -240,6 +308,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
         twoRows ? styles.bandTwoRows : null,
         maxWidthStyle,
         { minHeight: height, borderBottomColor: theme.colors.border.subtle },
+        pictureRoom ? styles.bandOverPicture : null,
       ]}
     >
       {twoRows ? (
@@ -250,7 +319,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
             <View style={styles.grow} />
             {actionsNode}
           </View>
-          <View style={styles.pagesRow}>{pageTabs}</View>
+          {pageTabs ? <View style={styles.pagesRow}>{pageTabs}</View> : null}
         </>
       ) : (
         <>
@@ -395,6 +464,9 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
   );
 });
 
+/** The room a picture band opens above the header (lab `at2-project-pageH`). */
+const PICTURE_BAND_TOP_INSET_PX = 128;
+
 const styles = StyleSheet.create(() => ({
   band: {
     width: '100%',
@@ -420,6 +492,10 @@ const styles = StyleSheet.create(() => ({
     flexShrink: 1,
   },
   tabs: { flex: 1, minWidth: 0, marginLeft: 4 },
+  // Over a picture the band keeps the lab's proportion (about 220 px at 1440, lab at2-project-pageH):
+  // the picture opens above the header, so the title and tabs sit at the band's foot on its dissolve
+  // instead of the picture shrinking to a coloured stripe behind them.
+  bandOverPicture: { paddingTop: PICTURE_BAND_TOP_INSET_PX },
   // Two rows: the identity row, then the page tabs on the band's own edges.
   bandTwoRows: {
     flexDirection: 'column',

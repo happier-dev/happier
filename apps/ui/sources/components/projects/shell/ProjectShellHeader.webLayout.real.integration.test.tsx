@@ -31,7 +31,7 @@ const { resolveProjectPageCatalog } = await import('@/components/projects/detail
 const PAGES = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: 'home' } })
   .filter(page => page.id !== 'memory');
 
-it.each([606, 1100])(
+it.each([510, 606, 1100])(
   'keeps the selected page a named tab a pointer reaches in a %ipx pane',
   async (width) => {
     const { ProjectShellHeader } = await import('./ProjectShellHeader');
@@ -46,6 +46,8 @@ it.each([606, 1100])(
               projectName="happier-dev"
               activePage="overview"
               pages={PAGES}
+              placement={{ items: PAGES, preferences: { orderedIds: [], placements: {} },
+                scope: { serverId: 'home', accountId: 'account' }, onChange: () => {} }}
               onSelectPage={() => {}}
               onNewSession={() => {}}
               look={<View testID="look" style={{ width: 28, height: 28 }} />}
@@ -73,7 +75,14 @@ it.each([606, 1100])(
       const named = PAGES.filter(
         (page) => (layout.rects.get(`project-shell-header.pages:${page.id}`)?.[0]?.width ?? 0) > 0,
       );
-      expect(named.length).toBeGreaterThanOrEqual(4);
+      expect(named.length).toBeGreaterThanOrEqual(width < 606 ? 2 : 4);
+      // Tabs that do not fit leave for More whole; a name is never cut short in the row.
+      for (const page of named) {
+        expect(layout.rect(`project-shell-header.pages:${page.id}`).clipped).not.toBe(true);
+      }
+      if (named.length < PAGES.length) {
+        expect(layout.rects.get('project-shell-header.pages.more')?.[0]?.width ?? 0).toBeGreaterThan(0);
+      }
       const more = layout.rects.get('project-shell-header.pages.more')?.[0];
       if (more) expect(more.receivesPointer).toBe(true);
       // Every page tab still inside the band, none drawn past its edge.

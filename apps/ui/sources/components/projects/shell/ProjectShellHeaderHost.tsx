@@ -17,7 +17,7 @@ import { ProjectPageCatalogProvider, useOptionalProjectPageCatalog, useProjectPa
 import { ProjectPageChromeCounts } from '../navigation/ProjectPageChromeCounts';
 import { resolveProjectNavigationCustomizer } from '../navigation/projectNavigationCustomizer';
 import { resolveNavigationPlacements } from '@/sync/domains/settings/mobileSurfacePinning';
-import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
+import { useNavigationSurfacePlacement, useNavigationSurfacePlacementActionWriter } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { Modal } from '@/modal';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -243,9 +243,14 @@ export const ProjectShellHeaderHost = React.memo(function ProjectShellHeaderHost
 function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
     const catalog = useProjectPageCatalog();
     const { preferences } = useNavigationSurfacePlacement('projectTabBar');
+    const writePlacement = useNavigationSurfacePlacementActionWriter('projectTabBar');
     const pages = React.useMemo(() => props.pages
       ? catalog.pages.filter(page => page.kind === 'plugin' || props.pages?.includes(page.selection.kind === 'builtin' ? page.selection.page : 'overview'))
       : catalog.pages, [catalog.pages, props.pages]);
+    const placementItems = React.useMemo(() => pages.map(page => {
+      const source = page.pluginPage ? catalog.projection?.installedPackagesById[page.pluginPage.pluginId]?.displayName : undefined;
+      return source ? { ...page, menuTitle: t('navigationPlacement.tabMenuTitle', { title: page.title, source }) } : page;
+    }), [pages, catalog.projection?.installedPackagesById]);
     const placements = React.useMemo(() => resolveNavigationPlacements(pages, preferences), [pages, preferences]);
     const newSession = useProjectNewSessionAction({ workspaceRef: props.workspaceRef,
       activeRootPath: props.activeRootPath, page: props.page });
@@ -282,6 +287,7 @@ function ProjectShellHeaderContent(props: ProjectShellHeaderHostProps) {
           activePage={catalog.activePageId}
           changeCount={changeCount}
           onCustomizeTabs={customize}
+          placement={{ items: placementItems, preferences, scope: catalog.authority?.scope ?? null, onChange: writePlacement }}
           onSelectPage={selectPage}
           onNewSession={newSession.open}
           menuActions={menuActions}

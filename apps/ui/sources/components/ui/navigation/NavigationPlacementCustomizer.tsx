@@ -7,6 +7,7 @@ import { type EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { HAPPIER_DRAG_GRIP_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
+import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -29,6 +30,8 @@ import { useDetailPageTabsPosition, useDetailPageTabsPositionActionWriter, useNa
 export type NavigationPlacementItem = NavigationPlacementPolicy & Readonly<{
     id: string;
     title: string;
+    /** The surface supplies an admitted source name when it has one. */
+    menuTitle?: string;
     icon?: IconName;
     group?: string;
     placementNote?: string;
@@ -83,6 +86,50 @@ function useRevealActiveGroup(activeGroup: string | undefined) {
 
 const BASE_PLACEMENTS = ['pinned', 'overflow', 'hidden'] as const;
 
+/** The customizer and in-bar menu share the catalog's placement choices and policy. */
+export function buildNavigationPlacementOptions(item: NavigationPlacementItem,
+    labels?: Readonly<Partial<Record<NavigationDefaultPlacement, string>>>): readonly Readonly<{
+        id: NavigationDefaultPlacement; label: string; disabled: boolean;
+    }>[] {
+    return ([...(item.defaultPlacement === 'auto' ? ['auto' as const] : []), ...BASE_PLACEMENTS]).map(id => ({
+        id,
+        label: labels?.[id] ?? t(`navigationPlacement.${id}`),
+        disabled: id !== 'auto' && item.allowedPlacements !== undefined && !item.allowedPlacements.includes(id),
+    }));
+}
+
+function selectedPlacement(item: NavigationPlacementItem, preferences: NavigationPlacementPreferences,
+    effectivePlacement: NavigationDefaultPlacement | undefined): NavigationDefaultPlacement {
+    return item.defaultPlacement === 'auto' && preferences.placements[item.id] === undefined
+        ? 'auto' : effectivePlacement ?? 'pinned';
+}
+
+/** The tab menu and customizer consume the same choices, reserved-primary policy and preference writer. */
+export function buildNavigationPlacementMenu(input: Readonly<{
+    item: NavigationPlacementItem;
+    preferences: NavigationPlacementPreferences;
+    onChange: (preferences: NavigationPlacementPreferences) => void | Promise<boolean>;
+    onCustomize?: () => void;
+}>): Readonly<{ items: readonly DropdownMenuItem[]; onSelect: (id: string) => void | Promise<boolean> }> {
+    const options = isReservedPrimary(input.item) ? [] : buildNavigationPlacementOptions(input.item, {
+        pinned: t('navigationPlacement.keepInBar'), overflow: t('navigationPlacement.moveToMore'), hidden: t('navigationPlacement.hide'),
+    });
+    const selected = selectedPlacement(input.item, input.preferences,
+        resolveNavigationPlacements([input.item], input.preferences).effectivePlacements[input.item.id]);
+    return {
+        items: [
+            ...options.map(option => ({ id: option.id, title: option.label, disabled: option.disabled,
+                checked: selected === option.id, category: 'placement' })),
+            ...(input.onCustomize ? [{ id: 'customize', title: t('navigationPlacement.customize'), category: 'customize' }] : []),
+        ],
+        onSelect: id => {
+            if (id === 'customize') { input.onCustomize?.(); return; }
+            const option = options.find(option => option.id === id);
+            if (option && !option.disabled) return input.onChange(updateNavigationPlacement(input.preferences, input.item.id, option.id));
+        },
+    };
+}
+
 /** Modal-bound preferences remain live when a settings Action changes the same device. */
 export function NavigationPlacementCustomizer(props: CustomizerProps & CustomModalInjectedProps) {
     const owner = useNavigationSurfacePlacement(props.address ?? props.surfaceId);
@@ -109,9 +156,10 @@ export type NavigationPlacementPreviewControls = Readonly<{
 }>;
 
 /** One reorder admission and write, for a placement list and for the preview that draws the same items. */
-function buildPlacementReorderBinding(input: Readonly<{
+export function buildPlacementReorderBinding(input: Readonly<{
     scope: EntityDragScopeV1 | null;
     dragSurfaceId: string;
+    axis?: 'horizontal' | 'vertical';
     items: readonly NavigationPlacementItem[];
     /** The ids a move may land among: its own group in a list, what is drawn in a preview. */
     moveIdsOf: (id: string) => readonly string[];
@@ -138,7 +186,7 @@ function buildPlacementReorderBinding(input: Readonly<{
             if (!next) return entityReorderRefused('reorder_target_gone');
             return { status: 'allowed', effect: { actionId: 'settings.set', input: {
                 anchor: 'appearance.navigationPlacements', value: navigationPlacementPatch(input.address, next),
-            }, preview: entityReorderPreview(position, items) } };
+            }, preview: entityReorderPreview(position, items, input.axis) } };
         },
         execute: async effect => {
             const payload = effect.input;
@@ -257,18 +305,10 @@ function PlacementRows(props: PlacementRowsProps) {
                             {item.icon ? <Icon name={item.icon} size={ICON_SIZE.md} color={theme.colors.text.secondary} />
                                 : hasGlyphColumn ? <View style={GLYPH_SLOT_STYLE} /> : null}
                         </View>}
-                        value={item.defaultPlacement === 'auto' && props.preferences.placements[item.id] === undefined
-                            ? 'auto' : placements.effectivePlacements[item.id] ?? 'pinned'}
+                        value={selectedPlacement(item, props.preferences, placements.effectivePlacements[item.id])}
                         // Every row offers the same segments, so the columns line up; a placement this item
                         // cannot take stays visible and disabled, explained by its note.
-                        options={([
-                            ...(item.defaultPlacement === 'auto' ? ['auto' as const] : []),
-                            ...BASE_PLACEMENTS,
-                        ]).map(id => ({
-                            id,
-                            label: props.placementLabels?.[id] ?? t(`navigationPlacement.${id}`),
-                            disabled: id !== 'auto' && item.allowedPlacements !== undefined && !item.allowedPlacements.includes(id),
-                        }))}
+                        options={buildNavigationPlacementOptions(item, props.placementLabels)}
                         testIDPrefix={`${testID}.placement:${item.id}`}
                         onChange={placement => props.onChange(updateNavigationPlacement(props.preferences, item.id, placement))} />}
                 </EntityFlatReorderRow>)}

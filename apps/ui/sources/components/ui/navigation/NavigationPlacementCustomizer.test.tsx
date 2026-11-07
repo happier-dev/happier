@@ -13,6 +13,13 @@ import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { ProjectShellHeader } from '@/components/projects/shell/ProjectShellHeader';
+import { resolveProjectPageCatalog } from '@/components/projects/detail/projectPageCatalog';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { EntityFlatReorderList } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
+import { useNavigationSurfacePlacement, useNavigationSurfacePlacementActionWriter } from './useNavigationSurfacePlacement';
+import { navigationPlacementPatch, readNavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 const pointer = vi.hoisted(() => ({ coarse: false }));
 vi.mock('@/utils/platform/webMobileHeuristics', async (importOriginal) => ({
@@ -184,6 +191,50 @@ describe('navigation placement customization', () => {
         expect(screen.findHostByTestId('navigation-placement-customizer.locked:overview')).not.toBeNull();
         expect(screen.findHostByTestId('navigation-placement-customizer.placement:overview:hidden')).toBeNull();
         expect(screen.findHostByTestId('navigation-placement-customizer.placement:code:hidden')).not.toBeNull();
+    });
+    it('shares Project tab placement between the menu, drag and agent Action, retaining unrelated device placements', async () => {
+        const locks = installWebLockManagerMock();
+        let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
+        try {
+            account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: normalizeActionsSettingsV1({
+                v: 1, approvalWaivedSurfaces: { 'settings.set': ['agent'] },
+            }) }) });
+            const pages = resolveProjectPageCatalog({ target: { kind: 'project', workspaceRefId: 'project', serverId: account.scope.serverId } });
+            const otherSurface = { orderedIds: ['home'], placements: { home: 'hidden' as const } };
+            storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: { appRail: otherSurface } }, { persist: false });
+            function Fixture() {
+                const { preferences } = useNavigationSurfacePlacement('projectTabBar');
+                const onChange = useNavigationSurfacePlacementActionWriter('projectTabBar');
+                const placed = resolveNavigationPlacements(pages, preferences);
+                return <ProjectShellHeader projectName="Project" checkout={null} pages={placed.pinned} overflowPages={placed.overflow}
+                    orderedPageIds={placed.ordered.map(page => page.id)} activePage="overview" onSelectPage={() => {}}
+                    onNewSession={null} menuActions={[]} placement={{ items: pages, preferences, scope: account!.scope, onChange }} />;
+            }
+            const screen = await renderScreen(<Fixture />);
+            await act(async () => { screen.findHostByTestId('project-shell-header.pages:code')!.props.onContextMenu({ preventDefault() {}, stopPropagation() {} }); });
+            const menu = screen.root.findAllByType(DropdownMenu).find(node => node.props.open === true)!;
+            await act(async () => { await menu.props.onSelect('hidden'); });
+            const saved = () => readNavigationPlacementPreferences(storage.getState().localSettings.navigationSurfacePlacementsV1, 'projectTabBar');
+            await vi.waitFor(() => expect(saved()?.placements.code).toBe('hidden'));
+            const binding = screen.root.findByType(EntityFlatReorderList).props.binding;
+            const admission = binding.resolve('changes', { anchorId: 'overview', placement: 'before' });
+            expect(admission.status).toBe('allowed');
+            await act(async () => { expect(await binding.execute(admission.effect)).toEqual({ status: 'applied' }); });
+            expect(saved()?.orderedIds.slice(0, 2)).toEqual(['changes', 'overview']);
+            expect(saved()?.placements.code).toBe('hidden');
+            expect(storage.getState().localSettings.navigationSurfacePlacementsV1.appRail).toEqual(otherSurface);
+            // An agent uses the same declared setting and sparse device address, with its own approval policy.
+            const execute = createFrontDoorActionExecute();
+            await act(async () => {
+                expect(await execute('settings.set', { anchor: 'appearance.navigationPlacements',
+                    value: navigationPlacementPatch('projectTabBar', { orderedIds: ['code', 'overview'], placements: { code: 'pinned' } }),
+                }, { surface: 'agent', authority: 'account_automation', serverId: account!.scope.serverId,
+                    expectedAccountId: account!.scope.accountId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+            });
+            expect(saved()?.orderedIds.slice(0, 2)).toEqual(['code', 'overview']);
+            expect(screen.findHostByTestId('project-shell-header.pages:code')).not.toBeNull();
+            expect(storage.getState().localSettings.navigationSurfacePlacementsV1.appRail).toEqual(otherSurface);
+        } finally { standardCleanup(); await account?.dispose(); locks.restore(); }
     });
     it('persists a phone placement edit through the enabled settings Action', async () => {
         const locks = installWebLockManagerMock();
