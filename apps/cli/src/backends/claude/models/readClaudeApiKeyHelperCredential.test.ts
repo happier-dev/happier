@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import type { NativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
@@ -126,26 +126,23 @@ describe('readClaudeApiKeyHelperCredential', () => {
       return realKill(pid, signal);
     });
     const controller = new AbortController();
-    let cleanup: NativeCatalogCleanup | undefined;
-    const reading = readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env,
-      timeoutMs: 10_000, signal: controller.signal, onNativeCleanup: next => { cleanup = next; } });
-    try {
-      await vi.waitFor(async () => { pids = await ownedPids(); expect(pids).toHaveLength(2); });
-      controller.abort();
-      // Process discovery uses the suite's real-process budget; settlement is the contract.
-      await expect(reading).resolves.toEqual({ status: 'failed' });
-      for (const pid of pids) expect(() => realKill(pid, 0)).not.toThrow();
-      await expect(cleanup?.()).rejects.toMatchObject({ code: 'process_tree_termination_incomplete' });
-    } finally {
+    // Runner-owned teardown also runs on timeout and never awaits the reader under test.
+    onTestFinished(async () => {
       signals.mockRestore();
       controller.abort();
-      pids = await ownedPids();
       for (const pid of pids) {
         try { realKill(pid, 0); } catch { continue; }
         await killProcessTree({ pid });
       }
-      await reading;
-    }
+    });
+    let cleanup: NativeCatalogCleanup | undefined;
+    const reading = readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env,
+      timeoutMs: 10_000, signal: controller.signal, onNativeCleanup: next => { cleanup = next; } });
+    await vi.waitFor(async () => { pids = await ownedPids(); expect(pids).toHaveLength(2); });
+    controller.abort();
+    await expect(reading).resolves.toEqual({ status: 'failed' });
+    for (const pid of pids) expect(() => realKill(pid, 0)).not.toThrow();
+    await expect(cleanup?.()).rejects.toMatchObject({ code: 'process_tree_termination_incomplete' });
   });
 
   it('settles cancellation after the shell exits while a background child retains stdout', async () => {
