@@ -45,7 +45,6 @@ export const VOICE_DICTATION_SETTINGS = defineSettingsPage({
                 provider: { storage: voiceSettingBinding('dictation.stt.provider') },
                 language: { storage: voiceSettingBinding('dictation.language') },
                 sttAssetId: { storage: voiceSettingBinding('dictation.stt.localNeural.assetId') },
-                sttLanguage: { storage: voiceSettingBinding('dictation.stt.localNeural.language') },
                 sttExecution: { storage: voiceSettingBinding('dictation.stt.localNeural.execution') },
                 executionMachine: { storage: voiceExecutionMachineBinding },
                 sttPrepareModel: {  operation: voiceSettingsOperation('stt_prepare', 'dictation') },

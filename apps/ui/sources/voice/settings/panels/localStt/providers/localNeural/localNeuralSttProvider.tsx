@@ -7,7 +7,7 @@ import { LocalNeuralSttSettings } from './LocalNeuralSttSettings';
 
 import type { LocalSttProviderSpec } from '../_types';
 
-const LocalNeuralProviderSettings: LocalSttProviderSpec['Settings'] = (props) => {
+const LocalNeuralProviderSettings: NonNullable<LocalSttProviderSpec['Settings']> = (props) => {
   const cfg = props.cfgStt as VoiceLocalSttSettings;
   return (
     <LocalNeuralSttSettings
@@ -15,6 +15,7 @@ const LocalNeuralProviderSettings: LocalSttProviderSpec['Settings'] = (props) =>
       setCfg={props.setStt as any}
       popoverBoundaryRef={props.popoverBoundaryRef}
       daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+      hideLanguage={props.hideLanguage}
     />
   );
 };

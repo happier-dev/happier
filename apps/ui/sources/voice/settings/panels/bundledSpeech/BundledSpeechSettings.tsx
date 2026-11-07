@@ -164,6 +164,7 @@ function BundledSpeechSettings(props: Readonly<{
   descriptor: SettingsDescriptor;
   voice: VoiceSettings;
   onVoiceChange: (next: VoiceSettings) => void;
+  hideLanguage?: boolean;
   popoverBoundaryRef?: React.RefObject<unknown> | null;
 }>) {
   const { theme } = useUnistyles();
@@ -315,8 +316,6 @@ function BundledSpeechSettings(props: Readonly<{
         credentialSourceDeclaration={props.entry.kind === 'voice.speech-engine.v1'
           ? props.entry.declaration
           : undefined}
-        recipientContract={props.entry.accountCredentialSlot?.recipientContract ?? null}
-        recipientContractDigest={props.entry.accountCredentialSlot?.recipientContractDigest ?? null}
         machineId={machine.machineId}
         machineLabel={machine.machineLabel}
         disclosePlainStorage={true}
@@ -333,6 +332,7 @@ function BundledSpeechSettings(props: Readonly<{
         />
       ))}
       {props.descriptor.fields.map((field) => {
+        if (props.hideLanguage && field.kind === 'language') return null;
         const rendered = (() => {
         const value = config[field.key];
         if (field.kind === 'text') {
@@ -520,6 +520,10 @@ function BundledSpeechSettings(props: Readonly<{
             ? [{ id: '', title: t('common.none'), subtitle: undefined }]
             : [];
         const allowCustom = field.kind === 'remote_select' && field.allowCustom;
+        const retainedCustomItems = allowCustom && typeof value === 'string' && value.length > 0
+          && !rows.some(row => row.id === value)
+          ? [{ id: value, title: value, subtitle: undefined }]
+          : [];
         const remoteCatalog = field.kind === 'remote_select' ? catalogs[field.key] : null;
         const catalogStatusItems = field.kind !== 'remote_select'
           ? []
@@ -548,6 +552,7 @@ function BundledSpeechSettings(props: Readonly<{
             items={[
               ...automaticItems,
               ...catalogStatusItems,
+              ...retainedCustomItems,
               ...rows.map((row) => ({
                 ...row,
                 icon: <Icon name={field.kind === 'language' ? 'translate' : 'sparkle'} size={20} color={theme.colors.text.secondary} />,
@@ -610,7 +615,7 @@ function BundledSpeechSettings(props: Readonly<{
 
 export function createBundledLocalSttProviderSpec(
   entry: BundledSpeechSettingsEntry,
-): LocalSttProviderSpec | null {
+): (LocalSttProviderSpec & Required<Pick<LocalSttProviderSpec, 'Settings'>>) | null {
   const descriptor = readBundledSpeechSettingsDescriptorFromEntry(entry.providerId, entry);
   if (!descriptor || (descriptor.role !== 'stt' && descriptor.role !== 'both')) return null;
   const Settings = (props: LocalSttProviderSettingsProps) => (
@@ -619,6 +624,7 @@ export function createBundledLocalSttProviderSpec(
       descriptor={descriptor}
       voice={props.voice}
       onVoiceChange={props.setVoice}
+      hideLanguage={props.hideLanguage}
       popoverBoundaryRef={props.popoverBoundaryRef}
     />
   );

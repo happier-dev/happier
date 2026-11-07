@@ -129,7 +129,8 @@ export function getVoiceContributedSettingsDeclarations(
         const descriptor = entry.providerSettings;
         const declaration = 'declaration' in entry ? entry.declaration : undefined;
         if (!descriptor && !declaration?.credentials) return [];
-        const endpointConsent = readBundledSpeechSettingsDescriptorFromEntry(entry.providerId, entry)?.endpointConsent;
+        const speechSettings = readBundledSpeechSettingsDescriptorFromEntry(entry.providerId, entry);
+        const endpointConsent = speechSettings?.endpointConsent;
         const presentationFields = descriptor?.presentation
             ? parseRealtimeSettingsDescriptor(entry.providerId, descriptor.presentation)?.fields.flatMap((field) => [
                 field, ...(Array.isArray(field.subfields) ? field.subfields as readonly RealtimeSettingsFieldDescriptor[] : []),
@@ -232,7 +233,11 @@ export function getVoiceContributedSettingsDeclarations(
         // The section carries the service's own name, so search says which service a control belongs to.
         const serviceTitle = declaration ? label(declaration.title) : String(tLoose(entry.selectionOptions?.[0]?.titleKey ?? 'settingsVoice.providerSectionTitle'));
         return pages.map((pageId) => defineSettingsPage({ pageId, sections: { [`provider.${entry.providerId}`]: {
-            ...(serviceTitle ? { title: serviceTitle } : {}), settings: fields,
+            ...(serviceTitle ? { title: serviceTitle } : {}),
+            settings: pageId === 'voiceDictation'
+                ? Object.fromEntries(Object.entries(fields).filter(([id]) => !speechSettings?.fields.some(field =>
+                    field.kind === 'language' && id === `provider.${entry.providerId}.${field.key}`)))
+                : fields,
         } } }));
     });
 }

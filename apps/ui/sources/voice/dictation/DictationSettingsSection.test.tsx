@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { createDeferred, flushHookEffects, registerStandardCleanupTarget, renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { createMemFs, createMemNativeDownload } from '@/voice/modelPacks/installerTestFs';
 
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { installVoiceSettingsPanelCommonModuleMocks } from '@/voice/settings/panels/voiceSettingsPanelTestHelpers';
 import {
@@ -254,7 +254,7 @@ describe('DictationSettingsSection', () => {
     expect(setVoice.mock.calls[0]?.[0].providers[EXTERNAL_DICTATION_STT_PROVIDER_ID]).toEqual(envelope);
   });
 
-  it('edits the selected Local Voice adapter STT settings when Dictation follows Local Voice', async () => {
+  it('keeps one Dictation language override when Dictation follows Local Voice', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const { OverlayPortalHost, OverlayPortalProvider, Popover } = await import('@/components/ui/popover');
     const localDirect = readLocalDirectVoiceSettings(voiceSettingsDefaults);
@@ -299,7 +299,7 @@ describe('DictationSettingsSection', () => {
     expect(findRenderedItem(tree, 'settings.voice.dictation.engine.same_as_local').props.selected).toBe(true);
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const recognitionLanguage = tree.root.findAllByType(DropdownMenu).filter(node =>
-      Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === '__custom__'));
+      Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === '__custom__' || item.id === 'automatic'));
     expect(recognitionLanguage).toHaveLength(1);
     const languageTriggers = recognitionLanguage[0]!.findAll((node) => String(node.type) === 'Pressable'
       && node.props.accessibilityState?.expanded === false);
@@ -312,7 +312,7 @@ describe('DictationSettingsSection', () => {
     // The native menu uses the shared phone sheet, which does not measure an
     // anchor. Selection through its real portal is the observable contract.
     const portalHost = tree.root.findByType(OverlayPortalHost);
-    const frenchChoice = portalHost.findAll((node) => String(node.type) === 'Pressable' && node.props.testID === 'dropdown-option-fr'
+    const frenchChoice = portalHost.findAll((node) => String(node.type) === 'Pressable' && node.props.testID === 'dropdown-option-fr-FR'
       && typeof node.props.onPress === 'function')[0];
     if (!frenchChoice) throw new Error('Missing French choice in native portal');
     await act(async () => {
@@ -322,7 +322,9 @@ describe('DictationSettingsSection', () => {
     expect(tree.root.findAllByType(Popover)).toHaveLength(0);
     await voiceChanged.promise;
     expect(setVoice).toHaveBeenCalledOnce();
-    expect(readLocalDirectVoiceSettings(setVoice.mock.calls[0]![0]).stt.localNeural.language).toBe('fr');
+    expect(setVoice.mock.calls[0]![0].dictation.language).toBe('fr-FR');
+    expect(setVoice.mock.calls[0]![0].dictation.sttBinding).toBe('same_as_local');
+    expect(readLocalDirectVoiceSettings(setVoice.mock.calls[0]![0])).toEqual(readLocalDirectVoiceSettings(dictationVoice));
     expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0]).stt.provider)
       .toBe('happier.voice.openai-compat/stt');
     expect(readLocalConversationVoiceSettings(setVoice.mock.calls[0]![0])).toEqual(readLocalConversationVoiceSettings(dictationVoice));
@@ -358,12 +360,11 @@ describe('DictationSettingsSection', () => {
     const device = getLocalSttProviderSpec('device');
     const neural = getLocalSttProviderSpec('local_neural');
     if (!device || !neural) throw new Error('expected built-in speech engines');
-    const providerSettings = tree.root.findAllByType(device.Settings);
-    expect(providerSettings).toHaveLength(1);
-    expect(providerSettings[0]?.props.voice).toBe(voice);
-    expect(providerSettings[0]?.props.setVoice).toBe(setVoice);
+    if (!neural.Settings) throw new Error('expected neural speech options');
     expect(tree.root.findAllByType(neural.Settings)).toHaveLength(0);
-    // Device speech has no engine fields; unselected neural/endpoint detail is absent.
+    // Device speech has no options, so no empty options section titled after it renders; unselected
+    // neural/endpoint detail is absent.
+    expect(tree.root.findAll((node) => node.props.title === device.title && typeof node.props.description === 'string')).toHaveLength(0);
     expect(tree.root.findAll(node => node.props.fieldTestID === 'settings.voice.localNeuralStt.language.custom.field'
       || (typeof node.props.testID === 'string' && node.props.testID.startsWith('voice-speech-setting:')))).toHaveLength(0);
     await act(async () => {
@@ -689,15 +690,14 @@ describe('DictationSettingsSection', () => {
     const ready = await withVoiceSettingsCredentialResource(account, {
       settings: account.settings, declaration, pluginId: entry.pluginId,
       resourceId: 'google-stt-secret', machineId: 'machine-online',
-      recipientContractDigest: entry.accountCredentialSlot?.recipientContractDigest,
     });
-    account.replaceSettings(ready);
+    account.replaceSettings(ready, { version: (storage.getState().settingsVersion ?? 0) + 1 });
     const subject = { kind: 'credential_access_disclosure', contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
       credentialSlotId: 'api_key', purpose: declaration.credentials!.slot.purpose,
       accessDeclarationDigest: 'b'.repeat(64), selectedAuthorityDigest: 'c'.repeat(64), selectedRawAccessDigest: 'd'.repeat(64) };
     const authoritySource = { kind: 'machine_installation', machineId: 'machine-online', installationId: 'installation-1' };
     const inspection = DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema.parse({ ok: true,
-      authorization: { pluginId: 'happier.voice.google', capability: 'credentials.materialize.raw', targetScope: { kind: 'account' },
+      authorization: { pluginId: 'happier.voice.google', capability: 'credentials.materialize.raw', targetScope: { kind: 'account' }, grantRequirement: 'linked',
         subject, authoritySource, disclosures: [{ sourceClass: { kind: 'savedSecret', secretKinds: ['apiKey'] },
           realm: 'daemon', phase: 'speech', materialization: 'httpHeaders', origin: 'https://generativelanguage.googleapis.com', destination: 'x-goog-api-key' }] },
       review: { plugin: { id: 'happier.voice.google', name: 'Google', version: '1.0.0' }, package: { identity: 'happier.voice.google' },
@@ -722,14 +722,11 @@ describe('DictationSettingsSection', () => {
       if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
         id => id === machine.id ? machine : null);
       if (path === '/v1/machines/machine-online') return Response.json({ machine });
-      if (path !== '/v1/plugins/permissions/grants/list') return originalRequest(url, init);
-      expect(JSON.parse(String(init?.body))).toMatchObject({ pluginId: inspection.authorization.pluginId,
-        capability: inspection.authorization.capability, targetScope: inspection.authorization.targetScope, subject });
-      return Response.json({ grants: [{ v: 1, id: 'grant-1', accountId: account.scope.accountId,
-          ...inspection.authorization, disclosures: undefined, status: 'active', requestId: 'request-1',
-          grantedByUserId: 'user-1', grantedAt: 2, createdAt: 2, updatedAt: 2 }], pendingRequests: [] });
+      return originalRequest(url, init);
     });
-    storage.getState().applyMachines([createMachineFixture({ id: 'machine-online', activeAt: Date.now() })], true, { sourceServerId: account.scope.serverId });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-online', activeAt: Date.now(),
+      storageMode: 'plain', access: createPlainMachineRowFixture({ id: 'machine-online', accountId: account.scope.accountId }).access,
+    })], true, { sourceServerId: account.scope.serverId });
     await refreshSavedSecretCatalog(account.scope);
     const setVoice = vi.fn();
     let commits = 0;
@@ -741,6 +738,8 @@ describe('DictationSettingsSection', () => {
     /></React.Profiler>;
     const screen = await renderScreen(render(account.settings.voice));
     const tree = screen.tree;
+    await flushHookEffects();
+    expect(storage.getState().settings.voiceSettingsV1.credentialBindings).toEqual(ready.voiceSettingsV1.credentialBindings);
     await waitForTestEvent(screen.subscribe, () => dictationCardReadiness(tree), readiness => readiness?.status === 'ready');
     expect(dictationCardReadiness(tree)?.status).toBe('ready');
     const initialCommits = commits;

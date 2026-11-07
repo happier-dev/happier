@@ -14,6 +14,7 @@ export function LocalNeuralSttSettings(props: {
   setCfg: (next: VoiceLocalSttSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  hideLanguage?: boolean;
 }) {
   const settings = useVoiceSttSettingRefs();
   const [languageOpen, setLanguageOpen] = React.useState(false);
@@ -39,7 +40,7 @@ export function LocalNeuralSttSettings(props: {
         allowDeviceSelection={executionPolicy.allowDeviceSelection}
       />
       </SettingAnchor>
-      <LocalNeuralSttLanguageItem
+      {props.hideLanguage ? null : <LocalNeuralSttLanguageItem
         language={props.cfg.localNeural.language}
         open={languageOpen}
         onOpenChange={setLanguageOpen}
@@ -49,7 +50,7 @@ export function LocalNeuralSttSettings(props: {
           provider: 'local_neural',
           localNeural: { ...props.cfg.localNeural, language },
         })}
-      />
+      />}
       <SelectedDaemonModelPackRow
         packId={props.cfg.localNeural.assetId}
         kind="stt_sherpa"

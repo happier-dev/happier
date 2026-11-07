@@ -30,6 +30,7 @@ export function LocalNeuralSttSettings(props: {
   setCfg: (next: VoiceLocalSttSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  hideLanguage?: boolean;
 }) {
   const settings = useVoiceSttSettingRefs();
   const { theme } = useUnistyles();
@@ -180,13 +181,13 @@ export function LocalNeuralSttSettings(props: {
         </>
       )}
 
-      <LocalNeuralSttLanguageItem
+      {props.hideLanguage ? null : <LocalNeuralSttLanguageItem
         language={props.cfg.localNeural.language}
         open={openMenu === 'language'}
         onOpenChange={(next) => setOpenMenu(next ? 'language' : null)}
         popoverBoundaryRef={props.popoverBoundaryRef}
         onSelect={(language) => setLocalNeural({ language })}
-      />
+      />}
     </>
   );
 }

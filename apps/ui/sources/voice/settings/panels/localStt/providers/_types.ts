@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -14,6 +14,8 @@ export type LocalSttProviderSettingsProps = {
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
   daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
+  /** Dictation supplies its own recognition-language control and runtime override. */
+  hideLanguage?: boolean;
 };
 export type LocalSttProviderSpec = {
   id: LocalSttProviderId;
@@ -21,6 +23,7 @@ export type LocalSttProviderSpec = {
   subtitle: string;
   iconName: string;
   detail: string;
-  Settings: React.ComponentType<LocalSttProviderSettingsProps>;
+  /** The engine's own options; absent when the engine has none, so no empty options section renders. */
+  Settings?: React.ComponentType<LocalSttProviderSettingsProps>;
   resolvePreferredExecution?: (requestedExecution: LocalNeuralExecution | null) => 'device' | 'daemon';
 };

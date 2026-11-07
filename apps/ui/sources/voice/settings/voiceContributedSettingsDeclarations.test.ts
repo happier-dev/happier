@@ -10,6 +10,18 @@ vi.mock('@/text', async () => {
 });
 
 describe('contributed Voice settings declaration admission', () => {
+    it('exposes one Dictation language owner while retaining conversation engine language', async () => {
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const { VOICE_DICTATION_SETTINGS } = await import('./voiceSettingsDeclarations');
+        const pages = getVoiceContributedSettingsDeclarations(createDefaultVoiceProviderRegistry());
+        const field = 'provider.happier.voice.google/gemini-stt.language';
+        const dictationFields = Object.assign({}, ...pages.filter(page => page.pageId === 'voiceDictation').map(page => page.settings));
+        const conversationFields = Object.assign({}, ...pages.filter(page => page.pageId === 'voiceConversations').map(page => page.settings));
+        expect(dictationFields[field]).toBeUndefined();
+        expect(conversationFields[field]?.storage).toBeDefined();
+        expect(VOICE_DICTATION_SETTINGS.settings).toHaveProperty('language');
+        expect(VOICE_DICTATION_SETTINGS.settings).not.toHaveProperty('sttLanguage');
+    });
     it('exposes typed selection for API-key-only providers and declarative Connected Account pickers', async () => {
         const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
         const pages = getVoiceContributedSettingsDeclarations(createDefaultVoiceProviderRegistry());

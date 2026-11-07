@@ -6,9 +6,10 @@ import 'fake-indexeddb/auto';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 
 import {
-  VoiceProviderContributionSchema,
+  VoiceProviderContributionSchema} from '@happier-dev/protocol/plugins/contributions/voice';
+import {
   type VoiceProviderSettingsJsonValueV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/providerSettings';
 import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -274,9 +275,7 @@ const executionMachine = {
     const machine = value ? createMachineFixture({ id: value, activeAt: Date.now(),
       metadata: { ...createMachineFixture().metadata!, displayName: this.currentLabel ?? undefined },
     }) : null;
-    storage.setState({ machines: machine ? { [machine.id]: machine } : {},
-      machineListByServerId: { [account.scope.serverId]: machine ? [machine] : [] },
-    });
+    storage.getState().applyMachines(machine ? [machine] : [], true, { sourceServerId: account.scope.serverId });
   },
   get machineLabel() { return this.currentLabel; },
   set machineLabel(value: string | null) {
@@ -348,8 +347,7 @@ async function saveCredential(providerId: string, secretId = 'account-secret-a')
   if (entry?.kind !== 'voice.speech-engine.v1' || !entry.declaration) throw new Error('Expected speech credential declaration');
   account.replaceSettings(await withVoiceSettingsCredentialResource(account, {
     settings: account.settings, declaration: entry.declaration, pluginId: entry.pluginId, resourceId: secretId,
-    recipientContractDigest: entry.accountCredentialSlot?.recipientContractDigest,
-  }));
+  }), { version: (storage.getState().settingsVersion ?? 0) + 1 });
   await refreshSavedSecretCatalog(account.scope);
 }
 
@@ -367,6 +365,26 @@ async function selectCredentialSource(entry: NonNullable<ReturnType<ReturnType<t
 }
 
 describe('BundledSpeechSettings', () => {
+  it('leaves recognition language to Dictation while retaining the engine configuration', async () => {
+    const { createBundledLocalSttProviderSpec } = await import('./BundledSpeechSettings');
+    const spec = createBundledLocalSttProviderSpec(createDefaultVoiceProviderRegistry().get(GOOGLE_GEMINI_STT_ID)!);
+    const Settings = spec?.Settings;
+    if (!Settings) throw new Error('Expected Google speech settings');
+    const voice = voiceWithRootProviderConfig(GOOGLE_GEMINI_STT_ID, { model: 'gemini-2.5-flash', language: 'fr' });
+    const setVoice = vi.fn();
+    const render = (hideLanguage: boolean) => React.createElement(Settings, {
+      cfgStt: { provider: GOOGLE_GEMINI_STT_ID }, setStt: vi.fn(), voice, setVoice, hideLanguage,
+    });
+    const screen = await renderScreen(render(false));
+    const languageControls = () => screen.tree.root.findAll(node =>
+      node.props.testID === 'voice-speech-setting:language' || node.type === DropdownMenu
+        && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'fr-FR'));
+    expect(languageControls().length).toBeGreaterThan(0);
+    await screen.update(render(true));
+    expect(languageControls()).toHaveLength(0);
+    expect(setVoice).not.toHaveBeenCalled();
+  });
+
   it.each(['execution machine', 'Account', 'provider', 'retired provider', 'retired projection', 'unrelated settings', 'installed first-party'] as const)('applies an endpoint approval only to its current context while retaining unrelated changes: %s', async (change) => {
     const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
     const entry = createDefaultVoiceProviderRegistry().get(OPENAI_COMPAT_TTS_ID);
@@ -411,6 +429,7 @@ describe('BundledSpeechSettings', () => {
     if (change === 'execution machine') {
       executionMachine.machineId = 'machine-b';
       executionMachine.machineLabel = 'Machine B';
+      account.replaceVoice({ ...account.settings.voice, executionMachine: { mode: 'fixed', machineId: 'machine-b' } });
     } else if (change === 'Account') {
       settingsActionState.settingsScope = { serverId: 'server-1', accountId: 'account-2' };
     } else if (change === 'provider') {
@@ -519,6 +538,42 @@ describe('BundledSpeechSettings', () => {
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: 'en-US-Test-A', title: 'English Test' })]));
   });
 
+  it.each([
+    { providerId: GOOGLE_GEMINI_STT_ID, role: 'stt', field: 'model', value: 'gemini-parity-custom' },
+    { providerId: GOOGLE_CLOUD_TTS_ID, role: 'tts', field: 'voiceName', value: 'en-US-Parity-Custom' },
+  ] as const)('shows the saved custom $field and opens its editor ($role)', async ({ providerId, role, field, value }) => {
+    const { LocalVoiceSttGroup } = await import('../localStt/LocalVoiceSttGroup');
+    const { LocalVoiceTtsGroup } = await import('../localTts/LocalVoiceTtsGroup');
+    const entry = createDefaultVoiceProviderRegistry().get(providerId);
+    if (entry?.kind !== 'voice.speech-engine.v1' || !entry.providerSettings) throw new Error('Expected speech settings owner');
+    const config = { ...entry.providerSettings.defaultConfig, [field]: value };
+    const voice = writeVoiceProviderSettingsConfig(voiceSettingsDefaults, providerId, config);
+    const setVoice = vi.fn();
+    let rerenderParent = () => {};
+    function SpeechGroup() {
+      const [, refresh] = React.useReducer(count => count + 1, 0);
+      rerenderParent = refresh;
+      return role === 'stt'
+        ? React.createElement(LocalVoiceSttGroup, { voice, setVoice, cfgStt: { provider: providerId }, setStt: vi.fn() })
+        : React.createElement(LocalVoiceTtsGroup, { voice, setVoice,
+          cfgTts: VoiceLocalTtsSchema.parse({ provider: providerId }), setTts: vi.fn(), networkTimeoutMs: 15_000 });
+    }
+    const rendered = await renderScreen(React.createElement(SpeechGroup));
+    const menu = () => rendered.tree.root.findAllByType(DropdownMenu).find(row => row.props.selectedId === value)!;
+    expect(rendered.tree.root.findAllByType(DropdownMenu).map(row => row.props.selectedId)).toContain(value);
+    expect(menu().props.items.find((item: { id: string }) => item.id === value)).toMatchObject({ title: value });
+    await act(async () => menu().props.onSelect('__custom__'));
+    const editor = () => rendered.tree.root.findAll(row => row.props.fieldTestID === `voice-speech-setting:${field}.custom.field`
+      && typeof row.props.onCommit === 'function')[0];
+    expect(editor()?.props.value).toBe(value);
+    await act(async () => rerenderParent());
+    expect(editor()?.props.value).toBe(value);
+    await act(async () => editor()!.props.onCommit(`${value}-edited`));
+    expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({ providers: expect.objectContaining({
+      [providerId]: expect.objectContaining({ config: expect.objectContaining({ [field]: `${value}-edited` }) }),
+    }) }));
+  });
+
   it('renders package-owned STT fields and writes the provider envelope', async () => {
     const { createBundledLocalSttProviderSpec } = await import('./BundledSpeechSettings');
     const spec = createBundledLocalSttProviderSpec(createDefaultVoiceProviderRegistry().get(GOOGLE_GEMINI_STT_ID)!);
@@ -555,7 +610,7 @@ describe('BundledSpeechSettings', () => {
     }));
   });
 
-  it('invokes a declared speech settings action from the real bundled STT panel and persists its patch', async () => {
+  it.each(['current', 'stale'] as const)('applies a speech settings patch through the real Account writer with a %s admitted version', async (version) => {
     const providerId = 'acme.external/action-stt';
     const declaration = parseSpeechDeclaration({
       id: 'action-stt',
@@ -662,26 +717,54 @@ describe('BundledSpeechSettings', () => {
     await rendered.tree.pressByTestIdAsync('app-shell-confirmation-confirm');
     await actionEntered.promise;
     expect(executeSettingsAction).toHaveBeenCalledOnce();
+    const admittedVersion = storage.getState().settingsVersion;
+    const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+    // Observe the actual writer's typed result without replacing its implementation.
+    const writes = vi.spyOn(getSyncSingleton(), 'mutateAccountSettingsOnce');
+    onTestFinished(() => writes.mockRestore());
+    const failurePresented = createDeferred<void>();
+    let acknowledgeFailure: (() => void) | undefined;
+    if (version === 'stale') {
+      // Native Alert is the OS presentation boundary. Keep the real error and
+      // action lifecycle, then answer its actual acknowledgement button.
+      nativeAlert.mockImplementationOnce((_title, _message, buttons) => {
+        acknowledgeFailure = buttons?.[0]?.onPress;
+        failurePresented.resolve();
+      });
+      await act(async () => {
+        account.replaceVoice(writeVoiceProviderSettingsConfig(account.settings.voice, providerId, { model: 'concurrent-model' }));
+      });
+      expect(storage.getState().settingsVersion).not.toBe(admittedVersion);
+    }
     await act(async () => {
       actionResponse.resolve({ patch: { model: 'speech-2' } });
     });
-    await patchApplied.promise;
-    await waitForTestEvent(account.subscribe,
-      () => readVoiceProviderSettingsConfig(account.persistedSettings.voice, providerId)?.model,
-      model => model === 'speech-2');
+    if (version === 'current') {
+      await patchApplied.promise;
+      await waitForTestEvent(account.subscribe,
+        () => readVoiceProviderSettingsConfig(account.persistedSettings.voice, providerId)?.model,
+        model => model === 'speech-2');
+    } else {
+      await failurePresented.promise;
+      expect(acknowledgeFailure).toBeTypeOf('function');
+      await act(async () => { acknowledgeFailure!(); });
+    }
     await flushHookEffects();
     await waitForTestEvent(rendered.tree.subscribe, () => action.props.loading, loading => loading === false);
     expect(action.props.loading).toBe(false);
-    expect(readVoiceProviderSettingsConfig(account.persistedSettings.voice, providerId)).toEqual({ model: 'speech-2' });
+    expect(readVoiceProviderSettingsConfig(account.persistedSettings.voice, providerId)).toEqual({ model: version === 'current' ? 'speech-2' : 'concurrent-model' });
     expect(executeSettingsAction).toHaveBeenCalledWith({
       entry,
       actionId: 'refresh-model',
       signal: expect.any(AbortSignal),
     });
-    expect(account.writes.length).toBeGreaterThan(0);
-    expect(readVoiceProviderSettingsConfig(account.persistedSettings.voice, providerId)).toEqual({ model: 'speech-2' });
+    expect(writes).toHaveBeenCalledOnce();
+    expect(writes).toHaveBeenCalledWith(expect.objectContaining({ expectedSettingsScope: account.scope, expectedSettingsVersion: admittedVersion }));
+    await expect(writes.mock.results[0]?.value).resolves.toMatchObject(version === 'current'
+      ? { status: 'applied' }
+      : { status: 'conflict', currentSettingsVersion: storage.getState().settingsVersion });
     expect(readVoiceProviderSettingsConfig(settingsActionState.voice as VoiceSettings, providerId))
-      .toEqual({ model: 'speech-2' });
+      .toEqual({ model: version === 'current' ? 'speech-2' : 'concurrent-model' });
   });
 
   it.each([
@@ -1289,57 +1372,6 @@ describe('BundledSpeechSettings', () => {
     expect(credential.props).not.toHaveProperty('operations');
   });
 
-  it('passes an admitted mediated speech recipient contract to the canonical credential approval surface', async () => {
-    const { normalizeRecipientContractV1, createRecipientContractDigestV1 } = await import('@happier-dev/protocol');
-    const recipientContract = normalizeRecipientContractV1({ version: 1,
-      package: { pluginId: openAiCompatTtsEntry.pluginId, source: { kind: 'package', locator: '@acme/speech' } },
-      publisher: { trust: 'verified', identity: 'npm:acme' },
-      contribution: { pluginId: openAiCompatTtsEntry.pluginId, localId: 'tts' },
-      credentialSlot: { id: 'api_key', scope: 'account' },
-      operations: [{ id: 'catalog', purpose: 'voice.speech.catalog', credentialSlotId: 'api_key', effect: 'read',
-        request: { origin: 'https://speech.example', pathTemplate: '/v1/voices', method: 'GET',
-          queryTemplate: [], headerTemplate: [], bodyTemplate: { kind: 'none' },
-          credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' }, redirect: 'error',
-          maxBodyBytes: 0, contentTypes: [] },
-        parameters: { schema: { type: 'object', properties: {}, additionalProperties: false }, mapping: [] },
-        response: { maxBytes: 32768, contentTypes: ['application/json'] },
-      }],
-    });
-    const recipientContractDigest = createRecipientContractDigestV1(recipientContract);
-    const entry = Object.freeze({
-      ...openAiCompatTtsEntry,
-      accountCredentialSlot: Object.freeze({
-        id: 'api_key',
-        scope: 'account' as const,
-        kind: 'apiKey' as const,
-        recipientContract,
-        recipientContractDigest,
-      }),
-    });
-    const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
-    const spec = createBundledLocalTtsProviderSpec(entry);
-    const rendered = await renderScreen(React.createElement(spec!.Settings, {
-      cfgTts: VoiceLocalTtsSchema.parse({ provider: OPENAI_COMPAT_TTS_ID }),
-      setTts: vi.fn(),
-      voice: voiceWithRootProviderConfig(OPENAI_COMPAT_TTS_ID, {
-        baseUrl: 'https://speech.example/v1',
-        insecureLocalOriginConsent: '',
-        insecureLocalConsentMachineId: '',
-        model: 'tts-1',
-        voiceName: 'alloy',
-        format: 'mp3',
-      }),
-      setVoice: vi.fn(),
-      networkTimeoutMs: 15_000,
-      popoverBoundaryRef: null,
-    }));
-
-    expect(rendered.tree.root.findByType(CredentialComponent).props).toMatchObject({
-      recipientContract,
-      recipientContractDigest,
-    });
-  });
-
   it.each([
     ['a definitively selected Connected Account', connectedAccountSelection, undefined],
     ['an unresolved source selection', { kind: 'none' } as const, 'voice.speech.transcribe'],
@@ -1619,13 +1651,18 @@ describe('BundledSpeechSettings', () => {
     await act(async () => {
       executionMachine.machineId = 'machine-b';
       executionMachine.machineLabel = 'Machine B';
+      // Admit the new HTTP Machine through Sync, including its RPC content.
+      const { sync } = await import('@/sync/sync');
+      await sync.refreshMachines();
+      account.replaceVoice({ ...account.settings.voice, executionMachine: { mode: 'fixed', machineId: 'machine-b' } });
     });
     await rendered.update(renderSettings());
+    expect(rendered.tree.root.findByType(CredentialComponent).props.machineId).toBe('machine-b');
     await act(async () => machineRequest.resolve([
       { id: 'machine-model', name: 'Machine model', metadata: {} },
     ]));
     await waitForTestEvent(rendered.tree.subscribe, modelItems,
-      items => items?.some((item: { id: string }) => item.id === 'machine-model') === true);
+      items => items?.some((item: { id: string }) => item.id === 'machine-model' || item.id === '__retry__') === true);
     expect(modelItems()).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'machine-model' }),
     ]));

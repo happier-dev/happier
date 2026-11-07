@@ -175,7 +175,7 @@ export function useVoiceDictationReadinessModel(props: Readonly<{
   const selectedStt = dictation.sttBinding === 'explicit'
     ? dictation.stt
     : localAdapter.config.stt;
-  const providerSpec = getLocalSttProviderSpec(selectedStt.provider, 'dictation_stt');
+  const providerSpec = providerSpecs.find(spec => spec.id === selectedStt.provider);
   const setDictation = (next: typeof dictation): void => {
     setReadinessCheck((current) => current?.status === 'checking' ? current : null);
     props.setVoice({ ...props.voice, dictation: next });
@@ -362,29 +362,6 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
           );
         })}
 
-        {providerSpec ? (
-          <providerSpec.Settings
-            cfgStt={selectedStt}
-            setStt={(stt) => {
-              if (dictation.sttBinding === 'explicit') {
-                setDictation({ ...dictation, stt });
-                return;
-              }
-              setReadinessCheck((current) => current?.status === 'checking' ? current : null);
-              const nextLocalAdapterSettings = {
-                ...localAdapter.config,
-                stt,
-              };
-              props.setVoice(localAdapter.adapterId === 'local_direct'
-                ? writeLocalDirectVoiceSettings(props.voice, nextLocalAdapterSettings)
-                : writeLocalConversationVoiceSettings(props.voice, nextLocalAdapterSettings));
-            }}
-            voice={props.voice}
-            setVoice={props.setVoice}
-            popoverBoundaryRef={props.popoverBoundaryRef}
-            daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
-          />
-        ) : null}
         {providerSpecs.filter((spec) => spec.id !== providerSpec?.id).map((spec) => (
           searchPrerequisite({ settings: [...getVoiceContributedSettingRefs(declarations, spec.id),
               ...(spec.id === 'local_neural' ? getVoiceLocalNeuralSttSettingRefs(VOICE_DICTATION_SETTINGS.settings) : [])], reason: t('settingsVoice.pages.search.select', { choice: spec.title, control: t('settingsVoice.dictation.provider') }) })
@@ -441,6 +418,36 @@ export function DictationSettingsSection(props: Parameters<typeof useVoiceDictat
         </SettingAnchor>
       </ItemGroup>
 
+      {/* The chosen engine's own options stand in their own section after Language (lab D), so they never read
+          as part of the last engine in the list. An engine without options has no section. */}
+      {providerSpec?.Settings ? (
+        <ItemGroup title={providerSpec.title} description={t('settingsVoice.pages.dictation.engineOptionsDescription')}>
+          <providerSpec.Settings
+            hideLanguage
+            cfgStt={selectedStt}
+            setStt={(stt) => {
+              if (dictation.sttBinding === 'explicit') {
+                setDictation({ ...dictation, stt });
+                return;
+              }
+              setReadinessCheck((current) => current?.status === 'checking' ? current : null);
+              const nextLocalAdapterSettings = {
+                ...localAdapter.config,
+                stt,
+              };
+              props.setVoice(localAdapter.adapterId === 'local_direct'
+                ? writeLocalDirectVoiceSettings(props.voice, nextLocalAdapterSettings)
+                : writeLocalConversationVoiceSettings(props.voice, nextLocalAdapterSettings));
+            }}
+            voice={props.voice}
+            setVoice={props.setVoice}
+            popoverBoundaryRef={props.popoverBoundaryRef}
+            daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+          />
+        </ItemGroup>
+      ) : null}
+
     </View>
   );
 }
+

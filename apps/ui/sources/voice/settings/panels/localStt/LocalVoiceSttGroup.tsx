@@ -8,7 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VoiceLocalSttSchema, type VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
-import { getLocalSttProviderSpec, useLocalSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
+import { useLocalSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
@@ -46,7 +46,7 @@ export function LocalVoiceSttGroup(props: {
     }
   }, [props.cfgStt]);
 
-  const providerSpec = getLocalSttProviderSpec(normalized.provider);
+  const providerSpec = providerSpecs.find(spec => spec.id === normalized.provider);
 
   return (
     <ItemGroup
@@ -81,7 +81,7 @@ export function LocalVoiceSttGroup(props: {
       />
       </SettingAnchor>
 
-      {providerSpec ? (
+      {providerSpec ? (providerSpec.Settings ? (
         <providerSpec.Settings
           cfgStt={normalized}
           setStt={props.setStt}
@@ -90,7 +90,7 @@ export function LocalVoiceSttGroup(props: {
           popoverBoundaryRef={props.popoverBoundaryRef}
           daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
         />
-      ) : (
+      ) : null) : (
         <Item title={t('common.unavailable')} />
       )}
       {providerSpecs.filter((spec) => spec.id !== providerSpec?.id).map((spec) => (

@@ -1,10 +1,6 @@
-import * as React from 'react';
-
 import { t } from '@/text';
 
 import type { LocalSttProviderSpec } from '../_types';
-
-const DeviceSttSettings: LocalSttProviderSpec['Settings'] = () => null;
 
 export const deviceSttProviderSpec: LocalSttProviderSpec = {
   id: 'device',
@@ -12,5 +8,4 @@ export const deviceSttProviderSpec: LocalSttProviderSpec = {
   get subtitle() { return t('settingsVoice.local.deviceSttSubtitle'); },
   iconName: 'microphone',
   get detail() { return t('settingsVoice.local.deviceSttDetail'); },
-  Settings: DeviceSttSettings,
 };
