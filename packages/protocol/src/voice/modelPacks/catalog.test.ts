@@ -23,6 +23,19 @@ describe('MODEL_PACK_CATALOG', () => {
       .toHaveProperty('displayName', 'Parakeet v3 (0.6B, int8)');
   });
 
+  it('offers the published multilingual Parakeet v3 pack for batch speech without changing streaming defaults', () => {
+    expect(getModelPackCatalogEntry('sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8')).toMatchObject({
+      publicationStatus: 'published', streamingCapable: false,
+      runtimeFamily: 'sherpa_parakeet_offline',
+      languages: expect.arrayContaining(['nl', 'fr', 'de']),
+      supportArtifacts: expect.arrayContaining([
+        { type: 'file', kind: 'license', path: 'LICENSES/CC-BY-4.0.txt' },
+        { type: 'file', kind: 'notice', path: 'THIRD_PARTY_NOTICES.txt' },
+      ]),
+    });
+    expect(getDefaultModelPackId('stt_sherpa')).toBe('sherpa-onnx-streaming-zipformer-en-2023-06-26');
+  });
+
   it('publishes only the exact canonical q8 Kokoro pack after normalized asset publication', () => {
     expect(KOKORO_DEFAULT_TTS_PACK_ID).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
     expect(getModelPackCatalogEntry(KOKORO_DEFAULT_TTS_PACK_ID)).toMatchObject({
