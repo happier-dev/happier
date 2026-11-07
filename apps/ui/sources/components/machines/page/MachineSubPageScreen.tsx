@@ -156,7 +156,9 @@ function MachineSubPageBody(props: Readonly<{
             return <MachineDirectConnectionSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} />;
         case 'security':
             return <MachineSecuritySection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
-                installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey} />;
+                installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey}
+                metadataVersion={machine.metadataVersion} metadataReadable={machine.metadata != null}
+                canManage={machine.isShared !== true || machine.access?.role === 'manage'} shared={machine.isShared === true} />;
         case 'installables':
             return <MachineInstallablesSection machineId={machine.id} serverId={serverId} machineSentenceName={target.machineSentenceName} />;
         case 'doctor':

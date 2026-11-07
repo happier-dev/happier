@@ -15,6 +15,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { joinList } from '@/utils/text/joinList';
 
+import { MachineAdminPowerSection } from './MachineAdminPowerSection';
 import type { MachineUpdatesScope } from './machineUpdatesActions';
 import {
   useMachineSecurityReboot,
@@ -55,6 +56,11 @@ export function MachineSecuritySection(
     installationId: string | null;
     online: boolean | null;
     refreshKey: number;
+    metadataVersion: number;
+    metadataReadable: boolean;
+    /** Elevation needs Manage (10-31); a Use grantee reads the facts only. */
+    canManage: boolean;
+    shared: boolean;
   }>,
 ) {
   const router = useRouter();
@@ -108,12 +114,25 @@ export function MachineSecuritySection(
       openActionOperationDetail({ serverId: props.serverId, operationId }),
   };
   return (
-    <MachineSecurityView
-      updates={updates}
-      machineName={props.machineName}
-      online={props.online}
-      controls={controls}
-    />
+    <>
+      <MachineAdminPowerSection
+        serverId={props.serverId}
+        machineId={props.machineId}
+        machineName={props.machineName}
+        online={props.online}
+        metadataVersion={props.metadataVersion}
+        metadataReadable={props.metadataReadable}
+        canManage={props.canManage}
+        shared={props.shared}
+        onOpenApproval={controls.onOpenApproval}
+      />
+      <MachineSecurityView
+        updates={updates}
+        machineName={props.machineName}
+        online={props.online}
+        controls={controls}
+      />
+    </>
   );
 }
 
