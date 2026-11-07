@@ -39,10 +39,14 @@ export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Read
         const expectedAttemptId = getVoiceSessionPresentedAttemptId();
         return execute('ui.voice_global.brief.request', expectedAttemptId ? { expectedAttemptId } : {});
     }, [execute]);
+    const openSetup = React.useCallback(() => {
+        void execute('ui.voice_global.setup.open', {});
+    }, [execute]);
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
     if (voiceEnabled !== true || props.open) return null;
+    // Setup's own open Action: in place where a host presents it (Home's Get set up), else Settings → Voice open.
     const setup = voice.primaryAction === 'setup' && voice.primaryActionLabel
-        ? { label: voice.primaryActionLabel, onPress: voice.onPrimaryAction }
+        ? { label: voice.primaryActionLabel, onPress: openSetup }
         : undefined;
     return <VoiceBriefButtonView onOpen={request} block={props.block} disabled={!setup && !ready} setup={setup} />;
 });
