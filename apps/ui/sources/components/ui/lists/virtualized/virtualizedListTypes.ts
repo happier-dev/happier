@@ -109,6 +109,8 @@ export type VirtualizedListProps<T> = Readonly<{
         index: number,
     ) => { length: number; offset: number; index: number };
     getFixedItemSize?: (item: T, index: number, itemType?: string | number) => number | undefined;
+    /** A row's expected height before it is measured (it is still measured once drawn); undefined uses the type's average. */
+    getEstimatedItemSize?: (item: T, index: number, itemType?: string | number) => number | undefined;
     drawDistance?: number;
     recycleItems?: boolean;
     maintainVisibleContentPosition?: boolean | Readonly<Record<string, unknown>>;
@@ -125,6 +127,8 @@ export type VirtualizedListProps<T> = Readonly<{
     webScrollHandlers?: Readonly<{
         onWheel?: (event: unknown) => void;
         onTouchMove?: (event: unknown) => void;
+        onPointerMove?: React.PointerEventHandler<HTMLElement>;
+        onPointerLeave?: React.PointerEventHandler<HTMLElement>;
     }>;
 
     /**

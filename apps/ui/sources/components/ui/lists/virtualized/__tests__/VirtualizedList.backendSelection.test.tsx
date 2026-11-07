@@ -61,6 +61,29 @@ describe('VirtualizedList backend', () => {
         expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
     });
 
+    it('keeps the web row renderer stable until its renderer or key extractor changes', async () => {
+        const { VirtualizedList } = await import('../VirtualizedList');
+        const keyExtractor = (item: Row) => item.id;
+        const renderItem = ({ item }: { item: Row }) => React.createElement('View', { testID: `row-${item.id}` });
+        const render = (renderer = renderItem, extractKey = keyExtractor) => (
+            <VirtualizedList<Row> data={rows} keyExtractor={extractKey} renderItem={renderer} />
+        );
+        const screen = await renderScreen(render());
+        const before = mocks.legend?.state.props.renderItem;
+
+        await screen.update(render());
+        expect(mocks.legend?.state.props.renderItem).toBe(before);
+
+        const nextRenderer = ({ item }: { item: Row }) => React.createElement('View', { testID: `updated-${item.id}` });
+        await screen.update(render(nextRenderer));
+        const afterRendererChange = mocks.legend?.state.props.renderItem;
+        expect(afterRendererChange).not.toBe(before);
+        expect(screen.findByTestId('updated-a')).toBeTruthy();
+
+        await screen.update(render(nextRenderer, item => `updated-${item.id}`));
+        expect(mocks.legend?.state.props.renderItem).not.toBe(afterRendererChange);
+    });
+
     it('renders the Legend backend for auto on native', async () => {
         platformState.os = 'ios';
         const nativeStyle = { height: 320 };

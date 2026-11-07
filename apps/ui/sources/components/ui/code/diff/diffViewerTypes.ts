@@ -72,6 +72,7 @@ export type DiffViewerBaseProps = Readonly<{
      */
     presentationStyleOverride?: 'unified' | 'split';
     scrollToLineId?: string;
+    scrollToLineRequestId?: CodeLinesViewProps['scrollToLineRequestId'];
     onScrollToLine?: CodeLinesViewProps['onScrollToLine'];
     externalScrollView?: CodeLinesViewProps['externalScrollView'];
     highlightLineId?: string;
@@ -135,8 +136,14 @@ export type TextDiffViewerProps = DiffViewerBaseProps & Readonly<{
      * soft bands, no hunk headers). `code` (default) is the code diff.
      */
     face?: 'code' | 'prose';
-    /** The prose face's side labels and, when a choice is made, which side is kept (the other dims). */
-    prose?: Readonly<{ oldLabel?: ReactNode; newLabel?: ReactNode; kept?: 'old' | 'new' | null }>;
+    /**
+     * The prose face's side labels and, when a choice is made, which side is kept (the other dims).
+     * `inline`: an edit read top to bottom rather than two versions to compare — one column in document
+     * order, each change marked where it happens (no sides, labels or kept choice).
+     * `words`: one passage edited, read as one run of words with only the changed words marked, in place
+     * (a suggested edit to a sentence). Labels, when given, only name the sides for assistive technology.
+     */
+    prose?: Readonly<{ oldLabel?: ReactNode; newLabel?: ReactNode; kept?: 'old' | 'new' | null; inline?: boolean; words?: boolean }>;
 }>;
 
 export type DiffViewerProps = UnifiedDiffViewerProps | TextDiffViewerProps;

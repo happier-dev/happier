@@ -1,4 +1,4 @@
-import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, buildScmReviewScopeId, type ScmReviewedMarkResponse, type ScmReviewedMarksSelection } from '@happier-dev/protocol/scm';
+import { buildScmReviewedMarksKey, createScmReviewedMarksRecordPort, buildScmReviewScopeId, ScmReviewedMarksError, type ScmReviewedMarkResponse, type ScmReviewedMarksSelection, type ScmReviewedUnmarkInput } from '@happier-dev/protocol/scm';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { AccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import type { ServerFetch } from '@/sync/http/client';
@@ -13,8 +13,8 @@ function errorCode(error: unknown): string {
 export function createScmReviewedMarksOperations(params: ScmReviewedMarksSelection & Readonly<{
   credentials: AuthCredentials; request: ServerFetch;
   shouldContinue: () => boolean; encryption?: AccountStorageContext['encryption'];
-  /** Optional admitted Action transport for callers that execute an agent intent. */
-  setReviewedAction?: (refs: readonly string[], reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
+  /** Every UI intent enters the mounted Action; this observer never writes Account data directly. */
+  setReviewedAction: (input: ScmReviewedUnmarkInput, reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
   getSelection?: () => ScmReviewedMarksSelection;
 }>) {
   const scopeId = buildScmReviewScopeId(params.comparison ? { repositoryRootPath: params.comparison.repository.rootPath, source: params.comparison.source } : params.source);
@@ -27,10 +27,16 @@ export function createScmReviewedMarksOperations(params: ScmReviewedMarksSelecti
   let state = createScmReviewedMarksState();
   const retiredState: ScmReviewedMarksState = { status: 'retired', record: null, version: -1, errorCode: 'account_kv_scope_retired' };
   const listeners = new Set<() => void>();
+  const recordListeners = new Set<() => void>();
+  const statusListeners = new Set<() => void>();
   const apply = (next: ScmReviewedMarksState) => {
     const reconciled = reconcileScmReviewedMarksState(state, next);
     if (state === reconciled) return;
+    const recordChanged = state.record !== reconciled.record;
+    const statusChanged = state.status !== reconciled.status || state.errorCode !== reconciled.errorCode;
     state = reconciled;
+    if (recordChanged) for (const listener of recordListeners) listener();
+    if (statusChanged) for (const listener of statusListeners) listener();
     for (const listener of listeners) listener();
   };
   const fail = (error: unknown) => apply({ status: current() ? 'error' : 'retired', record: null, version: state.version, errorCode: errorCode(error) });
@@ -52,7 +58,9 @@ export function createScmReviewedMarksOperations(params: ScmReviewedMarksSelecti
     return pendingRead;
   };
   const disposePush = subscribeKvPrefixChanges(key, changes => {
-    if (!changes.some(change => change.key === key) || !current()) return;
+    // A response already applied this authoritative per-key version. Other observers still
+    // fetch a genuinely newer push; error/idle observations retain their recovery read.
+    if (!changes.some(change => change.key === key && (state.status !== 'ready' || change.version > state.version)) || !current()) return;
     pushedWhileReading = true;
     void read().catch(() => { /* read publishes the typed failure without exposing old content. */ });
   }, { credentials: params.credentials, shouldContinue: current });
@@ -67,14 +75,28 @@ export function createScmReviewedMarksOperations(params: ScmReviewedMarksSelecti
       return result;
     } catch (error) { fail(error); return { success: false, errorCode: errorCode(error), error: error instanceof Error ? error.message : 'Reviewed marks are unavailable' }; }
   };
+  const selection = () => {
+    const selected = params.getSelection?.() ?? params;
+    const scope = selected.comparison ? { repositoryRootPath: selected.comparison.repository.rootPath, source: selected.comparison.source } : selected.source;
+    if (buildScmReviewScopeId(scope) !== scopeId) throw new ScmReviewedMarksError('reviewed_marks_invalid_selection', 'The displayed review scope changed');
+    return { selected, input: { v: 2 as const, cwd: scope.repositoryRootPath, source: scope.source,
+      ...(selected.comparison ? { comparisonId: selected.comparison.id } : {}) } };
+  };
   return {
-    key, read, setReviewed: (refs: readonly string[], reviewed: boolean) => perform(() => params.setReviewedAction
-      ? params.setReviewedAction(refs, reviewed)
-      : port.setReviewed(refs, reviewed)),
-    setReviewedKeys: (keys: readonly string[], reviewed: boolean) => perform(() => port.setReviewedKeys(keys, reviewed)),
-    clear: () => perform(() => port.clear()),
+    key, read, setReviewed: (refs: readonly string[], reviewed: boolean) => perform(() => {
+      const { selected, input } = selection();
+      if (!selected.comparison) throw new ScmReviewedMarksError('reviewed_marks_invalid_selection', 'Captured evidence is required for occurrence references');
+      return params.setReviewedAction({ ...input, comparisonId: selected.comparison.id, changeRefs: [...refs] }, reviewed);
+    }),
+    setReviewedKeys: (keys: readonly string[], reviewed: boolean) => perform(() => params.setReviewedAction({ ...selection().input, changeKeys: [...keys] }, reviewed)),
+    clear: () => perform(() => params.setReviewedAction({ ...selection().input, reset: true }, false)),
     getSnapshot: () => current() ? state : retiredState,
+    recordSource: {
+      getSnapshot: () => current() && state.status === 'ready' ? state.record : null,
+      subscribe: (listener: () => void) => { recordListeners.add(listener); return () => { recordListeners.delete(listener); }; },
+    },
+    subscribeStatus: (listener: () => void) => { statusListeners.add(listener); return () => { statusListeners.delete(listener); }; },
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    retire: () => { retired = true; disposePush(); apply({ status: 'retired', record: null, version: state.version }); listeners.clear(); },
+    retire: () => { retired = true; disposePush(); apply({ status: 'retired', record: null, version: state.version }); listeners.clear(); recordListeners.clear(); statusListeners.clear(); },
   };
 }

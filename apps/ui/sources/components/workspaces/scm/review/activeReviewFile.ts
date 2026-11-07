@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { scmComparisonKey } from '@/components/sessions/files/comparison/filesComparison';
 
 /**
- * The one "active review file" per review scope (a Session address, a workspace): which changed file
- * Review is showing, and a request from a changed-files list to show another. Review publishes; the
+ * The active file for a review's comparison, projected to its Session/workspace for Git lists.
+ * Restoration stays comparison-local; an explicit list request may navigate. Review publishes; the
  * Git changed-files list (and any list that replaces it) highlights, reveals and asks — neither owns
  * the other's scroll. Nothing is persisted. Ordinary hidden lists hold no request; a route promotion
  * may retain one comparison-qualified path until matching Files mounts, or its captured host retires.
@@ -128,6 +129,11 @@ export function activeReviewFileKeyForSession(sessionId: string, serverId?: stri
 /** Review and Git share the canonical normalized workspace identity, including its Home and machine. */
 export function activeReviewFileKeyForWorkspace(scope: WorkspaceScopeBase): string {
     return `workspace:${buildWorkspaceCacheKey(scope)}`;
+}
+
+/** A tab restores only its own comparison; the enclosing scope remains the explicit list-navigation channel. */
+export function activeReviewFileKeyForComparison(scopeKey: string, comparison: SessionScmReviewComparison | null): string {
+    return JSON.stringify([scopeKey, comparison ? scmComparisonKey(comparison) : null]);
 }
 
 /**

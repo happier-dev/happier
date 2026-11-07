@@ -16,6 +16,10 @@ import {
     subscribeActiveReviewFile,
 } from '@/components/workspaces/scm/review/activeReviewFile';
 
+function PaneWrapper({ children }: PropsWithChildren) {
+    return <AppPaneProvider>{children}</AppPaneProvider>;
+}
+
 describe('review selection restoration', () => {
     afterEach(async () => {
         await standardCleanup();
@@ -30,10 +34,11 @@ describe('review selection restoration', () => {
         function Wrapper({ children }: PropsWithChildren) {
             return <AppPaneProvider><DispatchProbe />{children}</AppPaneProvider>;
         }
+        const initialProps: { host: string; preference: string | null } = { host: 'home/account/comparison/walkthrough', preference: null };
         const hook = await renderHook(({ host, preference }: { host: string; preference: string | null }) => {
             renders++;
             return useScmReviewModelChoice(host, preference, 'session:model-draft');
-        }, { initialProps: { host: 'home/account/comparison/walkthrough', preference: null }, wrapper: Wrapper });
+        }, { initialProps, wrapper: Wrapper });
         await act(async () => hook.getCurrent().setModel('explicit-model'));
         expect(hook.getCurrent().chosenModel).toBe('explicit-model');
         renders = 0;
@@ -56,7 +61,7 @@ describe('review selection restoration', () => {
                 pane, hostKey: 'host', activeFileKey: key, comparison, view: 'files', presented,
                 persistedSelection: { selectionKey: JSON.stringify(['host', scmComparisonKey(comparison)]), path: 'turn-one.txt' },
             });
-        }, { initialProps: { presented: true }, wrapper: AppPaneProvider });
+        }, { initialProps: { presented: true }, wrapper: PaneWrapper });
 
         expect(readActiveReviewFile(key).focusRequest).toBeNull();
         expect(readActiveReviewFile(hook.getCurrent().key).focusRequest).toMatchObject({ path: 'turn-one.txt', comparison });
@@ -83,7 +88,7 @@ describe('review selection restoration', () => {
                     comparison: session, view: 'files', presented,
                     persistedSelection: { selectionKey: JSON.stringify(['host', scmComparisonKey(session)]), path: 'other.txt' } }),
             };
-        }, { initialProps: { presented: false }, wrapper: AppPaneProvider });
+        }, { initialProps: { presented: false }, wrapper: PaneWrapper });
         const branchKey = hook.getCurrent().branch.key;
         await act(async () => publishActiveReviewFile(branchKey, { presented: true, activePath: 'turn-one.txt' }));
         const branchState = readActiveReviewFile(branchKey);
@@ -105,7 +110,7 @@ describe('review selection restoration', () => {
             const pane = useAppPaneScope('session:retained-return');
             return useScmReviewActiveFileSelection({ pane, hostKey: 'host', activeFileKey: key, comparison, view, presented,
                 persistedSelection: { selectionKey: JSON.stringify(['host', scmComparisonKey(comparison)]), path: 'last.txt' } });
-        }, { initialProps: { presented: true, view: 'files' }, wrapper: AppPaneProvider });
+        }, { initialProps: { presented: true, view: 'files' }, wrapper: PaneWrapper });
         const restored = readActiveReviewFile(hook.getCurrent().key).focusRequest;
         expect(restored?.path).toBe('last.txt');
         let requests = 0;

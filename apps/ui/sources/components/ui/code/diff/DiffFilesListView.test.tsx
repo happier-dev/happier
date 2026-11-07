@@ -27,14 +27,19 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-vi.mock('@legendapp/list/react-native', async importOriginal => ({
-    ...await importOriginal<Record<string, unknown>>(),
-    LegendList: (props: any) => {
-        legendListMockState = legendListMockState ?? { props: null };
-        legendListMockState.props = props;
-        return React.createElement('LegendList', props);
-    },
-}));
+const legendScrollToIndex = vi.fn();
+vi.mock('@legendapp/list/react-native', async importOriginal => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({
+        original: await importOriginal<Record<string, unknown>>(),
+        renderItems: false,
+        refHandle: { scrollToIndex: legendScrollToIndex },
+        onCommit: props => {
+            legendListMockState = legendListMockState ?? { props: null };
+            legendListMockState.props = props;
+        },
+    }).module;
+});
 
 installCodeDiffCommonModuleMocks({
     reactNative: async () => {
@@ -181,6 +186,54 @@ describe('DiffFilesListView', () => {
             (Platform as unknown as { OS: string; select: (options: any) => unknown }).OS = previousOS;
             (Platform as unknown as { OS: string; select: (options: any) => unknown }).select = previousSelect;
         }
+    });
+
+    it('reads leading rows before the files in one virtualized list while files keep their own index space', async () => {
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+        legendListMockState = null;
+        legendScrollToIndex.mockClear();
+        const files: any[] = ['a', 'b'].map((name) => ({ key: name, filePath: `src/${name}.ts`, added: 1, removed: 0, unifiedDiff: 'x\n' }));
+        const fileRows: Array<{ key: string; index: number }> = [];
+        const viewable: any[] = [];
+        const leadingViewable: boolean[] = [];
+        const ref = React.createRef<any>();
+        await renderScreen(<DiffFilesListView ref={ref} files={files} expandedKeys={new Set()} onToggleExpanded={() => {}}
+            canRenderInlineDiffs wrapLines showLineNumbers showPrefix virtualizeFileList
+            leadingRows={{ keys: ['i0', 'i1', 'i2'], render: (index) => React.createElement('IndexRow', { testID: `index-row:${index}` }),
+                onViewableChange: (value) => leadingViewable.push(value) }}
+            onViewableItemsChanged={(info: any) => viewable.push(info)}
+            renderFileRow={({ file, index }: any) => { fileRows.push({ key: file.key, index }); return React.createElement('FileRow'); }} />);
+        const props = getLegendListProps();
+        expect(props.data.map((item: any) => props.keyExtractor(item))).toHaveLength(5);
+        expect(props.data.slice(0, 3).map((item: any, index: number) => props.getItemType(item, index))).toEqual(['leading', 'leading', 'leading']);
+        const rendered = await renderScreen(<>{props.renderItem({ item: props.data[1], index: 1 })}{props.renderItem({ item: props.data[4], index: 4 })}</>);
+        expect(rendered.findByTestId('index-row:1')).toBeTruthy();
+        expect(fileRows).toEqual([{ key: 'b', index: 1 }]);
+        await act(async () => props.onViewableItemsChanged({
+            viewableItems: [2, 3].map((index) => ({ index, item: props.data[index], key: props.keyExtractor(props.data[index]), isViewable: true })),
+            changed: [],
+        }));
+        expect(leadingViewable).toEqual([true]);
+        expect(viewable.at(-1).viewableItems.map((token: any) => [token.index, token.item.key])).toEqual([[0, 'a']]);
+        await act(async () => props.onViewableItemsChanged({
+            viewableItems: [{ index: 4, item: props.data[4], key: props.keyExtractor(props.data[4]), isViewable: true }], changed: [],
+        }));
+        expect(leadingViewable).toEqual([true, false]);
+        ref.current.scrollToIndex({ index: 1, animated: false });
+        expect(legendScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 4 }));
+    });
+
+    it('gives the recycler the known height of each leading row before it is drawn, and leaves file rows to measured averages', async () => {
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+        legendListMockState = null;
+        const files: any[] = [{ key: 'a', filePath: 'src/a.ts', added: 1, removed: 0, unifiedDiff: 'x\n' }];
+        await renderScreen(<DiffFilesListView files={files} expandedKeys={new Set()} onToggleExpanded={() => {}}
+            canRenderInlineDiffs wrapLines showLineNumbers showPrefix virtualizeFileList
+            leadingRows={{ keys: ['i0', 'i1'], render: () => null, estimatedSize: (index) => (index === 1 ? 39 : 28) }} />);
+        const props = getLegendListProps();
+        // Unmeasured offsets (a restored scroll position, a far jump) count leading rows at their real height.
+        expect(props.data.map((item: any, index: number) => props.getEstimatedItemSize?.(item, index, props.getItemType(item, index))))
+            .toEqual([28, 39, undefined]);
     });
 
     it('configures LegendList with stable virtualization defaults', async () => {

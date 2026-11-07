@@ -6,8 +6,7 @@ import {
 } from '@legendapp/list/react-native';
 import { Platform, StyleSheet, type ViewStyle } from 'react-native';
 
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-
+import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { normalizeVirtualizedListProps } from '../normalizeVirtualizedListProps';
 import type {
     VirtualizedListProps,
@@ -144,14 +143,14 @@ function LegendListBackendInner<T>(
 
     // A browser retains keyboard focus while a person scrolls. Keep that cell in Legend's
     // existing pinned inventory so recycling cannot silently move focus to the document body.
-    const renderItem = Platform.OS === 'web'
-        ? (info: VirtualizedListRenderItemInfo<T>) => {
-            const key = legendShared.keyExtractor(info.item, info.index);
-            return <div style={{ display: 'contents' }} onFocus={() => setFocusedItemKey(key)} onBlur={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget)) setFocusedItemKey(null);
-            }}>{legendShared.renderItem(info)}</div>;
-        }
-        : legendShared.renderItem;
+    const { keyExtractor, renderItem: renderRow } = legendShared;
+    const renderWebItem = React.useCallback((info: VirtualizedListRenderItemInfo<T>) => {
+        const key = keyExtractor(info.item, info.index);
+        return <div style={{ display: 'contents' }} onFocus={() => setFocusedItemKey(key)} onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setFocusedItemKey(null);
+        }}>{renderRow(info)}</div>;
+    }, [keyExtractor, renderRow]);
+    const renderItem = Platform.OS === 'web' ? renderWebItem : renderRow;
     const retainedKeys = focusedItemKey ? [...(retainedItemKeys ?? []), focusedItemKey] : retainedItemKeys;
 
     // Boundary adapter: Legend's prop and renderItem-info shapes are structural
@@ -163,13 +162,15 @@ function LegendListBackendInner<T>(
         ...nativeScrollLifecycleHandlers,
         ...webScrollHandlers,
         contentContainerStyle: legendContentContainerStyle,
+        // Legend's web scroll view takes one level of style; a caller's own array must not reach the DOM nested.
         style: Platform.OS === 'web'
-            ? [LEGEND_LIST_WEB_FILL_STYLE, style]
+            ? StyleSheet.flatten([LEGEND_LIST_WEB_FILL_STYLE, style])
             : style,
         estimatedItemSize: virtualization.estimatedItemSize,
         drawDistance: virtualization.drawDistance,
         getItemType: virtualization.getItemType,
         getFixedItemSize: virtualization.getFixedItemSize,
+        getEstimatedItemSize: virtualization.getEstimatedItemSize,
         recycleItems: virtualization.recycleItems,
         onStartReached: virtualization.onStartReached,
         onStartReachedThreshold: virtualization.onStartReachedThreshold,
@@ -177,16 +178,11 @@ function LegendListBackendInner<T>(
         data: legendShared.data,
     } as unknown as LegendListProps<T>;
 
-    // A retained surface that is not being presented is `display: none`: every row measures 0 x 0.
-    // Legend ignores a 0 x 0 viewport but accepts 0 x 0 rows, so a data or renderItem change while
-    // hidden makes every row "fit", the container pool grows a batch per synchronous layout pass, and
-    // React's nested-update limit ends it ("Maximum update depth exceeded" in ContainerLayoutCoordinator).
-    // Hold the last presented props instead; the current ones flow in the render that presents it again.
-    const presented = useLayoutPresentationActive();
-    const presentedPropsRef = React.useRef(legendProps);
-    if (presented) presentedPropsRef.current = legendProps;
+    // While its retained surface is hidden Legend keeps the last presented props, so a data change there
+    // never re-lays out the list against a hidden viewport; current props flow in when it is shown again.
+    const presentedLegendProps = usePresentedValue(legendProps);
 
-    return <LegendList {...presentedPropsRef.current} ref={innerRef} />;
+    return <LegendList {...presentedLegendProps} ref={innerRef} />;
 }
 
 export const LegendListBackend = React.forwardRef(LegendListBackendInner) as <T>(

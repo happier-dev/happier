@@ -1,16 +1,15 @@
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
+import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
 import { safeParse, type core } from 'zod/mini';
 import { SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema } from '@happier-dev/protocol/scm';
 import type { ScmRpcFailure } from './scmRpcFailure';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
-export type UiScmActionExecutor = Readonly<{
-    execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => Promise<ActionExecuteResult>;
-}>;
+export type UiScmActionExecutor = FrontDoorActionExecute['confirmed'] & Pick<FrontDoorActionExecute, 'confirmed'>;
 export type UiScmActionFailure = Readonly<{
     success: false; errorCode: string; error: string; approvalArtifactId?: string;
 }>;
@@ -82,6 +81,8 @@ async function announceScmApprovalPending(artifactId: string, serverId: string |
 export async function invokeUiScmAction<T>(params: Readonly<{
     actionId: ActionId; input: unknown; schema: core.$ZodType<T>;
     context: UiActionExecutorContext; executor?: UiScmActionExecutor;
+    /** The existing review control confirmed this exact SCM invocation. */
+    confirmed?: true;
     shouldContinue?: () => boolean;
     /** Fires when the admitted Action is about to reach the Machine, after any in-place confirmation. */
     onDispatched?: () => void;
@@ -94,12 +95,12 @@ export async function invokeUiScmAction<T>(params: Readonly<{
     const effectReceipt = effectClass === 'write' || effectClass === 'external' || effectClass === 'danger';
     if (!current()) return retired();
     try {
-        const executor = params.executor ?? (await import('@/sync/ops/actions/defaultActionExecutor'))
-            .createDefaultActionExecutor(params.onDispatched ? { onScmDispatched: params.onDispatched } : undefined);
+        const executor = params.executor ?? createFrontDoorActionExecute(undefined,
+            params.onDispatched ? { onScmDispatched: params.onDispatched } : undefined);
         // `execute` is the run-now entry: it alone offers a present person the in-place
         // confirmation. Withdrawal before dispatch is the context signal; `shouldContinue`
         // is read before entry and, for non-receipt effects, after the result.
-        const response = await executor.execute(params.actionId, params.input, {
+        const response = await (params.confirmed ? executor.confirmed : executor)(params.actionId, params.input, {
             ...params.context, surface: 'ui', actionRequestId: randomUUID(),
         });
         if (!effectReceipt && !current()) return retired();
