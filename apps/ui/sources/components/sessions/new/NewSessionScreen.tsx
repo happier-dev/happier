@@ -37,6 +37,7 @@ import { isNewSessionDraftLaunchOperationInCustody } from '@/components/sessions
 import { NewSessionDraftComposerActions } from '@/components/sessions/drafts/NewSessionDraftComposerActions';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { deleteNewSessionDraft } from '@/components/sessions/drafts/deleteNewSessionDraft';
+import { deleteNewSessionDraft } from '@/components/sessions/drafts/deleteNewSessionDraft';
 import { buildSessionDraftSyncStatusBadge } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import {
     SessionDraftConflictResolution,

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Platform, Pressable, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 
 import {
     buildNewSessionDraftRowPresentation,
@@ -60,6 +59,7 @@ import type { SessionListViewContext } from './search/sessionListViewFilters';
 import { resolveSessionListGroupRowGeometry, SessionListGroup, SessionListGroupMoreRow } from './SessionListGroup';
 import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { deleteNewSessionDraft } from '@/components/sessions/drafts/deleteNewSessionDraft';
 export { buildNewSessionDraftContinueRoute } from '@/components/sessions/drafts/newSessionDraftNavigation';
 
 export { buildNewSessionDraftRowPresentation } from '@/components/sessions/drafts/newSessionDraftPresentation';
@@ -520,11 +520,8 @@ const ServerScopedNewSessionDraftsSection = React.memo(function ServerScopedNewS
         }
         // The Action owner rechecks launch custody after its configurable review,
         // then the canonical tombstone closes any pending Runner activation.
-        const outcome = await action.execute('session.draft.delete', { draftId });
-        if (!outcome.ok) return false;
-        const parsed = AppShellActionOutputSchemas['session.draft.delete'].safeParse(outcome.result);
-        return parsed.success && parsed.data.status === 'deleted';
-    }, [action.execute, props.scope]);
+        return deleteNewSessionDraft({ execute: action.execute, draftId, isCurrent: action.isCurrent });
+    }, [action.execute, action.isCurrent, props.scope]);
 
     return (
         <NewSessionDraftsSectionView

@@ -83,7 +83,8 @@ function readFailureMessage(value: unknown): string | null {
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
-    if (code === 'outcome_unknown' || code === 'approval_execution_outcome_unknown') return t('entityDragDrop.preview.unknownDetail');
+    // Sent, with no answer back: it may or may not have landed.
+    if (code === 'outcome_unknown' || code === 'outcome_uncertain' || code === 'approval_execution_outcome_unknown') return t('entityDragDrop.preview.unknownDetail');
     const widgetRefusal = readWidgetRefusalMessage(code, record.details);
     if (widgetRefusal) return widgetRefusal;
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });

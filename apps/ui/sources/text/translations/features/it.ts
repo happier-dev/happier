@@ -11157,6 +11157,8 @@ const it: typeof en = {
         confirmDescription: 'La bozza viene rimossa dai tuoi dispositivi sincronizzati.',
         failedTitle: 'Impossibile eliminare questa bozza',
         launchInCustody: 'Questa bozza sta avviando una sessione. Potrai eliminarla al termine dell’avvio.',
+        failedTitle: 'Impossibile eliminare questa bozza',
+        launchInCustody: 'Questa bozza sta avviando una sessione. Potrai eliminarla al termine dell’avvio.',
     },
     conflict: {
         title: 'Rivedi le modifiche in conflitto',

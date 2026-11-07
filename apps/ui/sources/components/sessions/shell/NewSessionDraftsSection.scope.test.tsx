@@ -233,15 +233,17 @@ it('never falls back to the active repository when an inactive Home endpoint is 
         await vi.waitFor(() => expect(screen.findByTestId(rowId(waitingDraftId))).not.toBeNull());
         fixture.makeEndpointUnavailable();
         fixture.requests.length = 0;
-        const deletion: Promise<unknown> = sectionForOtherHome(screen, fixture.otherHome.id).props.onDelete(waitingDraftId, fixture.otherScope)
-            .catch((error: unknown) => error);
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert');
+        const deletion: Promise<unknown> = sectionForOtherHome(screen, fixture.otherHome.id).props.onDelete(waitingDraftId, fixture.otherScope);
         await vi.waitFor(() => expect(fixture.requests.some(request => request.origin === new URL(fixture.otherHome.serverUrl).origin)).toBe(true));
         expect(screen.findByTestId(rowId(waitingDraftId))).not.toBeNull();
         expect(draftMutations(fixture).every(request => request.origin === new URL(fixture.otherHome.serverUrl).origin)).toBe(true);
         expect(getSessionDraftSnapshot(fixture.account.scope, { kind: 'newSession', draftId: activeDraftId })).not.toBeNull();
-        // The genuine Account-mode HTTP failure is surfaced, not rewritten to
+        // The genuine Account-mode HTTP failure is told to the person once (D13), not rewritten to
         // a successful delete or retried against the focused Home.
-        expect(await deletion).toBeInstanceOf(Error);
+        expect(await deletion).toBe(false);
+        expect(alert).toHaveBeenCalledTimes(1);
     } finally { await fixture.dispose(); }
 });
 

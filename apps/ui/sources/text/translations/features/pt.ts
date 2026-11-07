@@ -11157,6 +11157,8 @@ const pt: typeof en = {
         confirmDescription: 'Isto remove o rascunho dos seus dispositivos sincronizados.',
         failedTitle: 'Não foi possível eliminar este rascunho',
         launchInCustody: 'Este rascunho está a iniciar uma sessão. Pode eliminá-lo quando o início terminar.',
+        failedTitle: 'Não foi possível eliminar este rascunho',
+        launchInCustody: 'Este rascunho está a iniciar uma sessão. Pode eliminá-lo quando o início terminar.',
     },
     conflict: {
         title: 'Rever alterações em conflito',

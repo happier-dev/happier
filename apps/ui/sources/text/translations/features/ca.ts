@@ -11157,6 +11157,8 @@ const ca: typeof en = {
         confirmDescription: 'Això elimina l’esborrany dels vostres dispositius sincronitzats.',
         failedTitle: 'No s’ha pogut suprimir aquest esborrany',
         launchInCustody: 'Aquest esborrany està iniciant una sessió. El podreu suprimir quan acabi l’inici.',
+        failedTitle: 'No s’ha pogut suprimir aquest esborrany',
+        launchInCustody: 'Aquest esborrany està iniciant una sessió. El podreu suprimir quan acabi l’inici.',
     },
     conflict: {
         title: 'Reviseu els canvis en conflicte',

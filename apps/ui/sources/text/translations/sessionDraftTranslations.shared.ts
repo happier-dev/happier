@@ -46,6 +46,8 @@ export const en = {
         action: 'Delete draft',
         confirmTitle: 'Delete this draft?',
         confirmDescription: 'This removes the draft from your synced devices.',
+        failedTitle: 'Couldn’t delete this draft',
+        launchInCustody: 'This draft is starting a session. You can delete it once the start finishes.',
     },
     conflict: {
         title: 'Review conflicting changes',

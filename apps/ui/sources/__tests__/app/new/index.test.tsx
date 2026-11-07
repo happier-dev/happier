@@ -479,4 +479,65 @@ describe('/new', () => {
             && (request.path === SESSION_DRAFT_ROUTE_MUTATE || request.path === SESSION_DRAFT_V2_ROUTE_MUTATE)))
             .toBe(true);
     });
+    // JOURNEY-OPUS-83 D13: the Home stopped answering while a draft was deleted; the text and its row stayed and
+    // nothing said why. A Delete that did not happen keeps the draft and tells the person, once.
+    it('says why a Delete did not happen and keeps the draft when the Home does not answer', async () => {
+        const draftId = '8e0a5dd1-b1df-43dd-b51e-b7787b30362e';
+        await homes.reset();
+        await seedPersistedHomeProfilesForTests({
+            activeServerId: 'home-a',
+            profiles: ['home-a', 'home-b'].map(id => ({ id, name: id, serverUrl: `https://${id}.test`,
+                createdAt: 1, updatedAt: 1, lastUsedAt: 1, source: 'manual' })),
+        });
+        await homes.addHome({ name: 'Home A', serverUrl: 'https://home-a.test',
+            accountId: 'account-1', currentAccount: true, active: false });
+        await homes.addHome({ name: 'Home B', serverUrl: 'https://home-b.test',
+            accountId: 'account-b', currentAccount: true, active: false });
+        const features = createRootLayoutFeaturesResponse();
+        if (!tryWriteServerEnabledBitInPlace(features, 'sessions.drafts', true)) {
+            throw new Error('Expected the canonical drafts feature fixture');
+        }
+        homes.answer('home-b', '/v1/features', { body: features });
+        homes.answer('home-b', '/v1/features/authenticated', { body: features });
+        homes.answer('home-b', `POST ${SESSION_DRAFT_V2_ROUTE_READ}`, {
+            body: SessionDraftReadResponseV2Schema.parse({ status: 'absent' }),
+        });
+        for (const path of [SESSION_DRAFT_ROUTE_MUTATE, SESSION_DRAFT_V2_ROUTE_MUTATE]) {
+            homes.answer('home-b', `POST ${path}`, { dispatchThenFail: true });
+        }
+        setMockServerId('home-a');
+        storage.getState().activateProfileScope({ serverId: 'home-a', accountId: 'account-1' });
+        storage.setState({ isSessionDraftsReady: false });
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        for (const key of Object.keys(mockState.localSearchParams)) {
+            delete mockState.localSearchParams[key as keyof typeof mockState.localSearchParams];
+        }
+        Object.assign(mockState.localSearchParams, {
+            draftId,
+            spawnServerId: 'home-b',
+            draftServerId: 'home-b',
+            draftAccountId: 'account-b',
+        });
+        repository.writeNewSessionDraft({ scope: { serverId: 'home-b', accountId: 'account-b' },
+            draftId, patch: { text: 'Waiting for computer' }, materializationIntent: 'seeded' });
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert');
+        const { t } = await import('@/text');
+
+        const Screen = (await import('@/app/(app)/new')).default;
+        const screen = await renderScreen(React.createElement(Screen));
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByProps({ testID: 'new-session-draft-delete' }).props.disabled).toBe(false);
+        });
+
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'new-session-draft-delete' }));
+
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+        expect(alert.mock.calls[0]![0]).toBe(t('sessionDrafts.delete.failedTitle'));
+        expect(readDraftSnapshot({ serverId: 'home-b', accountId: 'account-b' }, { kind: 'newSession', draftId }))
+            .toMatchObject({ document: { composer: { text: { value: 'Waiting for computer' } } } });
+        expect(mockState.routerReplace).not.toHaveBeenCalled();
+    });
 });

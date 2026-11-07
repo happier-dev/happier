@@ -11158,6 +11158,8 @@ const fr: typeof en = {
         confirmDescription: 'Cela retire le brouillon de tes appareils synchronisés.',
         failedTitle: 'Impossible de supprimer ce brouillon',
         launchInCustody: 'Ce brouillon est en train de démarrer une session. Tu pourras le supprimer une fois le démarrage terminé.',
+        failedTitle: 'Impossible de supprimer ce brouillon',
+        launchInCustody: 'Ce brouillon est en train de démarrer une session. Tu pourras le supprimer une fois le démarrage terminé.',
     },
     conflict: {
         title: 'Examiner les modifications en conflit',
