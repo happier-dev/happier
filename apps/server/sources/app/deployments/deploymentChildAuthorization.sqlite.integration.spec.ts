@@ -1646,8 +1646,10 @@ describe('deployment children retain their controller Action authority', () => {
                     const stored = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
                     expect(stored.contentArtifactId).toBe(prepared.contentArtifactId);
                     expect(stored.revision).toBe(input.expectedRevision + 1);
-                    const artifact = await db.artifact.findUniqueOrThrow({ where: { id: stored.contentArtifactId } });
-                    const content = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.body!)));
+                    const artifact = await readArtifactForCallerInTx(db, { actorAccountId: f.account.id,
+                        artifactId: stored.contentArtifactId });
+                    if (!artifact.ok) throw new Error(artifact.error);
+                    const content = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.artifact.body)));
                     if (typeof content.body !== 'string') throw new Error('Expected authored Environment text');
                     expect(JSON.parse(content.body)).toMatchObject({ bindings: [binding] });
                 } finally {

@@ -20,12 +20,14 @@ export function isDeploymentBackupInventoryActionIdV1(value: string): value is '
 
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
+export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';
+export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',
-  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, 'deployments.environments.update', 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'deployments.rollback',
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, 'deployments.targets.link', DEPLOYMENT_DEPLOY_ACTION_ID_V1, 'deployments.rollback',
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',
@@ -33,7 +35,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,
   'deployments.teardown',
   'deployments.cancel',
-  'deployments.environments.get', 'deployments.receipts.get', 'deployments.bindings.set',
+  'deployments.environments.get', 'deployments.receipts.get', DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   'deployments.environments.list', 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   'deployments.observation.get',
   'deployments.publish.prepare', 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,

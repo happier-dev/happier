@@ -28,7 +28,8 @@ import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSes
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
-  isDeploymentEnvironmentMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  isDeploymentEnvironmentMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, projectDeploymentReadAdmissionV1,
@@ -906,7 +907,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
   /** Exact non-content Link operand; Home derives its owner during issuance. */
   deploymentLinkEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
-  /** Exact non-content Environment operand for Home-authorized metadata reads. */
+  /** Exact non-content Environment operand for Home-authorized reads and binding preparation. */
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
@@ -919,7 +920,8 @@ export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
 export type ExternalActionRequestEnvelope = z.infer<typeof ExternalActionRequestEnvelopeSchema>;
 /** Public resource scope only; metadata content remains sealed in V2. */
 export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId: string, input: unknown): string | undefined {
-  return (isDeploymentEnvironmentMetadataReadActionIdV1(actionId) || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1)
+  return (isDeploymentEnvironmentMetadataReadActionIdV1(actionId) || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
+    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1)
     ? z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
 }
 export function projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(input: Readonly<{
@@ -1319,6 +1321,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
     && !isDeploymentEnvironmentMetadataReadActionIdV1(value.actionId)
+    && value.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     && !(value.actionId === 'deployments.environments.update' && isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
     && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'
       || value.actionId === 'deployments.restart' || value.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(value.actionId) || value.actionId === 'deployments.receipts.observe')))

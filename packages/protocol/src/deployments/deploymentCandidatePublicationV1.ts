@@ -136,11 +136,11 @@ export function computeDeploymentEnvironmentUpdateInputDigestV1(input: Readonly<
 /** The original signed invocation owns one create-only Environment candidate. */
 export function createDeploymentEnvironmentContentArtifactIdV1(input: Readonly<{
   accountId: string; serverIdentityId: string; actionId: string; requestId: string;
-  requestEnvelopeDigest: string; deploymentNativeAdmission: Readonly<{ environmentId: string }>;
+  requestEnvelopeDigest: string; environmentId: string;
 }>): string {
   return publicationArtifactId(computeCanonicalDomainSeparatedHexDigest('happier-deployment-environment-publication-v1',
     [input.serverIdentityId, input.accountId, input.actionId, input.requestId, input.requestEnvelopeDigest,
-      input.deploymentNativeAdmission.environmentId]));
+      input.environmentId]));
 }
 
 /** Preserve the admitted routing metadata when private content becomes an Artifact reference. */

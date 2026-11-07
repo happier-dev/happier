@@ -6,7 +6,10 @@ import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Sc
     EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { createDeploymentEnvironmentContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecutorContext, DeploymentActionIdV1 } from '@happier-dev/protocol';
 import { readDeploymentEnvironmentArtifactV1, isDeploymentEnvironmentBindingsOnlyUpdateV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, type MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -40,6 +43,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
     serverHttpBaseUrl: string;
     machineId: string;
     savedSecretOperationContext?: SavedSecretOperationContextV1;
+    resolveRequestHeaders(context: ActionExecutorContext, actionId: DeploymentActionIdV1,
+        request: Parameters<ArtifactRequestAuthorizationHeaders>[0]):
+        Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
 }>) {
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     return async (request: DeploymentBindingPreparationRequestV1):
@@ -52,13 +58,10 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const { context } = request;
             if (input.serverId !== host.serverId) return refuse('target_mismatch');
             const assertAuthority = () => assertDeploymentSecretInvocationCurrent(context);
-            const headers: ArtifactRequestAuthorizationHeaders = async transport => {
+            const headers = async (transport: Parameters<ArtifactRequestAuthorizationHeaders>[0],
+                actionId: DeploymentActionIdV1 = request.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set') => {
                 await assertAuthority();
-                const projection = context.externalActionExecutionAuthorization?.requesterHttpProjection;
-                const authorized = projection ? await projection.createRequestHeaders({ ...transport,
-                    effectActionId: request.buildMachineId ? 'deployments.environments.update' : 'deployments.bindings.set',
-                    ...(context.signal ? { signal: context.signal } : {}) })
-                    : { Authorization: `Bearer ${host.credentials.token}` };
+                const authorized = await host.resolveRequestHeaders(context, actionId, transport);
                 if (!authorized) return refuse('action_forbidden');
                 return { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorized };
             };
@@ -68,7 +71,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const { path } = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
                 input: { serverId: storageServerId, environmentId: input.environmentId } });
             const response = await axios.request<unknown>({ method: 'GET', url: `${host.serverHttpBaseUrl}${path}`,
-                headers: await headers({ method: 'GET', path }), signal: context.signal, maxRedirects: 0, validateStatus: () => true });
+                headers: await headers({ method: 'GET', path }, 'deployments.environments.get'), signal: context.signal, maxRedirects: 0, validateStatus: () => true });
             await assertAuthority();
             const loaded = DeploymentEnvironmentGetResultV1Schema.parse(response.data);
             if (!loaded.ok) return refuse(loaded.error);
@@ -105,8 +108,13 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 // Authored changes join the same private candidate and sole server CAS
                 // after current resource/installation custody has settled.
                 await assertCurrent();
+                const binding = context.externalActionExecutionAuthorization?.binding;
+                const artifactId = binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+                    ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: input.environmentId }) : undefined;
                 const created = await createDeploymentArtifactForHost({ artifacts, owner: loaded.environment.owner, assertCurrent,
-                    content: { header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: candidate.content.name },
+                    ...(artifactId ? { publication: 'create' as const } : {}),
+                    content: { ...(artifactId ? { artifactId } : {}),
+                        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: candidate.content.name },
                         body: JSON.stringify(candidate.content), signal: context.signal, beforeWrite: assertCurrent,
                         authorizationHeaders: headers } });
                 await assertCurrent();

@@ -136,7 +136,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     artifacts, owner: prepared.owner, publication: 'create',
                     assertCurrent: async () => { request.context.signal?.throwIfAborted(); },
                     content: { ...(binding && isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? {
-                        artifactId: createDeploymentEnvironmentContentArtifactIdV1({ ...binding, deploymentNativeAdmission: native }),
+                        artifactId: createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: native.environmentId }),
                     } : {}), header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: content.name },
                         body: JSON.stringify(content), signal: request.context.signal,
                         beforeWrite: async () => { request.context.signal?.throwIfAborted(); },

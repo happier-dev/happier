@@ -39,7 +39,8 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
-    isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -2477,8 +2478,12 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     });
     if (isMachineDeploymentEnvironmentAccessActionIdV1(root)
         && readDeploymentEnvironmentAccessPurpose(verified, proof)) return true;
-    if (root === 'deployments.bindings.set' && verified.effectActionId === root) {
-        return isAccountActionHttpOperation(root, proof) || isDeploymentBindingPreparationHttpPurpose(verified, proof);
+    if (root === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && verified.effectActionId === root) {
+        if (isAccountActionHttpOperation(root, proof)) {
+            return typeof proof.body === 'object' && proof.body !== null && 'environmentId' in proof.body
+                && proof.body.environmentId === verified.binding.environmentId;
+        }
+        return isDeploymentBindingPreparationHttpPurpose(verified, proof);
     }
     if ((root === 'deployments.environments.create' || root === 'deployments.environments.update')
         && verified.effectActionId === root) {

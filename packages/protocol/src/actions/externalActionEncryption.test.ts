@@ -39,6 +39,24 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('binds the selected binding Environment while keeping authored values encrypted', () => {
+    const bindingRequest = { ...binding, actionId: 'deployments.bindings.set' };
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
+      set: [{ purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'private-value' } }],
+      remove: [] };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: bindingRequest, input, material, randomBytes });
+    expect(request.deploymentMetadataEnvironmentId).toBe(input.environmentId);
+    expect(JSON.stringify(request)).not.toContain('private-value');
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: bindingRequest, material })).toEqual({ input });
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: { ...request, deploymentMetadataEnvironmentId: 'unrelated' }, binding: bindingRequest, material })).toBeNull();
+    const { deploymentMetadataEnvironmentId: _environment, ...missing } = request;
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: missing, binding: bindingRequest, material })).toBeNull();
+  });
+
   it('keeps managed guest diagnostics encrypted while binding its exact resource for admission', () => {
     const recoveryBinding = { ...binding, actionId: 'machines.managed.inspect' };
     const input = { homeId: 'home', managedId: 'resource', includeGuestDiagnostics: true };

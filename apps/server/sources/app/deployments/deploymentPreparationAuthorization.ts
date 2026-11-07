@@ -17,6 +17,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateI
     DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
     DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, type DeploymentDomainMetadataReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
@@ -356,20 +357,26 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     return publication ?? admittedEnvironmentId === admission.environmentId;
 }
 
-/** Ingress retains the original update's patch and CAS while replacing only its private content reference. */
-export async function readDeploymentEnvironmentUpdatePreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
+/** Signed authoring publishes one private candidate; ingress also retains its original patch and CAS. */
+export async function readDeploymentEnvironmentContentPreparationHttpPurpose(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
 ): Promise<boolean | null> {
+    if (effectActionId !== binding.actionId) return null;
+    if (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && binding.environmentId) {
+        const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: binding.environmentId });
+        return readDeploymentPrivateCandidatePublicationHttpPurpose(tx, binding.environmentId, proof, id,
+            DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+    }
     const admission = binding.deploymentNativeAdmission;
-    if (binding.actionId !== 'deployments.environments.update' || effectActionId !== binding.actionId) return null;
+    if (binding.actionId !== DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1) return null;
     const update = proof.method.toUpperCase() === 'PATCH' && /^\/v1\/deployments\/environments\/[^/?#]+$/u.test(proof.path)
         ? DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(proof.body) : null;
     if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(admission)) {
         if (update?.success && (update.data.patch?.ingress !== undefined || update.data.authoredInputDigest !== undefined)) return false;
         return null;
     }
-    const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, deploymentNativeAdmission: admission });
+    const id = createDeploymentEnvironmentContentArtifactIdV1({ ...binding, environmentId: admission.environmentId });
     if (update) {
         const parsed = update;
         if (!parsed.success || proof.path !== `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}`
