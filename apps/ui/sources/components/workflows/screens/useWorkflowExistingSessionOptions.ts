@@ -1,5 +1,8 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 import * as React from 'react';
 import { shallow } from 'zustand/shallow';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { usePreferredLanguage } from '@/text';
 
 import { isAutomationSessionCandidate, isAutomationSessionCandidateVisible } from '@/sync/domains/automations/isAutomationSessionCandidate';
@@ -8,10 +11,10 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { WorkflowExistingSessionOption } from '@/sync/domains/workflows/workflowAuthoring';
 import { resolveDisplayMachineIdForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import type { StorageState } from '@/sync/store/types';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { formatSessionWorkContext, getSessionName, getSessionWorkContextParts } from '@/utils/sessions/sessionUtils';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { ensureSessionMetadataInventoryForServerAccountScope } from '@/sync/domains/session/fetchSessionMetadataInventoryForServerAccountScope';
-import { readSessionListRowForServerId, readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
@@ -44,93 +47,136 @@ const NO_SESSION_OPTIONS: WorkflowSessionOptions = { existingSessions: NO_OPTION
 const selectNoRows = () => NO_ROWS;
 const selectNoOptions = () => NO_SESSION_OPTIONS;
 
-function createUnopenedRowsSelector(serverId: string | null) {
+function sameOptions(left: readonly WorkflowExistingSessionOption[], right: readonly WorkflowExistingSessionOption[]) {
+    return left.length === right.length && left.every((option, index) => shallow(option, right[index]));
+}
+
+function sameSessionPublication(left: StorageState | undefined, right: StorageState | undefined): boolean {
+    return !!left && !!right && left.sessionListRowsByServerId === right.sessionListRowsByServerId
+        && left.sessionListRenderableDelta === right.sessionListRenderableDelta;
+}
+
+/** Only the writer's immediate predecessor proves a delta is exhaustive. */
+function changedSessionIds(state: StorageState, previous: StorageState | undefined): readonly string[] | null {
+    if (!previous) return null;
+    const delta = state.sessionListRenderableDelta;
+    if (delta.revision === previous.sessionListRenderableDelta.revision + 1) {
+        return [...new Set([...delta.changedSessionIds, ...delta.removedSessionIds, ...(delta.hydratedSessionIds ?? [])])];
+    }
+    // Message/local presentation writes may replace Sessions without changing any continuation fact.
+    // Metadata admission (including full-record hydration) is named by the Session/list producer.
+    return delta === previous.sessionListRenderableDelta && state.sessionListRowsByServerId === previous.sessionListRowsByServerId ? [] : null;
+}
+
+/** Apply each producer publication before React coalesces renders. A fresh read
+ * without that immediate predecessor reconstructs the demanded projection. */
+function useSessionProjection<T>(select: (state: StorageState, previous?: StorageState) => T, enabled: boolean): T {
+    const projection = React.useMemo(() => {
+        const store = getStorage();
+        let currentState = enabled ? store.getState() : undefined;
+        let value = select(currentState ?? store.getState());
+        const update = (state: StorageState, previous?: StorageState) => {
+            value = select(state, sameSessionPublication(previous, currentState) ? previous : undefined);
+            currentState = state;
+        };
+        return {
+            read: () => {
+                if (!enabled) return value;
+                const state = store.getState();
+                if (state !== currentState) {
+                    update(state, sameSessionPublication(state, currentState) ? currentState : undefined);
+                }
+                return value;
+            },
+            subscribe: (notify: () => void) => !enabled ? () => {} : store.subscribe((state, previous) => {
+                const before = value;
+                update(state, previous);
+                if (value !== before) notify();
+            }, { sessions: true, sessionListRowsByServerId: true, sessionListRenderableDelta: true,
+                isDataReady: true, machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+                getProjectForSession: true, projectAccountRows: true }),
+        };
+    }, [enabled, select]);
+    return React.useSyncExternalStore(projection.subscribe, projection.read, projection.read);
+}
+
+function createUnopenedRowsSelector(serverId: string | null, isSessionVisible: SessionRecordingVisibility) {
     let previous = NO_ROWS;
-    let lastRows: StorageState['sessionListRowsByServerId'] | undefined;
-    let lastSessions: StorageState['sessions'] | undefined;
-    return (state: StorageState) => {
-        if (state.sessionListRowsByServerId === lastRows && state.sessions === lastSessions) return previous;
-        lastRows = state.sessionListRowsByServerId;
-        lastSessions = state.sessions;
-        const rows = serverId === null ? NO_ROWS : Object.values(
-            readSessionListRowsForServerId(state.sessionListRowsByServerId, serverId) ?? {},
-        ).filter(row => isAutomationSessionCandidateVisible(row)
-            && !areServerProfileIdentifiersEquivalent(state.sessions[row.id]?.serverId, serverId));
-        // Activity publications do not change continuation facts. A new retained
-        // owner projection does; its presence alone is not content admission.
-        if (rows.length === previous.length && rows.every((row, i) => {
-            const before = previous[i];
-            return row.id === before.id && row.metadataVersion === before.metadataVersion
+    const members = new Map<string, SessionListRenderableSession>();
+    return (state: StorageState, previousState?: StorageState) => {
+        const changedIds = changedSessionIds(state, previousState);
+        const rows = serverId === null ? undefined : readSessionListRowsForServerId(state.sessionListRowsByServerId, serverId);
+        const ids = changedIds ?? new Set([...members.keys(), ...Object.keys(rows ?? {})]);
+        let changed = false;
+        for (const id of ids) {
+            const row = rows?.[id];
+            if (!row || !isSessionVisible({ sessionId: id, serverId }) || !isAutomationSessionCandidateVisible(row)
+                || areServerProfileIdentifiersEquivalent(state.sessions[id]?.serverId, serverId)) {
+                changed = members.delete(id) || changed;
+                continue;
+            }
+            const before = members.get(id);
+            // Only continuation/disclosure facts start another snapshot acquisition; activity is not demand.
+            if (before && row.metadataVersion === before.metadataVersion
                 && row.metadataLayoutVersion === before.metadataLayoutVersion && row.metadata === before.metadata
                 && row.metadataUnavailable === before.metadataUnavailable && row.access === before.access
                 && row[SESSION_OWNER_METADATA_PROJECTION] === before[SESSION_OWNER_METADATA_PROJECTION]
-                && row.accessLevel === before.accessLevel && row.encryptedContentAvailability === before.encryptedContentAvailability;
-        })) return previous;
-        previous = rows;
+                && row.accessLevel === before.accessLevel && row.encryptedContentAvailability === before.encryptedContentAvailability) continue;
+            members.set(id, row);
+            changed = true;
+        }
+        if (changed) previous = [...members.values()];
         return previous;
     };
 }
 
-function sameOptions(left: readonly WorkflowExistingSessionOption[], right: readonly WorkflowExistingSessionOption[]) {
-    return left.length === right.length && left.every((option, index) => {
-        const other = right[index];
-        return option.sessionId === other.sessionId && option.machineId === other.machineId && option.label === other.label;
-    });
+/** One option per continuable Session: its title plus the Agent and Machine that tell same-titled Sessions apart. */
+function createSessionOption(source: Parameters<typeof getSessionName>[0], serverId: string | undefined,
+    sessionId: string, machineId: string): WorkflowExistingSessionOption {
+    const parts = getSessionWorkContextParts(source, serverId);
+    return { sessionId, machineId, label: getSessionName(source), agentId: parts.agentId,
+        contextLabel: formatSessionWorkContext(parts) };
 }
 
 function createOptionsSelector(serverId: string | null, machineId: string | null) {
-    // This hook owns the displayed options, not the Session/settings containers.
-    // Keep the selected projection stable without retaining a second data source.
-    let previous: WorkflowSessionOptions = { existingSessions: [], sessionDropCandidates: [] };
+    let previous = NO_SESSION_OPTIONS;
     let environmentInputs: readonly unknown[] | null = null;
-    let optionsBySession = new WeakMap<StorageState['sessions'][string], Readonly<{
-        row: SessionListRenderableSession | null;
-        option: WorkflowExistingSessionOption | null;
-    }>>();
-    let projectionInputs: readonly unknown[] | null = null;
-    return (state: StorageState, language: ReturnType<typeof usePreferredLanguage>, policy: WorkflowSessionPolicy): WorkflowSessionOptions => {
-        // Subscribe the projection to its inputs, not to every root publication.
-        // Target resolution also reads Machine and list-row facts through the
-        // canonical resolver; those remain live even when Session records do not change.
-        const inputs = [state.sessions, policy, state.isDataReady, state.machines,
-            state.machineListByServerId, state.machineListStatusByServerId,
-            state.sessionListRowsByServerId, state.getProjectForSession, language];
-        if (projectionInputs !== null && shallow(inputs, projectionInputs)) return previous;
-        projectionInputs = inputs;
-        // A peer's arrival changes the collection, not this Session's policy,
-        // target or name. Retain each immutable record's projection; canonical
-        // list-row changes invalidate only that row, shared target/policy/locale
-        // changes invalidate all. Membership still follows the current store.
+    let optionsById = new Map<string, WorkflowExistingSessionOption>();
+    return (state: StorageState, language: ReturnType<typeof usePreferredLanguage>, policy: WorkflowSessionPolicy, isSessionVisible: SessionRecordingVisibility,
+        previousState?: StorageState): WorkflowSessionOptions => {
         const environment = [policy, state.isDataReady, state.machines,
-            state.machineListByServerId, state.machineListStatusByServerId, state.getProjectForSession, language];
-        if (environmentInputs === null || !shallow(environment, environmentInputs)) {
-            optionsBySession = new WeakMap();
-            environmentInputs = environment;
-        }
-        const options: WorkflowExistingSessionOption[] = [];
-        for (const session of state.isDataReady ? Object.values(state.sessions) : []) {
-            if (serverId !== null && !areServerProfileIdentifiersEquivalent(session.serverId, serverId)) continue;
-            const row = readSessionListRowForServerId(state.sessionListRowsByServerId, session.serverId, session.id);
-            let cached = optionsBySession.get(session);
-            if (!cached || cached.row !== row) {
-                let option: WorkflowExistingSessionOption | null = null;
-                if (isAutomationSessionCandidate(session, policy)) {
-                    const sessionMachineId = resolveDisplayMachineIdForSessionFromState({
-                        state, serverId: session.serverId, sessionId: session.id, metadata: session.metadata,
-                    });
-                    if (sessionMachineId.length > 0) option = {
-                        sessionId: session.id, machineId: sessionMachineId, label: getSessionName(session),
-                    };
-                }
-                cached = { row, option };
-                optionsBySession.set(session, cached);
+            state.machineListByServerId, state.machineListStatusByServerId, state.getProjectForSession, state.projectAccountRows, language, isSessionVisible];
+        const changedIds = environmentInputs === null || !shallow(environment, environmentInputs) ? null : changedSessionIds(state, previousState);
+        environmentInputs = environment;
+        const beforeOptions = optionsById;
+        if (changedIds === null) optionsById = new Map();
+        const ids = changedIds ?? (state.isDataReady ? Object.keys(state.sessions) : []);
+        let changed = changedIds === null;
+        for (const id of ids) {
+            const session = state.isDataReady ? state.sessions[id] : undefined;
+            let option: WorkflowExistingSessionOption | null = null;
+            if (session && isSessionVisible({ sessionId: id, serverId: session.serverId })
+                && (serverId === null || areServerProfileIdentifiersEquivalent(session.serverId, serverId))
+                && isAutomationSessionCandidate(session, policy)) {
+                const sessionMachineId = resolveDisplayMachineIdForSessionFromState({
+                    state, serverId: session.serverId, sessionId: id, metadata: session.metadata,
+                });
+                if (sessionMachineId.length > 0) option = createSessionOption(session, session.serverId, id, sessionMachineId);
             }
-            if (cached.option) options.push(cached.option);
+            if (option === null) changed = optionsById.delete(id) || changed;
+            else {
+                const before = beforeOptions.get(id);
+                const next = before && shallow(before, option) ? before : option;
+                if (optionsById.get(id) !== next) { optionsById.set(id, next); changed = true; }
+            }
         }
-        if (sameOptions(options, previous.sessionDropCandidates)) return previous;
+        if (!changed) return previous;
+        const options = retainShallow(previous.sessionDropCandidates, [...optionsById.values()]);
         const existing = machineId === null ? options : options.filter(option => option.machineId === machineId);
-        previous = { sessionDropCandidates: options,
-            existingSessions: sameOptions(existing, previous.existingSessions) ? previous.existingSessions : existing };
+        const existingSessions = retainShallow(previous.existingSessions, existing);
+        if (options !== previous.sessionDropCandidates || existingSessions !== previous.existingSessions) {
+            previous = { sessionDropCandidates: options, existingSessions };
+        }
         return previous;
     };
 }
@@ -149,6 +195,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
 }>): WorkflowSessionOptionsState {
     const { serverId, machineId } = params;
     const enabled = params.enabled !== false;
+    const isSessionVisible = useSessionRecordingVisibility(enabled);
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
     const [retries, setRetries] = React.useState(0);
     const retrySessionOptions = React.useCallback(() => setRetries(count => count + 1), []);
@@ -189,8 +236,8 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
     const inventoryStatus = !binding ? 'ready' : inventory.acquisition === acquisition ? inventory.status : 'loading';
     const inventoryReadStarted = inventory.acquisition === acquisition;
 
-    const unopenedSelector = React.useMemo(() => enabled ? createUnopenedRowsSelector(serverId) : selectNoRows, [enabled, serverId]);
-    const unopenedRows = getStorage()(unopenedSelector);
+    const unopenedSelector = React.useMemo(() => enabled ? createUnopenedRowsSelector(serverId, isSessionVisible) : selectNoRows, [enabled, isSessionVisible, serverId]);
+    const unopenedRows = useSessionProjection(unopenedSelector, enabled);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     // Automation's Agent policy reads only this Account preference. Unrelated
     // preference edits do not invalidate hydrated options or restart snapshot admission.
@@ -257,7 +304,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                     if (isAutomationSessionCandidate({ ...row, ownerMetadataView: metadata }, accountSettings)) {
                         const sessionMachineId = resolveDisplayMachineIdForSessionFromState({ state: getStorage().getState(),
                             serverId: binding.scope.serverId, sessionId: row.id, metadata });
-                        if (sessionMachineId) option = { sessionId: row.id, machineId: sessionMachineId, label: getSessionName(row) };
+                        if (sessionMachineId) option = createSessionOption(row, binding.scope.serverId, row.id, sessionMachineId);
                     }
                     if (option) optionsById.set(row.id, option);
                 }
@@ -292,7 +339,7 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                                 if (isAutomationSessionCandidate(session, accountSettings)) {
                                     const sessionMachineId = resolveDisplayMachineIdForSessionFromState({ state: getStorage().getState(),
                                         serverId: binding.scope.serverId, sessionId, metadata: readSessionOwnerMetadataView(session) });
-                                    if (sessionMachineId) option = { sessionId, machineId: sessionMachineId, label: getSessionName(session) };
+                                    if (sessionMachineId) option = createSessionOption(session, binding.scope.serverId, sessionId, sessionMachineId);
                                 }
                             }
                             publishOption(sessionId, option);
@@ -317,14 +364,14 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
     // another Machine is refused (07 J19), while the picker offers only the
     // Where Machine's.
     const language = usePreferredLanguage();
-    const selector = React.useMemo(() => createOptionsSelector(serverId, machineId), [serverId, machineId]);
-    const selectHydrated = React.useCallback((state: StorageState) => enabled ? selector(state, language, policy) : selectNoOptions(),
-        [enabled, language, policy, selector]);
-    const hydrated = getStorage()(selectHydrated);
+    const selector = React.useMemo(() => createOptionsSelector(serverId, machineId), [enabled, serverId, machineId, isSessionVisible, language, policy]);
+    const selectHydrated = React.useCallback((state: StorageState, previous?: StorageState) => enabled ? selector(state, language, policy, isSessionVisible, previous) : selectNoOptions(),
+        [enabled, isSessionVisible, language, policy, selector]);
+    const hydrated = useSessionProjection(selectHydrated, enabled);
     return React.useMemo<WorkflowSessionOptionsState>(() => {
         const ids = new Set(unopenedRows.map(row => row.id));
         const extra = unopened.binding === binding && binding?.isCurrent()
-            ? unopened.options.filter(option => ids.has(option.sessionId)) : NO_OPTIONS;
+            ? unopened.options.filter(option => ids.has(option.sessionId) && isSessionVisible({ serverId, sessionId: option.sessionId })) : NO_OPTIONS;
         const candidates = extra.length ? [...hydrated.sessionDropCandidates, ...extra] : hydrated.sessionDropCandidates;
         return { sessionDropCandidates: candidates,
             existingSessions: extra.length ? candidates.filter(option => machineId === null || option.machineId === machineId) : hydrated.existingSessions,
@@ -333,5 +380,5 @@ export function useWorkflowExistingSessionOptions(params: Readonly<{
                 : inventoryStatus === 'error' || unopenedRows.length > 0 && unopenedStatus === 'error' ? 'error'
                     : inventoryStatus === 'loading' || unopenedRows.length > 0 && unopenedStatus === 'loading' ? 'loading' : 'ready',
             retrySessionOptions };
-    }, [binding, enabled, hydrated, inventoryStatus, machineId, resolution, retrySessionOptions, serverId, unopened, unopenedRows, unopenedStatus]);
+    }, [binding, enabled, hydrated, inventoryStatus, isSessionVisible, machineId, resolution, retrySessionOptions, serverId, unopened, unopenedRows, unopenedStatus]);
 }
