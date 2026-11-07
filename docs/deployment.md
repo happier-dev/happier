@@ -2050,6 +2050,16 @@ fails visibly and the person prepares again. Deployment recovery references rema
 protected through their existing Environment receipt owner. No schedule, retention default or backup
 ledger is added. If capture or verification evidence expires with ordinary operation
 retention, a new run and verification are required before destructive maintenance.
+Development-source backup setup uses `deployments.environments.update` with
+`patch.backup`, carrying the existing `DeploymentBackupConfigurationV1` shape.
+The host resolves the selected installed destination and calls
+`prepareDeploymentBackupConfigurationV1` to validate its nonsecret configuration,
+source selection, ownership and credential-role identities and capture the current
+occurrence. Credential values and references remain on `deployments.bindings.set`
+with purpose `backupDestination`. Setup can be saved before those bindings exist;
+that does not establish runtime readiness. The full reviewed input binds the
+private configuration, while Home receives only the prepared Artifact reference
+and public metadata for the existing Environment revision CAS.
 Development-source retention editing uses `deployments.environments.update` with
 `patch.backupRetention`, the selected `configRevision` and the person's retention
 counts. The existing private-content preparation and Environment revision CAS own

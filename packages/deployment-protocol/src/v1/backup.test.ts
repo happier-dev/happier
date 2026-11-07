@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema } from './environment.js';
 import * as schemas from './index.js';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
+import { computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1,
+    projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 const backup = {
     configRevision: 1,
@@ -17,6 +20,22 @@ const backup = {
 
 describe('Environment backup content', () => {
     const content = createDeploymentEnvironmentDetailV1().content;
+
+    it('binds backup setup to the reviewed input while keeping its configuration out of Home storage operands', () => {
+        const input = DeploymentEnvironmentUpdateInputV1Schema.parse({ serverId: 'home', environmentId: 'environment-a',
+            expectedRevision: 1, contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+            patch: { buildMachineId: 'builder', backup } });
+        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(input).success).toBe(false);
+        const prepared = { ...input, contentArtifactId: 'prepared', patch: { buildMachineId: 'builder' } };
+        expect(schemas.DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(prepared).success).toBe(true);
+        const native = projectDeploymentNativeAdmissionV1('deployments.environments.update', input);
+        expect(native).toHaveProperty('authoredMetadataDigest', computeDeploymentEnvironmentUpdateMetadataDigestV1(prepared));
+        expect(computeDeploymentEnvironmentUpdateInputDigestV1({ ...input,
+            patch: { ...input.patch, backup: { ...backup, config: { bucket: 'changed' } } } }))
+            .not.toBe(computeDeploymentEnvironmentUpdateInputDigestV1(input));
+        expect(computeDeploymentEnvironmentUpdateMetadataDigestV1({ ...prepared, patch: { buildMachineId: 'other' } }))
+            .not.toBe(computeDeploymentEnvironmentUpdateMetadataDigestV1(prepared));
+    });
 
     it('preserves strict JSON configuration values and detached nested snapshots', () => {
         const shared = { enabled: true };

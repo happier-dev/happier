@@ -2,7 +2,7 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentUpdateInputV1Schema,
-    DeploymentEnvironmentUpdatePatchV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+    DeploymentEnvironmentUpdatePatchV1Schema, deploymentEnvironmentPrivateContentPatchFieldsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { MachineSecretGrantV1Schema } from '../secrets/machineSecretGrantV1.js';
 
 /** Private prepared installation envelopes accompany the single public binding intent. */
@@ -13,7 +13,7 @@ export type DeploymentBindingsSetStorageInputV1 = z.infer<typeof DeploymentBindi
 
 /** Update remains the sole placement front door; binding custody commits in that same CAS. */
 export const DeploymentEnvironmentUpdateStorageInputV1Schema = lazyZodSchema(() => z.extend(DeploymentEnvironmentUpdateInputV1Schema, {
-    patch: z.optional(z.omit(DeploymentEnvironmentUpdatePatchV1Schema, { previewTemplate: true })),
+    patch: z.optional(z.omit(DeploymentEnvironmentUpdatePatchV1Schema, deploymentEnvironmentPrivateContentPatchFieldsV1)),
     authoredInputDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
     preparedBindings: z.optional(z.strictObject({
         grants: z.array(MachineSecretGrantV1Schema),

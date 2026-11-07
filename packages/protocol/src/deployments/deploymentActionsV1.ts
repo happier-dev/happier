@@ -74,7 +74,8 @@ import { DeploymentStoredDefinitionInputV1Schema, DeploymentTextV1Schema, Deploy
   DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentEnvironmentContentPatchV1Schema } from './deploymentEnvironmentContentPatchV1.js';
-export { DeploymentEnvironmentContentPatchV1Schema, hasDeploymentEnvironmentContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
+export { DeploymentEnvironmentContentPatchV1Schema, hasDeploymentEnvironmentContentPatchV1,
+    deploymentEnvironmentPrivateContentPatchFieldsV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 export { DeploymentPreviewTemplateV1Schema, DeploymentPreviewDataSelectionV1Schema,
   type DeploymentPreviewTemplateV1, type DeploymentPreviewDataSelectionV1 } from './deploymentPreviewTemplateV1.js';
 import { DeploymentIngressV1Schema } from './storedAppInputV1.js';

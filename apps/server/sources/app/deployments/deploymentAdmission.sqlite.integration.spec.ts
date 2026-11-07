@@ -21,7 +21,8 @@ import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx, project
 import { requestCancelDeploymentInTx } from './deploymentService';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
 import { isDeploymentPreparationAuthorizedInTx, isDeploymentPreparationHttpPurposeInTx } from './deploymentPreparationAuthorization';
-import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationBindingV1Schema, projectDeploymentPreparationAdmissionV1,
+    createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx } from './deploymentReadService';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -62,6 +63,81 @@ describe('current Source deployment authority', () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
+    it('persists signed prepared backup setup and refuses ordinary forged backup content', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            name: 'Backup setup', requestKey: crypto.randomUUID() }));
+        if (!source.ok) throw new Error(source.error);
+        const signing = nacl.sign.keyPair();
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            installationId: crypto.randomUUID(), installationPublicKey: privacyKit.encodeBase64(signing.publicKey),
+            metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        const content = { name: 'Backup setup', retainPreviousDeployments: 1, bindings: [],
+            definition: { kind: 'stored', document: 'services:\n  app:\n    image: nginx:1\n', contentRevision: 1,
+                composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'] } };
+        const artifact = async (body: unknown, artifactId: string = crypto.randomUUID()) => {
+            const saved = await createArtifact({ actorUserId: owner.id, artifactId,
+                kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: content.name })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!saved.ok) throw new Error(saved.error);
+            return { contentArtifactId: saved.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const initial = await artifact(content);
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, { ...initial, serverId,
+            projectSourceId: source.source.id, requestKey: crypto.randomUUID(), protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id }));
+        if (!created.ok) throw new Error(created.error);
+        const backup = { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'open' },
+            occurrenceId: 'destination', config: { bucket: 'recovery' }, credentialBindings: [],
+            sources: [{ kind: 'dump', sourceId: 'database', service: 'app', consistency: 'logical' }],
+            ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
+        const base = { ...initial, serverId, environmentId: created.environmentId, expectedRevision: created.revision };
+        const path = `/v1/deployments/environments/${created.environmentId}`;
+        const forged = { ...base, ...await artifact({ ...content, backup }) };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            for (const extra of [{}, { authoredInputDigest: 'a'.repeat(43) }]) {
+                const response = await app.inject({ method: 'PATCH', url: path, payload: { ...forged, ...extra },
+                    headers: { 'x-test-user-id': owner.id } });
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            }
+        });
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
+            .toMatchObject({ ...initial, revision: created.revision });
+
+        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...base, patch: { backup } });
+        const target = { kind: 'machine' as const, machineId: machine.id };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: authored };
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: owner.id, authentication: { kind: 'account', tokenEpoch: owner.tokenEpoch },
+            actionId: 'deployments.environments.update', machineId: machine.id, target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: authored });
+        const native = authorization.binding.deploymentNativeAdmission;
+        if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(native)) throw new Error('Expected prepared Environment admission');
+        const prepared = await artifact({ ...content, backup }, createDeploymentEnvironmentContentArtifactIdV1({
+            ...authorization.binding, environmentId: created.environmentId }));
+        const payload = DeploymentEnvironmentUpdateStorageInputV1Schema.parse({ ...base, ...prepared,
+            patch: {}, authoredInputDigest: native.inputDigest });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const response = await app.inject({ method: 'PATCH', url: path, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.environments.update',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId: 'deployments.environments.update', target,
+                    installationId: machine.installationId!, requestId: envelope.requestId,
+                    method: 'PATCH', path, body: payload, privateKey: signing.secretKey }),
+            } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, revision: created.revision + 1 });
+        }, { authentication: 'real' });
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
+            .toMatchObject({ ...prepared, revision: created.revision + 1 });
+    });
+
     it('persists only the reviewed retention policy through the existing Environment CAS', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
@@ -90,7 +166,7 @@ describe('current Source deployment authority', () => {
             sources: [{ kind: 'dump', sourceId: 'database', service: 'db', consistency: 'logical' }],
             ownership: { environmentId: created.environmentId, prefix: 'backups' }, retention: { kind: 'keepEverything' } };
         const configuredContent = await artifact({ ...content, backup });
-        const configured = await inTx(tx => setDeploymentEnvironmentBackupInTx(tx, owner.id, {
+        const configured = await inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id, {
             ...configuredContent, serverId, environmentId: created.environmentId, expectedRevision: created.revision }));
         if (!configured.ok) throw new Error(configured.error);
         const retention = { kind: 'keep', last: 7, monthly: 12 };

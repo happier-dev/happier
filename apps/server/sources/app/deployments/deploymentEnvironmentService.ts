@@ -339,7 +339,10 @@ export async function updateDeploymentEnvironmentInTx(tx: Tx, actorAccountId: st
             if (!isDeepStrictEqual(previous.content.bindings, content.content.bindings)
                 || !isDeepStrictEqual(previous.content.previewProvenance, content.content.previewProvenance)
                 || !isDeepStrictEqual(previous.content.template, content.content.template)
-                || !isDeepStrictEqual(desiredBackup, content.content.backup)) return deploymentFailure('deployment_conflict');
+                // Setup is prepared by the host's configuration owner in both Account modes.
+                // An explicit retention-only edit must still preserve its capture identity.
+                || (input.patch?.backupRetention !== undefined
+                    && !isDeepStrictEqual(desiredBackup, content.content.backup))) return deploymentFailure('deployment_conflict');
         } else if (contentWriter === 'backup') {
             if (!isDeepStrictEqual({ ...previous.content, backup: undefined }, { ...content.content, backup: undefined })) {
                 return deploymentFailure('deployment_conflict');

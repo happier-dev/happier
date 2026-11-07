@@ -1,7 +1,8 @@
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
-import { prepareDeploymentBackupRetentionV1 } from '@happier-dev/deployments';
-import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
+import { prepareDeploymentBackupConfigurationV1, prepareDeploymentBackupRetentionV1 } from '@happier-dev/deployments';
+import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
+    omitDeploymentEnvironmentPrivateContentPatchV1 } from '@happier-dev/protocol';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -12,6 +13,8 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { admitPreviewEnvironmentForHost } from './previewAdmissionForHost';
@@ -37,6 +40,12 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
     credentials: StoredCredentials;
     accountArtifacts?: ReturnType<typeof createCredentialedAccountArtifactStore>;
     serverHttpBaseUrl: string;
+    acquirePluginRuntimeRegistryLease?(): Promise<Readonly<{
+        registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'readPluginOccurrenceId'> & Readonly<{
+            contributes: Pick<ResolvedExecutablePluginRuntimeRegistry['contributes'], 'backupDestinations'>;
+        }>;
+        release(): Promise<void>;
+    }>>;
     resolveRequestHeaders(context: ActionExecutorContext, actionId: DeploymentActionIdV1,
         request: Readonly<{ method: string; path: string; body?: unknown }>):
         Readonly<Record<string, string>> | null | Promise<Readonly<Record<string, string>> | null>;
@@ -70,8 +79,8 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
             const artifact = await open(request.input.contentArtifactId);
             let candidate = readDeploymentEnvironmentArtifactV1(request.input, artifact);
             if (!candidate.ok) return { ok: false, errorCode: candidate.error, error: candidate.error };
-            // Dedicated writers own bindings and backup configuration, including
-            // in E2EE mode where the server cannot inspect these leaves.
+            // Create cannot bypass the existing binding and backup update writers,
+            // including in E2EE mode where the server cannot inspect these leaves.
             if (request.actionId === 'deployments.environments.create'
                 && (candidate.content.bindings.length > 0 || candidate.content.backup !== undefined || candidate.content.ingress !== undefined))
                 return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
@@ -112,10 +121,35 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 }
                 const retention = request.input.patch?.backupRetention;
                 let desiredBackup = previous.content.backup;
+                const backup = request.input.patch?.backup;
+                if (backup) {
+                    const lease = host.acquirePluginRuntimeRegistryLease ? await host.acquirePluginRuntimeRegistryLease()
+                        : tryAcquireAuthoritativePluginRuntimeRegistryLease();
+                    if (!lease) return { ok: false, errorCode: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE', error: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' };
+                    try {
+                        const destination = lease.registry.contributes.backupDestinations.find(entry =>
+                            entry.identity.pluginId === backup.destinationRef.pluginId
+                            && entry.identity.localId === backup.destinationRef.localId);
+                        const occurrenceId = destination && lease.registry.readPluginOccurrenceId(destination.identity.pluginId);
+                        if (!destination || !occurrenceId) return { ok: false, errorCode: 'destination_changed', error: 'destination_changed' };
+                        const prepared = prepareDeploymentBackupConfigurationV1({ environmentId: request.input.environmentId,
+                            configuration: backup, destination: { ref: destination.identity, descriptor: destination.definition, occurrenceId },
+                            bindings: previous.content.bindings });
+                        if (!prepared.ok) return { ok: false, errorCode: prepared.code, error: prepared.code };
+                        desiredBackup = prepared.configuration;
+                        // Signed authoring publishes the invocation's derived private Artifact,
+                        // even when its content matches the current configuration.
+                        if (request.context.externalActionExecutionAuthorization) {
+                            preparedContent = { input: request.input, owner: loaded.environment.owner };
+                        }
+                    } finally { await lease.release(); }
+                }
                 if (retention) {
-                    const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: previous.content.backup, ...retention });
+                    const prepared = prepareDeploymentBackupRetentionV1({ currentBackup: desiredBackup, ...retention });
                     if (!prepared.ok) return { ok: false, errorCode: prepared.code, error: prepared.code };
                     desiredBackup = prepared.configuration;
+                }
+                if (backup || retention) {
                     if (!isDeepStrictEqual(candidate.content.backup, desiredBackup)) {
                         if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
                         candidate = { ...candidate, content: { ...candidate.content, backup: desiredBackup } };
@@ -161,11 +195,13 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 await admitStoredComposeDefinition(candidate.content.definition);
             }
             request.context.signal?.throwIfAborted();
+            let preparedInput = request.actionId === 'deployments.environments.update' && 'environmentId' in request.input
+                && request.input.patch?.backup !== undefined ? request.input : undefined;
+            const binding = request.context.externalActionExecutionAuthorization?.binding;
+            const native = binding?.deploymentNativeAdmission;
             if (preparedContent) {
                 const prepared = preparedContent;
                 const content = candidate.content;
-                const binding = request.context.externalActionExecutionAuthorization?.binding;
-                const native = binding?.deploymentNativeAdmission;
                 if (binding && (binding.actionId !== request.actionId || !isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
                     || native.environmentId !== prepared.input.environmentId)) return { ok: false,
                     errorCode: 'action_forbidden', error: 'action_forbidden (deployment.environment.ingress_admission_missing)',
@@ -184,10 +220,12 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                             return headers;
                         } },
                 }));
-                const storagePatch = { ...prepared.input.patch };
-                delete storagePatch.previewTemplate;
-                return { input: { ...prepared.input, patch: storagePatch, contentArtifactId: created.artifactId,
-                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion },
+                preparedInput = { ...prepared.input, contentArtifactId: created.artifactId,
+                    contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
+            }
+            if (preparedInput) {
+                const storagePatch = omitDeploymentEnvironmentPrivateContentPatchV1(preparedInput.patch ?? {});
+                return { input: { ...preparedInput, patch: storagePatch },
                     ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
             }
             return null;

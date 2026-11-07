@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
-import { hasDeploymentEnvironmentContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
+import { hasDeploymentEnvironmentContentPatchV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
 import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
@@ -134,7 +134,7 @@ export function computeDeploymentEnvironmentUpdateMetadataDigestV1(input: Readon
   // The full input digest binds this private operand. Home receives only the
   // prepared Artifact reference; every remaining reviewed patch leaf stays bound.
   if (metadata.patch !== undefined) {
-    const { previewTemplate: _previewTemplate, ...patch } = readRecord(metadata.patch);
+    const patch = omitDeploymentEnvironmentPrivateContentPatchV1(readRecord(metadata.patch));
     reviewedMetadata = { ...metadata, patch };
   }
   return computeCanonicalDomainSeparatedDigest('happier-deployment-environment-update-metadata-v1',
