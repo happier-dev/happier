@@ -78,6 +78,8 @@ export type DocumentTabPresentation = Readonly<{
      * pinned marks keep a small status overlay. The label is read with the tab's name.
      */
     status?: DocumentTabStatus | null;
+    /** The instance's own identity mark (a Bot's face), drawn in place of the destination glyph. */
+    mark?: React.ReactNode;
 }>;
 
 /**
@@ -459,6 +461,7 @@ type DocumentTabRowProps<T extends DocumentTabItem> = Readonly<{
     active: boolean;
     unsaved: boolean;
     faviconUrl: string | null;
+    mark: React.ReactNode;
     isLoading: boolean;
     statusTone: DocumentTabStatus['tone'] | null;
     statusLabel: string;
@@ -594,7 +597,7 @@ export function DocumentTabStrip<T extends DocumentTabItem>(props: DocumentTabSt
         return {
             tab, first: index === 0, active: props.activeTabKey ? tab.key === props.activeTabKey : false,
             unsaved: props.unsavedTabKeys?.has(tab.key) === true,
-            faviconUrl: presentation?.faviconUrl ?? null, isLoading: presentation?.isLoading === true,
+            faviconUrl: presentation?.faviconUrl ?? null, mark: presentation?.mark ?? null, isLoading: presentation?.isLoading === true,
             statusTone: presentation?.status?.tone ?? null, statusLabel: presentation?.status?.label ?? '',
             tabTestID: props.testIds?.tab?.(safeKey) ?? undefined,
             pinTestID: props.testIds?.tabPin?.(safeKey) ?? undefined,
@@ -649,7 +652,7 @@ function DocumentDetailsTabRow<T extends DocumentTabItem>(props: DocumentTabRowP
     const { active: isActive, unsaved: isUnsaved } = props;
     // The tab keeps its designed height under every pointer; a finger reaches past it through the hit area.
     const tabHitArea = useHappierHitArea({ restingStyle: () => stylesheet.tabContent, hitReach: { left: 0, right: 0 } });
-    const presentation = { isLoading: props.isLoading, faviconUrl: props.faviconUrl,
+    const presentation = { isLoading: props.isLoading, faviconUrl: props.faviconUrl, mark: props.mark,
         status: props.statusTone ? { tone: props.statusTone, label: props.statusLabel } : null };
     const content = (
         <View
@@ -690,7 +693,7 @@ function DocumentDetailsTabRow<T extends DocumentTabItem>(props: DocumentTabRowP
                         style={styles.favicon}
                         testID={props.faviconTestID}
                     />
-                ) : props.renderLeadingIcon(tab, isActive)}
+                ) : presentation?.mark ?? props.renderLeadingIcon(tab, isActive)}
                 <View style={styles.tabCopy}>
                     <Text
                         style={[
@@ -1137,7 +1140,7 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
             }
         });
     }, [runtime, sourceId, tab.key]);
-    const presentation = { isLoading: props.isLoading, faviconUrl: props.faviconUrl,
+    const presentation = { isLoading: props.isLoading, faviconUrl: props.faviconUrl, mark: props.mark,
         status: props.statusTone ? { tone: props.statusTone, label: props.statusLabel } : null };
     const pinned = tab.isPinned;
     const status = presentation?.status ?? null;
@@ -1217,7 +1220,7 @@ function DocumentBarTabRow<T extends DocumentTabItem>(props: DocumentTabRowProps
                             style={styles.favicon}
                             testID={props.faviconTestID}
                         />
-                    ) : props.renderLeadingIcon(tab, props.active || hovered)}
+                    ) : presentation?.mark ?? props.renderLeadingIcon(tab, props.active || hovered)}
                     {pinned && status ? (
                         <View style={styles.pinnedStatus}>
                             <DocumentTabStatusMark status={status} compact testID={props.statusTestID} />

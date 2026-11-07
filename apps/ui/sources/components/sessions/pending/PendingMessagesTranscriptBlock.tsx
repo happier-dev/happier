@@ -5,7 +5,10 @@ import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
-import { useSession, useSetting } from '@/sync/domains/state/storage';
+import { useIsMachineListSettled, useServerScopedMachine, useSession, useSetting } from '@/sync/domains/state/storage';
+import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
+import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { sync } from '@/sync/sync';
 import { canSteerUserMessageNow, supportsInFlightSteerUserMessage } from '@/sync/domains/session/control/submitMode';
 import { derivePendingMessagesRuntimePresentation, getPendingMaterializingKey, getPendingMessageSendPresentation, sendPendingMessageWithIntent } from './pendingMessageSendActions';
@@ -29,6 +32,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import {
     getPendingMessageVisualState,
     isAcceptedLocalPendingProjection,
+    isLaunchOwnedPendingMessage,
     canUseDirectPendingDeliveryActions,
     isNextTurnHostInput,
     isPendingMessageProviderDeliveryInFlight,
@@ -58,8 +62,9 @@ import { resolvePendingInputServerWireMode } from '@/sync/engine/pending/pending
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { SessionMessageAccountByline } from '@/components/sessions/transcript/SessionMessageAccountByline';
 import { EVENT_ICON_CONTAINER_SIZE, TranscriptEventRow, TranscriptFollowSourceAction, TranscriptFollowSourceNotice } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
@@ -68,9 +73,31 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { UserMessageBubble, userMessageBubbleAlignerStyle, userMessageBubbleContentPadding } from '@/components/sessions/transcript/UserMessageBubble';
 import type { PendingMessageWithdrawRecoveryResult } from '@/components/sessions/composer/pendingMessageComposerDocumentOwner';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionPendingWithdrawResultV1Schema } from '@happier-dev/protocol/sessions/control/pendingWithdrawV1';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const PENDING_AFFORDANCE_ICON_SIZE_PX = 12;
 const QUEUE_GUTTER_PX = 16;
+/**
+ * A queued row's action band: its actions sit this far apart, this far under the bubble, over the row's bottom inset.
+ * With the half-gap reach below, each drawn 18 px action gets a 24 px target on both axes (the WCAG 2.5.8 floor)
+ * without growing the glyph, and the band paints at the committed row's 22 px.
+ */
+const MESSAGE_ACTION_SIZE_PX = 18;
+const MESSAGE_ACTION_GLYPH_PX = 14;
+const MESSAGE_ACTION_GAP_PX = 6;
+const MESSAGE_ACTION_ROW_MARGIN_TOP_PX = 4;
+const MESSAGE_ROW_PADDING_BOTTOM_PX = 8;
+/**
+ * Each action's hit area takes half of every real gap: to its neighbours, to the bubble's own press target
+ * above, and to the next row below. A tap on one action never lands on the one beside it (Remove included).
+ */
+const MESSAGE_ACTION_HIT_REACH = Object.freeze({
+    left: MESSAGE_ACTION_GAP_PX / 2,
+    right: MESSAGE_ACTION_GAP_PX / 2,
+    top: MESSAGE_ACTION_ROW_MARGIN_TOP_PX / 2,
+    bottom: MESSAGE_ROW_PADDING_BOTTOM_PX / 2,
+});
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
@@ -86,11 +113,11 @@ function excerptPendingText(message: PendingMessage): string {
     return `${(atWord > 24 ? cut.slice(0, atWord) : cut).trimEnd()}…`;
 }
 
-async function copyPendingMessageText(message: PendingMessage | DiscardedPendingMessage): Promise<boolean> {
+async function copyPendingMessageText(message: PendingMessage | DiscardedPendingMessage, writeClipboard: (text: string) => Promise<boolean>): Promise<boolean> {
     const text = getPendingText(message).trim();
     if (!text) return false;
     try {
-        const copied = await setClipboardStringSafe(text);
+        const copied = await writeClipboard(text);
         if (!copied) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
             return false;
@@ -164,6 +191,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     // about who authored it or whether this Session has another named collaborator.
     const authorship = useSessionMessageAuthorshipScope(props.sessionId, props.serverId);
     const accountActorViewerScope = authorship.viewerScope;
+    const writeClipboard = useClipboardWrite(accountActorViewerScope);
     const pendingRecoveryExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const pendingMessages = React.useMemo(() => props.pendingMessages.filter((message) =>
         isPendingMessageForRecipient(message, props.recipient)
@@ -186,6 +214,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const pendingInputServerId = props.serverId?.trim()
         || session?.serverId
         || resolvePreferredServerIdForSessionId(props.sessionId);
+    const reachableMachineTarget = useSessionReachableMachineTarget(props.sessionId, pendingInputServerId);
+    const machineId = reachableMachineTarget?.machineId ?? (session ? readSessionOwnerMetadataView(session)?.machineId : undefined);
+    const machinePresent = useServerScopedMachine(pendingInputServerId, machineId, Boolean);
+    const machineInventorySettled = useIsMachineListSettled(pendingInputServerId);
+    const machineAccessRemoved = isSessionMachineAccessRemoved({ session, machineId,
+        machinePresent, inventorySettled: machineInventorySettled });
     const serverFeaturesSnapshot = useServerFeaturesSnapshotForServerId(pendingInputServerId ?? null, {
         enabled: Boolean(pendingInputServerId),
     });
@@ -298,8 +332,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const blockedPendingExcerpt = blockedPendingIndex >= 0 ? excerptPendingText(pendingMessages[blockedPendingIndex]!) : '';
     // Several queued updates from one source read as one notice. Presentation only: every row stays in the
     // queue, in order, with its own delivery; a folded row just paints nothing of its own.
-    const pendingPresentation = React.useMemo(() => resolvePendingMessagesPresentation(pendingMessages, { materializingLocalIds }),
-        [materializingLocalIds, pendingMessages]);
+    const pendingActivationActiveAt = session?.activeAt;
+    const pendingActivationAuthorization = session?.pendingActivationAuthorization;
+    const pendingActivationFailureDetails = session?.pendingActivationFailureDetails;
+    const pendingPresentation = React.useMemo(() => resolvePendingMessagesPresentation(pendingMessages, { materializingLocalIds, machineAccessRemoved,
+        session: pendingActivationActiveAt === undefined ? null : { activeAt: pendingActivationActiveAt,
+            pendingActivationAuthorization, pendingActivationFailureDetails } }),
+        [materializingLocalIds, pendingMessages, pendingActivationActiveAt, pendingActivationAuthorization, pendingActivationFailureDetails, machineAccessRemoved]);
     const lastShownPendingIndex = pendingPresentation.shownRows.at(-1)?.index ?? -1;
     const notifyLayoutMutation = useTranscriptRowLayoutMutation();
     // Local materialization can unfold notices without a new queue item/signature. Reuse the row
@@ -332,24 +371,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             message,
         });
     }, [props.onEditPendingMessage]);
-
-    const handleRemove = React.useCallback(async (pendingId: string) => {
-        const confirmed = await Modal.confirm(
-            t('session.pendingMessages.removeConfirm.title'),
-            t('session.pendingMessages.removeConfirm.body'),
-            { confirmText: t('common.remove'), destructive: true },
-        );
-        if (!confirmed) return;
-        try {
-            await sync.deletePendingMessage(
-                props.sessionId,
-                pendingId,
-                ...(exactPendingQueueOwner ? [exactPendingQueueOwner] as const : [] as const),
-            );
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.deleteFailed'));
-        }
-    }, [exactPendingQueueOwner, props.sessionId]);
 
     const setPendingMaterializing = React.useCallback((message: PendingMessage, isMaterializing: boolean) => {
         const key = getPendingMaterializingKey(message);
@@ -384,8 +405,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [setPendingMaterializing]);
 
     const executePendingRecovery = React.useCallback(async (
-        actionId: 'session.pending.markHandled' | 'session.pending.dismiss' | 'session.pending.sendAsNew',
-        message: PendingMessage,
+        actionId: 'session.pending.markHandled' | 'session.pending.dismiss' | 'session.pending.sendAsNew' | 'session.pending.withdraw' | 'session.pending.requeue',
+        message: Pick<PendingMessage, 'id' | 'localId' | 'recipient'>,
     ) => {
         if (!accountActorViewerScope) throw new Error('action_account_scope_changed');
         const { serverId, accountId } = accountActorViewerScope;
@@ -394,7 +415,30 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ...(message.recipient ? { targetExecutionRunId: message.recipient.runId } : {}),
         }, { surface: 'ui', authority: 'present_user', defaultSessionId: props.sessionId, serverId, expectedAccountId: accountId });
         if (!result.ok && !isActionApprovalDeclinedErrorCode(result.errorCode)) throw new Error(result.error);
+        return result.ok ? result.result : null;
     }, [accountActorViewerScope, pendingRecoveryExecutor, props.sessionId]);
+
+    const handleRemove = React.useCallback(async (message: Pick<PendingMessage, 'id' | 'localId' | 'recipient'>) => {
+        if (!await Modal.confirm(t('session.pendingMessages.removeConfirm.title'),
+            t('session.pendingMessages.removeConfirm.body'), { confirmText: t('common.remove'), destructive: true })) return;
+        try {
+            const result = await executePendingRecovery('session.pending.withdraw', message);
+            const settled = SessionPendingWithdrawResultV1Schema.safeParse(result);
+            if (settled.success && settled.data.outcome !== 'removed') {
+                Modal.alert(t('common.error'), t('session.pendingMessages.errors.deleteFailed'));
+            }
+        } catch (e) {
+            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.deleteFailed'));
+        }
+    }, [executePendingRecovery]);
+
+    // The same public Action agents use (`session.draft.open`): the saved draft keeps the text and attachments.
+    const handleOpenLaunchDraft = React.useCallback((draftId: string) => {
+        if (!accountActorViewerScope) return;
+        const { serverId, accountId } = accountActorViewerScope;
+        fireAndForget(pendingRecoveryExecutor.execute('session.draft.open', { draftId },
+            { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId }), { tag: 'PendingMessages.openLaunchDraft' });
+    }, [accountActorViewerScope, pendingRecoveryExecutor]);
 
     const handleDismissDelivery = React.useCallback(async (message: PendingMessage) => {
         await runPendingDeliveryAction(message, async () => {
@@ -431,7 +475,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [exactPendingQueueOwner, props.sessionId, runPendingDeliveryAction]);
 
     const handleRemoveDelivery = React.useCallback(async (message: PendingMessage) => {
-        await runPendingDeliveryAction(message, () => handleRemove(message.id));
+        await runPendingDeliveryAction(message, () => handleRemove(message));
     }, [handleRemove, runPendingDeliveryAction]);
 
     const handleMarkDeliveryHandled = React.useCallback(async (message: PendingMessage) => {
@@ -459,49 +503,43 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }, [pendingInputInterruptAndRun, runPendingDeliveryAction]);
 
     const handlePendingSend = React.useCallback(async (message: PendingMessage, deliveryIntent: 'steer_now' | 'interrupt_and_send') => {
+        if (!accountActorViewerScope) return;
         await runPendingDeliveryAction(message, () => sendPendingMessageWithIntent({
             sessionId: props.sessionId, serverId: exactPendingQueueOwner?.serverId, session, message, deliveryIntent,
+            executor: pendingRecoveryExecutor, expectedAccountId: accountActorViewerScope.accountId,
         }));
-    }, [props.sessionId, exactPendingQueueOwner, session, runPendingDeliveryAction]);
+    }, [props.sessionId, exactPendingQueueOwner, session, runPendingDeliveryAction, pendingRecoveryExecutor, accountActorViewerScope]);
     const handleSteerNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'steer_now'), [handlePendingSend]);
     const handleSendNow = React.useCallback((message: PendingMessage) => handlePendingSend(message, 'interrupt_and_send'), [handlePendingSend]);
 
     const handleRequeueDiscarded = React.useCallback(async (pendingId: string) => {
         try {
-            await sync.restoreDiscardedPendingMessage(
-                props.sessionId,
-                pendingId,
-                ...(exactPendingQueueOwner ? [exactPendingQueueOwner] as const : [] as const),
-            );
+            const message = discardedMessages.find(row => row.id === pendingId);
+            if (message) await executePendingRecovery('session.pending.requeue', message);
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.restoreFailed'));
         }
-    }, [exactPendingQueueOwner, props.sessionId]);
+    }, [discardedMessages, executePendingRecovery]);
 
     const handleRemoveDiscarded = React.useCallback(async (pendingId: string) => {
-        const confirmed = await Modal.confirm(
-            t('session.pendingMessages.discarded.removeConfirm.title'),
-            t('session.pendingMessages.discarded.removeConfirm.body'),
-            { confirmText: t('common.remove'), destructive: true },
-        );
-        if (!confirmed) return;
-        try {
-            await sync.deleteDiscardedPendingMessage(
-                props.sessionId,
-                pendingId,
-                ...(exactPendingQueueOwner ? [exactPendingQueueOwner] as const : [] as const),
-            );
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.deleteDiscardedFailed'));
-        }
-    }, [exactPendingQueueOwner, props.sessionId]);
+        const message = discardedMessages.find(row => row.id === pendingId);
+        if (message) await handleRemove(message);
+    }, [discardedMessages, handleRemove]);
 
-    const handleSteerDiscardedNow = React.useCallback((message: DiscardedPendingMessage) => sendPendingMessageWithIntent({
+    const handleSteerDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
+        if (!accountActorViewerScope) return;
+        await sendPendingMessageWithIntent({
         sessionId: props.sessionId, serverId: exactPendingQueueOwner?.serverId, session, message, deliveryIntent: 'steer_now',
-    }), [props.sessionId, exactPendingQueueOwner, session]);
-    const handleSendDiscardedNow = React.useCallback((message: DiscardedPendingMessage) => sendPendingMessageWithIntent({
+        executor: pendingRecoveryExecutor, expectedAccountId: accountActorViewerScope.accountId,
+        });
+    }, [props.sessionId, exactPendingQueueOwner, session, pendingRecoveryExecutor, accountActorViewerScope]);
+    const handleSendDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
+        if (!accountActorViewerScope) return;
+        await sendPendingMessageWithIntent({
         sessionId: props.sessionId, serverId: exactPendingQueueOwner?.serverId, session, message, deliveryIntent: 'interrupt_and_send',
-    }), [props.sessionId, exactPendingQueueOwner, session]);
+        executor: pendingRecoveryExecutor, expectedAccountId: accountActorViewerScope.accountId,
+        });
+    }, [props.sessionId, exactPendingQueueOwner, session, pendingRecoveryExecutor, accountActorViewerScope]);
 
     const renderMessage = React.useCallback((args: {
         message: PendingMessage;
@@ -531,8 +569,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         // nothing that reads or delivers the content is offered until the real text arrives.
         const isContentLoading = message.pendingDecryption?.kind === 'loading';
         const isHostFollowInput = presentation.isHostInput;
+        // A new Bot's first-run seed is the host's line: the person never copies, edits or resends it as their words,
+        // and a delivery that cannot run is the Session's failure, said once by its delivery presenter.
+        const isHostOnboarding = presentation.hostOnboarding;
         const followInput = presentation.followInput;
         const visualState = getPendingMessageVisualState(message, {
+            session,
+            machineAccessRemoved,
             materializingLocalIds,
             hasEarlierRow: pendingMessages.slice(0, index).some((candidate) =>
                 candidate.source !== 'local_outbound' || candidate.deliveryStatus === 'accepted',
@@ -559,9 +602,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             && (visualState.kind === 'blocked' || visualState.kind === 'delivering');
         const isCancellationState = visualState.kind === 'cancelling' || visualState.kind === 'cancel_failed';
         const hasDurableOutboxOperation = message.pendingOutboxOperation === 'enqueue' || message.pendingOutboxOperation === 'cancel';
+        // The launch of a new Session owns its first message until it settles: no second writer.
+        const launchFailedDraftId = message.pendingLaunch?.state === 'failed' ? message.pendingLaunch.draftId : null;
         const canUsePendingQueueActions =
             !hasEffectPossibleDelivery
             && !hasDurableOutboxOperation
+            && !isLaunchOwnedPendingMessage(message)
             && !isAcceptedLocalPendingProjection(message);
         const deliveryBlockedPresentation = visualState.deliveryBlockedPresentation ?? null;
         // F-P2: the ONE in-flow notice this row paints. Selected from the visual-state owner's own
@@ -588,7 +634,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 })
                 : null;
         const deliveryStateLabel =
-            visualState.kind === 'delivering' && followInput
+            visualState.kind === 'starting'
+                ? t('newSession.startingSession')
+            : visualState.kind === 'launch_failed'
+                ? t('session.pendingMessages.deliveryStatus.notStarted')
+            : visualState.kind === 'launch_unresolved'
+                ? t('session.pendingMessages.deliveryBlockedReasons.unknown')
+            : visualState.kind === 'delivering' && followInput
                 && (!providerDeliveryLabelKey || providerDeliveryLabelKey === 'session.pendingMessages.deliveryStatus.nextTurn')
                 ? t('session.pendingMessages.badgeLabel', { count: 0 })
                 : visualState.kind === 'delivering'
@@ -638,15 +690,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             ? `${deliveryStateLabel}. ${queuedReasonLabel}`
             : deliveryStateLabel;
         const blockedDeliveryLabel = deliveryBlockedPresentation
-            ? t(deliveryBlockedPresentation.labelKey)
+            ? deliveryBlockedPresentation.message ?? t(deliveryBlockedPresentation.labelKey)
             : null;
-        const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, visualState);
+        const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, visualState, session);
         const canSendAsNew = message.pendingRecovery?.canSendAsNew === true;
 
 	        const menuItems = (() => {
 	            const items: DropdownMenuItem[] = [];
                 if (!presentation.canMutate) return items;
-                if (text && !isContentLoading) {
+                if (text && !isContentLoading && !isHostOnboarding) {
                     items.push({
                         id: 'copy',
                         testID: `pendingMessages.menu.copy:${message.id}`,
@@ -663,7 +715,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         disabled: deliveryActionBusy || pendingInputInterruptAndRun.busy,
                     });
                 }
-	            if (isCancellationState) {
+	            if (launchFailedDraftId) {
+	                items.push({ id: 'openDraft', testID: `pendingMessages.menu.openDraft:${message.id}`, title: t('session.pendingMessages.actions.openDraft'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
+	            } else if (isCancellationState) {
 	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (visualState.kind === 'send_failed') {
 	                items.push({ id: 'retrySend', title: t('session.pendingMessages.actions.retryDelivery'), icon: <Icon name="arrow-clockwise" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
@@ -671,17 +725,17 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	            } else if (hasDurableOutboxOperation) {
 	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (isServerDeliveryInProgress) {
-	                if (canSendAsNew) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (isUncertainDelivery) {
 	                items.push({ id: 'continueWaiting', testID: `pendingMessages.continueWaiting:${message.id}`, title: t('session.pendingMessages.actions.continueWaiting'), icon: <Icon name="clock" size={16} color={theme.colors.text.secondary} /> });
 	                items.push({ id: 'markDeliveryHandled', testID: `pendingMessages.markDeliveryHandled:${message.id}`, title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	                items.push({ id: 'dismissDelivery', testID: `pendingMessages.dismissDelivery:${message.id}`, title: t('session.pendingMessages.actions.dismiss'), icon: <Icon name="archive" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
-	                if (canSendAsNew) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
+	                if (canSendAsNew && !isHostOnboarding) items.push({ id: 'sendAsNew', testID: `pendingMessages.sendAsNew:${message.id}`, title: t('session.pendingMessages.actions.sendAsNew'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	            } else if (usesDeliveryResolutionActions) {
 	                items.push({ id: 'markDeliveryHandled', title: t('session.pendingMessages.actions.markHandled'), icon: <Icon name="checks" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
 	                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} />, disabled: deliveryActionBusy });
                 } else if (canUsePendingQueueActions) {
-		                if (!isContentLoading) items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
+		                if (!isContentLoading && !isHostOnboarding) items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
 		                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> });
                 }
 	            if (canSteerNow && canUseDirectDeliveryActions) {
@@ -711,13 +765,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 onSelect={async (itemId) => {
                     if (!presentation.canMutate) return;
                     setOpenMenuKey(null);
-                    if (itemId === 'copy') await copyPendingMessageText(message);
+                    if (itemId === 'copy') await copyPendingMessageText(message, writeClipboard);
+                    if (itemId === 'openDraft' && launchFailedDraftId) handleOpenLaunchDraft(launchFailedDraftId);
                     if (itemId === 'edit') await handleEdit(message);
                     if (itemId === 'remove') {
                         if (usesDeliveryResolutionActions) {
                             await handleRemoveDelivery(message);
                         } else {
-                            await handleRemove(message.id);
+                            await handleRemove(message);
                         }
                     }
                     if (itemId === 'dismissDelivery') await handleDismissDelivery(message);
@@ -751,7 +806,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             }
                             : null)}
                     >
-                        {!isHostFollowInput && <SessionMessageAccountByline
+                        {(!isHostFollowInput || isHostOnboarding) && <SessionMessageAccountByline
                             messageId={message.id}
                             actor={message.accountActor}
                             viewerScope={accountActorViewerScope}
@@ -816,13 +871,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 )}
                             </Pressable>
                             {isCollapsible ? (
-                                <Pressable
+                                <HappierPressable
                                     onPress={() => {
                                         toggleMessageExpanded(message.id);
                                     }}
                                     accessibilityRole="button"
-                                    accessibilityState={{ expanded: isExpanded }}
-                                    hitSlop={10}
+                                    expanded={isExpanded}
                                     testID={`pendingMessages.viewMore:${message.id}`}
                                     style={({ pressed }) => ([
                                         styles.userMessageBubbleToggle,
@@ -832,7 +886,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     <Text style={{ color: theme.colors.text.link, ...Typography.variant('meta', 'semiBold'),  }}>
                                         {isExpanded ? t('session.pendingMessages.actions.viewLess') : t('session.pendingMessages.actions.viewMore')}
                                     </Text>
-                                </Pressable>
+                                </HappierPressable>
                             ) : null}
                         </PendingUtteranceSurface>
 
@@ -861,7 +915,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         <View style={[styles.pendingStatusRow, isHostFollowInput ? (heightBearingChrome === 'blocked-notice' && blockedDeliveryLabel ? styles.hostBlockedStatusRow : styles.hostStatusRow) : null]}>
                             {followInput ? <TranscriptFollowSourceAction followInput={followInput} serverId={props.serverId}
                                 testID={`pendingMessages.followSourceOpen:${message.id}`} style={styles.hostSourceAction} /> : null}
-                            <View
+                            {isHostOnboarding ? null : <View
                                 testID={`pendingMessages.pendingAffordance:${message.id}`}
                                 accessible
                                 accessibilityLabel={deliveryStateAccessibilityLabel}
@@ -888,7 +942,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 >
                                     {deliveryStateLabel}
                                 </Text>
-                            </View>
+                            </View>}
 
                             {isWeb && presentation.canMutate ? (
                                 // The committed message's reveal owner: a queued row's actions keep their
@@ -896,16 +950,25 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 // that needs the person keeps its recovery in view.
                                 <RowActionRevealSlot
                                     testID={`pendingMessages.actionsOverlay:${message.id}`}
-                                    revealed={hoveredMessageId === message.id || menuOpen || visualState.kind === 'send_failed' || usesDeliveryResolutionActions || isUncertainDelivery}
+                                    revealed={hoveredMessageId === message.id || menuOpen || (!isHostOnboarding && (visualState.kind === 'send_failed' || launchFailedDraftId !== null || usesDeliveryResolutionActions || isUncertainDelivery))}
                                     style={styles.messageActionContainer}
                                 >
-                                    {text && !isContentLoading ? (
+                                    {text && !isContentLoading && !isHostOnboarding ? (
                                         <PendingMessageCopyAction
+                                            writeClipboard={writeClipboard}
                                             testID={`pendingMessages.copy:${message.id}`}
                                             message={message}
                                         />
                                     ) : null}
-                                    {paintsMessageActionRow && pendingMessages.length > 1 && !hasEffectPossibleDelivery ? (
+                                    {launchFailedDraftId ? (
+                                        <IconAction
+                                            testID={`pendingMessages.openDraft:${message.id}`}
+                                            accessibilityLabel={t('session.pendingMessages.actions.openDraft')}
+                                            icon="pencil"
+                                            onPress={() => handleOpenLaunchDraft(launchFailedDraftId)}
+                                        />
+                                    ) : null}
+                                    {paintsMessageActionRow && pendingMessages.length > 1 && !hasEffectPossibleDelivery && !isLaunchOwnedPendingMessage(message) ? (
                                         renderDragHandle({
                                             children: null,
                                             testID: `pendingMessages.reorder:${message.id}`,
@@ -939,7 +1002,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             disabled={deliveryActionBusy}
                                         />
                                     ) : null}
-                                    {isServerDeliveryInProgress && canSendAsNew ? (
+                                    {isServerDeliveryInProgress && canSendAsNew && !isHostOnboarding ? (
                                         <IconAction
                                             testID={`pendingMessages.sendAsNew:${message.id}`}
                                             accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
@@ -957,7 +1020,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             disabled={deliveryActionBusy}
                                         />
                                     ) : null}
-                                    {isUncertainDelivery && canSendAsNew ? (
+                                    {isUncertainDelivery && canSendAsNew && !isHostOnboarding ? (
                                         <IconAction
                                             testID={`pendingMessages.sendAsNew:${message.id}`}
                                             accessibilityLabel={t('session.pendingMessages.actions.sendAsNew')}
@@ -981,12 +1044,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                             testID={`pendingMessages.remove:${message.id}`}
                                             accessibilityLabel={t('common.remove')}
                                             icon="trash"
-                                            onPress={() => handleRemove(message.id)}
+                                            onPress={() => handleRemove(message)}
                                             tone="destructive"
                                             disabled={deliveryActionBusy}
                                         />
                                     ) : null}
-                                    {canUsePendingQueueActions && !usesDeliveryResolutionActions && !isContentLoading ? (
+                                    {canUsePendingQueueActions && !usesDeliveryResolutionActions && !isContentLoading && !isHostOnboarding ? (
     	                                    <IconAction
     	                                        testID={`pendingMessages.edit:${message.id}`}
                                             accessibilityLabel={t('session.pendingMessages.actions.edit')}
@@ -999,7 +1062,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     	                                        testID={`pendingMessages.remove:${message.id}`}
                                             accessibilityLabel={t('common.remove')}
                                             icon="trash"
-                                            onPress={() => handleRemove(message.id)}
+                                            onPress={() => handleRemove(message)}
                                             tone="destructive"
                                         />
                                     ) : null}
@@ -1036,6 +1099,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         );
     }, [
         accountActorViewerScope,
+        writeClipboard,
         authorship.hasOtherNamedCollaborator,
         canSteerNow,
         discardedCount,
@@ -1060,6 +1124,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         blockedPendingExcerpt,
         isWeb,
         materializingLocalIds,
+        machineAccessRemoved,
         menuPressAnchor,
         openMenuKey,
         pendingQueueDeliveryTiming,
@@ -1117,7 +1182,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
-                    if (itemId === 'copy') await copyPendingMessageText(message);
+                    if (itemId === 'copy') await copyPendingMessageText(message, writeClipboard);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
                     if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
@@ -1194,6 +1259,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             >
                                 {text ? (
                                     <PendingMessageCopyAction
+                                        writeClipboard={writeClipboard}
                                         testID={`pendingMessages.discarded.copy:${message.id}`}
                                         message={message}
                                     />
@@ -1237,6 +1303,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         );
     }, [
         accountActorViewerScope,
+        writeClipboard,
         authorship.hasOtherNamedCollaborator,
         canSteerNow,
         collapsedLines,
@@ -1438,15 +1505,16 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 
 const PendingMessageCopyAction = React.memo(function PendingMessageCopyAction(props: {
     message: PendingMessage | DiscardedPendingMessage;
+    writeClipboard: (text: string) => Promise<boolean>;
     testID: string;
 }) {
     const { markCopied, isCopied } = useHappierCopyFeedback();
     const copied = isCopied();
     const handlePress = React.useCallback(async () => {
-        if (await copyPendingMessageText(props.message)) {
+        if (await copyPendingMessageText(props.message, props.writeClipboard)) {
             markCopied();
         }
-    }, [markCopied, props.message]);
+    }, [markCopied, props.message, props.writeClipboard]);
 
     return (
         <IconAction
@@ -1459,6 +1527,11 @@ const PendingMessageCopyAction = React.memo(function PendingMessageCopyAction(pr
     );
 });
 
+/**
+ * A queued row's icon action: the shared icon-only button at the band's drawn 18 px, quiet like the committed
+ * row's actions. Its hit area takes half of each real gap (MESSAGE_ACTION_HIT_REACH), which with the band's
+ * gap and margin reaches the 24 px pointer floor on both axes, and further under a finger only into free space.
+ */
 function IconAction(props: {
     icon: IconName;
     onPress: () => void;
@@ -1468,38 +1541,26 @@ function IconAction(props: {
     disabled?: boolean;
 }) {
     const { theme } = useUnistyles();
-    const isDestructive = props.tone === 'destructive';
-    const tint = isDestructive
-        ? theme.colors.state.danger.foreground
-        : props.tone === 'success'
-            ? theme.colors.state.success.foreground
-            : theme.colors.text.secondary;
+    const tint = props.tone === 'destructive' ? theme.colors.state.danger.foreground : theme.colors.text.secondary;
     return (
-        <Pressable
+        <IconButton
             testID={props.testID}
             onPress={props.onPress}
             disabled={props.disabled === true}
-            hitSlop={14}
-            accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
-            accessibilityState={props.disabled === true ? { disabled: true } : undefined}
-            style={({ pressed }) => ({
-                padding: theme.space.s2,
-                borderRadius: 6,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: pressed && props.disabled !== true ? theme.colors.surface.pressedOverlay : 'transparent',
-                opacity: props.disabled === true ? 0.35 : pressed ? 1 : 0.65,
-                ...(Platform.OS === 'web'
-                    ? {
-                        cursor: 'pointer' as const,
-                        pointerEvents: 'auto' as const,
-                    }
-                    : null),
-            })}
-        >
-            <Icon name={props.icon} size={14} color={tint} />
-        </Pressable>
+            tooltip={props.accessibilityLabel}
+            variant="plain"
+            size={MESSAGE_ACTION_SIZE_PX}
+            iconSize={MESSAGE_ACTION_GLYPH_PX}
+            tone={props.tone === 'destructive' ? 'danger' : 'default'}
+            interactiveTargetEdgesPx={{
+                leading: MESSAGE_ACTION_HIT_REACH.left,
+                trailing: MESSAGE_ACTION_HIT_REACH.right,
+                top: MESSAGE_ACTION_HIT_REACH.top,
+                bottom: MESSAGE_ACTION_HIT_REACH.bottom,
+            }}
+            icon={<Icon name={props.icon} size={MESSAGE_ACTION_GLYPH_PX} color={tint} />}
+        />
     );
 }
 
@@ -1639,7 +1700,7 @@ const styles = StyleSheet.create((theme) => ({
     userMessageWrapper: {
         ...userMessageBubbleAlignerStyle,
         position: 'relative',
-        paddingBottom: 8,
+        paddingBottom: MESSAGE_ROW_PADDING_BOTTOM_PX,
     },
     userMessageWrapperHovered: {
         zIndex: 60,
@@ -1685,8 +1746,8 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignSelf: 'flex-end',
         justifyContent: 'flex-end',
-        marginTop: 2,
-        gap: 3,
+        marginTop: MESSAGE_ACTION_ROW_MARGIN_TOP_PX,
+        gap: MESSAGE_ACTION_GAP_PX,
     },
     discardedTitle: {
         marginTop: 6,

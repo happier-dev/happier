@@ -6,6 +6,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { DocumentTabStrip, type DocumentTabItem, type DocumentTabEntityDragSource } from '@/components/ui/navigation/DocumentTabStrip';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { readSessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useActiveServerAccountScope, useSession } from '@/sync/domains/state/storage';
@@ -243,10 +245,12 @@ const RAIL_TEST_IDS = {
     tabClose: (key: string) => `phone-rail-tab-close-${key}`,
 };
 
-/** A session tab carries its agent's mark, like the session row and header do. */
+/** A session tab carries the mark its row and header carry: a Bot's face, otherwise its Agent's mark. */
 const RailSessionMark = React.memo(function RailSessionMark(props: Readonly<{ sessionId: string; serverId: string | null }>) {
     const { theme } = useUnistyles();
     const session = useSession(props.sessionId, props.serverId);
+    const botFace = session ? readSessionBotFaceFacts(session, props.serverId) : null;
+    if (botFace) return <SessionBotFace facts={botFace} size={14} />;
     const agentId = session ? readSessionPresentationAgentId(session) ?? '' : '';
     const machineId = session ? readSessionOwnerMetadataView(session)?.machineId ?? null : null;
     return (

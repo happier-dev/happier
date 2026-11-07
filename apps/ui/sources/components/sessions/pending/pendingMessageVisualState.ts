@@ -4,7 +4,7 @@ import { t, type TranslationKeyNoParams } from '@/text';
 import { isPendingDeliveryProviderEffectPossibleV1, type PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import type { SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { followInputNeedsYou, isHostAuthoredInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { followInputNeedsYou, isHostAuthoredInputMeta, isHostOnboardingInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { followNoticeSourceKey, groupFollowNoticesBySource } from './followNoticeGroups';
 import type { SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
@@ -97,6 +97,8 @@ export function resolvePendingMessageHeightBearingChrome(
 /** The actual pending paint, shared by the presenter, reorder binding and transcript measurement. */
 export type PendingMessageContentPresentation = Readonly<{
     isHostInput: boolean;
+    /** A new Bot's first-run seed: a quiet host line the person cannot copy, edit or resend; its delivery fails at the Session, not here. */
+    hostOnboarding: boolean;
     followInput: SessionFollowInputV1 | null;
     followSourceKey: string | null;
     needsYou: boolean;
@@ -124,8 +126,10 @@ export type PendingMessagesPresentation = Readonly<{
 export function resolvePendingMessageContentPresentation(message: PendingMessage): PendingMessageContentPresentation {
     const contentOpen = message.pendingDecryptFailure?.kind !== 'decrypt_failed' && message.pendingDecryption?.kind !== 'loading';
     const followInput = contentOpen ? readHostFollowInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput) : null;
+    const hostOnboarding = contentOpen && isHostOnboardingInputMeta(message.rawRecord?.meta);
     return {
-        isHostInput: contentOpen && isHostAuthoredInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput),
+        isHostInput: hostOnboarding || (contentOpen && isHostAuthoredInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput)),
+        hostOnboarding,
         followInput,
         followSourceKey: followInput ? followNoticeSourceKey(followInput) : null,
         needsYou: followInput !== null && followInputNeedsYou(followInput),
@@ -154,7 +158,7 @@ export function resolvePendingMessagesPresentation(
             count: aggregate ? group.count : 1,
             needsYou,
             opensSourceSession: needsYou && followInput !== null && 'sourceSessionId' in followInput.original,
-            heightBearingChrome: resolvePendingMessageHeightBearingChrome(row.visualState),
+            heightBearingChrome: row.hostOnboarding ? 'none' : resolvePendingMessageHeightBearingChrome(row.visualState),
             canMutate: !folded && !aggregate,
             canReorder: !folded && !aggregate && row.visualState.deliveryMutationPolicy !== 'effect_possible'
                 && !isLaunchOwnedPendingMessage(row.message) };

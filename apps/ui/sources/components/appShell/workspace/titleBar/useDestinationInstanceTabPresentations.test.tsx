@@ -75,6 +75,22 @@ describe('workspace session tab presentation', () => {
         expect(renders).toBe(rendersBefore);
     });
 
+    it('does not redraw the strip when an open tab\'s Session changes a fact its status does not show', async () => {
+        // Every new message or agent-state write replaces the row; the strip redrew on each one.
+        const row = seed({ latestTurnStatus: 'in_progress' });
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useDestinationInstanceTabPresentations(entries); });
+        const before = hook.getCurrent();
+        const rendersBefore = renders;
+        await act(async () => {
+            for (let seq = 2; seq < 5; seq += 1) {
+                storage.setState({ sessionListRowsByServerId: { 'home-a': { s1: { ...row, seq, updatedAt: row.updatedAt + seq } } } });
+            }
+        });
+        expect(hook.getCurrent()).toBe(before);
+        expect(renders - rendersBefore).toBe(0);
+    });
+
     it('withdraws a working spinner at the canonical freshness deadline without a store update', async () => {
         seed({ latestTurnStatus: 'in_progress' });
         const hook = await renderHook(() => useDestinationInstanceTabPresentations(entries));
@@ -97,5 +113,17 @@ describe('workspace session tab presentation', () => {
         expect(hook.getCurrent().get('tab')).toBeUndefined();
         await act(async () => { storage.setState({ sessionListRowsByServerId: {} }); });
         expect(hook.getCurrent().get('tab')).toBeUndefined();
+    });
+
+    it('leads a Bot tab with its face from the row it already holds, stable across unrelated row writes', async () => {
+        const metadata = { path: '/repo', bot: { kind: 'bot' }, botFace: { style: 'planet', body: 'crab', palette: 'moss' } };
+        seed({ metadata });
+        const hook = await renderHook(() => useDestinationInstanceTabPresentations(entries));
+        const mark = hook.getCurrent().get('tab')?.mark as { props: { facts: { seed: string; face: unknown } } } | undefined;
+        expect(mark?.props.facts).toMatchObject({ seed: 's1', face: { style: 'planet', body: 'crab', palette: 'moss' } });
+        await act(async () => { seed({ metadata, latestTurnStatus: 'in_progress' }); });
+        expect(hook.getCurrent().get('tab')?.mark).toBe(mark);
+        await act(async () => { seed({ metadata: { path: '/repo' } }); });
+        expect(hook.getCurrent().get('tab')?.mark).toBeUndefined();
     });
 });

@@ -57,7 +57,7 @@ import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/
 import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '@/components/sessions/transcript/events/runtimeIssueMessage';
 import { TeamCredentialDenialRecovery } from '@/components/sessions/transcript/events/TeamCredentialDenialRecovery';
 import { AgentAuthRequiredRecovery } from '@/components/sessions/transcript/events/AgentAuthRequiredRecovery';
-import { isHostAuthoredInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { isHostAuthoredInputMeta, isHostOnboardingInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
@@ -711,8 +711,7 @@ function RenderBlock(props: {
   switch (props.message.kind) {
     case 'user-text':
       if (props.isHostFollowInput && !props.returnedAnswer) {
-        const provenance = readSessionMessageProvenance(props.message.meta, 'stored');
-        if (provenance?.kind === 'host' && provenance.producer === 'hostOnboarding') {
+        if (isHostOnboardingInputMeta(props.message.meta)) {
           return <HostOnboardingNotice message={props.message} sessionId={props.sessionId} serverId={props.serverId}
             canSendMessages={props.interaction.canSendMessages === true} />;
         }

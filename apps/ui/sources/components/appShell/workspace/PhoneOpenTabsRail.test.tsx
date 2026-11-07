@@ -168,6 +168,20 @@ describe('phone production tab carry', () => {
         expect(runtime.getSnapshot().phase).toBe('idle');
         await screen.unmount();
     });
+    it('leads a Bot\'s session tab with its face, not an Agent glyph (Living Bots lab)', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { SessionBotFace } = await import('@/components/sessions/bots/face/SessionBotFace');
+        const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
+        vi.stubGlobal('ImageData', class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} });
+        storage.setState({ profileScope: scope });
+        storage.getState().applySessions([createSessionFixture({ id: 'session', serverId: scope.serverId,
+            metadata: { path: '/repo', machineId: 'machine', flavor: 'codex', bot: { kind: 'bot' } } as ReturnType<typeof createSessionFixture>['metadata'] })]);
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={harness().workspace}><PhoneOpenTabsRail /></WorkspaceNavigationProvider>,
+            { createNodeMock: node => node.type === 'canvas' ? { getContext: () => ({ putImageData() {} }) } : null });
+        expect(screen.findByType(SessionBotFace).props.facts).toMatchObject({ seed: 'session' });
+        expect(screen.findAllByType(SessionAgentCatalogIdentityIcon)).toHaveLength(0);
+        vi.unstubAllGlobals();
+    });
     it('carries a qualified Session from the actual narrow strip into the mounted Workflow target and cancels without writing', async () => {
         storage.setState({ profileScope: scope });
         const h = harness(true);

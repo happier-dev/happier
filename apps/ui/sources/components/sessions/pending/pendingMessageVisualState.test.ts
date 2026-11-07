@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import { t } from '@/text';
 
 import {
     createSessionInputFailureError,
@@ -10,8 +11,11 @@ import {
     canUseDirectPendingDeliveryActions,
     getSessionInputFailureLabelKey,
     resolvePendingMessageHeightBearingChrome,
+    resolvePendingMessagesPresentation,
     type PendingMessageVisualStateKind,
 } from './pendingMessageVisualState';
+import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
+import { SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
     return {
@@ -27,6 +31,24 @@ function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage
 }
 
 describe('getPendingMessageVisualState', () => {
+    it('paints a launch-owned first message as starting, then as a launch refusal with its typed reason', () => {
+        const starting = pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'starting' } });
+        expect(getPendingMessageVisualState(starting)).toEqual({ kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' });
+        const failed = pendingMessage({ source: 'local_outbound',
+            pendingLaunch: { state: 'failed', message: 'The model is not available.', draftId: 'draft-1' } });
+        const failedState = getPendingMessageVisualState(failed);
+        expect(failedState).toMatchObject({ kind: 'launch_failed', showSpinner: false,
+            deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryStatus.notStarted', message: 'The model is not available.' } });
+        expect(resolvePendingMessageHeightBearingChrome(failedState)).toBe('blocked-notice');
+        // A terminal wait that ended without an outcome never keeps spinning as "starting".
+        const unresolvedState = getPendingMessageVisualState(pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'unresolved' } }));
+        expect(unresolvedState).toMatchObject({ kind: 'launch_unresolved', showSpinner: false,
+            deliveryBlockedPresentation: { labelKey: 'session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain', isUnknown: true } });
+        expect(resolvePendingMessageHeightBearingChrome(unresolvedState)).toBe('blocked-notice');
+        // A launch-owned row is never the composer's direct send/steer target, whatever its delivery status.
+        expect(canUseDirectPendingDeliveryActions({ ...starting, source: undefined })).toBe(false);
+        expect(canUseDirectPendingDeliveryActions({ ...failed, source: undefined })).toBe(false);
+    });
     it('keeps check-in holds and muted input distinct from unknown delivery failures', () => {
         expect(getPendingMessageVisualState(pendingMessage({
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'autonomous_check_in',
@@ -291,6 +313,28 @@ describe('getPendingMessageVisualState', () => {
         });
     });
 
+    it('presents removed machine access for a runtime-config block and retracts it when access returns', () => {
+        const message = pendingMessage({
+            pendingDeliveryStatus: 'blocked',
+            pendingDeliveryBlockedReason: 'runtime_config_blocked',
+        });
+        expect(getPendingMessageVisualState(message, { machineAccessRemoved: true })).toMatchObject({
+            kind: 'blocked',
+            deliveryBlockedPresentation: {
+                message: t('machineRequester.accessRemoved', { machine: t('common.machine') }),
+                isUnknown: false,
+            },
+        });
+        expect(getPendingMessageVisualState(message, { machineAccessRemoved: false }).deliveryBlockedPresentation)
+            .not.toHaveProperty('message');
+        expect(getPendingMessageVisualState({ ...message, pendingDeliveryBlockedReason: 'terminal_composer_draft' }, {
+            machineAccessRemoved: true,
+        }).deliveryBlockedPresentation).toEqual({
+            labelKey: 'session.pendingMessages.deliveryBlockedReasons.terminalComposerDraft',
+            isUnknown: false,
+        });
+    });
+
     it('marks unknown raw delivery states as unknown blocked presentation', () => {
         expect(getPendingMessageVisualState(pendingMessage({
             pendingDeliveryStatus: 'blocked',
@@ -421,5 +465,28 @@ describe('pending delivery actions', () => {
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingOutboxOperation: 'enqueue' }))).toBe(false);
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDecryptFailure: { kind: 'decrypt_failed' } }))).toBe(false);
         expect(canUseDirectPendingDeliveryActions(pendingMessage({ pendingDeliveryStatus: 'server_delivering' }))).toBe(false);
+    });
+});
+
+describe('a new Bot\'s first-run seed while it is pending', () => {
+    // The real birth record (`preparedSessionBirth`): template facts plus host provenance and request, no Home authority yet.
+    const onboarding = buildSessionHostOnboardingInputV1({ templateName: 'Coffee Companion', templateVersion: '1.0.10', authorDisplayName: 'Mara' });
+    const seed = (overrides: Partial<PendingMessage> = {}) => pendingMessage({
+        text: onboarding.initialInput.text,
+        rawRecord: { meta: { ...onboarding.meta, [SESSION_MESSAGE_PROVENANCE_META_KEY]: onboarding.inputAdmission.provenance,
+            [SESSION_INPUT_REQUEST_META_KEY]: onboarding.inputAdmission.request } },
+        ...overrides,
+    });
+
+    it('is the host\'s quiet line, not the person\'s bubble, and never paints its own blocked notice', () => {
+        const [row] = resolvePendingMessagesPresentation([seed({
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
+        expect(row).toMatchObject({ isHostInput: true, hostOnboarding: true, heightBearingChrome: 'none' });
+    });
+
+    it('leaves an ordinary message the person typed as their own', () => {
+        const [row] = resolvePendingMessagesPresentation([pendingMessage({
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
+        expect(row).toMatchObject({ isHostInput: false, hostOnboarding: false, heightBearingChrome: 'blocked-notice' });
     });
 });
