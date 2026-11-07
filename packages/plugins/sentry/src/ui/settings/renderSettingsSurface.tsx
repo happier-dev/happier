@@ -48,7 +48,7 @@ export const renderSurface = createTriageSourceSettingsSurface({
           configuration: { v: 1, token: encodeSentryInstanceConfiguration({
             ...decoded.configuration,
             projectScope: selection,
-            projectUnits: selection.kind === 'selected' ? units : undefined,
+            ...(selection.kind === 'selected' ? { projectUnits: units } : {}),
           }) },
         };
       } catch {

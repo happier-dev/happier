@@ -1,3 +1,4 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 /**
  * The Sentry detail body's tab declarations.
  *
@@ -64,7 +65,7 @@ export type SentryDetailTabDeclarationV1 = Readonly<{
   retainedState: string;
   readPlane: SentryDetailTabReadPlaneV1;
   /** The single component that owns this panel's vertical scrolling. */
-  scrollOwner: 'scrollArea' | 'list';
+  scrollOwner: TriageDetailPanelScrollOwnerV1;
   /**
    * `true` when the tab is present only while its condition holds. A conditional
    * tab's condition is evaluated by the body before the strip renders, which is

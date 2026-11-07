@@ -16,7 +16,7 @@ import {
 } from '../../sentryContracts.js';
 
 import { renderSurface } from './renderSettingsSurface.js';
-import { decodeSentryInstanceConfiguration } from '../../instances/sentryInstanceConfiguration.js';
+import { decodeSentryInstanceConfiguration, encodeSentryInstanceConfiguration } from '../../instances/sentryInstanceConfiguration.js';
 
 /**
  * What Sentry contributes to the shared PRs & Issues settings page.
@@ -79,6 +79,34 @@ afterEach(async () => {
 });
 
 describe('the mounted Sentry PRs & Issues settings page', () => {
+  it('saves the default All projects selection without changing the discovered organization', async () => {
+    const draft = {
+      v: 1, binding: { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, account: {
+        service: { pluginId: SENTRY_PLUGIN_ID, localId: 'sentry-account' }, accountId: 'account-1',
+      } },
+      localInstanceKey: `https://us.sentry.io${SENTRY_SCOPE_SEPARATOR}4501`,
+      keyStability: 'locatorDerived', locator: { v: 1, displayLabel: 'Example Org' },
+      configuration: { v: 1, token: encodeSentryInstanceConfiguration({
+        v: 1, organizationId: '4501', projectScope: { kind: 'all' }, environmentScope: { kind: 'all' },
+      }) },
+    };
+    const page = await mountSettings({ kind: 'complete', candidates: [draft], failures: [] });
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Add Example Org to PRs & Issues' })); });
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Save selection' })); });
+    const request = TriageSourceAdministrationActionInputV1Schema.parse(recorded.find(({ action }) => (
+      (action as { localId: string }).localId === TRIAGE_SOURCES_ADMINISTER_ACTION_REF_V1.localId
+    ))?.input);
+    expect(request).toMatchObject({ kind: 'create', draft: {
+      binding: draft.binding, localInstanceKey: draft.localInstanceKey, locator: draft.locator,
+    } });
+    if (request.kind !== 'create') throw new Error('expected configuration creation');
+    expect(decodeSentryInstanceConfiguration(request.draft.configuration.token)).toEqual({
+      ok: true, configuration: {
+        v: 1, organizationId: '4501', projectScope: { kind: 'all' }, environmentScope: { kind: 'all' },
+      },
+    });
+  });
+
   it('configures project selection through the shared control while retaining the organization binding', async () => {
     const draft = {
       v: 1, binding: { purpose: SENTRY_CONNECTED_ACCOUNT_PURPOSE, account: {

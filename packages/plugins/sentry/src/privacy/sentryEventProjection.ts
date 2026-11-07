@@ -8,9 +8,10 @@
  * live. Tokens, session cookies, request bodies and local variable values all appear
  * there, on a shape no schema constrains.
  *
- * So this module is an **allow-list by construction**, not a redaction pass. It builds
- * its output from the fields named in the exported types below and passes no
- * unrecognized key through. That is what makes §8.5's rule enforceable rather than
+ * This module builds the typed event sections below. Event tags retain customer-defined
+ * keys and values, with provider `_meta` scrubbing at the same field owner as the
+ * rest of the projection. It does not pass arbitrary raw event bags through. This
+ * keeps §8.5's rule enforceable rather than
  * aspirational: a `formatted` prose rendering, however it arrived, is dropped and
  * recorded rather than reaching a renderer as unclassified text — because a prose
  * rendering has no dotted paths, and every value withheld here can reappear inside it.
@@ -43,13 +44,6 @@ import {
   SENTRY_DETAIL_BOUNDS_V1,
   type SentryDetailBoundsV1,
 } from '../detail/detailProjection.js';
-import {
-  isSentryAllowedTagKey,
-  isSentrySensitiveTagKey,
-  type SentryTagKeyV1,
-} from './sentryTagAllowList.js';
-
-export type { SentryTagKeyV1 };
 
 /** The published bounds one event projection is measured against. */
 export type SentryEventBoundsV1 = SentryDetailBoundsV1;
@@ -97,15 +91,7 @@ export type SentryEventSectionV1 =
   | Readonly<{ kind: 'message'; formatted: string }>
   | Readonly<{ kind: 'unsupported'; entryType: string }>;
 
-/**
- * One admitted event tag.
- *
- * `key` is typed as a plain string even though only `sentryTagAllowList` keys can ever
- * appear here, and deliberately so: this exact shape crosses the Action boundary and
- * comes back parsed, and a narrower in-process type than the wire type would force a
- * re-narrowing on the far side — a second place deciding which keys are admissible. The
- * allow-list stays the one classifier, at the one point where a key is admitted.
- */
+/** One provider-redacted event tag, including customer-defined keys. */
 export type SentryEventTagProjectionV1 = Readonly<{
   key: string;
   value: string;
@@ -612,14 +598,13 @@ function projectTags(
   const tags: SentryEventTagProjectionV1[] = [];
   for (const [index, candidate] of raw.entries()) {
     if (!isRecord(candidate)) continue;
-    const key = readString(candidate['key']);
-    // A key nobody classified carries a value nobody classified. The withheld tag is
-    // named so a reader is told the event had more, rather than shown a subset that
-    // looks like the whole set.
-    if (key === null || !isSentryAllowedTagKey(key)) {
-      record(ledger, formatPath(['tags', index]), 'pluginWithheld');
-      continue;
-    }
+    const key = projectField({
+      raw: candidate['key'],
+      path: ['tags', index, 'key'],
+      maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+      ledger,
+    });
+    if (key === null) continue;
     const value = projectField({
       raw: candidate['value'],
       path: ['tags', index, 'value'],
@@ -627,9 +612,9 @@ function projectTags(
       ledger,
     });
     if (value === null) continue;
-    // A tag discloses its key, not its index: the same key repeated is one fact about
-    // what this projection carries, and it is only claimed for a tag that survived.
-    if (isSentrySensitiveTagKey(key)) markSensitive(ledger, `tags.${key}`);
+    // Custom tags are unclassified content. Disclose the collection once, without
+    // inventing another key classifier or expanding a valid key beyond its wire bound.
+    markSensitive(ledger, 'tags');
     tags.push(Object.freeze({ key, value }));
   }
   return Object.freeze(tags);

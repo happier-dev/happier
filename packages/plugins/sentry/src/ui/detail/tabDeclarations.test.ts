@@ -1,6 +1,7 @@
+import { readPluginTranslationResources } from '../../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
-import { SENTRY_UI_TRANSLATIONS } from '../translations.js';
 
 import {
   SENTRY_DEFAULT_DETAIL_TAB_V1,
@@ -10,7 +11,9 @@ import {
   sentryVisibleDetailTabs,
 } from './tabDeclarations.js';
 
-const LOCALES = Object.keys(SENTRY_UI_TRANSLATIONS) as (keyof typeof SENTRY_UI_TRANSLATIONS)[];
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../../', import.meta.url));
+
+const LOCALES = Object.keys(PACKAGED_UI_TRANSLATIONS) as (keyof typeof PACKAGED_UI_TRANSLATIONS)[];
 
 describe('Sentry detail tab declarations', () => {
   it('states a lifetime and a scroll owner on every tab', () => {
@@ -32,14 +35,14 @@ describe('Sentry detail tab declarations', () => {
     for (const tab of SENTRY_DETAIL_TABS_V1) {
       expect(tab.titleKey, tab.id).toMatch(/^plugins\.sentry\.ui\.tab\./u);
       for (const locale of LOCALES) {
-        const messages: Readonly<Record<string, string>> = SENTRY_UI_TRANSLATIONS[locale];
+        const messages: Readonly<Record<string, string>> = PACKAGED_UI_TRANSLATIONS[locale];
         expect(messages[tab.titleKey], `${tab.id} @ ${locale}`).toBeTypeOf('string');
         expect(messages[tab.titleKey], `${tab.id} @ ${locale}`).not.toBe('');
       }
       // English is the fallback a locale with no entry degrades to, so the two
       // must not be allowed to drift into two different English words.
-      expect(SENTRY_UI_TRANSLATIONS.en[
-        tab.titleKey as keyof typeof SENTRY_UI_TRANSLATIONS.en
+      expect(PACKAGED_UI_TRANSLATIONS.en[
+        tab.titleKey as keyof typeof PACKAGED_UI_TRANSLATIONS.en
       ], tab.id).toBe(tab.title);
     }
   });
@@ -47,7 +50,7 @@ describe('Sentry detail tab declarations', () => {
   it('translates every tab into a locale that is not English', () => {
     // A catalog whose non-English entries were copied from the English column
     // would satisfy presence and still ship an untranslated strip.
-    const japanese: Readonly<Record<string, string>> = SENTRY_UI_TRANSLATIONS.ja;
+    const japanese: Readonly<Record<string, string>> = PACKAGED_UI_TRANSLATIONS.ja;
     for (const tab of SENTRY_DETAIL_TABS_V1) {
       expect(japanese[tab.titleKey], tab.id).not.toBe(tab.title);
     }

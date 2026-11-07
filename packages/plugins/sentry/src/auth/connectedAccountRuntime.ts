@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableRuntime, ConnectedAccountPortableReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 /**
  * The `sentry-account` Connected Account runtime (`SENTRY.md` §2.1, §2.1a,
  * §2.3a).
@@ -326,7 +327,7 @@ async function completeManualConnection(
  * that never accepted it.
  */
 async function resolveConfirmedDeploymentOrigin(
-  context: SentryReadContext,
+  context: Pick<ConnectedAccountPortableReadContext, 'configuration' | 'credentials'>,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<
   | Readonly<{ ok: true; origin: string }>
@@ -385,6 +386,25 @@ async function readHealth(
     : { status: 'unavailable', diagnostic: confirmation.diagnostic };
 }
 
+const materializeSentryCredentials: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options) => {
+    if (request.kind !== 'httpHeaders') {
+      throw new Error('Sentry connected accounts support HTTP-header materialization only');
+    }
+    const confirmed = await resolveConfirmedDeploymentOrigin(context, options);
+    if (!confirmed.ok || request.origin !== confirmed.origin) {
+      throw new Error('Sentry connected accounts cannot materialize credentials for this origin');
+    }
+    if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) {
+      return { kind: 'httpHeaders', headers: EMPTY_HTTP_HEADERS };
+    }
+    const token = (await context.credentials.get(SENTRY_TOKEN_CREDENTIAL_KEY, options))?.trim()
+      ?? '';
+    if (token === '') {
+      throw new Error('Sentry connected-account credentials are unavailable');
+    }
+    return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${token}` } };
+  };
+
 const sentryConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
@@ -403,26 +423,14 @@ const sentryConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   async status(context, options) {
     return readHealth(context, options);
   },
-  async materialize(request, context, options) {
-    if (request.kind !== 'httpHeaders') {
-      throw new Error('Sentry connected accounts support HTTP-header materialization only');
-    }
-    const confirmed = await resolveConfirmedDeploymentOrigin(context, options);
-    if (!confirmed.ok || request.origin !== confirmed.origin) {
-      throw new Error('Sentry connected accounts cannot materialize credentials for this origin');
-    }
-    if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) {
-      return { kind: 'httpHeaders', headers: EMPTY_HTTP_HEADERS };
-    }
-    const token = (await context.credentials.get(SENTRY_TOKEN_CREDENTIAL_KEY, options))?.trim()
-      ?? '';
-    if (token === '') {
-      throw new Error('Sentry connected-account credentials are unavailable');
-    }
-    return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${token}` } };
-  },
+  materialize: materializeSentryCredentials,
 };
 
 export const sentryConnectedAccountRuntime = Object.freeze(
   sentryConnectedAccountRuntimeDefinition,
 );
+
+export const sentryPortableAccountRuntime: ConnectedAccountPortableRuntime = {
+    authentication: sentryConnectedAccountRuntime.authentication,
+    materialize: materializeSentryCredentials,
+};

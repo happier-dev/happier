@@ -396,29 +396,48 @@ describe('Sentry event projection — what may leave this source', () => {
     expect(projected.sensitivePaths).not.toContain('culprit');
   });
 
-  it('publishes only allow-listed tag keys and names the ones it withheld', () => {
+  it('publishes customer-defined tag fields and honours provider scrubbing without a key allow-list', () => {
     const projected = projectSentryEventForDisplay({
       ...exceptionEvent(),
       tags: [
         { key: 'release', value: '1.4.2' },
         { key: 'url', value: 'https://shop.example.com/checkout?token=secret' },
-        { key: 'internal_auth_token', value: 'ghp_notatoken' },
+        { key: 'checkout.plan', value: 'enterprise' },
+        { key: 'custom.scrubbed', value: 'must-not-survive' },
       ],
+      _meta: { tags: { '3': { value: { '': { rem: [['@password', 's']] } } } } },
     });
 
     expect(projected.tags).toEqual([
       { key: 'release', value: '1.4.2' },
       { key: 'url', value: 'https://shop.example.com/checkout?token=secret' },
+      { key: 'checkout.plan', value: 'enterprise' },
     ]);
-    expect(JSON.stringify(projected)).not.toContain('ghp_notatoken');
+    expect(JSON.stringify(projected)).not.toContain('must-not-survive');
     expect(projected.redactions).toContainEqual({
-      path: 'tags[2]',
-      reason: 'pluginWithheld',
+      path: 'tags[3].value',
+      reason: 'providerScrubbed',
     });
-    // A build metadata tag is not sensitive; an environment/identity one is, and
-    // the disclosure names it rather than guessing from a boolean.
-    expect(projected.sensitivePaths).toContain('tags.url');
-    expect(projected.sensitivePaths).not.toContain('tags.release');
+    expect(projected.redactions).not.toContainEqual({ path: 'tags[2]', reason: 'pluginWithheld' });
+    // All customer-defined values are disclosed rather than classified by key.
+    expect(projected.sensitivePaths).toContain('tags');
+  });
+
+  it('keeps custom tag keys within the existing Action contract and honours scrubbed keys', () => {
+    const projected = projectSentryEventForDisplay(exceptionEvent({
+      tags: [
+        { key: `custom\n${'x'.repeat(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes)}`, value: 'kept' },
+        { key: 'scrubbed-key-must-not-survive', value: 'also-withheld' },
+        { key: null, value: 'malformed' },
+      ],
+      _meta: { tags: { '1': { key: { '': { chunks: [{ type: 'redaction' }] } } } } },
+    }));
+
+    expect(projected?.tags).toHaveLength(1);
+    expect(projected?.tags[0]?.value).toBe('kept');
+    expect(JSON.stringify(projected)).not.toContain('must-not-survive');
+    expect(projected?.redactions).toContainEqual({ path: 'tags[1].key', reason: 'providerScrubbed' });
+    expect(SentryReadEventResultV1Schema.safeParse({ kind: 'event', projection: projected }).success).toBe(true);
   });
 
   it('maps only the five allow-listed user fields and withholds the rest', () => {

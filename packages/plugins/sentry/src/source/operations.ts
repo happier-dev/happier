@@ -11,12 +11,13 @@
  * administration Action.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { SentrySourceContext } from '../api/sentryApiClient.js';
 import type {
   ConnectedAccountMetadataList,
   ConnectedAccountRef,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
+import { fitActionResultSequenceV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import {
   TriageGetInputV1Schema,
   isTriageSourceConnectedAccountInstanceV1,
@@ -361,7 +362,7 @@ function compareAccounts(left: ConnectedAccountRef, right: ConnectedAccountRef):
  */
 export async function listSentryInstances(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<TriageListInstancesResultV1> {
   TriageListInstancesInputV1Schema.parse(input);
   const nowMs = Date.now();
@@ -415,35 +416,25 @@ export async function listSentryInstances(
   }
 
   const frozenFailures = Object.freeze([...failures]);
-  if (listed.status === 'truncated') {
-    // The incumbent listing has no resumable cursor, so an elision can never be
-    // reported as complete discovery — and it never retires anything either.
-    return Object.freeze({
-      kind: 'incomplete' as const,
-      candidates: Object.freeze(candidates),
-      failures: frozenFailures,
-      failure: sourceFailure(SENTRY_FAILURE_CODES.accountListTruncated),
+  // Both an incomplete native walk and omission at the public response byte
+  // boundary preserve useful candidates without claiming complete discovery.
+  const listingFailure = listed.status === 'truncated'
+    ? sourceFailure(SENTRY_FAILURE_CODES.accountListTruncated) : incompleteReason;
+  return fitActionResultSequenceV1(candidates, (included, omittedCount): TriageListInstancesResultV1 => {
+    const failure = listingFailure ?? (omittedCount > 0
+      ? sourceFailure(SENTRY_FAILURE_CODES.instanceListResponseTruncated) : null);
+    const retained = Object.freeze([...included]);
+    if (failure !== null) return Object.freeze({
+      kind: 'incomplete' as const, candidates: retained, failures: frozenFailures, failure,
     });
-  }
-  if (incompleteReason !== null) {
-    return Object.freeze({
-      kind: 'incomplete' as const,
-      candidates: Object.freeze(candidates),
-      failures: frozenFailures,
-      failure: incompleteReason,
-    });
-  }
-  return Object.freeze({
-    kind: 'complete' as const,
-    candidates: Object.freeze(candidates),
-    failures: frozenFailures,
-  });
+    return Object.freeze({ kind: 'complete' as const, candidates: retained, failures: frozenFailures });
+  }).result;
 }
 
 /** One provider page of the V1 full scan for one exact configured instance. */
 export async function scanSentrySource(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.parse(input);
   const failed = (failure: TriageSourceFailureV1): TriageScanResultV1 => Object.freeze({
@@ -513,7 +504,7 @@ export async function scanSentrySource(
 /** One authoritative read of one local ref through one exact configured instance. */
 export async function getSentrySourceEntry(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<TriageGetResultV1> {
   const parsed = TriageGetInputV1Schema.parse(input);
   const localRef: TriageSourceEntryLocalRefV1 = toTriageLocalRef({

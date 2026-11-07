@@ -303,6 +303,28 @@ describe('the Sentry selected-evidence Composer reference', () => {
     expect(resolved.context).toContain('1 provider-scrubbed field(s)');
   });
 
+  it('dispatches selected custom tag fields while provider-scrubbed credentials stay absent', async () => {
+    const candidate = disclosedCandidate();
+    const resolved = await resolveSentryEvidenceReference(
+      candidate.candidate.id,
+      host({
+        status: 200,
+        body: {
+          ...rawEvent(),
+          tags: [
+            { key: 'checkout.plan', value: 'enterprise' },
+            { key: 'custom.credential', value: 'must-not-survive' },
+          ],
+          _meta: { tags: { '1': { value: { '': { rem: [['@password', 's']] } } } } },
+        },
+      }).context,
+    );
+
+    expect(resolved.context).toContain('Tag checkout.plan: enterprise');
+    expect(resolved.context).not.toContain('must-not-survive');
+    expect(resolved.context).toContain('1 provider-scrubbed field(s)');
+  });
+
   it('preserves a protocol-valid timestamp outside the JavaScript Date range without throwing', async () => {
     const candidate = disclosedCandidate();
     const outsideDateRangeEpochSeconds = 8_640_000_000_001;
@@ -399,6 +421,9 @@ describe('the Sentry selected-evidence Composer reference', () => {
         { key: 'device', value: 'desktop' },
         { key: 'custom-secret', value: 'must-not-survive' },
       ],
+      // Custom keys are no longer withheld. Sentry's own annotation protects this
+      // credential; the neighbouring owner-positive case keeps ordinary custom tags.
+      _meta: { tags: { '8': { value: { '': { rem: [['@password', 's']] } } } } },
       entries: [{
         type: 'exception',
         data: { values: [{ type: hostile, value: hostile, stacktrace: { frames } }] },

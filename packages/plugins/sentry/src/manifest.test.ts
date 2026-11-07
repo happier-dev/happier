@@ -27,6 +27,15 @@ type SentryNetworkGrant = Extract<
 >;
 
 describe('Sentry plugin manifest', () => {
+  it('exports checkpoint Collection callbacks through its author entry', async () => {
+    const entry = await import('./index.js');
+    const collections = PLUGIN_MANIFEST.contributes.accountCollections;
+    expect(collections).not.toHaveLength(0);
+    expect(entry).toHaveProperty('collectionMigrations', Object.fromEntries(
+      collections.map((collection) => [collection.id, []]),
+    ));
+  });
+
   it('publishes the manifest subpath consumed by the bundled-plugin registry', async () => {
     const packageJson = JSON.parse(
       await readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -156,6 +165,10 @@ describe('Sentry plugin manifest', () => {
     for (const id of Object.values(SENTRY_ACTION_IDS)) {
       const action = actions.get(id);
       if (action === undefined) continue;
+      if (id === SENTRY_ACTION_IDS.setupIssueEvent || id === SENTRY_ACTION_IDS.resetIssueEvent) {
+        expect(action.hostAccess ?? []).toEqual([]);
+        continue;
+      }
       // Both halves of the split network grant are declared on every read: the
       // host authorizes scopes by the exact ids an Action names, so omitting
       // the account half would leave a self-hosted read with no allowed origin.

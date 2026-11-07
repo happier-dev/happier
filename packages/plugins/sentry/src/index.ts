@@ -16,6 +16,7 @@ export { activate } from './activate.js';
 export {
   PLUGIN_MANIFEST,
   PLUGIN_MANIFEST as manifest,
+  collectionMigrations,
   SENTRY_DETAIL_ARTIFACT_ID,
   SENTRY_DETAIL_FALLBACK_RENDERER_ID,
   SENTRY_DETAIL_RENDERER_ID,
@@ -97,11 +98,6 @@ export type {
   SentryFrameV1,
   SentryRedactionV1,
 } from './privacy/sentryEventProjection.js';
-export {
-  isSentryAllowedTagKey,
-  isSentrySensitiveTagKey,
-} from './privacy/sentryTagAllowList.js';
-export type { SentryTagKeyV1 } from './privacy/sentryTagAllowList.js';
 export {
   SENTRY_DETAIL_STATS_PERIOD,
   SENTRY_MAX_DETAIL_PAGE_SIZE,

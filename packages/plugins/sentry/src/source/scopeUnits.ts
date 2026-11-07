@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { SentrySourceContext } from '../api/sentryApiClient.js';
 import {
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TriageListScopeUnitsConnectedAccountInputV1Schema,
@@ -23,7 +23,7 @@ import { resolveInstanceDeployment, sourceFailure } from './operations.js';
 /** Source-owned directory; configured mode interprets only retained private configuration. */
 export async function listSentryScopeUnits(
   input: unknown,
-  context: PluginInvocationContext,
+  context: SentrySourceContext,
 ): Promise<TriageListScopeUnitsResultV1> {
   const parsed = TriageListScopeUnitsConnectedAccountInputV1Schema.parse(input);
   const configured = decodeSentryInstanceConfiguration(parsed.draft.configuration.token);

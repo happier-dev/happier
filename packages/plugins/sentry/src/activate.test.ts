@@ -1,21 +1,25 @@
+import { activate as activateAccount } from './accountRuntime.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
-import { PLUGIN_MANIFEST, SENTRY_ACTION_IDS } from './manifest.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 import { SENTRY_CONNECTED_ACCOUNT_ID } from './sentryContracts.js';
 
 describe('Sentry plugin activation', () => {
-  it('registers exactly the Actions and Connected Account the manifest declares', () => {
+  it('registers exactly the Actions and Connected Account the manifest declares', async () => {
     const registerAction = vi.fn();
     const registerAccount = vi.fn();
     const registerComposerReference = vi.fn();
 
-    activate({
+    await activate({
       actions: { register: registerAction },
       connectedAccounts: { register: registerAccount },
       composerReferences: { register: registerComposerReference },
+      backgroundServices: { register: vi.fn() },
+      events: { register: vi.fn() },
     } as never);
 
+    activateAccount({ actions: { register: registerAction }, connectedAccounts: { register: vi.fn() } } as never);
     const registered = registerAction.mock.calls.map(([id]) => id).sort();
     // The spine registers exactly the declared Actions: registering an
     // undeclared one, or declaring one nothing implements, is the drift this
@@ -23,7 +27,6 @@ describe('Sentry plugin activation', () => {
     expect(registered).toEqual(
       [...PLUGIN_MANIFEST.contributes.actions.map((action) => action.id)].sort(),
     );
-    expect(registered).toEqual(Object.values(SENTRY_ACTION_IDS).sort());
     for (const [, handler] of registerAction.mock.calls) {
       expect(typeof handler).toBe('function');
     }
