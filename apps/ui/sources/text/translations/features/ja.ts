@@ -271,6 +271,7 @@ const actionConfirmationTranslations = { ja: {
         homeUnavailable: 'この承認は、このデバイスでは利用できない Home に属しています。判断するには、その Home を再接続してください。',
         turnedOffTitle: 'アクションはオフです',
         turnedOffMessage: 'このアクションはオフになっているため、何も変更されませんでした。設定 → アクションで再びオンにできます。',
+        turnedOffUnnamedMessage: 'このアクションはオフです。設定 → アクションでオンに戻すと、ここで使えます。',
         turnedOffReadMessage: 'このアクションはオフになっているため、何も読み込まれませんでした。設定 → アクションで再びオンにできます。',
         openActionSettings: 'アクションの設定を開く',
     } } as const satisfies Pick<Record<string, ActionConfirmationTranslations>, "ja">;

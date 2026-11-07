@@ -271,6 +271,7 @@ const actionConfirmationTranslations = { es: {
         homeUnavailable: 'Esta aprobación pertenece a un Home que no está disponible en este dispositivo. Vuelve a conectar ese Home para decidir.',
         turnedOffTitle: 'Acción desactivada',
         turnedOffMessage: 'Esta acción está desactivada, así que no se ha cambiado nada. Puedes volver a activarla en Ajustes → Acciones.',
+        turnedOffUnnamedMessage: 'Esta acción está desactivada. Vuelve a activarla en Ajustes → Acciones para usarla aquí.',
         turnedOffReadMessage: 'Esta acción está desactivada, así que no se ha cargado nada. Puedes volver a activarla en Ajustes → Acciones.',
         openActionSettings: 'Abrir ajustes de Acciones',
     } } as const satisfies Pick<Record<string, ActionConfirmationTranslations>, "es">;

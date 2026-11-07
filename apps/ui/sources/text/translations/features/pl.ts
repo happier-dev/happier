@@ -271,6 +271,7 @@ const actionConfirmationTranslations = { pl: {
         homeUnavailable: 'To zatwierdzenie należy do Home niedostępnego na tym urządzeniu. Połącz ten Home ponownie, aby podjąć decyzję.',
         turnedOffTitle: 'Akcja wyłączona',
         turnedOffMessage: 'Ta akcja jest wyłączona, więc nic nie zostało zmienione. Możesz ją ponownie włączyć w Ustawienia → Akcje.',
+        turnedOffUnnamedMessage: 'Ta akcja jest wyłączona. Włącz ją ponownie w Ustawienia → Akcje, aby użyć jej tutaj.',
         turnedOffReadMessage: 'Ta akcja jest wyłączona, więc nic nie zostało wczytane. Możesz ją ponownie włączyć w Ustawienia → Akcje.',
         openActionSettings: 'Otwórz ustawienia Akcji',
     } } as const satisfies Pick<Record<string, ActionConfirmationTranslations>, "pl">;

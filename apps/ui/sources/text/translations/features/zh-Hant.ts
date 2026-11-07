@@ -271,6 +271,7 @@ const actionConfirmationTranslations = { 'zh-Hant': {
         homeUnavailable: '此核准屬於本裝置上無法使用的 Home。請重新連接該 Home 後再作決定。',
         turnedOffTitle: '操作已關閉',
         turnedOffMessage: '此操作已關閉，因此未做任何更改。你可以在「設定 → 操作」中重新開啟。',
+        turnedOffUnnamedMessage: '此操作已關閉。在「設定 → 操作」中重新開啟，即可在這裡使用。',
         turnedOffReadMessage: '此操作已關閉，因此未載入任何內容。你可以在「設定 → 操作」中重新開啟。',
         openActionSettings: '開啟操作設定',
     } } as const satisfies Pick<Record<string, ActionConfirmationTranslations>, "zh-Hant">;
