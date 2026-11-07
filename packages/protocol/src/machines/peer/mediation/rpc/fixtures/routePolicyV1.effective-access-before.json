@@ -171,6 +171,7 @@
   ["daemon.sessionRunner.status.get","use"],
   ["daemon.sessionRunner.status.v2.get","use"],
   ["scm.backend.describe","use"],
+  ["scm.workspace.watch.v1","use"],
   ["capabilities.describe","use"],
   ["daemon.localServices.preview.openOrCreate","use"],
   ["daemon.localServices.preview.revoke","use"],

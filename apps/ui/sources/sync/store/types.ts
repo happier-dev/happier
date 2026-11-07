@@ -271,6 +271,7 @@ export interface ProjectDomainSlice {
             serverId?: string | null;
             snapshot: ScmWorkingSnapshot;
             status: ScmStatus | null;
+            options?: import('../runtime/orchestration/projectManager').ScmSnapshotPublicationOptions;
         }>>,
     ) => void;
     getSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => string[];
@@ -302,7 +303,7 @@ export interface ProjectDomainSlice {
     updateWorkspaceScmStatus: (scope: WorkspaceScopeBase, status: ScmStatus | null) => void;
     getWorkspaceScmSnapshot: (scope: WorkspaceScopeBase) => ScmWorkingSnapshot | null;
     getWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase) => import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null;
-    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null) => void;
+    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null, options?: import('../runtime/orchestration/projectManager').ScmSnapshotPublicationOptions) => void;
     updateWorkspaceScmSnapshotError: (
         scope: WorkspaceScopeBase,
         error: import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null

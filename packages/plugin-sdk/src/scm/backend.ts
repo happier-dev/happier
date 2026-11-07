@@ -1,5 +1,4 @@
 /** @moduleRealm daemon */
-import type { PluginLocalizedStringV2 } from '../manifest.js';
 import type {
     ScmBranchCheckoutRequest,
     ScmBranchCheckoutResponse,
@@ -100,6 +99,7 @@ import type {
     ScmStatusSnapshotResponse,
 } from './projections.js';
 import type { PluginJsonValueV2 } from '../identity.js';
+import type { PluginLocalizedStringV2 } from '../manifest.js';
 
 export type ScmReviewWorkspaceMaterializePreparedRequest = Readonly<{
     cwd: string;
@@ -434,12 +434,29 @@ export type WorkspaceLocationInspection = Readonly<{
         path?: string;
         /** Opaque canonical repository identity used to compare related checkouts. */
         repositoryIdentityPath?: string;
+        /** Host-proven main checkout or bare repository root for this checkout family. */
+        parentRootPath?: string;
     }>[];
     checkoutProviderKinds?: readonly CreatableWorkspaceCheckoutKind[];
 }>;
 
 export type WorkspaceIntegrationHandlers = Readonly<{
-exportCommit?: (input: Readonly<{
+    /** Fetch one ref through an existing configured repository remote and verify its approved immutable commit, without changing the checkout. */
+    fetchCommitRef?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        cloneUrl: string;
+        ref: string;
+        expectedCommitSha: string;
+        signal?: AbortSignal;
+    }>) => Promise<void>;
+    /** Resolve the selected ref to one committed object without moving or repairing the checkout. */
+    resolveCommitRef?: (input: Readonly<{
+        context: BackendRuntimeContext;
+        ref: string;
+        signal?: AbortSignal;
+    }>) => Promise<string>;
+    /** Immutable commit objects only; never reads index/worktree bytes or changes the checkout. */
+    exportCommit?: (input: Readonly<{
         context: BackendRuntimeContext;
         commitSha: string;
         artifactDirectory: string;
@@ -451,26 +468,16 @@ exportCommit?: (input: Readonly<{
         entries: readonly (WorkspaceTransferEntry & Readonly<{ disposeSource?: () => Promise<void> | void }>)[];
         dispose(): Promise<void>;
     }>>;
-
-resolveCommitRef?: (input: Readonly<{
-        context: BackendRuntimeContext;
-        ref: string;
-        signal?: AbortSignal;
-    }>) => Promise<string>;
-
-fetchCommitRef?: (input: Readonly<{
-        context: BackendRuntimeContext;
-        cloneUrl: string;
-        ref: string;
-        expectedCommitSha: string;
-        signal?: AbortSignal;
-    }>) => Promise<void>;
-
     /** Optional read classification; raw directory listings remain available when absent. */
     classifyDirectoryIgnores?: (input: Readonly<{
         cwd: string;
         entries: readonly Readonly<{ name: string; type: 'file' | 'directory' | 'other' }>[];
     }>) => Promise<ReadonlySet<string>>;
+    /** Inputs whose native changes invalidate a presented workspace's SCM projection. */
+    watchInputs?: (input: Readonly<{ context: BackendRuntimeContext }>) => Promise<Readonly<{
+        paths: readonly string[];
+        workspaceFileNames: readonly string[];
+    }>>;
     inspectWorkspaceLocation?: (
         input: Readonly<{ context: BackendRuntimeContext }>
     ) => Promise<WorkspaceLocationInspection | null> | WorkspaceLocationInspection | null;

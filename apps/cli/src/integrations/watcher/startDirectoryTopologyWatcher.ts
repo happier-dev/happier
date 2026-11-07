@@ -23,6 +23,8 @@ export type DirectoryTopologyWatchTarget = Readonly<{
     directory: string;
     /** Apply the consuming domain's existing traversal policy before enrolling subtrees. */
     shouldWatchDirectory?: (directory: string) => boolean;
+    /** Refresh domain traversal policy before enrolling a changed directory. */
+    onBeforeDirectoryChange?: (changedPath?: string) => void | Promise<void>;
     onStructuralChange: (changedPath?: string, kind?: 'directory' | 'file' | 'unknown') => void | Promise<void>;
     /** Source-wide consumers share these directory attachments for content too. */
     onFileChange?: (changedPath?: string) => void | Promise<void>;
@@ -49,6 +51,7 @@ function watchDirectoryTree(
     onFileChange?: (changedPath?: string) => void,
     shouldWatchDirectory?: (directory: string) => boolean,
     onSymbolicLink?: (path: string) => void,
+    onBeforeDirectoryChange?: DirectoryTopologyWatchTarget['onBeforeDirectoryChange'],
 ) {
     const watchers = new Map<string, FSWatcher>();
     let active = true;
@@ -84,6 +87,8 @@ function watchDirectoryTree(
                 if (!active) return;
                 onSymbolicLink?.(changedPath);
                 const wasDirectory = watchers.has(changedPath);
+                if (wasDirectory || await isCanonicalDirectory(changedPath)) await onBeforeDirectoryChange?.(changedPath);
+                if (!active) return;
                 closeSubtree(changedPath);
                 await walk(changedPath);
                 if (active) onStructuralChange(filename === null ? undefined : changedPath,
@@ -136,6 +141,7 @@ export function startDirectoryTopologyWatchers(
         onStructuralChange: DirectoryTopologyWatchTarget['onStructuralChange'];
         onFileChange: DirectoryTopologyWatchTarget['onFileChange'];
         shouldWatchDirectory: DirectoryTopologyWatchTarget['shouldWatchDirectory'];
+        onBeforeDirectoryChange: DirectoryTopologyWatchTarget['onBeforeDirectoryChange'];
         onSymbolicLink: DirectoryTopologyWatchTarget['onSymbolicLink'];
         watcher: ReturnType<typeof watch> | null;
         disposeTree: (() => void) | null;
@@ -160,6 +166,7 @@ export function startDirectoryTopologyWatchers(
             onStructuralChange: target.onStructuralChange,
             onFileChange: target.onFileChange,
             shouldWatchDirectory: target.shouldWatchDirectory,
+            onBeforeDirectoryChange: target.onBeforeDirectoryChange,
             onSymbolicLink: target.onSymbolicLink,
             watcher: null,
             disposeTree: null,
@@ -251,7 +258,7 @@ export function startDirectoryTopologyWatchers(
                         notifyUnavailable(error);
                     }, path => emitFileChange(target, path), target.shouldWatchDirectory, path => {
                         if (active) void Promise.resolve(target.onSymbolicLink?.(path)).catch(notifyUnavailable);
-                    });
+                    }, target.onBeforeDirectoryChange);
                 target.disposeTree = tree.dispose;
                 await tree.ready;
                 if (emitAfterAttachment) emitStructuralChange(target);
@@ -272,7 +279,12 @@ export function startDirectoryTopologyWatchers(
                             emitFileChange(target, changedPath);
                             return;
                         }
-                        emitStructuralChange(target, changedPath);
+                        void (async () => {
+                            if (!changedPath || await isCanonicalDirectory(changedPath)) {
+                                await target.onBeforeDirectoryChange?.(changedPath);
+                            }
+                            if (active && target.watcher === nextWatcher) emitStructuralChange(target, changedPath);
+                        })().catch(notifyUnavailable);
                     },
                 );
             } catch (error) {

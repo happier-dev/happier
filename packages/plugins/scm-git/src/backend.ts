@@ -6,6 +6,7 @@ import {
 import type { BackendRuntimeRegistration as ScmBackendRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/backend';
 
 import { classifyGitDirectoryIgnores } from './directoryIgnores.js';
+import { readGitWorkspaceWatchInputs } from './watchInputs.js';
 import type { ScmBackend } from './types.js';
 import { createGitExecutionFeatureDetector, detectGitRepo, getGitSnapshot, getGitWorktreesEnrichment } from './repository.js';
 import { GIT_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
@@ -43,6 +44,7 @@ import { captureGitCommitTarget } from './operations/commitPublication.js';
 import { gitRemotePublish } from './operations/publishOperations.js';
 import { gitDiffCommit, gitDiffFile, gitBlameFile, gitLogList, gitHistoryEntries } from './operations/readOperations.js';
 import { gitFileAtRevision } from './operations/fileAtRevision.js';
+import { exportGitCommit, fetchGitCommitRef, resolveGitCommitRef } from './operations/exportCommit.js';
 import { gitRemoteAdd, gitRemoteRemove, gitRemoteSetUrl } from './operations/remoteManagementOperations.js';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './operations/remoteOperations.js';
 import { gitRemoveIndexLock } from './operations/removeIndexLockOperation.js';
@@ -67,7 +69,11 @@ export function createGitBackend(): ScmBackend {
             preferenceAllowedModes: ['.git'],
         },
         workspaceIntegration: {
+            fetchCommitRef: fetchGitCommitRef,
+            resolveCommitRef: resolveGitCommitRef,
+            exportCommit: exportGitCommit,
             classifyDirectoryIgnores: classifyGitDirectoryIgnores,
+            watchInputs: readGitWorkspaceWatchInputs,
             inspectWorkspaceLocation: inspectGitWorkspaceLocation,
             reconcilePostMaterialization: reconcileGitWorkspacePostMaterialization,
             prepareReviewWorkspace: prepareGitReviewWorkspaceAtSelectedRoot,

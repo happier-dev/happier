@@ -37,6 +37,11 @@ const VOICE_FOUNDATION_INTERNAL_METHODS = Object.freeze([
 // Downstream A.12 domain packets append their own rows when a method is proven
 // internal-only rather than action-backed.
 export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
+    {
+        method: RPC_METHODS.SCM_WORKSPACE_WATCH,
+        rationale: 'Native workspace invalidation observation shares daemon-owned watches and carries no repository snapshot or mutation; public SCM Actions remain the snapshot and effect owners.',
+        ownerPacket: 'SCM-LIVE-WATCH',
+    },
     ...VOICE_FOUNDATION_INTERNAL_METHODS.map((method) => ({
         method,
         rationale: 'Daemon-executed Voice operations are closed, machine-owned transport RPCs, not public ActionSpec action surfaces.',
@@ -284,6 +289,11 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
         rationale: 'LSV-1 daemon-owned local-services inventory change watch (long poll over the inventory registry push producer); remains internal transport, not a public action surface.',
         ownerPacket: 'LSV-1',
+    },
+    {
+        method: RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH,
+        rationale: 'Browser view discovery parks on the canonical daemon broker lifecycle until Session view membership changes; no Action effect or polling.',
+        ownerPacket: 'RU2',
     },
     {
         method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,

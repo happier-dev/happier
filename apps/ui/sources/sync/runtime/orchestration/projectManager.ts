@@ -15,12 +15,9 @@ import {
     clearWorkspaceScmCommitSelectionPaths,
     getWorkspaceScmCommitSelectionPatches,
     getWorkspaceScmCommitSelectionPaths,
-    getWorkspaceScmTouchedPaths,
     markWorkspaceScmCommitSelectionPaths,
-    markWorkspaceScmTouchedPaths,
     pruneWorkspaceScmCommitSelectionPatches,
     pruneWorkspaceScmCommitSelectionPaths,
-    pruneWorkspaceScmTouchedPaths,
     removeWorkspaceScmCommitSelectionPatch,
     unmarkWorkspaceScmCommitSelectionPaths,
     upsertWorkspaceScmCommitSelectionPatch,
@@ -32,6 +29,7 @@ import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationE
 import type { ScmOperationOutcome } from '@happier-dev/protocol/scm';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { shallow } from 'zustand/vanilla/shallow';
 import { areScmWorkingSnapshotsEquivalentIgnoringFetchedAt } from '@/scm/sync/snapshotDiff';
 
@@ -43,6 +41,9 @@ export interface ProjectKey {
     machineId: string;
     rootPath: string;
 }
+
+/** A native workspace change can alter file bytes while Git status and line counts stay equal. */
+export type ScmSnapshotPublicationOptions = Readonly<{ contentChanged?: boolean }>;
 
 export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null; externalSessionV1?: unknown }): string {
     const machineId = resolveSessionMachineId(metadata);
@@ -136,7 +137,6 @@ export interface Project {
     /** Last error encountered while refreshing source-control snapshot for this project */
     scmSnapshotError?: ProjectScmSnapshotError | null;
     /** Paths touched in this project/workspace (path -> timestamp) */
-    workspaceScmTouchedPaths?: Record<string, number>;
     /** Virtual commit selection paths for this project/workspace (path -> timestamp) */
     scmCommitSelection?: Record<string, number>;
     /** Virtual commit selection patches for this project/workspace (path -> { path, patch, selectedAt }) */
@@ -162,16 +162,25 @@ class ProjectManager {
     private projectKeyToId: Map<string, string> = new Map();
     private sessionToProject: Map<string, string> = new Map();
     private nextProjectId = 1;
-    private readonly scmSnapshotListeners = new Set<() => void>();
+    private readonly scmSnapshotListeners = new Set<Readonly<{
+        listener: (scopeKey: string) => void;
+        scopeKeys: ReadonlySet<string>;
+    }>>();
 
-    /** Snapshot demand is independent of unrelated root-store publications. */
-    subscribeScmSnapshots(listener: () => void): () => void {
-        this.scmSnapshotListeners.add(listener);
-        return () => { this.scmSnapshotListeners.delete(listener); };
+    /** SCM demand is independent of unrelated root-store publications. */
+    subscribeScmSnapshots(listener: (scopeKey: string) => void, scopeKeys: ReadonlySet<string>): () => void {
+        // The mounted projection owns this live selection, including Session paths
+        // whose repository root has not been discovered yet.
+        const subscription = { listener, scopeKeys };
+        this.scmSnapshotListeners.add(subscription);
+        return () => { this.scmSnapshotListeners.delete(subscription); };
     }
 
-    private publishScmSnapshotChange(): void {
-        for (const listener of [...this.scmSnapshotListeners]) listener();
+    private publishScmSnapshotChange(key: ProjectKey): void {
+        const scopeKey = this.getProjectKeyString(key);
+        for (const subscription of [...this.scmSnapshotListeners]) {
+            if (subscription.scopeKeys.has(scopeKey)) subscription.listener(scopeKey);
+        }
     }
 
     /**
@@ -243,6 +252,10 @@ class ProjectManager {
     ): void {
         // Session must have metadata path (machine id may be absent for legacy/terminal sessions).
         const metadata = readSessionOwnerMetadataView(session);
+        if (readSessionDirectoryKind(metadata) === 'managed') {
+            this.removeSession(session.id);
+            return;
+        }
         if (!metadata?.path) {
             return;
         }
@@ -277,6 +290,7 @@ class ProjectManager {
                     previousProject.sessionIds.splice(index, 1);
                     if (previousProject.scmOperationInFlight?.sessionId === session.id) {
                         previousProject.scmOperationInFlight = null;
+                        this.publishScmSnapshotChange(previousProject.key);
                     }
                     previousProject.updatedAt = Date.now();
                     
@@ -318,6 +332,7 @@ class ProjectManager {
             project.sessionIds.splice(index, 1);
             if (project.scmOperationInFlight?.sessionId === sessionId) {
                 project.scmOperationInFlight = null;
+                this.publishScmSnapshotChange(project.key);
             }
             project.updatedAt = Date.now();
         }
@@ -348,7 +363,7 @@ class ProjectManager {
         for (const sessionId of project.sessionIds) {
             this.sessionToProject.delete(sessionId);
         }
-        if (project.scmSnapshot) this.publishScmSnapshotChange();
+        this.publishScmSnapshotChange(project.key);
     }
 
     /**
@@ -437,21 +452,6 @@ class ProjectManager {
         return this.getOrCreateProject(normalized);
     }
 
-    markWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase, paths: string[], touchedAt: number = Date.now()): boolean {
-        if (!paths.some(Boolean)) return false;
-        const project = this.getOrCreateProjectForWorkspace(scope);
-        return project ? markWorkspaceScmTouchedPaths(project, paths, touchedAt) : false;
-    }
-
-    getWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase): string[] {
-        return getWorkspaceScmTouchedPaths(this.getProjectForWorkspace(scope));
-    }
-
-    pruneWorkspaceScmTouchedPaths(scope: WorkspaceScopeBase, activePaths: Set<string>): boolean {
-        const project = this.getProjectForWorkspace(scope);
-        return project ? pruneWorkspaceScmTouchedPaths(project, activePaths) : false;
-    }
-
     getWorkspaceScmStatus(scope: WorkspaceScopeBase): ScmStatus | null {
         const project = this.getProjectForWorkspace(scope);
         return project?.scmStatus ?? null;
@@ -470,12 +470,12 @@ class ProjectManager {
         return project?.scmSnapshot ?? null;
     }
 
-    updateWorkspaceScmSnapshot(scope: WorkspaceScopeBase, scmSnapshot: ScmWorkingSnapshot | null): boolean {
+    updateWorkspaceScmSnapshot(scope: WorkspaceScopeBase, scmSnapshot: ScmWorkingSnapshot | null, options?: ScmSnapshotPublicationOptions): boolean {
         const previous = this.getProjectForWorkspace(scope);
         if (!previous && scmSnapshot === null) return false;
         const project = this.getOrCreateProjectForWorkspace(scope);
         if (!project) return false;
-        const changed = this.updateProjectScmSnapshotById(project.id, scmSnapshot);
+        const changed = this.updateProjectScmSnapshotById(project.id, scmSnapshot, options);
         return changed || previous === null;
     }
 
@@ -496,6 +496,7 @@ class ProjectManager {
         if (shallow(project.scmSnapshotError ?? null, error)) return false;
         project.scmSnapshotError = error;
         project.updatedAt = Date.now();
+        this.publishScmSnapshotChange(project.key);
         return true;
     }
 
@@ -506,17 +507,23 @@ class ProjectManager {
     ): boolean {
         if (!paths.some(Boolean)) return false;
         const project = this.getOrCreateProjectForWorkspace(scope);
-        return project ? markWorkspaceScmCommitSelectionPaths(project, paths, selectedAt) : false;
+        if (!project || !markWorkspaceScmCommitSelectionPaths(project, paths, selectedAt)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     unmarkWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase, paths: string[]): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? unmarkWorkspaceScmCommitSelectionPaths(project, paths) : false;
+        if (!project || !unmarkWorkspaceScmCommitSelectionPaths(project, paths)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     clearWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? clearWorkspaceScmCommitSelectionPaths(project) : false;
+        if (!project || !clearWorkspaceScmCommitSelectionPaths(project)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     getWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase): string[] {
@@ -526,7 +533,9 @@ class ProjectManager {
 
     pruneWorkspaceScmCommitSelectionPaths(scope: WorkspaceScopeBase, activePaths: Set<string>): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? pruneWorkspaceScmCommitSelectionPaths(project, activePaths) : false;
+        if (!project || !pruneWorkspaceScmCommitSelectionPaths(project, activePaths)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     upsertWorkspaceScmCommitSelectionPatch(
@@ -536,7 +545,9 @@ class ProjectManager {
     ): boolean {
         if (!patchSelection.path || !patchSelection.patch.trim()) return false;
         const project = this.getOrCreateProjectForWorkspace(scope);
-        return project ? upsertWorkspaceScmCommitSelectionPatch(project, patchSelection, selectedAt) : false;
+        if (!project || !upsertWorkspaceScmCommitSelectionPatch(project, patchSelection, selectedAt)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     getWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase): ScmCommitSelectionPatch[] {
@@ -546,22 +557,29 @@ class ProjectManager {
 
     removeWorkspaceScmCommitSelectionPatch(scope: WorkspaceScopeBase, path: string): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? removeWorkspaceScmCommitSelectionPatch(project, path) : false;
+        if (!project || !removeWorkspaceScmCommitSelectionPatch(project, path)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     clearWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? clearWorkspaceScmCommitSelectionPatches(project) : false;
+        if (!project || !clearWorkspaceScmCommitSelectionPatches(project)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     pruneWorkspaceScmCommitSelectionPatches(scope: WorkspaceScopeBase, activePaths: Set<string>): boolean {
         const project = this.getProjectForWorkspace(scope);
-        return project ? pruneWorkspaceScmCommitSelectionPatches(project, activePaths) : false;
+        if (!project || !pruneWorkspaceScmCommitSelectionPatches(project, activePaths)) return false;
+        this.publishScmSnapshotChange(project.key);
+        return true;
     }
 
     appendWorkspaceScmOperation(
         scope: WorkspaceScopeBase,
         entry: Omit<ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
+        sessionId: string = 'workspace',
     ): ScmProjectOperationLogEntry | null {
         const project = this.getOrCreateProjectForWorkspace(scope);
         if (!project) return null;
@@ -572,7 +590,7 @@ class ProjectManager {
 
         const next: ScmProjectOperationLogEntry = {
             id: `${entry.timestamp}-${Math.random().toString(36).slice(2, 10)}`,
-            sessionId: 'workspace',
+            sessionId,
             operation: entry.operation,
             status: entry.status,
             timestamp: entry.timestamp,
@@ -590,6 +608,7 @@ class ProjectManager {
         }
 
         project.updatedAt = Date.now();
+        this.publishScmSnapshotChange(project.key);
         return next;
     }
 
@@ -604,6 +623,7 @@ class ProjectManager {
         scope: WorkspaceScopeBase,
         operation: ScmProjectOperationKind,
         startedAt: number = Date.now(),
+        sessionId: string = 'workspace',
     ): BeginScmProjectOperationResult {
         const project = this.getOrCreateProjectForWorkspace(scope);
         if (!project) {
@@ -617,12 +637,13 @@ class ProjectManager {
         const inFlight: ScmProjectInFlightOperation = {
             id: `${startedAt}-${Math.random().toString(36).slice(2, 10)}`,
             startedAt,
-            sessionId: 'workspace',
+            sessionId,
             operation,
             phase: 'queued',
         };
         project.scmOperationInFlight = inFlight;
         project.updatedAt = startedAt;
+        this.publishScmSnapshotChange(project.key);
         return { started: true, operation: inFlight };
     }
 
@@ -632,6 +653,7 @@ class ProjectManager {
         if (project.scmOperationInFlight.id !== operationId) return false;
         project.scmOperationInFlight = null;
         project.updatedAt = Date.now();
+        this.publishScmSnapshotChange(project.key);
         return true;
     }
 
@@ -642,6 +664,7 @@ class ProjectManager {
         if (current.phase === 'running' && current.progressText === progressText) return false;
         project.scmOperationInFlight = { ...current, phase: 'running', progressText, ...(current.phase === 'queued' ? { startedAt: Date.now() } : {}) };
         project.updatedAt = Date.now();
+        this.publishScmSnapshotChange(project.key);
         return true;
     }
 
@@ -660,20 +683,22 @@ class ProjectManager {
         project.scmStatus = scmStatus;
         project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
+        this.publishScmSnapshotChange(project.key);
         return true;
     }
 
     /**
      * Update source-control snapshot for a project (identified by project ID)
      */
-    updateProjectScmSnapshotById(projectId: string, scmSnapshot: ScmWorkingSnapshot | null): boolean {
+    updateProjectScmSnapshotById(projectId: string, scmSnapshot: ScmWorkingSnapshot | null, options?: ScmSnapshotPublicationOptions): boolean {
         const project = this.projects.get(projectId);
-        if (!project || areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(project.scmSnapshot ?? null, scmSnapshot)) return false;
+        if (!project || project.scmSnapshot === scmSnapshot
+            || !options?.contentChanged && areScmWorkingSnapshotsEquivalentIgnoringFetchedAt(project.scmSnapshot ?? null, scmSnapshot)) return false;
 
         project.scmSnapshot = scmSnapshot;
         project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
-        this.publishScmSnapshotChange();
+        this.publishScmSnapshotChange(project.key);
         return true;
     }
 
@@ -707,12 +732,12 @@ class ProjectManager {
     clearProjectScmStatus(projectId: string): void {
         const project = this.projects.get(projectId);
         if (project) {
-            const hadSnapshot = project.scmSnapshot != null;
+            const changed = project.scmSnapshot != null || project.scmStatus != null;
             project.scmStatus = null;
             project.scmSnapshot = null;
             project.lastScmStatusUpdate = Date.now();
             project.updatedAt = Date.now();
-            if (hadSnapshot) this.publishScmSnapshotChange();
+            if (changed) this.publishScmSnapshotChange(project.key);
         }
     }
 
@@ -751,9 +776,9 @@ class ProjectManager {
     /**
      * Update source-control snapshot for a session's project
      */
-    updateSessionProjectScmSnapshot(sessionId: string, scmSnapshot: ScmWorkingSnapshot | null): boolean {
+    updateSessionProjectScmSnapshot(sessionId: string, scmSnapshot: ScmWorkingSnapshot | null, options?: ScmSnapshotPublicationOptions): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? this.updateProjectScmSnapshotById(project.id, scmSnapshot) : false;
+        return project ? this.updateProjectScmSnapshotById(project.id, scmSnapshot, options) : false;
     }
 
     /**
@@ -768,30 +793,6 @@ class ProjectManager {
     }
 
     /**
-     * Mark workspace-wide touched paths, resolving the workspace through a Session.
-     */
-    markWorkspaceScmTouchedPathsForSession(sessionId: string, paths: string[], touchedAt: number = Date.now()): boolean {
-        const project = this.getProjectForSession(sessionId);
-        return project ? markWorkspaceScmTouchedPaths(project, paths, touchedAt) : false;
-    }
-
-    /**
-     * Return workspace-wide touched paths; these do not establish Session authorship.
-     */
-    getWorkspaceScmTouchedPathsForSession(sessionId: string): string[] {
-        const project = this.getProjectForSession(sessionId);
-        return getWorkspaceScmTouchedPaths(project);
-    }
-
-    /**
-     * Remove touched paths that are no longer active in the current source-control snapshot.
-     */
-    pruneWorkspaceScmTouchedPathsForSession(sessionId: string, activePaths: Set<string>): boolean {
-        const project = this.getProjectForSession(sessionId);
-        return project ? pruneWorkspaceScmTouchedPaths(project, activePaths) : false;
-    }
-
-    /**
      * Mark file paths as selected for virtual commit scope by a session.
      */
     markSessionProjectScmCommitSelectionPaths(
@@ -800,7 +801,7 @@ class ProjectManager {
         selectedAt: number = Date.now(),
     ): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? markWorkspaceScmCommitSelectionPaths(project, paths, selectedAt) : false;
+        return project ? this.markWorkspaceScmCommitSelectionPaths(project.key, paths, selectedAt) : false;
     }
 
     /**
@@ -808,7 +809,7 @@ class ProjectManager {
      */
     unmarkSessionProjectScmCommitSelectionPaths(sessionId: string, paths: string[]): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? unmarkWorkspaceScmCommitSelectionPaths(project, paths) : false;
+        return project ? this.unmarkWorkspaceScmCommitSelectionPaths(project.key, paths) : false;
     }
 
     /**
@@ -816,7 +817,7 @@ class ProjectManager {
      */
     clearSessionProjectScmCommitSelectionPaths(sessionId: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? clearWorkspaceScmCommitSelectionPaths(project) : false;
+        return project ? this.clearWorkspaceScmCommitSelectionPaths(project.key) : false;
     }
 
     /**
@@ -832,7 +833,7 @@ class ProjectManager {
      */
     pruneSessionProjectScmCommitSelectionPaths(sessionId: string, activePaths: Set<string>): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? pruneWorkspaceScmCommitSelectionPaths(project, activePaths) : false;
+        return project ? this.pruneWorkspaceScmCommitSelectionPaths(project.key, activePaths) : false;
     }
 
     /**
@@ -844,7 +845,7 @@ class ProjectManager {
         selectedAt: number = Date.now(),
     ): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? upsertWorkspaceScmCommitSelectionPatch(project, patchSelection, selectedAt) : false;
+        return project ? this.upsertWorkspaceScmCommitSelectionPatch(project.key, patchSelection, selectedAt) : false;
     }
 
     /**
@@ -860,7 +861,7 @@ class ProjectManager {
      */
     removeSessionProjectScmCommitSelectionPatch(sessionId: string, path: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? removeWorkspaceScmCommitSelectionPatch(project, path) : false;
+        return project ? this.removeWorkspaceScmCommitSelectionPatch(project.key, path) : false;
     }
 
     /**
@@ -868,7 +869,7 @@ class ProjectManager {
      */
     clearSessionProjectScmCommitSelectionPatches(sessionId: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? clearWorkspaceScmCommitSelectionPatches(project) : false;
+        return project ? this.clearWorkspaceScmCommitSelectionPatches(project.key) : false;
     }
 
     /**
@@ -876,7 +877,7 @@ class ProjectManager {
      */
     pruneSessionProjectScmCommitSelectionPatches(sessionId: string, activePaths: Set<string>): boolean {
         const project = this.getProjectForSession(sessionId);
-        return project ? pruneWorkspaceScmCommitSelectionPatches(project, activePaths) : false;
+        return project ? this.pruneWorkspaceScmCommitSelectionPatches(project.key, activePaths) : false;
     }
 
     appendSessionProjectScmOperation(
@@ -884,33 +885,7 @@ class ProjectManager {
         entry: Omit<ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
     ): ScmProjectOperationLogEntry | null {
         const project = this.getProjectForSession(sessionId);
-        if (!project) return null;
-
-        if (!project.scmOperationLog) {
-            project.scmOperationLog = [];
-        }
-
-        const next: ScmProjectOperationLogEntry = {
-            id: `${entry.timestamp}-${Math.random().toString(36).slice(2, 10)}`,
-            sessionId,
-            operation: entry.operation,
-            status: entry.status,
-            timestamp: entry.timestamp,
-            ...(entry.path ? { path: entry.path } : {}),
-            ...(entry.detail ? { detail: entry.detail } : {}),
-            ...(entry.errorCode ? { errorCode: entry.errorCode } : {}),
-            ...(entry.outcome ? { outcome: entry.outcome } : {}),
-        };
-
-        project.scmOperationLog.push(next);
-        if (project.scmOperationLog.length > ProjectManager.MAX_SCM_OPERATION_LOG) {
-            project.scmOperationLog = project.scmOperationLog.slice(
-                project.scmOperationLog.length - ProjectManager.MAX_SCM_OPERATION_LOG
-            );
-        }
-
-        project.updatedAt = Date.now();
-        return next;
+        return project ? this.appendWorkspaceScmOperation(project.key, entry, sessionId) : null;
     }
 
     beginSessionProjectScmOperation(
@@ -926,47 +901,17 @@ class ProjectManager {
                 inFlight: null,
             };
         }
-
-        if (project.scmOperationInFlight) {
-            return {
-                started: false,
-                reason: 'operation_in_flight',
-                inFlight: project.scmOperationInFlight,
-            };
-        }
-
-        const inFlight: ScmProjectInFlightOperation = {
-            id: `${startedAt}-${Math.random().toString(36).slice(2, 10)}`,
-            startedAt,
-            sessionId,
-            operation,
-            phase: 'queued',
-        };
-        project.scmOperationInFlight = inFlight;
-        project.updatedAt = startedAt;
-        return {
-            started: true,
-            operation: inFlight,
-        };
+        return this.beginWorkspaceScmOperation(project.key, operation, startedAt, sessionId);
     }
 
     finishSessionProjectScmOperation(sessionId: string, operationId: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        if (!project?.scmOperationInFlight) return false;
-        if (project.scmOperationInFlight.id !== operationId) return false;
-        project.scmOperationInFlight = null;
-        project.updatedAt = Date.now();
-        return true;
+        return project ? this.finishWorkspaceScmOperation(project.key, operationId) : false;
     }
 
     updateSessionProjectScmOperationProgress(sessionId: string, operationId: string, progressText?: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        const current = project?.scmOperationInFlight;
-        if (!project || !current || current.id !== operationId) return false;
-        if (current.phase === 'running' && current.progressText === progressText) return false;
-        project.scmOperationInFlight = { ...current, phase: 'running', progressText, ...(current.phase === 'queued' ? { startedAt: Date.now() } : {}) };
-        project.updatedAt = Date.now();
-        return true;
+        return project ? this.updateWorkspaceScmOperationProgress(project.key, operationId, progressText) : false;
     }
 
     getSessionProjectScmInFlightOperation(sessionId: string): ScmProjectInFlightOperation | null {
@@ -984,12 +929,12 @@ class ProjectManager {
      * Clear all projects (useful for testing or resetting state)
      */
     clear(): void {
-        const hadSnapshots = [...this.projects.values()].some(project => project.scmSnapshot != null);
+        const changedKeys = [...this.projects.values()].map(project => project.key);
         this.projects.clear();
         this.projectKeyToId.clear();
         this.sessionToProject.clear();
         this.nextProjectId = 1;
-        if (hadSnapshots) this.publishScmSnapshotChange();
+        for (const key of changedKeys) this.publishScmSnapshotChange(key);
     }
 
     /**

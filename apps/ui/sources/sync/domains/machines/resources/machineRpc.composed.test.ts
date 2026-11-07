@@ -116,6 +116,64 @@ function vitals(sampledAt = Date.now()) {
     }, series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] } });
 }
 
+it('keeps SCM workspace observation parked, delivers changes and native failure reasons, and cancels all demand', async () => {
+    const { watchMachineScmWorkspaceChanges } = await import('@/sync/ops/scm/machineScmWorkspaceWatch');
+    await withMachineHome(async home => {
+        const onReady = vi.fn();
+        const onChange = vi.fn();
+        const onUnavailable = vi.fn();
+        const method = 'scm.workspace.watch.v1';
+        home.setAnswer(async call => {
+            const params = call.params as { observationOnly?: true; sinceRevision?: number };
+            if (call.method === method && !params.observationOnly && params.sinceRevision === undefined) {
+                await call.reply({ status: 'ready', revision: 1 });
+            }
+        });
+        const watch = watchMachineScmWorkspaceChanges('shared-machine', { serverId: home.serverId, directory: '/workspace',
+            onReady, onChange, onUnavailable });
+        try {
+            await vi.waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(home.calls.filter(call => call.method === method)).toHaveLength(3));
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(home.calls.filter(call => call.method === method)).toHaveLength(3);
+            vi.useRealTimers();
+            const next = home.calls.find(call => (call.params as { sinceRevision?: number }).sinceRevision === 1)!;
+            await next.reply({ status: 'changed', revision: 2 });
+            await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+            await vi.waitFor(() => expect(home.calls.filter(call => call.method === method)).toHaveLength(4));
+            expect(onUnavailable).not.toHaveBeenCalled();
+        } finally { watch.dispose(); }
+        await vi.waitFor(() => expect(home.cancellations).toHaveLength(2));
+
+        home.calls.length = 0;
+        home.cancellations.length = 0;
+        onUnavailable.mockClear();
+        const unavailable = watchMachineScmWorkspaceChanges('shared-machine', { serverId: home.serverId, directory: '/workspace',
+            onChange, onUnavailable });
+        try {
+            await vi.waitFor(() => expect(home.calls.filter(call => call.method === method)).toHaveLength(3));
+            const next = home.calls.find(call => (call.params as { sinceRevision?: number }).sinceRevision === 1)!;
+            await next.reply({ status: 'unavailable', reason: { code: 'ENOSPC', message: 'Native watcher capacity exhausted' } });
+            await vi.waitFor(() => expect(onUnavailable).toHaveBeenCalledExactlyOnceWith({ code: 'ENOSPC', message: 'Native watcher capacity exhausted' }));
+            await vi.waitFor(() => expect(home.cancellations).toHaveLength(1));
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(home.calls.filter(call => call.method === method)).toHaveLength(3);
+            vi.useRealTimers();
+        } finally { unavailable.dispose(); }
+
+        home.calls.length = 0;
+        onUnavailable.mockClear();
+        home.setAnswer(async call => { if (call.method === method) call.refuse(RPC_ERROR_CODES.METHOD_NOT_FOUND); });
+        const olderMachine = watchMachineScmWorkspaceChanges('shared-machine', { serverId: home.serverId, directory: '/workspace',
+            onChange, onUnavailable });
+        try {
+            await vi.waitFor(() => expect(onUnavailable).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: RPC_ERROR_CODES.METHOD_NOT_FOUND })));
+        } finally { olderMachine.dispose(); }
+    });
+});
+
 it('lets all parked machine watches follow the remote reply and caller cancellation beyond the former client deadline', async () => {
     await withMachineHome(async home => {
         home.setAnswer(async call => { await call.reply(vitals()); });
@@ -382,12 +440,12 @@ it('cancels a parked inventory snapshot at last unsubscribe and loads again on n
     await withMachineHome(async home => {
         const key = { machineId: 'shared-machine', serverId: home.serverId };
         const unsubscribe = subscribeLocalServiceInventoryStore(key, () => {});
-        await vi.waitFor(() => expect(home.calls.some(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)).toBe(true));
-        const parked = home.calls.find(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)!;
+        await vi.waitFor(() => expect(home.calls.some(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)).toBe(true));
+        const parked = home.calls.find(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)!;
         unsubscribe();
         await vi.waitFor(() => expect(home.cancellations).toContain(parked.requestId));
         home.setAnswer(async call => {
-            if (call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) await call.reply({ protocolVersion: 1, snapshot: {
+            if (call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT) await call.reply({ protocolVersion: 1, snapshot: {
                 v: 1, machineId: key.machineId, generatedAt: 1000, refreshState: 'idle', entries: [], diagnostics: [],
             } });
         });
@@ -409,12 +467,12 @@ it('releases a parked inventory read when its retained destination is hidden', a
         });
         const screen = await renderScreen(content(true));
         try {
-            await vi.waitFor(() => expect(home.calls.some(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)).toBe(true));
-            const parked = home.calls.find(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)!;
+            await vi.waitFor(() => expect(home.calls.some(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)).toBe(true));
+            const parked = home.calls.find(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)!;
             await screen.update(content(false));
             await vi.waitFor(() => expect(home.cancellations).toContain(parked.requestId));
             await screen.update(content(true));
-            await vi.waitFor(() => expect(home.calls.filter(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)).toHaveLength(2));
+            await vi.waitFor(() => expect(home.calls.filter(call => call.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT)).toHaveLength(2));
         } finally { await screen.unmount(); }
     });
 });

@@ -463,6 +463,7 @@ export type SessionsDomain = {
             serverId?: string | null;
             snapshot: ScmWorkingSnapshot;
             status: ScmStatus | null;
+            options?: import('../../runtime/orchestration/projectManager').ScmSnapshotPublicationOptions;
         }>>,
     ) => void;
     getSessionProjectScmCommitSelectionPaths: (sessionId: string, serverId?: string | null) => string[];
@@ -494,7 +495,7 @@ export type SessionsDomain = {
     updateWorkspaceScmStatus: (scope: WorkspaceScopeBase, status: ScmStatus | null) => void;
     getWorkspaceScmSnapshot: (scope: WorkspaceScopeBase) => ScmWorkingSnapshot | null;
     getWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase) => ProjectScmSnapshotError | null;
-    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null) => void;
+    updateWorkspaceScmSnapshot: (scope: WorkspaceScopeBase, snapshot: ScmWorkingSnapshot | null, options?: import('../../runtime/orchestration/projectManager').ScmSnapshotPublicationOptions) => void;
     updateWorkspaceScmSnapshotError: (scope: WorkspaceScopeBase, error: ProjectScmSnapshotError | null) => void;
     getWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase) => string[];
     markWorkspaceScmCommitSelectionPaths: (scope: WorkspaceScopeBase, paths: string[], selectedAt?: number) => void;
@@ -2974,11 +2975,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // ProjectManager publishes SCM facts; only the legacy per-Session status mirror writes Zustand.
             if (publishes.length === 0) return;
             const statusUpdates: Record<string, ScmStatus | null> = {};
-            for (const { sessionId, serverId, snapshot, status } of publishes) {
+            for (const { sessionId, serverId, snapshot, status, options } of publishes) {
                 const scope = resolveSessionScmScope(sessionId, serverId);
                 if (serverId != null || scope) {
                     if (!scope) continue;
-                    projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
+                    projectManager.updateWorkspaceScmSnapshot(scope, snapshot, options);
                     projectManager.updateWorkspaceScmSnapshotError(scope, null);
                     projectManager.updateWorkspaceScmStatus(scope, status);
                     // A summary delivery has no rows: it cannot prove a selected path is gone.
@@ -2991,7 +2992,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     continue;
                 }
                 ensureProjectManagerSession(sessionId);
-                projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot);
+                projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot, options);
                 projectManager.updateSessionProjectScmSnapshotError(sessionId, null);
                 projectManager.updateSessionProjectScmStatus(sessionId, status);
                 if (!snapshot.detail) {
@@ -3159,8 +3160,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         },
         getWorkspaceScmSnapshot: (scope) => projectManager.getWorkspaceScmSnapshot(scope),
         getWorkspaceScmSnapshotError: (scope) => projectManager.getWorkspaceScmSnapshotError(scope),
-        updateWorkspaceScmSnapshot: (scope, snapshot) => {
-            projectManager.updateWorkspaceScmSnapshot(scope, snapshot);
+        updateWorkspaceScmSnapshot: (scope, snapshot, options) => {
+            projectManager.updateWorkspaceScmSnapshot(scope, snapshot, options);
         },
         updateWorkspaceScmSnapshotError: (scope, error) => {
             projectManager.updateWorkspaceScmSnapshotError(scope, error);

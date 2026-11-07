@@ -29,7 +29,13 @@ vi.mock('react-native', async () => {
 // The Machine RPC transport is external; the status sync owner, repository service and store stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-    return createServerScopedMachineRpcBoundaryMock(machineRpc);
+    return createServerScopedMachineRpcBoundaryMock(request => {
+        // Fallback cadence remains meaningful while the remote watcher is still enrolling.
+        if (request.method === RPC_METHODS.SCM_WORKSPACE_WATCH) return new Promise(resolve => {
+            request.signal?.addEventListener('abort', () => resolve({ status: 'cancelled' }), { once: true });
+        });
+        return machineRpc(request);
+    });
 });
 
 const snapshotRequests = () => machineRpc.mock.calls

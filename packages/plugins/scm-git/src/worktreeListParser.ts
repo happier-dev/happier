@@ -16,11 +16,27 @@ function normalizeGitPathToken(rawPath: string | null | undefined): string | nul
     return rawPath;
 }
 
+export type GitWorktreeRecord = ScmWorktree & Readonly<{ bare: boolean }>;
+
+/** Git's first registration is the main checkout or bare repository. */
+export function parseGitWorktreeListRecords(worktreesOutput: string): readonly GitWorktreeRecord[] {
+    return parseGitWorktreeRecords({ worktreesOutput, currentWorktreePath: null });
+}
+
 export function parseGitWorktreeListPorcelain(input: {
     worktreesOutput: string;
     currentWorktreePath: string | null;
     mainWorktreePath?: string | null;
 }): ReadonlyArray<ScmWorktree> {
+    return parseGitWorktreeRecords(input).map(({ bare: _bare, ...worktree }) => worktree)
+        .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function parseGitWorktreeRecords(input: {
+    worktreesOutput: string;
+    currentWorktreePath: string | null;
+    mainWorktreePath?: string | null;
+}): readonly GitWorktreeRecord[] {
     if (input.worktreesOutput.includes('\0')) {
         return parseGitWorktreeListPorcelainZ(input);
     }
@@ -28,16 +44,18 @@ export function parseGitWorktreeListPorcelain(input: {
     const lines = input.worktreesOutput.split('\n');
     const currentPath = input.currentWorktreePath?.trim() || null;
     const mainPath = input.mainWorktreePath?.trim() || null;
-    const worktrees: ScmWorktree[] = [];
+    const worktrees: GitWorktreeRecord[] = [];
 
     let activePath: string | null = null;
     let activeBranch: string | null = null;
     let activeIsPrunable = false;
+    let activeBare = false;
 
     const flush = () => {
         const path = activePath?.trim() || null;
         if (!path) return;
         worktrees.push({
+            bare: activeBare,
             id: deriveGitWorktreeId(path),
             path,
             branch: normalizeBranchRef(activeBranch),
@@ -48,6 +66,7 @@ export function parseGitWorktreeListPorcelain(input: {
         activePath = null;
         activeBranch = null;
         activeIsPrunable = false;
+        activeBare = false;
     };
 
     for (const rawLine of lines) {
@@ -68,31 +87,34 @@ export function parseGitWorktreeListPorcelain(input: {
         if (line.startsWith('prunable ')) {
             activeIsPrunable = true;
         }
+        if (line === 'bare') activeBare = true;
     }
 
     flush();
 
-    return worktrees.sort((left, right) => left.path.localeCompare(right.path));
+    return worktrees;
 }
 
 function parseGitWorktreeListPorcelainZ(input: {
     worktreesOutput: string;
     currentWorktreePath: string | null;
     mainWorktreePath?: string | null;
-}): ReadonlyArray<ScmWorktree> {
+}): readonly GitWorktreeRecord[] {
     const tokens = input.worktreesOutput.split('\0');
     const currentPath = normalizeGitPathToken(input.currentWorktreePath);
     const mainPath = normalizeGitPathToken(input.mainWorktreePath);
-    const worktrees: ScmWorktree[] = [];
+    const worktrees: GitWorktreeRecord[] = [];
 
     let activePath: string | null = null;
     let activeBranch: string | null = null;
     let activeIsPrunable = false;
+    let activeBare = false;
 
     const flush = () => {
         const path = normalizeGitPathToken(activePath);
         if (!path) return;
         worktrees.push({
+            bare: activeBare,
             id: deriveGitWorktreeId(path),
             path,
             branch: normalizeBranchRef(activeBranch),
@@ -103,6 +125,7 @@ function parseGitWorktreeListPorcelainZ(input: {
         activePath = null;
         activeBranch = null;
         activeIsPrunable = false;
+        activeBare = false;
     };
 
     for (let index = 0; index < tokens.length; index += 1) {
@@ -132,9 +155,10 @@ function parseGitWorktreeListPorcelainZ(input: {
         if (token.startsWith('prunable')) {
             activeIsPrunable = true;
         }
+        if (token === 'bare') activeBare = true;
     }
 
     flush();
 
-    return worktrees.sort((left, right) => left.path.localeCompare(right.path));
+    return worktrees;
 }

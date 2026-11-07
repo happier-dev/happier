@@ -1,4 +1,4 @@
-import type { BackendRuntimeHandlers, WorkspaceIntegrationHandlers } from '@happier-dev/plugin-sdk/scm/backend';
+import type { BackendRuntimeHandlers, WorkspaceIntegrationHandlers, WorkspaceLocationInspection } from '@happier-dev/plugin-sdk/scm/backend';
 import type { ScmCommandRunner } from './runtime';
 import type {
     ScmBackendDescribeRequest,
@@ -91,8 +91,6 @@ import type {
     ScmWorktreeReinstateRequest,
     ScmWorktreeRemoveResponse,
     ScmBackendId,
-    WorkspaceCheckoutKind,
-    WorkspaceLocationScm,
 } from '@happier-dev/protocol';
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 import type { ScmBlameFileRequest, ScmBlameFileResponse, ScmFileAtRevisionRequest, ScmFileAtRevisionResponse } from '@happier-dev/protocol/scm';
@@ -144,20 +142,9 @@ export type ScmBackendSelection = {
     preferenceAllowedModes?: readonly ScmRepoMode[];
 };
 
-export type ScmWorkspaceIntegrationWorkspaceLocationInspection = Readonly<{
-    rootPath: string;
-    scmProvider?: WorkspaceLocationScm['provider'];
-    /** Exact committed revision at inspection time, when supplied by the selected SCM contribution. */
-    committedRevision?: string;
-    checkoutDiscovery?: readonly ScmWorkspaceIntegrationCheckoutDiscovery[];
-    checkoutProviderKinds?: readonly Exclude<WorkspaceCheckoutKind, 'primary'>[];
-}>;
+export type ScmWorkspaceIntegrationWorkspaceLocationInspection = WorkspaceLocationInspection;
 
-export type ScmWorkspaceIntegrationCheckoutDiscovery = Readonly<{
-    kind: Exclude<WorkspaceCheckoutKind, 'primary'>;
-    path?: string;
-    repositoryIdentityPath?: string;
-}>;
+export type ScmWorkspaceIntegrationCheckoutDiscovery = NonNullable<WorkspaceLocationInspection['checkoutDiscovery']>[number];
 
 export type ScmWorkspaceIntegrationPostMaterializationInput = Readonly<{
     context: ScmBackendContext;
@@ -219,11 +206,11 @@ export type ScmWorkspaceIntegrationAdministrativePathInput = Readonly<{
 export type ScmWorkspaceIntegrationPortableWorkspacePathInput = ScmWorkspaceIntegrationPortableWorkspacePathRequest;
 
 export type ScmWorkspaceIntegration = Readonly<{
-fetchCommitRef?: WorkspaceIntegrationHandlers['fetchCommitRef'];
-resolveCommitRef?: WorkspaceIntegrationHandlers['resolveCommitRef'];
-exportCommit?: WorkspaceIntegrationHandlers['exportCommit'];
-
+    fetchCommitRef?: WorkspaceIntegrationHandlers['fetchCommitRef'];
+    resolveCommitRef?: WorkspaceIntegrationHandlers['resolveCommitRef'];
+    exportCommit?: WorkspaceIntegrationHandlers['exportCommit'];
     classifyDirectoryIgnores?: WorkspaceIntegrationHandlers['classifyDirectoryIgnores'];
+    watchInputs?: WorkspaceIntegrationHandlers['watchInputs'];
     inspectWorkspaceLocation?: (input: Readonly<{
         context: ScmBackendContext;
     }>) => Promise<ScmWorkspaceIntegrationWorkspaceLocationInspection | null>;

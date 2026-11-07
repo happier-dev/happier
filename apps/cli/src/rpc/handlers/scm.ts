@@ -1,4 +1,6 @@
 import type {
+    ScmSuggestionApplyRequest,
+    ScmSuggestionApplyResponse,
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
     ScmBranchIntegrationRequest,
@@ -80,7 +82,7 @@ import type {
 import type { ScmCommitUndoLastRequest, ScmCommitUndoLastResponse, ScmConflictAcceptSideRequest, ScmConflictMarkResolvedRequest } from '@happier-dev/protocol/scm';
 import type { ScmFileAtRevisionRequest, ScmFileReadResponse } from '@happier-dev/protocol/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
-import { ScmLogListRequestSchema } from '@happier-dev/protocol/scm';
+import { ScmLogListRequestSchema, summarizeScmChanges } from '@happier-dev/protocol/scm';
 import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -102,6 +104,7 @@ import { sendFileReviewNoteToSession } from '@/session/services/sendFileReviewNo
 import type { FileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { resolveCwd } from '@/scm/runtime';
+import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 
 const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
     context: RpcHandlerContext;
@@ -241,12 +244,18 @@ export function registerScmHandlers(
         includeWorktreeStatus: request.includeWorktreeStatus === true,
         operationStateVersion: request.operationStateVersion ?? null,
         outcomeVersion: request.outcomeVersion ?? null,
+        detail: request.detail ?? null,
     });
     const invalidateStatusSnapshotCache = (): void => {
         statusSnapshotCacheGeneration += 1;
         statusSnapshotInFlight.clear();
         statusSnapshotCache.clear();
     };
+    if (deps?.machineId) registerScmWorkspaceWatchHandler(rpcHandlerManager, workingDirectory, {
+        accessPolicy: deps.accessPolicy ?? resolveFilesystemAccessPolicy(),
+        registry: deps.registry,
+        invalidateStatusSnapshot: invalidateStatusSnapshotCache,
+    });
     const runWithStatusSnapshotCacheInvalidation = async <T>(operation: () => Promise<T>): Promise<T> => {
         invalidateStatusSnapshotCache();
         try {
@@ -271,9 +280,15 @@ export function registerScmHandlers(
             rpcCompatibility: true,
         }).then((result) => {
             const response = result as ScmStatusSnapshotResponse;
+            // Delivery follows consumption: a summary reader (composer, headers) gets the shared
+            // counts instead of the list; a facts reader's backend already skipped the scan. Neither
+            // reply looks clean: `detail` says the list was not sent.
             // Omit neutral facts once, before shared in-flight/cache publication.
             // Keep the existing schema's input shape; there is no separate wire codec.
-            const value: ScmStatusSnapshotTransportResponse = response.snapshot && response.snapshot.entries.length > 0 ? {
+            const value: ScmStatusSnapshotTransportResponse = request.detail && response.snapshot ? {
+                ...response, snapshot: { ...response.snapshot, entries: [], detail: request.detail,
+                    ...(request.detail === 'summary' ? { summary: summarizeScmChanges(response.snapshot.entries, response.snapshot.totals) } : {}) },
+            } : response.snapshot && response.snapshot.entries.length > 0 ? {
                 ...response,
                 snapshot: {
                     ...response.snapshot,
@@ -384,6 +399,14 @@ export function registerScmHandlers(
             rpcCompatibility: true,
             runMutation: runWithStatusSnapshotCacheInvalidation,
         }) as ScmChangeDiscardResponse,
+    );
+
+    scmRpcHandlerManager.registerHandler<ScmSuggestionApplyRequest, ScmSuggestionApplyResponse>(
+        'scm.suggestion.apply',
+        async request => await executeScmActionOperation({
+            actionId: 'scm.suggestion.apply', input: request, ...routeBase,
+            runMutation: runWithStatusSnapshotCacheInvalidation,
+        }) as ScmSuggestionApplyResponse,
     );
 
     scmRpcHandlerManager.registerHandler<ScmCommitCreateRequest, ScmCommitCreateResponse>(

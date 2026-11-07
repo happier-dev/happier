@@ -3,6 +3,40 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { runScmCommand } from './runtime.js';
 import { buildScmNonInteractiveEnv } from './providers/shared/nonInteractiveEnv.js';
+import { parseGitWorktreeListRecords } from './worktreeListParser.js';
+
+/** Git lists the main checkout (or bare repository) first, independently of path sorting. */
+export async function resolveGitMainWorktreePath(input: Readonly<{
+    worktreesOutput: string;
+    currentWorktreePath: string | null;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
+    const main = parseGitWorktreeListRecords(input.worktreesOutput)[0];
+    if (!main) return null;
+    if (main.bare || main.path === input.currentWorktreePath) return main.path;
+    const proof = await runScmCommand({ bin: 'git', cwd: main.path,
+        args: ['rev-parse', '--show-toplevel'], signal: input.signal,
+        env: buildScmNonInteractiveEnv({ LC_ALL: 'C' }) });
+    if (proof.success) return proof.stdout.replace(/\n$/, '') === main.path ? main.path : null;
+    // Separate-git-dir administration is not proof of a main checkout.
+    if (/not a git repository|must be run in a work tree/i.test(proof.stderr)) return null;
+    throw new Error(`Git main checkout inspection unavailable: ${proof.stderr}`);
+}
+
+export async function inspectGitMainWorktreePath(input: Readonly<{
+    cwd: string;
+    currentWorktreePath: string;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
+    const listed = await runScmCommand({ bin: 'git', cwd: input.cwd,
+        args: ['worktree', 'list', '--porcelain', '-z'], signal: input.signal,
+        env: buildScmNonInteractiveEnv({ LC_ALL: 'C' }) });
+    if (!listed.success) {
+        if (/not a git repository/i.test(listed.stderr)) return null;
+        throw new Error(`Git worktree inspection unavailable: ${listed.stderr}`);
+    }
+    return resolveGitMainWorktreePath({ ...input, worktreesOutput: listed.stdout });
+}
 
 export type GitCheckoutIdentity = Readonly<{
     branchName: string | null;

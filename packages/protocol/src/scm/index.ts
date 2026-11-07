@@ -44,6 +44,7 @@ export * from './repositoryProvisioning.js';
 export * from './repositoryClone.js';
 export * from './worktrees.js';
 export * from './fileChangesScope.js';
+export * from './workspaceWatch.js';
 import {
   ScmBranchSourceRefSchema,
   ScmRemoteManagementNameSchema,

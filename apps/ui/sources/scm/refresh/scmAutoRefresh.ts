@@ -1,16 +1,28 @@
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import { readHostWindowFocus } from '@/utils/runtime/readHostWindowFocus';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
-export type ScmAutoRefreshDemand = Readonly<{
-    sessionId: string;
-    serverId?: string | null;
+export type ScmAutoRefreshDemand = Readonly<({ sessionId: string; serverId?: string | null } | { scope: WorkspaceScopeBase }) & {
     intervalMs: number;
     stepIntervalMs?: number;
     maxIntervalMs?: number;
+    /** Project owns its initial/loading read; it still retains observation and the incumbent fallback. */
+    refreshOnRetain?: boolean;
 }>;
 
-type Target = Readonly<{ key: string; read(): Promise<ScmWorkingSnapshot | null> }>;
+export type ScmAutoRefreshWatchCallbacks = Readonly<{
+    onChange(): void;
+    onReady(): void;
+    onUnavailable(reason: ScmWorkspaceWatchUnavailable): void;
+}>;
+type Target = Readonly<{
+    key: string;
+    read(source?: 'filesystem'): Promise<ScmWorkingSnapshot | null>;
+    watch?(callbacks: ScmAutoRefreshWatchCallbacks): () => void;
+    onUnavailable?(reason: ScmWorkspaceWatchUnavailable): void;
+}>;
 type Consumer = { demand: ScmAutoRefreshDemand; poll: Poll };
 type Poll = {
     key: string;
@@ -19,14 +31,28 @@ type Poll = {
     running: boolean;
     delayMs: number;
     snapshot: ScmWorkingSnapshot | null;
+    watchStarted: boolean;
+    stopWatch: (() => void) | null;
+    unavailable: ScmWorkspaceWatchUnavailable | null;
 };
 
-/** One external-editor fallback per repository. Agent and local Git writes use the normal invalidator. */
+/** One presented observation and external-editor fallback per repository. */
 export class ScmAutoRefresh {
     private polls = new Map<string, Poll>();
     private stopListening: (() => void) | null = null;
 
     constructor(private resolve: (demand: ScmAutoRefreshDemand) => Target | null) {}
+
+    hasDemand(key: string): boolean { return this.polls.has(key); }
+    getUnavailable(key: string): ScmWorkspaceWatchUnavailable | null { return this.polls.get(key)?.unavailable ?? null; }
+
+    /** The status owner has published the first snapshot (and possibly discovered its repository root). */
+    reconcile(key: string): void {
+        const poll = this.polls.get(key);
+        if (!poll) return;
+        const target = this.resolvePoll(poll);
+        if (target) this.reconcileWatch(poll, target);
+    }
 
     retain(demand: ScmAutoRefreshDemand): () => void {
         if (!Number.isFinite(demand.intervalMs) || demand.intervalMs < 0) return () => {};
@@ -35,29 +61,36 @@ export class ScmAutoRefresh {
         let poll = this.polls.get(target.key);
         if (!poll) {
             poll = { key: target.key, consumers: new Set(), timer: null, running: false,
-                delayMs: demand.intervalMs, snapshot: null };
+                delayMs: demand.intervalMs, snapshot: null, watchStarted: false, stopWatch: null, unavailable: null };
             this.polls.set(target.key, poll);
         }
         const previousInterval = this.policy(poll)?.intervalMs;
         const consumer = { demand, poll };
         poll.consumers.add(consumer);
         if (!this.stopListening) {
-            let active = isRuntimeActive() && readHostWindowFocus() !== false;
+            let active = this.isActive();
             this.stopListening = subscribeToRuntimeActiveChange(() => {
-                const nextActive = isRuntimeActive() && readHostWindowFocus() !== false;
+                const nextActive = this.isActive();
                 if (nextActive === active) return;
                 active = nextActive;
                 for (const current of this.polls.values()) {
                     this.clearTimer(current);
-                    this.schedule(current, 0);
+                    if (!active) this.releaseWatch(current);
+                    else {
+                        const next = this.resolvePoll(current);
+                        if (next) this.reconcileWatch(current, next);
+                        this.schedule(current, 0);
+                    }
                 }
             }, { includeWindowFocus: true });
         }
+        this.reconcileWatch(poll, target);
         if (previousInterval !== undefined && demand.intervalMs > 0 && demand.intervalMs < previousInterval) {
             poll.delayMs = demand.intervalMs;
             this.clearTimer(poll);
             this.schedule(poll, demand.intervalMs);
-        } else this.schedule(poll, 0);
+        } else if (demand.refreshOnRetain !== false) this.schedule(poll, 0);
+        else if (demand.intervalMs > 0) this.schedule(poll, demand.intervalMs);
 
         return () => {
             const current = consumer.poll;
@@ -80,10 +113,39 @@ export class ScmAutoRefresh {
         };
     }
 
+    private isActive(): boolean { return isRuntimeActive() && readHostWindowFocus() !== false; }
+
+    private reconcileWatch(poll: Poll, target: Target): void {
+        if (!this.isActive() || poll.consumers.size === 0 || poll.watchStarted || !target.watch) return;
+        poll.watchStarted = true;
+        const revalidate = () => {
+            // The shared status queue preserves changes arriving after an in-flight read started.
+            void target.read('filesystem').catch(() => {
+                // The status owner presents failures; the incumbent fallback remains available.
+            });
+        };
+        poll.stopWatch = target.watch({
+            onChange: revalidate,
+            // A read after native enrollment closes the initial snapshot-to-attachment window.
+            onReady: revalidate,
+            onUnavailable: reason => {
+                poll.unavailable = reason;
+                target.onUnavailable?.(reason);
+                // Keep watchStarted until presentation ends; the fallback remains, without a watch retry.
+            },
+        });
+    }
+
+    private releaseWatch(poll: Poll): void {
+        poll.stopWatch?.();
+        poll.stopWatch = null;
+        poll.watchStarted = false;
+        poll.unavailable = null;
+    }
+
     private policy(poll: Poll): ScmAutoRefreshDemand | undefined {
         let fastest: ScmAutoRefreshDemand | undefined;
         for (const { demand } of poll.consumers) {
-            // A surface with polling disabled still acquires its first snapshot; it cannot disable another surface's demand.
             if (fastest && demand.intervalMs === 0) continue;
             if (!fastest || fastest.intervalMs === 0 || demand.intervalMs < fastest.intervalMs
                 || demand.intervalMs === fastest.intervalMs && (demand.maxIntervalMs ?? demand.intervalMs) < (fastest.maxIntervalMs ?? fastest.intervalMs)) fastest = demand;
@@ -98,23 +160,23 @@ export class ScmAutoRefresh {
 
     private remove(poll: Poll): void {
         this.clearTimer(poll);
+        this.releaseWatch(poll);
         if (this.polls.get(poll.key) === poll) this.polls.delete(poll.key);
     }
 
     private schedule(poll: Poll, delayMs: number): void {
         if (poll.timer !== null || poll.running || poll.consumers.size === 0
-            || this.policy(poll)?.intervalMs === 0 && poll.snapshot !== null
-            || !isRuntimeActive() || readHostWindowFocus() === false) return;
+            || this.policy(poll)?.intervalMs === 0 && poll.snapshot !== null || !this.isActive()) return;
         poll.timer = setTimeout(() => { void this.run(poll); }, delayMs);
     }
 
-    /** A first snapshot can discover that two Session directories belong to the same repository. */
     private resolvePoll(poll: Poll): Target | null {
         const consumer = poll.consumers.values().next().value;
         const target = consumer ? this.resolve(consumer.demand) : null;
         if (!target) { this.remove(poll); return null; }
         if (target.key === poll.key) return target;
         this.polls.delete(poll.key);
+        this.releaseWatch(poll);
         const existing = this.polls.get(target.key);
         if (existing) {
             const previous = this.policy(existing);
@@ -130,6 +192,7 @@ export class ScmAutoRefresh {
                 this.clearTimer(existing);
                 this.schedule(existing, existing.delayMs);
             }
+            this.reconcileWatch(existing, target);
             return null;
         }
         poll.key = target.key;
@@ -138,8 +201,8 @@ export class ScmAutoRefresh {
     }
 
     private async run(poll: Poll): Promise<void> {
+        if (poll.running || poll.consumers.size === 0 || !this.isActive()) return;
         this.clearTimer(poll);
-        if (!isRuntimeActive() || readHostWindowFocus() === false) return;
         const target = this.resolvePoll(poll);
         if (!target) return;
         poll.running = true;
@@ -155,7 +218,13 @@ export class ScmAutoRefresh {
             // The status owner presents read failures; a later fallback or pushed change can recover.
         } finally {
             poll.running = false;
-            if (poll.consumers.size > 0 && this.resolvePoll(poll) && this.policy(poll)!.intervalMs > 0) this.schedule(poll, poll.delayMs);
+            if (poll.consumers.size > 0) {
+                const next = this.resolvePoll(poll);
+                if (next) {
+                    this.reconcileWatch(poll, next);
+                    if (this.policy(poll)!.intervalMs > 0) this.schedule(poll, poll.delayMs);
+                }
+            }
         }
     }
 }

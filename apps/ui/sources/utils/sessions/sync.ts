@@ -101,7 +101,11 @@ export class InvalidateSync {
         }
     }
 
-    invalidateCoalesced() {
+    invalidateCoalesced(options?: { rerunIfStarted?: boolean }) {
+        if (options?.rerunIfStarted) {
+            this.invalidate();
+            return;
+        }
         if (this._stopped) {
             return;
         }

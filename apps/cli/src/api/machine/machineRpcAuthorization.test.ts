@@ -297,7 +297,7 @@ describe('authorizeMachineRpcRequest', () => {
     // Native filesystem/transfer and MCP effects decide custody at their
     // registered owners: see the file/no-port test below and the installed
     // rpcHandlers.filesystem.memberIdentity / rpcHandlers.mcpServers.*composed suites.
-    for (const method of [RPC_METHODS.SCM_STATUS_SNAPSHOT, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST,
+    for (const method of [RPC_METHODS.SCM_STATUS_SNAPSHOT, RPC_METHODS.SCM_WORKSPACE_WATCH, RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST,
       RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.PREVIEW_ENV]) {
       const request = { method: `machine:${method}`, params: {}, machineAdmission, callerAuthority: 'account_automation' as const };
       expect(await authorizeMachineRpcRequest(request, boundary), method).toEqual({ ok: true });

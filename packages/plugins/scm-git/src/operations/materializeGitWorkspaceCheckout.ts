@@ -1,4 +1,5 @@
 import { lstat, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import type {
@@ -105,6 +106,7 @@ async function runGitOrThrow(input: Readonly<{
         args: input.args,
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
+        signal: input.signal,
     });
     throwIfAborted(input.signal);
     if (!result.success) {
@@ -194,7 +196,7 @@ function sameGitRemoteTarget(left: string, right: string): boolean {
 
 async function resolveSourceTipRemote(input: Readonly<{
     repoRoot: string;
-    sourceTip: ScmReviewWorkspaceSourceTip;
+    sourceTip: Pick<ScmReviewWorkspaceSourceTip, 'cloneUrl'>;
     signal?: AbortSignal;
 }>): Promise<string> {
     const remoteOutput = await runGitOrThrow({
@@ -213,7 +215,10 @@ async function resolveSourceTipRemote(input: Readonly<{
         } catch {
             continue;
         }
-        if (configuredUrls.split(/\r?\n/).some((url) => sameGitRemoteTarget(url, input.sourceTip.cloneUrl))) {
+        // Git fetch uses the first URL; later URLs must not authorize another
+        // repository reached through that configured remote name.
+        const [fetchUrl] = configuredUrls.split(/\r?\n/);
+        if (fetchUrl && sameGitRemoteTarget(fetchUrl, input.sourceTip.cloneUrl)) {
             return remoteName;
         }
     }
@@ -223,20 +228,28 @@ async function resolveSourceTipRemote(input: Readonly<{
     );
 }
 
-async function fetchVerifiedSourceTip(input: GitPreparedReviewWorkspaceInput): Promise<void> {
-    const remote = await resolveSourceTipRemote(input);
-    await runGitOrThrow({
-        cwd: input.repoRoot,
-        args: ['fetch', '--no-tags', remote, input.sourceTip.fetchRef],
-        signal: input.signal,
-    });
-    const fetchedHead = await readGitRevision({
-        cwd: input.repoRoot,
-        revision: 'FETCH_HEAD',
-        signal: input.signal,
-    });
-    if (fetchedHead !== input.sourceTip.sourceHeadSha.toLowerCase()) {
-        throw new Error('The selected source ref no longer resolves to the observed source head');
+/** Review and deployment share configured-remote admission and exact fetched-object verification. */
+export async function fetchVerifiedGitCommitRef(input: Readonly<{
+    repoRoot: string; cloneUrl: string; ref: string; expectedCommitSha: string; signal?: AbortSignal;
+}>): Promise<void> {
+    if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/iu.test(input.expectedCommitSha)
+        || !input.ref.startsWith('refs/') || hasForbiddenGitRefName(input.ref)) {
+        throw Object.assign(new Error('Invalid source ref'), { code: 'git_selection_unavailable' });
+    }
+    const remote = await resolveSourceTipRemote({ ...input, sourceTip: { cloneUrl: input.cloneUrl } });
+    // FETCH_HEAD is shared by every fetch in this repository. An invocation-owned
+    // ref keeps unrelated concurrent fetches out of this approval comparison.
+    const fetchedRef = `refs/happier/source-fetch/${randomUUID()}`;
+    try {
+        await runGitOrThrow({ cwd: input.repoRoot,
+            args: ['fetch', '--no-tags', '--no-write-fetch-head', '--refmap=', '--', remote, `${input.ref}:${fetchedRef}`], signal: input.signal });
+        const fetchedHead = await readGitRevision({ cwd: input.repoRoot, revision: fetchedRef, signal: input.signal });
+        if (fetchedHead !== input.expectedCommitSha.toLowerCase()) {
+            throw Object.assign(new Error('The selected source ref no longer resolves to the approved commit'), { code: 'approval_stale' });
+        }
+    } finally {
+        // Cleanup owns only this temporary ref and must finish after cancellation.
+        await runGitOrThrow({ cwd: input.repoRoot, args: ['update-ref', '-d', fetchedRef] });
     }
 }
 
@@ -260,11 +273,12 @@ async function branchExists(input: Readonly<{
 async function branchToFetchedSourceTip(input: Readonly<{
     repoRoot: string;
     branchName: string;
+    commitSha: string;
     signal?: AbortSignal;
 }>): Promise<void> {
     await runGitOrThrow({
         cwd: input.repoRoot,
-        args: ['branch', '--', input.branchName, 'FETCH_HEAD'],
+        args: ['branch', '--', input.branchName, input.commitSha],
         signal: input.signal,
     });
 }
@@ -680,7 +694,8 @@ export async function prepareGitReviewWorkspace(
         assertFilesystemPathAuthorized: input.assertFilesystemPathAuthorized,
     });
 
-    await fetchVerifiedSourceTip(input);
+    await fetchVerifiedGitCommitRef({ repoRoot: input.repoRoot, cloneUrl: input.sourceTip.cloneUrl,
+        ref: input.sourceTip.fetchRef, expectedCommitSha: input.sourceTip.sourceHeadSha, signal: input.signal });
     if (!await branchExists({
         repoRoot: input.repoRoot,
         branchName,
@@ -689,6 +704,7 @@ export async function prepareGitReviewWorkspace(
         await branchToFetchedSourceTip({
             repoRoot: input.repoRoot,
             branchName,
+            commitSha: observedHeadSha,
             signal: input.signal,
         });
     }

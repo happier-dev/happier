@@ -9,26 +9,55 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { clearCachedWorkspaceRepositoryDirectoryEntries } from '@/sync/domains/workspaces/files/workspaceRepositoryDirectory';
+import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
+
+export type InvalidationSource = 'unknown' | 'mutation' | 'filesystem';
+
+/** A pending content-change fact survives other invalidations until its refresh starts. */
+export function recordProjectInvalidationSource(sources: Map<string, InvalidationSource>, key: string, source: InvalidationSource): void {
+    if (sources.get(key) !== 'filesystem') sources.set(key, source);
+}
 
 export type ScmStatusSyncStateMaps = {
     projectSyncMap: Map<string, InvalidateSync>;
     projectPollingSuspended: Set<string>;
     projectSnapshotSignature: Map<string, string>;
     projectLastSnapshot: Map<string, ScmWorkingSnapshot | null>;
-    projectLastInvalidatedBySession: Map<string, string>;
-    projectLastInvalidationSource: Map<string, 'unknown' | 'mutation'>;
-    projectLastInvalidatedBySessionAt: Map<string, number>;
+    projectLastInvalidationSource: Map<string, InvalidationSource>;
 };
+
+/** Order-sensitive 64-bit digest (two FNV-1a lanes) of status rows: an equality token, not a security hash. */
+function createRowDigest(): Readonly<{ add: (row: string) => void; digest: () => string }> {
+    let low = 0x811c9dc5;
+    let high = 0x01000193 ^ 0x9e3779b9;
+    let rows = 0;
+    const mix = (code: number) => {
+        low = Math.imul(low ^ code, 0x01000193);
+        high = Math.imul(high ^ code, 0x5bd1e995);
+        high ^= high >>> 15;
+    };
+    return {
+        add(row) {
+            for (let index = 0; index < row.length; index += 1) mix(row.charCodeAt(index));
+            mix(0x0a);
+            rows += 1;
+        },
+        digest: () => `${rows}:${(high >>> 0).toString(36)}.${(low >>> 0).toString(36)}`,
+    };
+}
 
 export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
     if (!snapshot.repo.isRepo) {
         return 'not-scm-repo';
     }
 
-    const filesSig = snapshot.entries
-        .map((entry) => [
+    // The row list is digested, not concatenated: the diff cache and status sync keep this string after
+    // the review closes, and the joined rows are megabytes on a large repository (4.4 MB at 59k rows).
+    const files = createRowDigest();
+    for (const entry of snapshot.entries) {
+        files.add([
             entry.path,
             entry.previousPath ?? '',
             entry.includeStatus,
@@ -40,8 +69,11 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
             String(entry.stats.pendingAdded),
             String(entry.stats.pendingRemoved),
             String(entry.stats.isBinary),
-        ].join('|'))
-        .join('\n');
+        ].join('|'));
+    }
+    const filesSig = files.digest();
+    // A poorer delivery has no rows: its level and shared counts stand in for them.
+    const deliverySig = snapshot.detail ? `${snapshot.detail}|${JSON.stringify(snapshot.summary ?? null)}|${JSON.stringify(snapshot.totals)}` : '';
     const remotesSig = [...(snapshot.repo.remotes ?? [])]
         .map((remote) => [
             remote.name,
@@ -69,22 +101,28 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
         String(snapshot.operationState?.canContinue === true),
         String(snapshot.operationState?.canAbort === true),
         filesSig,
+        deliverySig,
     ].join('\n');
 }
 
 /** Clears the file-search caches of a project's Sessions; an exact-Home Session clears its workspace cache. */
 export async function clearSearchCacheForProject(
     sessions: ReadonlyArray<Readonly<{ sessionId: string; serverId: string | null }>>,
+    workspace?: WorkspaceScopeBase,
 ): Promise<void> {
+    const workspaceKeys = new Set<string>();
+    const workspaceKey = workspace ? tryBuildWorkspaceCacheKey(workspace) : null;
+    if (workspaceKey) workspaceKeys.add(workspaceKey);
     for (const { sessionId, serverId } of sessions) {
         if (serverId) {
             const target = resolveWorkspaceTargetForSessionFromState(storage.getState(), { sessionId, serverId });
-            if (target) clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey: target.workspaceCacheKey });
+            if (target) workspaceKeys.add(target.workspaceCacheKey);
         } else {
             clearSuggestionFileSearchCache(sessionId);
             clearCachedRepositoryDirectoryEntries({ sessionId });
         }
     }
+    for (const workspaceCacheKey of workspaceKeys) clearCachedWorkspaceRepositoryDirectoryEntries({ workspaceCacheKey });
 }
 
 export function readScmSessionContext(sessionId: string, serverId?: string | null) {
@@ -164,23 +202,9 @@ export function moveProjectStateKey(input: {
     }
     stateMaps.projectLastSnapshot.delete(fromKey);
 
-    const actor = stateMaps.projectLastInvalidatedBySession.get(fromKey);
-    if (actor && !stateMaps.projectLastInvalidatedBySession.has(toKey)) {
-        stateMaps.projectLastInvalidatedBySession.set(toKey, actor);
-    }
-    stateMaps.projectLastInvalidatedBySession.delete(fromKey);
-
     const actorSource = stateMaps.projectLastInvalidationSource.get(fromKey);
-    if (actorSource && !stateMaps.projectLastInvalidationSource.has(toKey)) {
-        stateMaps.projectLastInvalidationSource.set(toKey, actorSource);
-    }
+    if (actorSource) recordProjectInvalidationSource(stateMaps.projectLastInvalidationSource, toKey, actorSource);
     stateMaps.projectLastInvalidationSource.delete(fromKey);
-
-    const actorAt = stateMaps.projectLastInvalidatedBySessionAt.get(fromKey);
-    if (typeof actorAt === 'number' && !stateMaps.projectLastInvalidatedBySessionAt.has(toKey)) {
-        stateMaps.projectLastInvalidatedBySessionAt.set(toKey, actorAt);
-    }
-    stateMaps.projectLastInvalidatedBySessionAt.delete(fromKey);
 }
 
 export function collectStaleProjectKeysAfterReassign(input: {

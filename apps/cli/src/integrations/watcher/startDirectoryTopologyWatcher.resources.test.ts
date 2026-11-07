@@ -2,6 +2,7 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { discoverAgentAccountingJsonlSource } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 const synchronousFilesystem = vi.hoisted(() => ({ canonicalizations: 0, stats: 0, containmentChecks: 0 }));
 
@@ -81,7 +82,15 @@ it.skipIf(process.platform !== 'linux')('enrols new subtrees and recovers delete
     await mkdir(outside);
     await mkdir(root);
     const baseline = await inotifyWatchCount();
-    const changed = vi.fn();
+    const discoveredFiles = new Set<string>();
+    const discovery = new AbortController();
+    const changed = vi.fn(async (_changedPath?: string) => {
+        // Source-wide consumers rediscover the tree after an unknown/root change.
+        // Exercise the canonical accounting discovery, rather than treating an
+        // earlier notification as proof that newly returned content was read.
+        const inventory = await discoverAgentAccountingJsonlSource([root], discovery.signal);
+        for (const file of inventory.files) discoveredFiles.add(file);
+    });
     const ready = vi.fn();
     const unavailable = vi.fn();
     const dispose = startDirectoryTopologyWatcher(root, changed, { onReady: ready, onUnavailable: unavailable });
@@ -124,9 +133,10 @@ it.skipIf(process.platform !== 'linux')('enrols new subtrees and recovers delete
         await mkdir(root);
         await vi.waitFor(async () => expect(await inotifyWatchCount() - baseline).toBe(2));
         await writeFile(join(root, 'returned.jsonl'), '{}\n');
-        await vi.waitFor(() => expect(changed).toHaveBeenCalledWith(join(root, 'returned.jsonl')));
+        await vi.waitFor(() => expect(discoveredFiles.has(join(root, 'returned.jsonl'))).toBe(true));
         expect(unavailable).not.toHaveBeenCalled();
     } finally {
+        discovery.abort();
         dispose();
         await vi.waitFor(async () => expect(await inotifyWatchCount()).toBe(baseline));
         await rm(parent, { recursive: true, force: true });

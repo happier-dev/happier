@@ -22,7 +22,7 @@ import type { ScmBackend } from '../types';
 import { withScmWorktreeMutationActivity } from '../worktreeMutationActivity';
 import { resolveScmBackendCapabilities } from '@happier-dev/protocol/scm/resolveScmBackendCapabilities';
 import type { ScmWorkspaceIntegrationPortableWorkspacePathClassification as HostPortableWorkspacePathClassification } from '../workspace/portableWorkspacePath';
-import { runScmCommand as runHostScmCommand } from '../runtime';
+import { runScmCommand as runHostScmCommand, runWithScmCommandRunner, type ScmCommandRunner } from '../runtime';
 import {
     createScmInstallableCommandAuthorization,
     rejectUnauthorizedScmInstallableCommand,
@@ -100,6 +100,7 @@ function useHandler<TInput extends object, TResult>(
 
 function createScmBackendRuntimeServices(
     definition: ScmBackendExecutableDefinition,
+    runner?: ScmCommandRunner,
 ): ScmBackendRuntimeServices {
     const commandAuthorization = createScmInstallableCommandAuthorization(definition.commands);
     const runCommand = async (input: BackendCommandRunInput | BackendCommandStreamInput) => {
@@ -108,7 +109,7 @@ function createScmBackendRuntimeServices(
             authorization: commandAuthorization,
         });
         if (unauthorizedCommand) return unauthorizedCommand;
-        return await runHostScmCommand({
+        return await runWithScmCommandRunner(runner, () => runHostScmCommand({
             bin: input.command,
             installableKey: input.installableKey,
             cwd: input.cwd,
@@ -120,7 +121,7 @@ function createScmBackendRuntimeServices(
             env: input.env,
             signal: input.signal,
             ...('stdoutConsumer' in input ? { stdoutConsumer: input.stdoutConsumer } : {}),
-        });
+        }));
     };
     return { runCommand, runCommandStreaming: runCommand,
         async renamePathNoReplace({ sourcePath, targetPath, expectedIdentity, signal }) {
@@ -168,20 +169,24 @@ function createWorkspaceIntegrationAdapter(
     if (!handlers) return undefined;
 
     return {
-...(handlers.fetchCommitRef ? { fetchCommitRef: async (input) => await runWithScmBackendRuntimeServices(
+        ...(handlers.fetchCommitRef ? { fetchCommitRef: async (input) => await runWithScmBackendRuntimeServices(
             services, async () => await handlers.fetchCommitRef!(input),
         ) } : {}),
-...(handlers.resolveCommitRef ? { resolveCommitRef: async (input) => await runWithScmBackendRuntimeServices(
+        ...(handlers.resolveCommitRef ? { resolveCommitRef: async (input) => await runWithScmBackendRuntimeServices(
             services, async () => await handlers.resolveCommitRef!(input),
         ) } : {}),
-...(handlers.exportCommit ? { exportCommit: async (input) => await runWithScmBackendRuntimeServices(
+        ...(handlers.exportCommit ? { exportCommit: async (input) => await runWithScmBackendRuntimeServices(
             services, async () => await handlers.exportCommit!(input),
         ) } : {}),
-
         ...(handlers.classifyDirectoryIgnores ? {
             classifyDirectoryIgnores: async (input) => await runWithScmBackendRuntimeServices(
                 services,
                 async () => await handlers.classifyDirectoryIgnores!(input),
+            ),
+        } : {}),
+        ...(handlers.watchInputs ? {
+            watchInputs: async (input) => await runWithScmBackendRuntimeServices(
+                services, async () => await handlers.watchInputs!(input),
             ),
         } : {}),
         ...(handlers.inspectWorkspaceLocation ? { inspectWorkspaceLocation: async (input) => await runWithScmBackendRuntimeServices(
@@ -315,9 +320,10 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
     executableDefinition: ScmBackendExecutableDefinition;
     registration: ScmBackendRuntimeRegistration;
     hostingProviderRuntimeServices?: ScmHostingProviderRuntimeServices;
+    scmCommandRunner?: ScmCommandRunner;
 }>): ScmBackend {
     const preferredMode = input.executableDefinition.repoModes[0] ?? '.git';
-    const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition);
+    const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition, input.scmCommandRunner);
     const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? null;
     const captureTarget = input.registration.handlers.commit?.captureTarget;
     const commitCaptureTarget: ScmBackend['commitCaptureTarget'] = captureTarget
