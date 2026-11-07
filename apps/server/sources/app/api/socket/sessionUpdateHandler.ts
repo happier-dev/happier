@@ -1,4 +1,4 @@
-import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
+import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import {
     buildMessageUpdatedUpdate,
@@ -12,6 +12,7 @@ import {
 } from "@/app/events/eventRouter";
 import { resolveSessionMessageAccountActor } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { db } from "@/storage/db";
+import { bindSessionTranscriptApprovalVisualPublication } from '@/app/session/sessionTranscriptApprovalVisualPublication';
 import { RetainedContextPendingMaterializeRequestV5Schema } from '@happier-dev/protocol/sessions/pending/retainedPendingContextV1';
 import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
@@ -50,7 +51,7 @@ import {
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
 import { publishSessionReadCursorUpdate } from "@/app/session/readCursor/publishSessionReadCursorUpdate";
-import { recordSessionAlive } from "@/app/presence/presenceRecorder";
+import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { resolvePresenceTimeoutConfig } from "@/app/presence/timeout";
 import {
     blockPendingDelivery,
@@ -67,13 +68,11 @@ import { loadPendingActivationPublication } from "@/app/session/pending/publishP
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
 import { resolveStructuralSessionAccess } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
-import { resolveCurrentSessionRecipientAccountIds } from "@/app/session/access/sessionRecipients";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
 import { SESSION_PENDING_EXECUTION_RUN_MATERIALIZE_NEXT_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2, SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2, SessionPendingExecutionRunMaterializeNextRequestV2Schema, SessionPendingExecutionRunMaterializeNextResponseV2Schema, SessionPendingExecutionRunAcceptedRequestV2Schema, SessionPendingExecutionRunAcceptedResponseV2Schema, SessionPendingExecutionRunBlockRequestV2Schema, SessionPendingExecutionRunBlockResponseV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, AcceptedPendingSettlementRequestV1Schema, AcceptedPendingSettlementResponseV1Schema } from '@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1';
-import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunSessionUpdateStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { PrimaryTurnStatusV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
@@ -93,7 +92,8 @@ import { TranscriptStreamSegmentDeltaEphemeralMessageSchema, TranscriptStreamSeg
 import type { SessionEndAckResponse } from "@happier-dev/protocol/updates";
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeSignalChange } from "@/app/activity/accountActivityBadge";
-import { canPublishFromSessionScopedSocket, canTargetSessionFromSocket } from "./sessionScopedBinding";
+import { canTargetSessionFromSocket } from "./sessionScopedBinding";
+import { admitCurrentSessionPublication } from './currentSessionPublicationAdmission';
 import { hasExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMutationV1Schema, SessionMessageReplyMutationResultV1Schema,
     SESSION_MESSAGE_REPLY_RELEASE_SOURCE_TURN_EVENT_V1, SessionMessageReplySourceTurnReleaseV1Schema, SessionMessageReplySourceTurnReleaseResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -119,8 +119,6 @@ import {
     projectSessionTranscriptPublicationUnanchoredProjection,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import {
-    isTransactionAcquisitionUnavailableError,
-    isTransactionConflictExhaustedError,
     isTransactionDeadlineExceededError,
 } from "@/storage/inTx";
 
@@ -142,7 +140,7 @@ function scheduleTrackedSessionBadgeRefresh(params: Parameters<typeof refreshTra
 
 const RELEASED_UI_V0_2_0_DIRECT_USER_MESSAGE_SENT_FROM = new Set(["web", "ios", "android", "mac", "pending_send_now", "retry"]);
 const PENDING_MATERIALIZATION_RETRY_AFTER_MS = 1_000;
-const ExecutionRunPublicStateSocketSchema = z.object(ExecutionRunPublicStateSchema.shape);
+const ExecutionRunSessionUpdateStateSocketSchema = z.object(ExecutionRunSessionUpdateStateSchema.shape);
 const TranscriptStreamSegmentEphemeralSocketMessageSchema = z.object(TranscriptStreamSegmentEphemeralMessageSchema.shape);
 const TranscriptStreamSegmentDeltaEphemeralSocketMessageSchema = z.object(TranscriptStreamSegmentDeltaEphemeralMessageSchema.shape);
 
@@ -455,7 +453,7 @@ export function sessionUpdateHandler(
     let legacyAliveFailureStreak = 0;
     let pendingLegacyAlive: Readonly<{
         observedAtMs: number;
-        record: Parameters<typeof recordSessionAlive>[0];
+        sessionId: string;
     }> | null = null;
     let legacyAliveTimer: ReturnType<typeof setTimeout> | null = null;
     let legacyAliveStopped = false;
@@ -835,9 +833,7 @@ export function sessionUpdateHandler(
         } catch (error) {
             diagnose(sessionFollowAckErrorCauses(error));
             respond({ ok: false, v: 1, error: isLockAdmissionDeadlineExceededError(error)
-                || isTransactionDeadlineExceededError(error)
-                || isTransactionConflictExhaustedError(error)
-                || isTransactionAcquisitionUnavailableError(error) ? "retryable" : "internal" });
+                || isTransactionStorageError(error) ? "retryable" : "internal" });
         }
     });
 
@@ -1124,7 +1120,8 @@ export function sessionUpdateHandler(
             }
             const result = await trustedSessionPublisher.presence.runAsCurrentPublisher({
                 socket,
-                operation: async (publisherAuthority) => await createSessionMessage({
+                operation: async (publisherAuthority) => {
+                    const written = await createSessionMessage({
                     inputAdmission: "transcriptOnly",
                     actorUserId: userId,
                     sessionId: observation.sessionId,
@@ -1137,6 +1134,7 @@ export function sessionUpdateHandler(
                     publisherAuthority,
                     runtimeComposition: composeSessionActivityRuntimeComposition(publisherAuthority),
                     trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
+                    usageTimingV1: observation.usageTimingV1,
                     trustedTranscriptObservationProvenance: observation.provenance,
                     ...(observation.v === 2 && observation.surfaceItemReference !== undefined
                         ? { trustedSurfaceItemReference: observation.surfaceItemReference } : {}),
@@ -1146,7 +1144,18 @@ export function sessionUpdateHandler(
                     ...(observation.sessionEventType && !isRecoveredHistory
                         ? { trustedSessionEventType: observation.sessionEventType }
                         : {}),
-                }),
+                    });
+                    if (written.ok && observation.v === 2 && observation.approvalRequestArtifactId) {
+                        const bound = await bindSessionTranscriptApprovalVisualPublication({
+                            accountId: userId, artifactId: observation.approvalRequestArtifactId,
+                            sessionId: observation.sessionId, localId: observation.localId,
+                            messageId: written.message.id, content: typeof observation.content === 'string'
+                                ? { t: 'encrypted', c: observation.content } : observation.content,
+                        });
+                        if (!bound) return { ok: false, error: 'invalid-params' } as const;
+                    }
+                    return written;
+                },
             });
             if (result === null || !result.ok) {
                 respond({
@@ -1242,6 +1251,7 @@ export function sessionUpdateHandler(
                 authentication: readSessionAccessAuthenticationFromSocket(socket),
                 expectedVersion,
                 metadataCiphertext: metadata,
+                usageTimingV1: data.usageTimingV1,
                 ...(typeof lastViewedSessionSeqHint === "number"
                     ? { readCursorHintV1: { lastViewedSessionSeq: lastViewedSessionSeqHint } }
                     : {}),
@@ -1379,6 +1389,7 @@ export function sessionUpdateHandler(
                     sessionId: sid,
                     expectedVersion,
                     agentStateCiphertext: agentState,
+                usageTimingV1: data.usageTimingV1,
                     ...(typeof pendingPermissionRequestCount === "number" ? { pendingPermissionRequestCount } : {}),
                     ...(typeof pendingUserActionRequestCount === "number" ? { pendingUserActionRequestCount } : {}),
                     ...(pendingRequestNewestCreatedAt !== undefined ? { pendingRequestNewestCreatedAt } : {}),
@@ -1699,9 +1710,8 @@ export function sessionUpdateHandler(
             }
             return;
         }
-        const observation = pendingLegacyAlive;
-        const sid = observation.record.sessionId;
-        clearPendingLegacyAlive();
+        let observation = pendingLegacyAlive;
+        const sid = observation.sessionId;
         legacyAliveInFlight = true;
         let legacyAlivePersisted = false;
         try {
@@ -1709,6 +1719,10 @@ export function sessionUpdateHandler(
                 publisher.presence,
                 async () => {
                     if (legacyAliveStopped) return { status: "superseded" } as const;
+                    // Coalesce the whole received tuple until shared admission. A queued close
+                    // may clear pending work; its accepted alive still precedes it at receipt time.
+                    observation = pendingLegacyAlive ?? observation;
+                    clearPendingLegacyAlive();
                     const observedAt = new Date(observation.observedAtMs);
                     const touched = await publisher.presence.touchPublisher({ socket, observedAt });
                     return touched.status === "unregistered" && !legacyAliveStopped
@@ -1730,8 +1744,6 @@ export function sessionUpdateHandler(
                 Date.now() + RELEASED_ALIVE_PERSISTENCE_INTERVAL_MS,
                 observation.observedAtMs + observationRefreshWindowMs,
             );
-
-            await recordSessionAlive(observation.record);
 
             const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
             if (session) await Promise.all(
@@ -1781,6 +1793,26 @@ export function sessionUpdateHandler(
                     }
                 }),
             );
+            // An active→active heartbeat has no Account cursor. Its audience
+            // reads the new activeAt from the same realtime activity heartbeat
+            // the owner receives below, under the realtime publication policy.
+            if (session && presenceResult.status === "touched") {
+                for (const accountId of presenceResult.heartbeatRecipientAccountIds) {
+                    if (accountId === userId) continue;
+                    const heartbeat = projectSessionTranscriptPublicationRealtimeProjection(
+                        { active: true, activeAt: presenceResult.activeAt.getTime() },
+                        session,
+                        accountId,
+                    );
+                    if (heartbeat.kind !== "publish" || heartbeat.value.active !== true
+                        || typeof heartbeat.value.activeAt !== "number") continue;
+                    eventRouter.emitEphemeral({
+                        userId: accountId,
+                        payload: buildSessionActivityEphemeral(sid, true, heartbeat.value.activeAt),
+                        recipientFilter: { type: 'user-scoped-only' },
+                    });
+                }
+            }
             if (presenceResult.badgeAttentionChanged) {
                 scheduleTrackedSessionBadgeRefresh({
                     badgeAttentionChanged: true,
@@ -1822,22 +1854,9 @@ export function sessionUpdateHandler(
         const observedAtMs = Date.now();
         const timestamp = Math.min(data.time, observedAtMs);
         if (timestamp < observedAtMs - 1000 * 60 * 10) return;
-        const latestTurnStatus = PrimaryTurnStatusV1Schema.safeParse(data.latestTurnStatus);
-        const latestTurnStatusObservedAt = typeof data.latestTurnStatusObservedAt === "number"
-            && Number.isFinite(data.latestTurnStatusObservedAt)
-            && data.latestTurnStatusObservedAt >= 0
-            ? Math.trunc(data.latestTurnStatusObservedAt)
-            : null;
         pendingLegacyAlive = {
             observedAtMs,
-            record: {
-                accountId: userId,
-                sessionId: data.sid,
-                timestamp,
-                ...(latestTurnStatus.success && latestTurnStatusObservedAt !== null
-                    ? { latestTurnStatus: latestTurnStatus.data, latestTurnStatusObservedAt }
-                    : {}),
-            },
+            sessionId: data.sid,
         };
         await flushLegacyAlive();
     });
@@ -1850,33 +1869,20 @@ export function sessionUpdateHandler(
             const runRaw = data?.run;
             if (!sid) return;
 
-            if (!await canPublishFromSessionScopedSocket({
-                socket,
-                connection,
-                sessionId: sid,
-                requireMachineBinding: true,
-            })) {
-                return;
-            }
-
-            const access = await resolveStructuralSessionAccess(db, { accountId: userId, sessionId: sid });
-            if (access?.level !== 'owner') return;
-
-            // Strip unknown fields before rebroadcasting (clients treat this as a hint; keep the payload tight).
-            const parsedRun = ExecutionRunPublicStateSocketSchema.safeParse(runRaw);
-            if (!parsedRun.success) {
-                return;
-            }
-
-            const recipientAccountIds = await resolveCurrentSessionRecipientAccountIds({ sessionId: sid });
-            if (!recipientAccountIds || recipientAccountIds.length === 0) return;
-            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
-            if (!publication) return;
+            const admission = await admitCurrentSessionPublication({
+                socket, connection, sessionId: sid,
+                parse: () => {
+                    const parsed = ExecutionRunSessionUpdateStateSocketSchema.safeParse(runRaw);
+                    return parsed.success ? parsed.data : null;
+                },
+            });
+            if (!admission) return;
+            const { recipientAccountIds, publication } = admission;
 
             const payload = {
                 type: 'execution-run-updated' as const,
                 sessionId: sid,
-                run: parsedRun.data,
+                run: admission.value,
             };
 
             // Live execution-run facts carry no sequence anchor, so every
@@ -1910,32 +1916,23 @@ export function sessionUpdateHandler(
             const sid = typeof data?.sid === 'string' ? String(data.sid).trim() : '';
             if (!sid) return;
 
-            if (!await canPublishFromSessionScopedSocket({
-                socket,
-                connection,
-                sessionId: sid,
-                requireMachineBinding: true,
-            })) {
-                return;
-            }
-
-            const access = await resolveStructuralSessionAccess(db, { accountId: userId, sessionId: sid });
-            if (access?.level !== 'owner') return;
-
-            const parsedMessage = TranscriptStreamSegmentEphemeralSocketMessageSchema.safeParse(data?.message);
-            if (!parsedMessage.success) {
-                return;
-            }
-
-            const recipientAccountIds = await resolveCurrentSessionRecipientAccountIds({ sessionId: sid });
-            if (!recipientAccountIds || recipientAccountIds.length === 0) return;
-            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
-            if (!publication) return;
+            const admission = await admitCurrentSessionPublication({
+                socket, connection, sessionId: sid,
+                parse: () => {
+                    const parsed = TranscriptStreamSegmentEphemeralSocketMessageSchema.safeParse(data?.message);
+                    return parsed.success ? parsed.data : null;
+                },
+                // A segment's first emission is tick 1. A publisher without ticks has no segment
+                // boundary to read at, so each of its checkpoints counts as one.
+                opensSegment: message => (message.tick ?? 1) === 1,
+            });
+            if (!admission) return;
+            const { recipientAccountIds, publication } = admission;
 
             const payload = {
                 type: 'transcript-stream-segment' as const,
                 sessionId: sid,
-                message: parsedMessage.data,
+                message: admission.value,
             };
 
             for (const participantUserId of recipientAccountIds) {
@@ -1958,8 +1955,8 @@ export function sessionUpdateHandler(
     });
 
     // Delta form of the live transcript segment stream: carries ONLY appended text plus
-    // tick/baseLength chaining fields. Mirrors the snapshot handler exactly (session-scoped-socket
-    // proof, edit+owner access, per-event schema validation with `.strip()`).
+    // tick/baseLength chaining fields. Mirrors the snapshot handler exactly (the connect-admitted
+    // publisher, its held audience, per-event schema validation with `.strip()`).
     registerSessionEvent('transcript-stream-segment-delta', async (data: any) => {
         try {
             websocketEventsCounter.inc({ event_type: 'transcript-stream-segment-delta' });
@@ -1967,32 +1964,20 @@ export function sessionUpdateHandler(
             const sid = typeof data?.sid === 'string' ? String(data.sid).trim() : '';
             if (!sid) return;
 
-            if (!await canPublishFromSessionScopedSocket({
-                socket,
-                connection,
-                sessionId: sid,
-                requireMachineBinding: true,
-            })) {
-                return;
-            }
-
-            const access = await resolveStructuralSessionAccess(db, { accountId: userId, sessionId: sid });
-            if (access?.level !== 'owner') return;
-
-            const parsedMessage = TranscriptStreamSegmentDeltaEphemeralSocketMessageSchema.safeParse(data?.message);
-            if (!parsedMessage.success) {
-                return;
-            }
-
-            const recipientAccountIds = await resolveCurrentSessionRecipientAccountIds({ sessionId: sid });
-            if (!recipientAccountIds || recipientAccountIds.length === 0) return;
-            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
-            if (!publication) return;
+            const admission = await admitCurrentSessionPublication({
+                socket, connection, sessionId: sid,
+                parse: () => {
+                    const parsed = TranscriptStreamSegmentDeltaEphemeralSocketMessageSchema.safeParse(data?.message);
+                    return parsed.success ? parsed.data : null;
+                },
+            });
+            if (!admission) return;
+            const { recipientAccountIds, publication } = admission;
 
             const payload = {
                 type: 'transcript-stream-segment-delta' as const,
                 sessionId: sid,
-                message: parsedMessage.data,
+                message: admission.value,
             };
 
             for (const participantUserId of recipientAccountIds) {
@@ -2127,6 +2112,7 @@ export function sessionUpdateHandler(
                         actorUserId: userId,
                         sessionId: sid,
                         content,
+                        usageTimingV1: data.usageTimingV1,
                         localId,
                         messageRole: admission?.principalKind === "api-token-session-viewer" ? "user" : parsedMessageRole?.data,
                         sidechainId,
@@ -2401,6 +2387,7 @@ export function sessionUpdateHandler(
                             publisherAuthority,
                             diagnosticCorrelationId,
                             ...(parsed.data.acceptedDelivery === undefined ? {} : { acceptedDelivery: parsed.data.acceptedDelivery }),
+                            usageTimingV1: parsed.data.usageTimingV1,
                             ...('acceptedTurn' in parsed.data && parsed.data.acceptedTurn !== undefined ? { acceptedTurn: parsed.data.acceptedTurn } : {}),
                             ...("recipient" in parsed.data ? { targetExecutionRunId: parsed.data.recipient.runId, expectedSidechainId: parsed.data.sidechainId } : {}),
                         }),
@@ -2631,8 +2618,7 @@ export function sessionUpdateHandler(
                 } catch (error) {
                     if (
                         isLockAdmissionDeadlineExceededError(error)
-                        || isTransactionDeadlineExceededError(error)
-                        || isTransactionAcquisitionUnavailableError(error)
+                        || isTransactionStorageError(error)
                     ) throw error;
                     logUnexpectedRequestError(error, { module: 'websocket', socketId: socket.id,
                         sessionId: trustedSessionPublisher?.binding.sessionId,
@@ -2653,8 +2639,7 @@ export function sessionUpdateHandler(
                     event: 'pending-materialization-failed', phase: 'admission' });
                 if (
                     isLockAdmissionDeadlineExceededError(error)
-                    || isTransactionDeadlineExceededError(error)
-                    || isTransactionAcquisitionUnavailableError(error)
+                    || isTransactionStorageError(error)
                 ) {
                     respond({
                         ok: false,

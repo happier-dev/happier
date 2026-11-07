@@ -1,4 +1,4 @@
-import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionMachineRuntimeDemandV1, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
 import { normalizeId } from './inputReading.js';
 import { readRecord, hasOwn } from '../../inputs/inputRecords.js';
 import { readWidgetDefinitionActionSessionV1 } from '../../widgets/definitionActionsV1.js';
@@ -31,6 +31,16 @@ export function resolveExecutionRunScope(input: unknown, ctx: ActionExecutorCont
   }
   const fallback = normalizeId(ctx.defaultSessionId);
   return fallback || null;
+}
+
+/** Declaration projection of the same attached/detached scope used by Run execution. */
+export function resolveExecutionRunMachineRuntimeDemand(input: unknown, context: ActionExecutorContext): ActionMachineRuntimeDemandV1 | null {
+  const sessionId = resolveExecutionRunScope(input, context);
+  const machineId = context.externalActionTarget?.kind === 'machine'
+    ? context.externalActionTarget.machineId : context.executionRunTargetMachineId;
+  const target = sessionId ? { kind: 'session' as const, sessionId }
+    : machineId ? { kind: 'machine' as const, machineId } : null;
+  return target ? { target, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
 }
 
 export function withoutExecutionRunScope(input: unknown): Record<string, unknown> {

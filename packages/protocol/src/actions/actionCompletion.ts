@@ -16,6 +16,7 @@ import { ScmDiffSummaryGenerateOutputSchema, type ScmDiffSummaryReviewRun } from
 import { ScmDiffSummaryResultErrorCodeSchema } from '../scm/diffSummaryResult.js';
 import { ReviewPublicationEvidenceSchema, type ReviewPublicationMaterialization } from '../reviews/reviewPublicationEvidence.js';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from './operations/v1.js';
+import type { DeploymentReceiptResultV1 } from '../deployments/deploymentActionsV1.js';
 
 export type ActionCompletionRun = Readonly<{ key: string; runId: string; observation?: ExecutionRunOutputObservation }>;
 export type ActionCompletionLaunchFailure = Readonly<{ key: string; errorCode: string; runCreation: ExecutionRunStartRunCreation }>;
@@ -283,7 +284,8 @@ export async function resumeActionCompletionV1(params: Readonly<{
   return hasUnknownLaunch ? uncertain : { kind: 'completed', value: validated.value };
 }
 
-export const ProjectCommandActionOutputV1Schema = lazyZodSchema(() => z.strictObject({ operation: ActionOperationSnapshotV1Schema }));
+export const ActionOperationCompletionOutputV1Schema = lazyZodSchema(() => z.strictObject({ operation: ActionOperationSnapshotV1Schema }));
+export const ProjectCommandActionOutputV1Schema = ActionOperationCompletionOutputV1Schema;
 
 /** One finite completion owner; preparation can also produce strict no-launch final facts. */
 export function createProjectCommandActionCompletionV1(options: Readonly<{ immediateResultSchema?: z.ZodMiniType }> = {}): OperationCompletionDeclaration {
@@ -318,3 +320,42 @@ export function createProjectCommandActionCompletionV1(options: Readonly<{ immed
 
 /** Finite command acceptance is an observation handle, never a completed workflow leaf. */
 export const projectCommandActionCompletionV1 = createProjectCommandActionCompletionV1();
+
+/** The accepted host operation, not a pending storage acknowledgement, completes this leaf. */
+export function createDeploymentDeployActionCompletionV1(resultSchema: z.ZodMiniType<DeploymentReceiptResultV1>): OperationCompletionDeclaration {
+  const completedResultSchema = lazyZodSchema(() => resultSchema.check(z.refine(
+    value => !value.ok || 'deploymentId' in value && (value.state === 'succeeded' || value.state === 'running_unverified'),
+    { message: 'A retained pending deployment is not terminal evidence.' },
+  )));
+  return {
+    awaits: 'action_operations',
+    immediateResultSchema: completedResultSchema,
+    terminalOutputSchema: lazyZodSchema(() => z.union([completedResultSchema, ActionOperationCompletionOutputV1Schema])),
+    launched: output => {
+      const pending = resultSchema.parse(output);
+      if (!pending.ok || !('kind' in pending) || pending.kind !== 'pending' || !pending.operation
+        || pending.operation.operationId !== pending.actionOperationId) {
+        throw new Error('deployment_operation_context_unavailable');
+      }
+      return { operations: [{ key: 'deployment', ...pending.operation }] };
+    },
+    terminal: (output, operations) => {
+      const pending = resultSchema.parse(output);
+      const observed = operations[0];
+      const operation = observed?.operation;
+      if (!pending.ok || !('kind' in pending) || pending.kind !== 'pending' || !pending.operation
+        || operations.length !== 1 || !observed || !operation || operation.operationId !== pending.actionOperationId
+        || observed.serverId !== pending.operation.serverId || observed.machineId !== pending.operation.machineId
+        || observed.operationId !== pending.operation.operationId
+        || operation.scope.machineId !== pending.operation.machineId || operation.actionId !== 'deployments.deploy') {
+        throw new Error('deployment_operation_correspondence_mismatch');
+      }
+      if (operation.state !== 'succeeded') return { operation };
+      const receipt = completedResultSchema.parse(operation.result);
+      if (receipt.ok && receipt.environmentId !== pending.environmentId) {
+        throw new Error('deployment_operation_correspondence_mismatch');
+      }
+      return receipt;
+    },
+  };
+}

@@ -4,11 +4,11 @@ import { ArtifactBlobReferenceV1Schema, type ArtifactBlobStoredContentV1, type A
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { deletePrivateFile } from '@/storage/blob/files';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import { storePrivateBinaryContent, openPrivateBinaryContent } from '@/storage/privateFiles/privateBinaryContent';
-import { readArtifactForCallerInTx, readmitArtifactContentInTx } from './artifactAccessService';
+import { readArtifactForCallerInTx } from './artifactAccessService';
 import { artifactBlobRejectedUploadPrefix, artifactBlobWritingUploadPrefix,
     writeAccountPrivateFileCandidate, settleAccountPrivateFileUploadInTx,
     isAccountPrivateFileUploadActiveInTx, deleteAccountPrivateFileUpload, discardAccountPrivateFileCandidate } from '@/storage/privateFiles/accountPrivateFileCustody';
@@ -85,7 +85,7 @@ export async function admitArtifactBlobWriteInTx(tx: Tx, input: Readonly<{
 }
 
 export async function readArtifactBlob(input: Readonly<{ actorAccountId: string; artifactId: string; blobId: string }>) {
-    const admitted = await readSnapshotWithCurrentAdmission({ capture: async tx => {
+    const admitted = await captureReadSnapshot({ capture: async tx => {
         const read = await readArtifactForCallerInTx(tx, input);
         if (!read.ok) return read;
         const row = await tx.artifactBlob.findFirst({ where: { id: input.blobId, artifactId: input.artifactId } });
@@ -94,18 +94,14 @@ export async function readArtifactBlob(input: Readonly<{ actorAccountId: string;
             return { ok: false as const, error: 'artifact_not_found' as const };
         }
         if (row.encryptionMode !== read.artifact.encryptionMode) return { ok: false as const, error: 'artifact_content_unavailable' as const };
-        return { ok: true as const, row, ownerAccountId: read.artifact.ownerAccountId, admission: read.artifact };
+        return { ok: true as const, row, ownerAccountId: read.artifact.ownerAccountId };
     }, materialize: async captured => {
         if (!captured.ok) return captured;
         // Private IO may be large/remote and must finish outside the database lock.
         const bytes = privacyKit.encodeBase64(new Uint8Array(await openArtifactBlobBytes(captured.ownerAccountId, captured.row)));
         const content: ArtifactBlobStoredContentV1 = captured.row.encryptionMode === 'plain' ? { t: 'plain', v: bytes } : { t: 'encrypted', c: bytes };
         return { ...captured, value: { blobId: captured.row.id, content } };
-    } }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const current = await readmitArtifactContentInTx(tx, input, captured.admission);
-        return current.ok ? captured : current;
-    });
+    } });
     if (!admitted.ok) return admitted;
     return { ok: true as const, value: admitted.value };
 }

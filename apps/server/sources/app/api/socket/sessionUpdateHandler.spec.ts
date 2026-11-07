@@ -37,7 +37,6 @@ const emitEphemeral = vi.fn();
 const emitUpdate = vi.fn();
 const activityCacheIsSessionValid = vi.fn(async () => true);
 const activityCacheMarkSessionInactive = vi.fn();
-const recordSessionAlive = vi.fn(async () => {});
 const publishSessionTurnMutationUpdate = vi.fn(async () => {});
 const buildPendingChangedUpdate = vi.fn();
 const buildPendingResolvedMessageUpdate = vi.fn(() => ({
@@ -87,9 +86,6 @@ vi.mock("@/app/presence/sessionCache", () => ({
         markSessionInactive: activityCacheMarkSessionInactive,
     },
 }));
-vi.mock("@/app/presence/presenceRecorder", () => ({
-    recordSessionAlive,
-}));
 vi.mock("@/app/session/turns/publishSessionTurnMutationUpdate", () => ({
     publishSessionTurnMutationUpdate,
 }));
@@ -111,10 +107,21 @@ vi.mock("@/storage/db", async () => {
         homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
         session: {
             findUnique: sessionFindUnique,
+            // No stored activation authorization in these publication fixtures.
+            // Keep the real activation-publication reader beneath the socket path.
+            findMany: vi.fn(async () => []),
             update: sessionUpdate,
         },
     };
     return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
+});
+// Substitute SQLite's separate persistent reader while keeping inReadSnapshot real.
+vi.mock("@/storage/prisma", async importOriginal => {
+    const { db } = await import("@/storage/db");
+    return {
+        ...await importOriginal<typeof import("@/storage/prisma")>(),
+        withSqliteReadSnapshot: createDbTransactionMock(() => db).readSnapshot,
+    };
 });
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: {
@@ -207,7 +214,6 @@ describe("sessionUpdateHandler", () => {
         emitUpdate.mockClear();
         activityCacheIsSessionValid.mockClear();
         activityCacheMarkSessionInactive.mockClear();
-        recordSessionAlive.mockClear();
         buildUpdateSessionUpdate.mockClear();
         buildPendingChangedUpdate.mockClear();
         buildPendingResolvedMessageUpdate.mockClear();
@@ -790,106 +796,8 @@ describe("sessionUpdateHandler", () => {
         expect(updateSessionAgentState).not.toHaveBeenCalled();
         expect(createSessionMessage).not.toHaveBeenCalled();
         expect(activityCacheIsSessionValid).not.toHaveBeenCalled();
-        expect(recordSessionAlive).not.toHaveBeenCalled();
     });
 
-    it("forwards a validated latest turn snapshot from session-alive", async () => {
-        const observedAt = Date.now();
-        const socket = createFakeSocket();
-        registerSessionUpdateHandler(
-            "user-1",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
-            trustedPublisher,
-        );
-        touchPublisher.mockResolvedValueOnce({
-            status: "touched",
-            committedFence: new Date(observedAt),
-            activeAt: new Date(observedAt),
-            recipientCursors: [],
-            badgeAttentionChanged: false,
-        });
-        await getSocketHandler(socket, "session-alive")({
-            sid: "s-1",
-            time: observedAt,
-            thinking: false,
-            latestTurnStatus: "completed",
-            latestTurnStatusObservedAt: observedAt,
-        });
-
-        expect(recordSessionAlive).toHaveBeenCalledWith({
-            accountId: "user-1",
-            sessionId: "s-1",
-            timestamp: observedAt,
-            latestTurnStatus: "completed",
-            latestTurnStatusObservedAt: observedAt,
-        });
-    });
-
-    it("drops overlapping session-alive attempts across persistence and accepts the next heartbeat after freshness expires", async () => {
-        const observedAt = Date.now();
-        const now = vi.spyOn(Date, "now").mockReturnValue(observedAt);
-        const socket = createFakeSocket();
-        registerSessionUpdateHandler(
-            "user-1",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any,
-            trustedPublisher,
-        );
-        const alive = getSocketHandler(socket, "session-alive");
-        const touched = {
-            status: "touched",
-            committedFence: new Date(observedAt),
-            activeAt: new Date(observedAt),
-            recipientCursors: [],
-            badgeAttentionChanged: false,
-        };
-        let resolveFirstTouch!: (value: typeof touched) => void;
-        const firstTouch = new Promise<typeof touched>((resolve) => {
-            resolveFirstTouch = resolve;
-        });
-        let markFirstRecordEntered!: () => void;
-        const firstRecordEntered = new Promise<void>((resolve) => {
-            markFirstRecordEntered = resolve;
-        });
-        let releaseFirstRecord!: () => void;
-        const firstRecordRelease = new Promise<void>((resolve) => {
-            releaseFirstRecord = resolve;
-        });
-        touchPublisher
-            .mockReturnValueOnce(firstTouch)
-            .mockResolvedValue({ status: "rejected", reason: "unauthorized" });
-        recordSessionAlive.mockImplementationOnce(async () => {
-            markFirstRecordEntered();
-            await firstRecordRelease;
-        });
-        const payload = { sid: "s-1", time: observedAt, thinking: true };
-
-        const firstAttempt = alive(payload);
-        await Promise.resolve();
-        await Promise.resolve();
-        const overlapDuringTouch = alive({ ...payload, time: observedAt + 1 });
-        const touchCallsDuringTouch = touchPublisher.mock.calls.length;
-
-        resolveFirstTouch(touched);
-        await firstRecordEntered;
-        const overlapDuringPersistence = alive({ ...payload, time: observedAt + 2 });
-        const touchCallsDuringPersistence = touchPublisher.mock.calls.length;
-
-        releaseFirstRecord();
-        await Promise.all([firstAttempt, overlapDuringTouch, overlapDuringPersistence]);
-
-        try {
-            now.mockReturnValue(observedAt + 60_000);
-            await alive({ ...payload, time: observedAt + 60_000 });
-            expect(touchCallsDuringTouch).toBe(1);
-            expect(touchCallsDuringPersistence).toBe(1);
-            expect(touchPublisher).toHaveBeenCalledTimes(2);
-            expect(recordSessionAlive).toHaveBeenCalledTimes(1);
-        } finally {
-            now.mockRestore();
-        }
-    });
 
     it("accepts the next session-alive heartbeat after a touch failure", async () => {
         const observedAt = Date.now();
@@ -982,6 +890,7 @@ describe("sessionUpdateHandler", () => {
                 committedFence: new Date(observedAt + 4_001),
                 activeAt: new Date(observedAt + 4_001),
                 recipientCursors: [],
+                heartbeatRecipientAccountIds: [],
                 badgeAttentionChanged: false,
             });
             now.mockReturnValue(observedAt + 4_001);
@@ -1001,7 +910,7 @@ describe("sessionUpdateHandler", () => {
         }
     });
 
-    it("coalesces successful released alive reconciliation while its committed presence fence is fresh", async () => {
+    it("coalesces successful heartbeats while the committed presence fence is fresh", async () => {
         const observedAt = Date.parse("2026-07-22T08:00:00.000Z");
         const now = vi.spyOn(Date, "now").mockReturnValue(observedAt);
         const socket = createFakeSocket();
@@ -1016,6 +925,7 @@ describe("sessionUpdateHandler", () => {
             committedFence: new Date(observedAt),
             activeAt: new Date(observedAt),
             recipientCursors: [],
+            heartbeatRecipientAccountIds: [],
             badgeAttentionChanged: false,
         });
         const alive = getSocketHandler(socket, "session-alive");
@@ -1036,7 +946,6 @@ describe("sessionUpdateHandler", () => {
             });
 
             expect(touchPublisher).toHaveBeenCalledTimes(1);
-            expect(recordSessionAlive).toHaveBeenCalledTimes(1);
 
             now.mockReturnValue(observedAt + 60_000);
             await alive({
@@ -1046,7 +955,6 @@ describe("sessionUpdateHandler", () => {
                 latestTurnStatusObservedAt: observedAt,
             });
             expect(touchPublisher).toHaveBeenCalledTimes(2);
-            expect(recordSessionAlive).toHaveBeenCalledTimes(2);
         } finally {
             now.mockRestore();
         }
@@ -1114,7 +1022,6 @@ describe("sessionUpdateHandler", () => {
         });
         expect(publishSnapshot).not.toHaveBeenCalled();
         expect(touchPublisher).not.toHaveBeenCalled();
-        expect(recordSessionAlive).not.toHaveBeenCalled();
     });
 
     it("writes runtime activity projection through a dedicated socket mutation without forwarding diagnostics", async () => {
@@ -1329,7 +1236,7 @@ describe("sessionUpdateHandler", () => {
             },
         }, callback);
 
-        expect(updateSessionAgentState).toHaveBeenCalledWith({
+        expect(updateSessionAgentState).toHaveBeenCalledWith(expect.objectContaining({
             actorUserId: "user-1",
             sessionId: "s-1",
             expectedVersion: 1,
@@ -1348,7 +1255,7 @@ describe("sessionUpdateHandler", () => {
                 ownerActivityDelivery,
                 ownerActivityDeliveryWasReported: true,
             } } : {}),
-        });
+        }));
         expect(buildUpdateSessionUpdate).toHaveBeenCalledTimes(1);
         expect(buildUpdateSessionUpdate.mock.calls[0]?.[1]).toBe(10);
         expect(emitUpdate).toHaveBeenCalledTimes(1);

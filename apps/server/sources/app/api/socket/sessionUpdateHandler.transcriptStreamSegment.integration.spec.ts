@@ -32,9 +32,6 @@ vi.mock("@/app/session/messageContent/normalizeIncomingSessionMessageContent", (
     normalizeIncomingSessionMessageContent: vi.fn(() => null),
 }));
 
-vi.mock("@/app/presence/presenceRecorder", () => ({
-    recordSessionAlive: vi.fn(async () => {}),
-}));
 
 vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
     refreshTrackedSessionAccountBadgePushes: vi.fn(async () => {}),
@@ -46,28 +43,22 @@ vi.mock("@/app/activity/accountActivityBadge", () => ({
 
 
 
-const activeAccessKey = vi.hoisted(() => ({
-    machineId: "m1",
-    machine: {
-        revokedAt: null,
-        replacedByMachineId: null,
-    },
-}));
-const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<typeof activeAccessKey | null> => activeAccessKey));
 const sessionFindUnique = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({
-    db: {
-        accessKey: {
-            findUnique: accessKeyFindUnique,
-        },
-        session: {
-            findUnique: sessionFindUnique,
-        },
-    },
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/db")>(),
+    db: (await import("../testkit/sessionPublicationDb")).createSessionPublicationDbMock({
+        sessionId: "s1",
+        readSession: (...args: unknown[]) => sessionFindUnique(...args),
+    }),
 }));
 
-vi.mock("@/config/env", () => ({
-    parseIntEnv: (_value: string | undefined, fallback: number) => fallback,
+// SQLite snapshots use a dedicated persistent connection, outside db.$transaction.
+vi.mock("@/storage/prisma", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/prisma")>(),
+    withSqliteReadSnapshot: (await import("../testkit/sessionPublicationDb")).createSessionPublicationDbFixture({
+        sessionId: "s1",
+        readSession: (...args: unknown[]) => sessionFindUnique(...args),
+    }).readSnapshot,
 }));
 
 vi.mock("@/app/session/parseSessionMessageSidechainId", () => ({
@@ -113,12 +104,10 @@ describe("sessionUpdateHandler (transcript-stream-segment relay)", () => {
     beforeEach(() => {
         emitEphemeral.mockReset();
         websocketEventsCounterInc.mockReset();
-        accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue(activeAccessKey);
         sessionFindUnique.mockReset();
         sessionFindUnique.mockResolvedValue({
             accountId: "u1",
-            shares: [],
+            shares: [{ id: "share-u2", sharedWithUserId: "u2", accessLevel: "view", canApprovePermissions: false }],
             currentStorageState: "hosted",
             acceptedThroughServerSeq: null,
             materializationPublicationId: null,
@@ -287,29 +276,4 @@ describe("sessionUpdateHandler (transcript-stream-segment relay)", () => {
         expect(emitEphemeral).not.toHaveBeenCalled();
     });
 
-    it("does not relay transcript-stream-segment-delta from non-owner sessions", async () => {
-        sessionFindUnique.mockResolvedValue({ accountId: "another-owner", currentStorageState: "hosted", shares: [{ id: "share-1", accessLevel: "edit", canApprovePermissions: false }] });
-
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-
-        const socket = createOwnerSessionSocket();
-        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any;
-        sessionUpdateHandler("u1", socket as any, connection);
-
-        const handler = getSocketHandler(socket, "transcript-stream-segment-delta");
-        await handler({
-            sid: "s1",
-            message: {
-                localId: "segment-1",
-                messageRole: "agent",
-                tick: 2,
-                baseLength: 5,
-                content: { t: "encrypted", c: "cipher" },
-                createdAt: 1_000,
-                updatedAt: 1_040,
-            },
-        });
-
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
 });

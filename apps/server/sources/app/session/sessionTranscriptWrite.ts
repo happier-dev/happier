@@ -1,3 +1,5 @@
+import { UsageTimingBoundsV1Schema, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protocol/sessions/control/contract';
@@ -17,7 +19,6 @@ import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode
 import { inTx, type Tx } from "@/storage/inTx";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
-import { isPrismaErrorCode } from "@/storage/prisma";
 import { SessionTranscriptSurfaceItemReferenceInputV1Schema, getSessionTranscriptSurfaceItemReferenceSourceKeyV1, readSessionTranscriptSurfaceItemReferencesV1, type SessionTranscriptSurfaceItemReferenceInputV1, type SessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readPublishedSessionSurfaceItemInTx } from './systemRecords/sessionSystemRecordService';
 import { isSessionSystemRecordRevisionAtLeastAcknowledged } from './systemRecords/sessionSystemRecordRevision';
@@ -47,6 +48,33 @@ export async function admitSessionTranscriptSurfaceItemReferenceInTx(tx: Tx, par
         }
     }
     return references.length ? { v: 1, references } : undefined;
+}
+
+/** Historical retry and late native settlement enrich the same row without rewriting its body or sequence. */
+export async function enrichSessionTranscriptSurfaceItemReferencesInTx(tx: Tx, params: Readonly<{
+    sessionId: string;
+    sessionEncryptionMode: SessionEncryptionMode;
+    stored: Readonly<{ id: string; rowRevision: bigint; surfaceItemReference?: unknown }>;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
+}>) {
+    const admitted = await admitSessionTranscriptSurfaceItemReferenceInTx(tx, params);
+    if (!admitted) return null;
+    const references = new Map<string, SessionTranscriptSurfaceItemReferencesV1['references'][number]>();
+    const candidates: SessionTranscriptSurfaceItemReferencesV1['references'] = [...admitted.references,
+        ...(readSessionTranscriptSurfaceItemReferencesV1(params.stored.surfaceItemReference) ?? [])];
+    for (const reference of candidates) {
+        const key = 'sourceItemId' in reference
+            ? getSessionTranscriptSurfaceItemReferenceSourceKeyV1(reference)
+            : `legacy:${JSON.stringify(reference)}`;
+        if (!references.has(key)) references.set(key, reference);
+    }
+    const enriched: SessionTranscriptSurfaceItemReferencesV1 = { v: 1, references: [...references.values()] };
+    if (isDeepStrictEqual(params.stored.surfaceItemReference, enriched)) return null;
+    const updated = await updateSessionMessageAtCurrentRevisionInTx({
+        tx, id: params.stored.id, rowRevision: params.stored.rowRevision,
+        data: { surfaceItemReference: enriched, rowRevision: { increment: BigInt(1) } },
+    });
+    return { ...updated, surfaceItemReference: enriched };
 }
 
 export const SESSION_TRANSCRIPT_WRITE_SELECT = {
@@ -231,6 +259,7 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     sessionEncryptionMode: SessionEncryptionMode;
     storagePolicy: SessionTranscriptStoragePolicy;
     content: PrismaJson.SessionMessageContent;
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     localId: string | null;
     sidechainId: string | null;
     messageRole: SessionMessageRole | null;
@@ -253,6 +282,7 @@ export type HistoricalSessionMessageItem = Readonly<{
     sidechainId: string | null;
     messageRole: SessionMessageRole | null;
     content: PrismaJson.SessionMessageContent;
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     sourceCreatedAt?: Date;
     sourceUpdatedAt?: Date;
     transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
@@ -281,6 +311,7 @@ export async function writeSessionTranscriptMessageInTx(
     tx: Tx,
     params: SessionTranscriptMessageWriteParams,
 ) {
+    if (params.usageTimingV1 !== undefined && params.usageTimingV1 !== null && !UsageTimingBoundsV1Schema.safeParse(params.usageTimingV1).success) throw new Error('Invalid message Usage timing');
     const content = normalizeSessionMessageContentForStorage(params.content);
     if (!content) throw new Error("Session message content cannot be represented in storage");
     params = { ...params, content };
@@ -321,6 +352,7 @@ export async function writeSessionTranscriptMessageInTx(
             sessionId: params.sessionId,
             seq: next.seq,
             content: params.content,
+            usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
             localId: params.localId,
             sidechainId: params.sidechainId,
             messageRole: params.messageRole,
@@ -496,36 +528,18 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
         if (stored) {
             // Only an explicit retry can enrich an exact existing native row. Omitted or
             // unavailable associations never withdraw its previously admitted members.
-            const admitted = await admitSessionTranscriptSurfaceItemReferenceInTx(tx, {
+            const updated = await enrichSessionTranscriptSurfaceItemReferencesInTx(tx, {
                 sessionId: params.sessionId, sessionEncryptionMode: params.sessionEncryptionMode,
+                stored,
                 surfaceItemReference: item.surfaceItemReference,
             });
-            if (!admitted) {
+            if (!updated) {
                 messages.push(stored);
                 continue;
             }
-            const references = new Map<string, SessionTranscriptSurfaceItemReferencesV1['references'][number]>();
-            const collectedReferences: SessionTranscriptSurfaceItemReferencesV1['references'] = [
-                ...admitted.references,
-                ...(readSessionTranscriptSurfaceItemReferencesV1(stored.surfaceItemReference) ?? []),
-            ];
-            for (const reference of collectedReferences) {
-                const key = 'sourceItemId' in reference
-                    ? getSessionTranscriptSurfaceItemReferenceSourceKeyV1(reference)
-                    : `legacy:${JSON.stringify(reference)}`;
-                if (!references.has(key)) references.set(key, reference);
-            }
-            const enriched: SessionTranscriptSurfaceItemReferencesV1 = { v: 1, references: [...references.values()] };
-            if (isDeepStrictEqual(stored.surfaceItemReference, enriched)) {
-                messages.push(stored);
-                continue;
-            }
-            const updated = await updateSessionMessageAtCurrentRevisionInTx({
-                tx, id: stored.id, rowRevision: stored.rowRevision,
-                data: { surfaceItemReference: enriched, rowRevision: { increment: BigInt(1) } },
-            });
             didWrite = true;
-            messages.push({ ...stored, updatedAt: updated.updatedAt, rowRevision: updated.rowRevision, surfaceItemReference: enriched });
+            messages.push({ ...stored, updatedAt: updated.updatedAt, rowRevision: updated.rowRevision,
+                surfaceItemReference: updated.surfaceItemReference });
             continue;
         }
         const persisted = await writeSessionTranscriptMessageInTx(tx, {
@@ -534,6 +548,7 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             sessionEncryptionMode: params.sessionEncryptionMode,
             storagePolicy: params.storagePolicy,
             content: item.content,
+            usageTimingV1: item.usageTimingV1,
             localId: item.localId,
             ...(item.surfaceItemReference ? { surfaceItemReference: item.surfaceItemReference } : {}),
             sidechainId: item.sidechainId,

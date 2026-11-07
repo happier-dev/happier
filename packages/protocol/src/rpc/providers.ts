@@ -1,12 +1,13 @@
-import { ProviderBindingAuthorizationTicketV1Schema } from '../providers/grants/v1.js';
 import { z } from 'zod/mini';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '../connect/connectedServiceUxDiagnostics.js';
 import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../providers/ids.js';
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { CustomProviderTemplateV1Schema } from '../providers/connections/customTemplateV1.js';
 import {
   ProviderClaudeHelperModelsV1Schema,
+  ProviderConnectionModelSettingsUpdateV1Schema,
   ProviderConnectionPurposeBindingDefaultsV1Schema,
   ProviderEndpointOverrideV1Schema,
   ProviderGatewayPlacementV1Schema,
@@ -18,8 +19,9 @@ import {
   ProviderProbeObservationIdentityV1Schema,
   ProviderProbeRequestFingerprintV1Schema,
 } from '../providers/fingerprints.js';
-import { ProviderBrokerApplicationBindingV1Schema } from '../providers/brokerRouteGrantV1.js';
+import { ProviderBrokerApplicationBindingV1Schema, ProviderBrokerSourceApplicationBindingV1Schema } from '../providers/brokerRouteGrantV1.js';
 import { ProviderCredentialTransportV1Schema } from '../providers/credentials/v1.js';
+import { ProviderBindingAuthorizationTicketV1Schema } from '../providers/grants/v1.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../providers/endpointUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../providers/publicHeadersSchema.js';
 import { ProviderEndpointPolicyV1Shape } from '../providers/endpointPolicyV1.js';
@@ -40,10 +42,9 @@ import {
   PROVIDER_WIRE_PROTOCOL_LIMITS_V1,
   ProviderWireProtocolSchema,
 } from '../providers/capabilities/v1.js';
-import { PROVIDER_CATALOG_LIMITS_V1 } from '../providers/catalog/limits.js';
 import { ProviderCatalogProbeModelsV1Schema } from '../providers/catalog/merge.js';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
-import { PROVIDER_SETTINGS_LIMITS_V1, ProviderManualModelInputV1Schema } from '../providers/settings/v1.js';
+import { ProviderManualModelInputV1Schema } from '../providers/settings/v1.js';
 import {
   ProviderDiscoveryCandidateIdV1Schema,
   ProviderDiscoveryCandidateV1Schema,
@@ -124,12 +125,13 @@ export type DaemonProviderTeamCredentialResourceTestCandidateRequestV1 = z.infer
 export const DaemonProviderTeamCredentialResourceTestCandidateResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({
     status: z.literal('success'),
-    application: ProviderBrokerApplicationBindingV1Schema,
+    application: ProviderBrokerSourceApplicationBindingV1Schema,
     request: TeamCredentialResourceTestApplicationRequestV1Schema,
   }),
   z.strictObject({
     status: z.literal('unavailable'),
-    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable']),
+    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable',
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired]),
   }),
 ]));
 export type DaemonProviderTeamCredentialResourceTestCandidateResponseV1 = z.infer<
@@ -150,7 +152,7 @@ const DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema = lazyZod
 
 export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
-    application: ProviderBrokerApplicationBindingV1Schema,
+    application: ProviderBrokerSourceApplicationBindingV1Schema,
     modelId: ProviderModelIdSchema,
     sourceRevision: z.string().check(z.minLength(1), z.maxLength(512)),
   })),
@@ -166,7 +168,8 @@ export const DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema = laz
   z.strictObject({ status: z.literal('eligible') }),
   z.strictObject({
     status: z.literal('unavailable'),
-    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable', 'source_changed']),
+    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable', 'source_changed',
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired]),
   }),
 ]));
 export type DaemonProviderTeamCredentialBrokerEligibilityResponseV1 = z.infer<
@@ -187,12 +190,13 @@ export const DaemonProviderRpcErrorV1Schema = ProviderErrorV1Schema;
 
 export const DaemonProviderModelRowV1Schema = lazyZodSchema(() => z.strictObject({
   id: ProviderModelIdSchema,
+  descriptor: z.optional(ProviderModelDescriptorV1Schema),
   name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
   source: z.enum(['manual', 'static', 'probe']),
   stale: z.boolean(),
   loadState: z.enum(['loaded', 'unloaded', 'unknown']),
   visibility: z.enum(['visible', 'hidden_all_agents']),
-}));
+}).check(z.refine(row => row.descriptor === undefined || row.descriptor.id === row.id, 'Model descriptor must match the exact row id')));
 export type DaemonProviderModelRowV1 = z.infer<typeof DaemonProviderModelRowV1Schema>;
 
 export const DaemonProviderModelsResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
@@ -326,6 +330,9 @@ const DaemonProviderAuthoringCredentialV1Schema = lazyZodSchema(() => z.strictOb
   slotId: z.literal('apiKey'),
   label: z.literal('api_key'),
   required: z.boolean(),
+  authorityDescription: z.optional(PluginLocalizedStringV2Schema),
+  additionalCredentials: z.optional(z.array(z.strictObject({ slotId: ProviderLocalIdSchema,
+    label: z.optional(PluginLocalizedStringV2Schema), required: z.literal(true) }))),
 }));
 
 const ProviderAuthoringReviewFingerprintV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.startsWith('authoring-review:v1:')));
@@ -458,7 +465,7 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.strict
   websiteUrl: z.optional(ProviderHttpsUrlSchema),
   role: z.enum(['default', 'named']),
   displayNameMode: z.enum(['automatic', 'custom']),
-  sourceStatus: z.enum(['available', 'unavailable']),
+  sourceStatus: z.enum(['loading', 'available', 'unavailable']),
   probeCapability: z.enum(['catalog', 'availability', 'none']),
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   compatibility: z.array(DaemonProviderAgentCompatibilitySummaryV1Schema).check(z.maxLength(128)),
@@ -475,6 +482,10 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.strict
     boundMachineIds: z.array(ProviderMachineIdSchema),
     keyUrl: z.optional(ProviderHttpsUrlSchema),
     authorityDescription: z.optional(PluginLocalizedStringV2Schema),
+    additionalCredentials: z.optional(z.array(z.strictObject({
+      slotId: ProviderLocalIdSchema, label: z.optional(PluginLocalizedStringV2Schema), required: z.literal(true),
+      accountBound: z.boolean(), boundMachineIds: z.array(ProviderMachineIdSchema),
+    }))),
   })),
   /**
    * Exact, content-free witness accepted by Team credential resource creation.
@@ -568,8 +579,7 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
     template: CustomProviderTemplateV1Schema,
     savedSecretId: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     enable: z.boolean(),
-    manualModels: z._default(z.array(ProviderManualModelInputV1Schema)
-      .check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection)), []),
+    manualModels: z._default(z.array(ProviderManualModelInputV1Schema), []),
   })).check(z.superRefine((value, ctx) => {
     const ids = new Set<string>();
     value.manualModels.forEach((model, index) => {
@@ -603,6 +613,7 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
     displayName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
     displayNameMode: z.optional(z.enum(['automatic', 'custom'])),
     template: z.optional(CustomProviderTemplateV1Schema),
+    modelSettings: z.optional(ProviderConnectionModelSettingsUpdateV1Schema),
     deployment: z.optional(DaemonProviderConnectionDeploymentUpdateV1Schema),
     gatewayPlacement: z.optional(z.nullable(ProviderGatewayPlacementV1Schema)),
     claudeHelperModels: z.optional(z.nullable(ProviderClaudeHelperModelsV1Schema)),
@@ -635,7 +646,7 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProviderConnectionMutationBaseV1Schema, {
     action: z.literal('bindSecret'),
-    credentialSlotId: z.literal('apiKey'),
+    credentialSlotId: ProviderLocalIdSchema,
     savedSecretId: z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     scope: z.enum(['account', 'machine']),
   })),
@@ -656,6 +667,7 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = lazyZodSchema((
       credential: z.nullable(z.strictObject({
         required: z.boolean(),
         keyUrl: z.optional(ProviderHttpsUrlSchema),
+        authorityDescription: z.optional(PluginLocalizedStringV2Schema),
       })),
       endpointTemplates: z._default(z.array(z.strictObject({
         id: ProviderEndpointOverrideV1Schema.shape.endpointTemplateId,
@@ -672,7 +684,7 @@ export const DaemonProviderConnectionsDescribeResponseV1Schema = lazyZodSchema((
     diagnostics: z.array(z.strictObject({
       path: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
       reason: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    })).check(z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics)),
+    })),
     availableTruncated: z.boolean(),
     authoringPreview: z.optional(DaemonProviderContributionAuthoringPreviewV1Schema),
     deletedConnection: z.optional(z.nullable(z.strictObject({
@@ -783,7 +795,7 @@ const DaemonProviderReasoningEffortSupportV1Schema = lazyZodSchema(() => z.union
 export const DaemonProviderTeamCredentialRequestPolicySupportV1Schema = lazyZodSchema(() => z.strictObject({
   /** Value-free current catalog metadata required by the Home projection. */
   descriptor: ProviderModelDescriptorV1Schema,
-  application: ProviderBrokerApplicationBindingV1Schema,
+  application: ProviderBrokerSourceApplicationBindingV1Schema,
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
   protocolKind: z.enum([
     'openai_responses',
@@ -792,7 +804,7 @@ export const DaemonProviderTeamCredentialRequestPolicySupportV1Schema = lazyZodS
   ]),
   model: z.strictObject({
     canonicalId: ProviderModelIdSchema,
-    aliases: z.array(ProviderModelIdSchema).check(z.maxLength(64)),
+    aliases: z.array(ProviderModelIdSchema),
   }).check(z.superRefine((value, ctx) => {
     if (new Set(value.aliases).size !== value.aliases.length) {
       ctx.addIssue({ code: 'custom', path: ['aliases'], message: 'Model aliases must be unique' });
@@ -844,13 +856,15 @@ export const DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema = 
   }),
   z.strictObject({
     status: z.literal('unavailable'),
-    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable']),
+    reason: z.enum(['source_unavailable', 'application_unavailable', 'model_unavailable',
+      CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired]),
   }),
 ]));
 export type DaemonProviderTeamCredentialRequestPolicySupportResponseV1 = z.infer<
   typeof DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema
 >;
 
+/** Private source-custodian facts, never returned in a broad Team catalog. */
 export const DaemonProviderNativeSourceV1Schema = lazyZodSchema(() => z.strictObject({
   authorizationTicket: ProviderBindingAuthorizationTicketV1Schema,
   providerTicket: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)),
@@ -870,11 +884,11 @@ export const DaemonProviderModelProjectionRowV1Schema = lazyZodSchema(() => z.st
   /** Admitted source slots for grouping, independent of the selected downstream protocol. */
   gatewaySlots: z.optional(z.array(QualifiedConnectedAccountPurposeBindingV1Schema)),
   application: z.optional(ProviderBrokerApplicationBindingV1Schema),
-  /** Private controller/Home projection; public catalogs retain only the opaque reference. */
-  nativeSource: z.optional(DaemonProviderNativeSourceV1Schema),
   sourceFacts: z.optional(ProviderModelBindingSourceV1Schema),
   confirmationSource: z.optional(ProviderModelConfirmationSourceV1Schema),
   requestPolicySupport: z.optional(DaemonProviderTeamCredentialRequestPolicySupportV1Schema),
+  /** Private controller/Home projection; public catalogs retain only the opaque reference. */
+  nativeSource: z.optional(DaemonProviderNativeSourceV1Schema),
   /** Non-secret source-owned facts needed to materialize an admitted direct API key. */
   directMaterialization: z.optional(z.strictObject({
     endpoint: z.strictObject({
@@ -934,7 +948,7 @@ export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   supportsFreeformModelIds: z.boolean(),
   suppressedConnectedServiceIds: z.array(ConnectedServiceIdSchema).check(z.maxLength(32)),
-  rows: z.array(DaemonProviderModelProjectionRowV1Schema).check(z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection + 1)),
+  rows: z.array(DaemonProviderModelProjectionRowV1Schema),
 }).check(z.superRefine((value, ctx) => {
   value.rows.forEach((row, index) => {
     const support = row.requestPolicySupport;
@@ -999,16 +1013,6 @@ export const DaemonProviderModelProjectionGroupV1Schema = lazyZodSchema(() => z.
       message: 'A Provider model projection may contain at most one stale-current recovery row',
     });
   }
-  if (
-    value.rows.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
-    && staleCurrentRows.length !== 1
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['rows'],
-      message: 'A Provider model projection may exceed the active model limit only for one stale-current recovery row',
-    });
-  }
 })));
 export type DaemonProviderModelProjectionGroupV1 = z.infer<typeof DaemonProviderModelProjectionGroupV1Schema>;
 
@@ -1024,7 +1028,7 @@ export const DaemonProviderCurrentSelectionRecoveryV1Schema = lazyZodSchema(() =
   displaySnapshot: z.nullable(z.strictObject({
     providerName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
     connectionName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
-    modelName: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
+    modelName: z.optional(z.string().check(z.trim(), z.minLength(1))),
   }).check(z.superRefine((value, ctx) => {
     if (value.providerName === undefined
       && value.connectionName === undefined
@@ -1095,70 +1099,14 @@ export const DaemonProviderModelProjectionResponseV1Schema = lazyZodSchema(() =>
 ]));
 export type DaemonProviderModelProjectionResponseV1 = z.infer<typeof DaemonProviderModelProjectionResponseV1Schema>;
 
-export type TeamCredentialSourceModelProjectionFailureV1 = Readonly<{
-  status: 'unavailable';
-  reason: 'response_invalid' | 'projection_unavailable' | 'not_granted' | 'incompatible';
-  error?: z.infer<typeof ProviderErrorV1Schema>;
-}>;
-
-/** Shared source-row admission for recipient projection and broker execution.
- * This reads source facts only; entitlement, Team policy and disclosure remain
- * at their respective owners. The strict RPC reader is also used in-process. */
-export function admitTeamCredentialSourceModelRowsV1(response: unknown):
-  | TeamCredentialSourceModelProjectionFailureV1
-  | Readonly<{ status: 'success'; rows: readonly Readonly<{
-      group: DaemonProviderModelProjectionGroupV1;
-      row: DaemonProviderModelProjectionRowV1 & { application: z.infer<typeof ProviderBrokerApplicationBindingV1Schema> };
-      sourceRevision: string;
-    }>[] }> {
-  const parsed = DaemonProviderModelProjectionResponseV1Schema.safeParse(response);
-  if (!parsed.success) return { status: 'unavailable', reason: 'response_invalid' };
-  if (parsed.data.status === 'error') {
-    return { status: 'unavailable', reason: 'projection_unavailable', error: parsed.data.error };
-  }
-  const projection = parsed.data;
-  let failure: TeamCredentialSourceModelProjectionFailureV1 | undefined;
-  const rows = projection.groups.flatMap(group => {
-    if (!group.authorization.authorized) {
-      failure ??= { status: 'unavailable', reason: 'not_granted', error: group.authorization.error };
-      return [];
-    }
-    if (!group.sourceRevision) {
-      failure ??= { status: 'unavailable', reason: 'projection_unavailable' };
-      return [];
-    }
-    const sourceRevision = group.sourceRevision;
-    return group.rows.flatMap(row => {
-      if (row.visibility !== 'visible') return [];
-      if (row.catalog.stale) {
-        failure ??= { status: 'unavailable', reason: 'projection_unavailable' };
-        return [];
-      }
-      if (!row.application || row.ref.modelId !== row.descriptor.id
-        || row.application.agentTargetKey !== projection.agentTargetKey
-        || row.ref.agentTargetKey !== row.application.agentTargetKey) {
-        failure ??= { status: 'unavailable', reason: 'response_invalid' };
-        return [];
-      }
-      if (!row.sourceFacts && row.compatibility.result.status === 'incompatible') {
-        failure ??= { status: 'unavailable', reason: 'incompatible' };
-        return [];
-      }
-      return [{ group, row: { ...row, application: row.application }, sourceRevision }];
-    });
-  });
-  if (rows.length > 0) return { status: 'success', rows };
-  const refreshFailure = projection.refreshFailures?.[0];
-  if (refreshFailure) return { status: 'unavailable', reason: 'projection_unavailable', error: refreshFailure.error };
-  return failure ?? { status: 'success', rows: [] };
-}
+export { admitTeamCredentialSourceModelRowsV1, type TeamCredentialSourceModelProjectionFailureV1 } from './teamCredentialSourceModels.js';
 
 const ProviderModelSettingsMutationBaseV1Schema = lazyZodSchema(() => z.object({ machineId: ProviderMachineIdSchema }));
 export const DaemonProviderModelSettingsMutationRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('action', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProviderModelSettingsMutationBaseV1Schema, {
     action: z.literal('manualAdd'), connectionId: ProviderConnectionIdSchema,
     expectedConnectionRevision: z.number().check(z.int(), z.nonnegative()),
-    models: z.array(ProviderManualModelInputV1Schema).check(z.minLength(1), z.maxLength(PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection)),
+    models: z.array(ProviderManualModelInputV1Schema).check(z.minLength(1)),
   })).check(z.superRefine((value, ctx) => {
     const seen = new Set<string>();
     value.models.forEach((model, index) => {
@@ -1187,7 +1135,7 @@ export const DaemonProviderModelSettingsMutationRequestV1Schema = lazyZodSchema(
     changes: z.array(z.strictObject({
       ref: ModelVisibilityRefV1Schema,
       hidden: z.boolean(),
-    })).check(z.minLength(1), z.maxLength(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection)),
+    })).check(z.minLength(1)),
   })).check(z.superRefine((value, ctx) => {
     const seen = new Set<string>();
     value.changes.forEach((change, index) => {

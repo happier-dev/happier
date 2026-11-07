@@ -1,10 +1,11 @@
-import { PluginAccountDataEraseActionInputV1Schema } from '../../../plugins/data/accountEraseV1.js';
+import type { PluginAccountDataEraseActionInputV1Schema } from '../../../plugins/data/accountEraseV1.js';
 import { completeActionResult } from '../resultProjection.js';
-import { AccountSessionsSignOutEverywhereActionInputV1Schema } from '../../../auth/accountSessions.js';
-import { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema } from '../../../auth/accountApiTokens.js';
-import { AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema } from '../../../auth/accountSecurity.js';
+import type { AccountApiTokensCreateActionInputV1Schema, AccountApiTokensUpdateActionInputV1Schema } from '../../../auth/accountApiTokens.js';
+import type { AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordRemoveRequestV1Schema } from '../../../auth/accountSecurity.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
+import type { z } from 'zod/mini';
+import type { AdmittedActionInputById } from '../../actionSpecs.js';
 
 
 
@@ -16,7 +17,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountPluginDataEraseAction({
-          input: PluginAccountDataEraseActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof PluginAccountDataEraseActionInputV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -28,7 +29,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountSessionsSignOutEverywhereAction({
-          input: AccountSessionsSignOutEverywhereActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as AdmittedActionInputById['account.sessions.signOutEverywhere'],
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -43,7 +44,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountApiTokensCreateAction({
-          input: AccountApiTokensCreateActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof AccountApiTokensCreateActionInputV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -55,7 +56,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountApiTokensListAction({
-          input: AccountApiTokensListActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as AdmittedActionInputById['account.apiTokens.list'],
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -85,7 +86,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         return completeActionResult(await deps.accountApiTokensUpdateAction({
-          input: AccountApiTokensUpdateActionInputV1Schema.parse(parsed.data), context: ctx,
+          input: parsed.data as z.infer<typeof AccountApiTokensUpdateActionInputV1Schema>, context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         }));
       }
@@ -95,7 +96,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountApiTokensRevokeAction({
-          input: AccountApiTokensRevokeActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as AdmittedActionInputById['account.apiTokens.revoke'],
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -107,7 +108,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountApiTokensRevokeAllAction({
-          input: AccountApiTokensRevokeAllActionInputV1Schema.parse(parsed.data),
+          input: parsed.data as AdmittedActionInputById['account.apiTokens.revokeAll'],
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -123,21 +124,11 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountSecurityGetAction({
-          input: AccountSecurityGetRequestV1Schema.parse(parsed.data),
+          input: parsed.data as AdmittedActionInputById['account.security.get'],
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         return completeActionResult(result);
-      }
-
-      if (actionId === 'account.security.terminalPresentUser.set') {
-        if (!deps.accountSecurityTerminalPresentUserSetAction) {
-          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        }
-        return completeActionResult(await deps.accountSecurityTerminalPresentUserSetAction({
-          input: AccountTerminalPresentUserPolicySetRequestV1Schema.parse(parsed.data), context: ctx,
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-        }));
       }
 
       if (actionId === 'account.password.enroll') {
@@ -145,7 +136,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountPasswordEnrollAction({
-          input: AccountPasswordEnrollRequestV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof AccountPasswordEnrollRequestV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -157,7 +148,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountPasswordChangeAction({
-          input: AccountPasswordChangeRequestV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof AccountPasswordChangeRequestV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -169,7 +160,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountPasswordRemoveAction({
-          input: AccountPasswordRemoveRequestV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof AccountPasswordRemoveRequestV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -181,7 +172,7 @@ export async function dispatchAccountSecurity(inv: Pick<CoreInvocation, 'actionI
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.accountEmailChangeRequestAction({
-          input: AccountEmailChangeRequestV1Schema.parse(parsed.data),
+          input: parsed.data as z.infer<typeof AccountEmailChangeRequestV1Schema>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });

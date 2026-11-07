@@ -1,5 +1,4 @@
-import { ACCOUNT_EMAIL_CHANGE_PATH_V1, ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1, AccountEmailChangeCompleteRequestV1Schema, AccountEmailChangeRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, AccountPasswordMutationResponseV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema, PlainPasswordResetSubmitRequestV1Schema, PlainPasswordResetSubmitResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
-import { TerminalPresentUserPolicySchema } from '@happier-dev/protocol/actions/invocationAuthority';
+import { ACCOUNT_EMAIL_CHANGE_PATH_V1, ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, ACCOUNT_PASSWORD_MUTATION_CHALLENGE_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1, AccountEmailChangeCompleteRequestV1Schema, AccountEmailChangeRequestV1Schema, AccountEmailChangeRequestResponseV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordEnrollEmailRequestV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, AccountPasswordMutationResponseV1Schema, PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema, PlainPasswordResetSubmitRequestV1Schema, PlainPasswordResetSubmitResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { createPasswordCredentialTargetDigestV1, createPasswordCredentialMutationDigestV1, type PasswordCredentialMutationV1 } from '@happier-dev/protocol/auth/passwordMutationChallenge';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import { parseAccountPasswordCredentialV1, type AccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
@@ -207,14 +206,12 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
         if (request.validationError) return reply.code(400).send({ error: "invalid_request" });
         const row = await db.account.findUnique({
             where: { id: request.userId },
-            select: { encryptionMode: true, publicKey: true, terminalPresentUserPolicy: true, AccountIdentity: { where: { provider: "email" }, select: { providerUserId: true } }, AccountPasswordCredential: { select: { revision: true, credential: true } } },
+            select: { encryptionMode: true, publicKey: true, AccountIdentity: { where: { provider: "email" }, select: { providerUserId: true } }, AccountPasswordCredential: { select: { revision: true, credential: true } } },
         });
         if (!row) return reply.code(404).send({ error: "not_found" });
         if (row.encryptionMode !== "plain" && row.encryptionMode !== "e2ee") {
             return reply.code(409).send({ error: "credential_inconsistent" });
         }
-        const terminalPolicy = TerminalPresentUserPolicySchema.safeParse(row.terminalPresentUserPolicy);
-        if (!terminalPolicy.success) return reply.code(409).send({ error: "credential_inconsistent" });
         if (row.AccountPasswordCredential) {
             const parsed = parseAccountPasswordCredentialV1(row.encryptionMode, row.AccountPasswordCredential.credential);
             if (!parsed.ok || (parsed.mode === "e2ee"
@@ -222,38 +219,7 @@ export function registerAccountSecurityRoutes(app: Fastify, params: Readonly<{
                 return reply.code(409).send({ error: "credential_inconsistent" });
             }
         }
-        return reply.send({ v: 1, encryptionMode: row.encryptionMode, terminalPresentUserPolicy: terminalPolicy.data, nativeEmail: row.AccountIdentity[0]?.providerUserId ?? null, password: row.AccountPasswordCredential ? { status: "enrolled", revision: row.AccountPasswordCredential.revision } : { status: "not_enrolled", revision: null } });
-    });
-
-    app.post(ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, {
-        preHandler: authenticated,
-        attachValidation: true,
-        config: { connectionAuthFailureError: "invalid_token" },
-        schema: {
-            body: AccountTerminalPresentUserPolicySetRequestV1Schema,
-            response: { 200: AccountTerminalPresentUserPolicySetResponseV1Schema, ...ACCOUNT_SECURITY_ROUTE_ERROR_RESPONSES },
-        },
-    }, async (request, reply) => {
-        if (request.validationError) return reply.code(400).send({ error: "invalid_request" });
-        const policy = request.body.policy;
-        const result = await inTx(async (tx) => {
-            await acquireAccountSessionOwnerMetadataFencesInTx(tx, [request.userId], "exclusive");
-            const account = await tx.account.findUnique({
-                where: { id: request.userId },
-                select: { status: true, terminalPresentUserPolicy: true },
-            });
-            if (!account) return "not_found" as const;
-            if (account.status !== "active") return "disabled" as const;
-            if (account.terminalPresentUserPolicy !== policy) {
-                await tx.account.update({ where: { id: request.userId }, data: { terminalPresentUserPolicy: policy } });
-                await markAccountChanged(tx, { accountId: request.userId, kind: "account", entityId: "self" });
-                afterTx(tx, () => eventRouter.disconnectAccountTerminalSockets(request.userId));
-            }
-            return "updated" as const;
-        });
-        if (result === "not_found") return reply.code(404).send({ error: "not_found" });
-        if (result === "disabled") return reply.code(403).send({ error: "account-disabled" });
-        return reply.send({ policy });
+        return reply.send({ v: 1, encryptionMode: row.encryptionMode, nativeEmail: row.AccountIdentity[0]?.providerUserId ?? null, password: row.AccountPasswordCredential ? { status: "enrolled", revision: row.AccountPasswordCredential.revision } : { status: "not_enrolled", revision: null } });
     });
 
     app.post(ACCOUNT_PASSWORD_ENROLL_EMAIL_REQUEST_PATH_V1, { preHandler: authenticated, attachValidation: true, config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "auth.email.verify.requestAuthenticated"), connectionAuthFailureError: "invalid_token" }, schema: { body: AccountPasswordEnrollEmailRequestV1Schema, response: { 200: AccountEmailChangeRequestResponseV1Schema, ...ACCOUNT_SECURITY_ROUTE_ERROR_RESPONSES } } }, async (request, reply) => {

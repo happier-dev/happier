@@ -3,7 +3,7 @@ import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/en
 import { encodeBase64 } from "privacy-kit";
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadinessReadScope } from "@/app/encryption/accountRecipientEnvelopeReadiness";
+import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadinessReadScope, type AccountRecipientEnvelopeReadinessRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import type { Tx } from "@/storage/inTx";
 import { RECIPIENT_READINESS_SELECT } from "./sessionDataKeyRecipientProjection";
 
@@ -100,6 +100,26 @@ export function resolveViewerSessionNotificationContentAvailability(
         return false;
     }
     return isStructurallyValidSessionDataKeyEnvelope(envelope.encryptedDataKey);
+}
+
+/**
+ * Whether an authorized viewer may attempt a client-side content read.
+ * Unlike a rich notification, an explicit read can use the retained owner-only
+ * Account reader when the Session envelope is genuinely absent. This is only
+ * eligibility: the key-holding reader must still authenticate/open the content.
+ * A present invalid envelope never falls back, and neither does a recipient.
+ */
+export function resolveViewerSessionContentReadAvailability(
+    row: SessionDataKeyEnvelopeViewerRow & Readonly<{
+        accountId: string;
+        account: AccountRecipientEnvelopeReadinessRow & Readonly<{ id: string }>;
+    }>,
+    viewerAccountId: string,
+): boolean {
+    if (row.encryptionMode === "e2ee" && row.accountId === viewerAccountId && row.dataKeyEnvelopes.length === 0) {
+        return deriveAccountRecipientEnvelopeReadinessFromRow(row.account).status === "available";
+    }
+    return resolveViewerSessionNotificationContentAvailability(row);
 }
 
 /**

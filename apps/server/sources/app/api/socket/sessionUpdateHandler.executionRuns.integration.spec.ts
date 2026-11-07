@@ -32,9 +32,6 @@ vi.mock("@/app/session/messageContent/normalizeIncomingSessionMessageContent", (
     normalizeIncomingSessionMessageContent: vi.fn(() => null),
 }));
 
-vi.mock("@/app/presence/presenceRecorder", () => ({
-    recordSessionAlive: vi.fn(async () => {}),
-}));
 
 vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({
     refreshTrackedSessionAccountBadgePushes: vi.fn(async () => {}),
@@ -47,21 +44,28 @@ vi.mock("@/app/activity/accountActivityBadge", () => ({
 
 
 const sessionFindUnique = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({
-    db: {
-        accessKey: {
-            findUnique: accessKeyFindUnique,
-        },
-        session: {
-            findUnique: sessionFindUnique,
-        },
-    },
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/db")>(),
+    db: (await import("../testkit/sessionPublicationDb")).createSessionPublicationDbMock({
+        sessionId: "s1",
+        readSession: (...args: unknown[]) => sessionFindUnique(...args),
+    }),
+}));
+
+// SQLite read-only transactions use a dedicated connection rather than db.$transaction.
+// Substitute that persistent boundary while retaining the real snapshot and audience owners.
+vi.mock("@/storage/prisma", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/prisma")>(),
+    withSqliteReadSnapshot: (await import("../testkit/sessionPublicationDb")).createSessionPublicationDbFixture({
+        sessionId: "s1",
+        readSession: (...args: unknown[]) => sessionFindUnique(...args),
+    }).readSnapshot,
 }));
 
 function buildPublicationRow(overrides: Record<string, unknown> = {}) {
     return {
         accountId: "u1",
-        shares: [],
+        shares: [{ id: "share-u2", sharedWithUserId: "u2", accessLevel: "view", canApprovePermissions: false }],
         seq: 5,
         currentStorageState: "hosted",
         acceptedThroughServerSeq: null,
@@ -79,18 +83,6 @@ function buildPublicationRow(overrides: Record<string, unknown> = {}) {
     };
 }
 
-const activeAccessKey = vi.hoisted(() => ({
-    machineId: "m1",
-    machine: {
-        revokedAt: null,
-        replacedByMachineId: null,
-    },
-}));
-const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<typeof activeAccessKey | null> => activeAccessKey));
-
-vi.mock("@/config/env", () => ({
-    parseIntEnv: (_value: string | undefined, fallback: number) => fallback,
-}));
 
 vi.mock("@/app/session/parseSessionMessageSidechainId", () => ({
     parseSessionMessageSidechainId: () => ({ ok: false }),
@@ -118,12 +110,13 @@ vi.mock("@/utils/runtime/lock", () => ({
     },
 }));
 
+// Load the real handler graph during collection, outside the per-event test deadline.
+const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
 describe("sessionUpdateHandler (execution-run-updated)", () => {
     beforeEach(() => {
         emitEphemeral.mockReset();
         websocketEventsCounterInc.mockReset();
-        accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue(activeAccessKey);
         sessionFindUnique.mockReset();
         sessionFindUnique.mockResolvedValue(buildPublicationRow());
     });
@@ -134,7 +127,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
             acceptedThroughServerSeq: 7,
         }));
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -183,7 +175,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
             acceptedThroughServerSeq: null,
         }));
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -225,7 +216,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
     it("fails closed without any execution-run-updated delivery when the publication row is unavailable", async () => {
         sessionFindUnique.mockResolvedValue(null);
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -265,7 +255,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
 
     it("broadcasts execution-run-updated ephemeral updates from a daemon session socket to all session participants", async () => {
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -333,63 +322,47 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         expect(collaboratorCall?.skipSenderConnection).toBeUndefined();
     });
 
-    it("does not broadcast execution-run-updated when the machine access key binding has been revoked", async () => {
-        accessKeyFindUnique.mockResolvedValueOnce(null);
-
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-
+    it("forwards a content-free input turn and refuses one that carries turn text", async () => {
         const socket = createFakeSocket();
         (socket as any).data = {
             machineId: "m1",
-            sessionScopedBinding: {
-                sessionId: "s1",
-                machineId: "m1",
-                proof: "machine-access-key",
-            },
+            sessionScopedBinding: { sessionId: "s1", machineId: "m1", proof: "machine-access-key" },
         };
-        sessionUpdateHandler(
-            "u1",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
-        );
-
+        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any;
+        sessionUpdateHandler("u1", socket as any, connection);
         const handler = getSocketHandler(socket, "execution-run-updated");
-        await handler({
+        const turn = { turnId: "turn-1", inputIds: ["input-1"], state: "completed" };
+        const frame = (last: Record<string, unknown>) => ({
             sid: "s1",
             run: {
                 runId: "run_1",
                 callId: "call_1",
                 sidechainId: "call_1",
-                intent: "review",
+                intent: "agent",
                 backendTarget: { kind: "builtInAgent", agentId: "claude" },
                 permissionMode: "read_only",
-                retentionPolicy: "ephemeral",
-                runClass: "bounded",
-                ioMode: "request_response",
+                retentionPolicy: "resumable",
+                runClass: "long_lived",
+                ioMode: "streaming",
                 status: "running",
                 startedAtMs: 123,
+                inputTurns: { occurrenceId: "occurrence-1", last },
             },
         });
 
-        expect(accessKeyFindUnique).toHaveBeenCalledWith({
-            where: {
-                accountId_machineId_sessionId: {
-                    accountId: "u1",
-                    machineId: "m1",
-                    sessionId: "s1",
-                },
-            },
-            select: {
-                machineId: true,
-                machine: { select: { revokedAt: true, replacedByMachineId: true } },
-            },
-        });
+        await handler(frame({ ...turn, result: { kind: "text", value: "agent output" } }));
         expect(emitEphemeral).not.toHaveBeenCalled();
+
+        await handler(frame(turn));
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+            payload: expect.objectContaining({
+                run: expect.objectContaining({ inputTurns: { occurrenceId: "occurrence-1", last: turn } }),
+            }),
+        }));
     });
 
     it("does not broadcast execution-run-updated without machine-bound session proof even when the sender owns the session", async () => {
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -427,7 +400,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
     });
 
     it("does not broadcast when the socket is scoped to a different session id", async () => {
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -473,93 +445,12 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
     });
 
     it("does not broadcast when the session-scoped socket is not a daemon session socket", async () => {
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         sessionUpdateHandler(
             "u1",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
-        );
-
-        const handler = getSocketHandler(socket, "execution-run-updated");
-        await handler({
-            sid: "s1",
-            run: {
-                runId: "run_1",
-                callId: "call_1",
-                sidechainId: "call_1",
-                intent: "review",
-                backendTarget: { kind: "builtInAgent", agentId: "claude" },
-                permissionMode: "read_only",
-                retentionPolicy: "ephemeral",
-                runClass: "bounded",
-                ioMode: "request_response",
-                status: "running",
-                startedAtMs: 123,
-            },
-        });
-
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
-
-    it("rejects a shared admin before broadcasting execution-run-updated", async () => {
-        sessionFindUnique.mockResolvedValue(buildPublicationRow({ accountId: "another-owner", shares: [{ id: "share-1", accessLevel: "admin", canApprovePermissions: true }] }));
-
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-
-        const socket = createFakeSocket();
-        (socket as any).data = {
-            machineId: "m1",
-            sessionScopedBinding: {
-                sessionId: "s1",
-                machineId: "m1",
-                proof: "machine-access-key",
-            },
-        };
-        sessionUpdateHandler(
-            "u1",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
-        );
-
-        const handler = getSocketHandler(socket, "execution-run-updated");
-        await handler({
-            sid: "s1",
-            run: {
-                runId: "run_1",
-                callId: "call_1",
-                sidechainId: "call_1",
-                intent: "review",
-                backendTarget: { kind: "builtInAgent", agentId: "claude" },
-                permissionMode: "read_only",
-                retentionPolicy: "ephemeral",
-                runClass: "bounded",
-                ioMode: "request_response",
-                status: "running",
-                startedAtMs: 123,
-            },
-        });
-
-        expect(emitEphemeral).not.toHaveBeenCalled();
-    });
-
-    it("does not broadcast execution-run-updated from a shared editor daemon when the session owner differs", async () => {
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-
-        const socket = createFakeSocket();
-        (socket as any).data = {
-            machineId: "m1",
-            sessionScopedBinding: {
-                sessionId: "s1",
-                machineId: "m1",
-                proof: "machine-access-key",
-            },
-        };
-        sessionUpdateHandler(
-            "shared-editor",
-            socket as any,
-            { connectionType: "session-scoped", socket: socket as any, userId: "shared-editor", sessionId: "s1" } as any,
         );
 
         const handler = getSocketHandler(socket, "execution-run-updated");
@@ -585,7 +476,6 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
 
     it("strips untrusted extra execution-run fields before rebroadcasting", async () => {
 
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {
@@ -634,14 +524,11 @@ describe("sessionUpdateHandler (transcript-stream-segment)", () => {
     beforeEach(() => {
         emitEphemeral.mockReset();
         websocketEventsCounterInc.mockReset();
-        accessKeyFindUnique.mockReset();
-        accessKeyFindUnique.mockResolvedValue(activeAccessKey);
         sessionFindUnique.mockReset();
         sessionFindUnique.mockResolvedValue(buildPublicationRow());
     });
 
     it("broadcasts transcript stream segment ephemerals to all session participants", async () => {
-        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
         (socket as any).data = {

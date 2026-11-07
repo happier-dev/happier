@@ -1,14 +1,11 @@
-import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
-import { publishWorkflowRunMachineWakeInTx } from '@/app/workflows/workflowRunMachineRouting';
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT } from '@happier-dev/protocol/automations/event';
 import { AutomationRunCauseSchema, type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationRunExecutionInputV1Schema, toAutomationRunExecutionInputV1Origin } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { deriveAutomationManualOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { normalizeAutomationTemplateEnvelopeStoredRead } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
-import { parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { automationRunExecutionTargetTypeV1, parseAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { parseAutomationObservationOnlyDefinitionV1, parseAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { automationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/protocol/automations/result-delivery';
@@ -16,8 +13,10 @@ import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/prot
 import { afterTx, type Tx } from "@/storage/inTx";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { invalidateSessionReviewProjectionsForAutomationInTx } from './sessionReviewProjectionInvalidation';
+import { getSessionReviewProjectionIdForRun, invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
+import { publishWorkflowRunMachineWakeInTx } from '@/app/workflows/workflowRunMachineRouting';
 import { attachAutomationWorkflowBodyTx } from "@/app/workflows/workflowRunService";
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
 import {
@@ -37,7 +36,6 @@ import {
     retainedV2OriginKindForRun,
 } from "./automationRunCauseCodec";
 import {
-    AUTOMATION_RUN_TERMINAL_STATES,
     initialAutomationExecutionDispatchStateForRun,
     type AutomationRunItem,
 } from "./automationTypes";
@@ -54,7 +52,6 @@ export type AutomationRunAdmissionIneligibleReason =
     | "triggerDisabled"
     | "triggerRevisionMismatch"
     | "triggerKindMismatch"
-    | "capacity"
     | "idempotencyKeyInvalid"
     | "featureDisabled"
     | "definitionInvalid"
@@ -108,12 +105,6 @@ function parseTriggerEvidenceEnvelope(raw: string | null | undefined): unknown |
     } catch {
         return undefined;
     }
-}
-
-function targetTypeForRecipe(recipe: Readonly<{ target: Readonly<{ kind: string }> }>) {
-    if (recipe.target.kind === "newSession") return "new_session" as const;
-    if (recipe.target.kind === "existingSession") return "existing_session" as const;
-    return "execution_run" as const;
 }
 
 function hasCauseOwnedPrivateInput(cause: AutomationRunCause): boolean {
@@ -234,14 +225,6 @@ type PreparedAutomationRunAdmissionResult =
     | AutomationRunAdmissionResult
     | Readonly<{ kind: "prepared"; admission: PreparedAutomationRunAdmission }>;
 
-function consumesEventConversationCapacity(admission: PreparedAutomationRunAdmission): boolean {
-    // Session-scoped work uses the trigger's existing active/pending owner,
-    // not the Account-wide Event/Conversation capacity pool.
-    if (admission.automation.scopeSessionId !== null) return false;
-    return admission.cause.kind === "conversation"
-        || (admission.cause.kind === "trigger" && admission.cause.triggerKind === "pluginEvent");
-}
-
 function isSessionLifecycleCause(cause: AutomationRunCause): boolean {
     return cause.kind === "trigger"
         && cause.triggerKind === "sessionLifecycle";
@@ -264,7 +247,7 @@ export function freezeAutomationRunInput(params: Readonly<{
         if (
             definition.recipe.templateVersion !== automation.templateVersion
             || definition.recipe.triggerEvidence !== null
-            || targetTypeForRecipe(definition.recipe) !== automation.targetType
+            || automationRunExecutionTargetTypeV1(definition.recipe.target) !== automation.targetType
             || triggerEvidence === undefined
             || !triggerEvidenceMatchesCause(cause, triggerEvidence)
         ) return { kind: "ineligible", reason: "definitionInvalid" };
@@ -499,11 +482,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         if (!projected) throw new Error("Attached Automation workflow Run has invalid origin correspondence");
         run = projected;
     }
-    await params.tx.automation.update({
-        where: { id: request.automationId },
-        data: { lastRunAt: request.now },
-    });
-    await invalidateSessionReviewProjectionsForAutomationInTx(params.tx, automation.id);
+    await invalidateSessionReviewProjectionForRunInTx(params.tx, run);
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,
         kind: "automation",
@@ -536,10 +515,8 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
 
 /**
  * The one admission owner for trigger and direct invocation batches. It
- * rejoins immutable occurrences before mutable checks, freezes current recipe
- * and assignments, and applies Event/Conversation capacity as deterministic
- * prefix admission across the net-new capacity-consuming candidates of this
- * bounded request.
+ * rejoins immutable occurrences before mutable checks and freezes the current
+ * recipe and assignments for each eligible new occurrence.
  */
 export async function admitAutomationRunsTx(params: Readonly<{
     tx: Tx;
@@ -548,13 +525,28 @@ export async function admitAutomationRunsTx(params: Readonly<{
     recipeFeaturePolicy?: AutomationRecipeFeaturePolicy;
 }>): Promise<readonly AutomationRunAdmissionResult[]> {
     if (params.admissions.length === 0) return [];
-    await acquireWorkflowPublicationLocksInTx(params.tx, { accountId: params.accountId,
-        automationIds: [...new Set(params.admissions.map(request => request.automationId))] });
-    const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy({ tx: params.tx });
     const parsedAdmissions = params.admissions.map((request) => ({
         request,
         cause: AutomationRunCauseSchema.parse(request.cause),
     }));
+    const supersededTriggerIds = parsedAdmissions.flatMap(({ request, cause }) =>
+        cause.kind !== 'manual' && cause.triggerId
+            && !(cause.kind === 'conversation' && request.scopedConversationTrigger !== undefined)
+            ? [cause.triggerId] : []);
+    await acquireWorkflowPublicationLocksInTx(params.tx, { accountId: params.accountId,
+        automationIds: [...new Set(params.admissions.map(request => request.automationId))],
+        sessionIds: parsedAdmissions.flatMap(({ cause }) => {
+            const sourceSessionId = getSessionReviewProjectionIdForRun(encodeAutomationRunCause(cause));
+            return sourceSessionId === null ? [] : [sourceSessionId];
+        }),
+        ...(supersededTriggerIds.length ? { runWhere: automationPortableQueryChunks({
+            values: [...new Set(supersededTriggerIds)], bindingsPerValue: 1, fixedBindings: 3,
+        }).map(ids => ({
+            accountId: params.accountId, triggerId: { in: [...ids] }, state: 'queued',
+            automation: { scopeSessionId: { not: null } },
+        })) } : {}),
+    });
+    const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy({ tx: params.tx });
     // The same trigger row also serializes claims. Lock before mutable reads
     // so concurrent admissions observe the incumbent pending reservation.
     const scopedLockCandidates = [...new Set(parsedAdmissions.flatMap(({ cause }) => (
@@ -682,45 +674,10 @@ export async function admitAutomationRunsTx(params: Readonly<{
         scopedConversationMatches: scopedConversationMatches[index] === true,
     }));
 
-    // Capacity is deterministic prefix admission in request order. Exact
-    // rejoins are already decided above and consume nothing; every genuinely
-    // new capacity-consuming row decrements the single remaining-capacity
-    // count, and ordered positions beyond it return typed `capacity` as the
-    // request's retryable, checkpoint-unsafe remainder. A caller retries the
-    // same request, rejoins the committed prefix through the canonical
-    // occurrence owner, and admits the suffix once ordinary terminal recovery
-    // frees capacity. No reservation, rollback, staging, fairness, progress
-    // cursor, or second capacity counter exists; the count below stays the one
-    // capacity owner, evaluated inside this request's fence/transaction.
-    let remainingEventConversationCapacity = 0;
-    if (prepared.some((result) => (
-        result.kind === "prepared" && consumesEventConversationCapacity(result.admission)
-    ))) {
-        const occupied = await params.tx.automationRun.count({
-            where: {
-                accountId: params.accountId,
-                automation: { is: { scopeSessionId: null } },
-                OR: [
-                    { causeKind: "conversation" },
-                    { causeKind: "trigger", causeTriggerKind: "pluginEvent" },
-                ],
-                state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
-            },
-        });
-        remainingEventConversationCapacity = Math.max(
-            0,
-            MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - occupied,
-        );
-    }
     const results: AutomationRunAdmissionResult[] = [];
     for (const result of prepared) {
         if (result.kind !== "prepared") {
             results.push(result);
-            continue;
-        }
-        const consumesCapacity = consumesEventConversationCapacity(result.admission);
-        if (consumesCapacity && remainingEventConversationCapacity <= 0) {
-            results.push({ kind: "ineligible", reason: "capacity" });
             continue;
         }
         const admitted = await insertPreparedAutomationRunTx({
@@ -728,15 +685,12 @@ export async function admitAutomationRunsTx(params: Readonly<{
             accountId: params.accountId,
             admission: result.admission,
         });
-        // Only a genuinely inserted row consumes capacity; rejoins never
-        // reach this loop and blocked positions decrement nothing.
-        if (consumesCapacity) remainingEventConversationCapacity -= 1;
         results.push(admitted);
     }
     return results;
 }
 
-/** The scalar adapter over the canonical bounded admission owner. */
+/** The scalar adapter over the canonical admission owner. */
 export async function admitAutomationRunTx(params: Readonly<{
     tx: Tx;
     accountId: string;

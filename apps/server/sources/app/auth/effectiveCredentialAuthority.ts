@@ -1,5 +1,5 @@
 import type { AuthTokenAuthority, AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
-import { resolveInvocationAuthority, TerminalPresentUserPolicySchema } from '@happier-dev/protocol/actions/invocationAuthority';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import type { ActionRequiredAuthority } from "@happier-dev/protocol/actions/metadata";
 
 /** A caller can lower verified authority; no caller-supplied value can raise it. */
@@ -9,17 +9,14 @@ export function narrowCredentialAuthority(authority: AuthTokenAuthority, ceiling
     return authority === "present_user" && ceiling === "account_automation" ? "account_automation" : authority;
 }
 
-/** The signed floor stays unchanged; current Account policy governs terminal invocations. */
+/**
+ * The signed floor stays unchanged. A terminal (CLI login) is the person's own tool,
+ * so its invocations are person-class; every other kind keeps its minted authority.
+ */
 export function effectiveCredentialAuthority(input: Readonly<{
     credentialKind: AuthTokenKind;
     mintedAuthority: AuthTokenAuthority;
-    terminalPresentUserPolicy: unknown;
 }>): AuthTokenAuthority {
     if (input.credentialKind !== "terminal") return input.mintedAuthority;
-    const policy = TerminalPresentUserPolicySchema.safeParse(input.terminalPresentUserPolicy);
-    return resolveInvocationAuthority({
-        credential: "terminal",
-        surface: "rpc",
-        terminalPolicy: policy.success ? policy.data : "disallowed",
-    });
+    return resolveInvocationAuthority({ credential: "terminal", surface: "rpc" });
 }

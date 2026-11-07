@@ -6,7 +6,7 @@ import { SessionMessageReplyProgressV1Schema, deriveSessionMessageReplyReturnLoc
     type SessionMessageReplySourceTurnReleaseV1, type SessionMessageReplySourceTurnReleaseResultV1, type SessionMessageReplyAccountMutationV1,
     SessionMessageReplyPendingHintV1Schema, type SessionMessageDiscussionReplyReturnV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { parseStoredSessionTurnTranscriptAnchors } from '@/app/session/turns/parseSessionTurnState';
-import { resolveEffectiveSessionAccessForSessionsInTx, resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import { resolveEffectiveSessionAccessForSessionsInTx, resolveSessionAccessForOperation, type EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveDiscussionContextInTx, discussionContextStorageAdapter } from '@/app/discussions/access';
@@ -29,6 +29,9 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import type { Prisma } from '@prisma/client';
 import { log } from '@/utils/logging/log';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { markDiscussionReadersChangedInTx } from '@/app/discussions/changes';
+import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+import type { SessionMessageReplyPublicationFailureV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 
 const selection = { id: true, replyProgress: true, targetExecutionRunId: true, inputAdmissionReceipt: true } as const;
 type Original = { sessionId: string; localId: string; pendingId?: string; messageId?: string; progress: SessionMessageReplyProgressV1 | null; malformed: boolean;
@@ -82,8 +85,14 @@ async function readOriginal(tx: Tx, sessionId: string, localId: string): Promise
     return (await readOriginals(tx, [{ sessionId, localId }])).get(replyKey({ sessionId, localId })) ?? null;
 }
 
-async function writeOriginal(tx: Tx, original: Original, progress: SessionMessageReplyProgressV1): Promise<void> {
-    if (isDeepStrictEqual(original.progress, progress)) return;
+async function writeOriginal(tx: Tx, original: Original, progress: SessionMessageReplyProgressV1): Promise<SessionMessageReplyProgressV1> {
+    if (progress.returnPublication?.kind === 'failed' && progress.returnPublication.failure.retryable
+        && original.progress && (progress.acceptedTurnId !== original.progress.acceptedTurnId
+        || !isDeepStrictEqual(progress.outcome, original.progress.outcome))) {
+        const { returnPublication: _previousPublication, ...advanced } = progress;
+        progress = advanced;
+    }
+    if (isDeepStrictEqual(original.progress, progress)) return progress;
     const data = { replyProgress: SessionMessageReplyProgressV1Schema.parse(progress),
         replySourceSessionId: progress.humanOrigin?.sessionId ?? progress.sourceSession?.sourceSessionId ?? null,
         replySourceTurnId: progress.sourceSession?.sourceTurnId ?? null,
@@ -96,15 +105,25 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
         : await tx.sessionMessage.updateMany({ where: { id: original.messageId, replyProgress: { equals: original.storedProgress } }, data });
     if (changed.count !== 1) throw new TransactionReplayRequiredError('session-input-reply-progress-changed');
     if (original.pendingId && original.messageId) await tx.sessionMessage.update({ where: { id: original.messageId }, data });
+    const visibleFailure = (value: SessionMessageReplyProgressV1['returnPublication']) =>
+        value?.kind === 'failed' && !value.failure.retryable ? value.failure : null;
+    if (progress.discussion && progress.disposition !== 'returned'
+        && !isDeepStrictEqual(visibleFailure(progress.returnPublication), visibleFailure(original.progress.returnPublication))) {
+        await markDiscussionReadersChangedInTx({ tx, discussionId: progress.discussion.discussionId });
+    }
+    const workflowPublicationChanged = progress.workflow !== undefined
+        && !isDeepStrictEqual(progress.returnPublication, original.progress.returnPublication);
     if (progress.acceptedTurnId !== original.progress.acceptedTurnId
         || !isDeepStrictEqual(progress.outcome, original.progress.outcome)
-        || progress.disposition === 'return_pending' && original.progress.disposition !== 'return_pending') {
+        || progress.disposition === 'return_pending' && original.progress.disposition !== 'return_pending'
+        || workflowPublicationChanged) {
         afterTx(tx, async () => {
             try {
                 const session = await db.session.findUnique({ where: { id: original.sessionId }, select: { accountId: true } });
                 if (session) {
                     const payload = SessionMessageReplyPendingHintV1Schema.parse({ type: 'session-message-reply-pending-v1', v: 1,
-                        sessionId: original.sessionId, requestLocalId: original.localId });
+                        sessionId: original.sessionId, requestLocalId: original.localId,
+                        ...(progress.workflow ? { workflowRunId: progress.workflow.runId } : {}) });
                     await eventRouter.emitEphemeral({ userId: session.accountId, payload,
                         recipientFilter: { type: 'all-interested-in-session', sessionId: original.sessionId } });
                     const sourceSessionId = progress.humanOrigin?.sessionId ?? progress.sourceSession?.sourceSessionId;
@@ -116,7 +135,7 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
                         if (source && source.accountId !== session.accountId) await eventRouter.emitEphemeral({ userId: source.accountId, payload,
                             recipientFilter: { type: 'all-interested-in-session', sessionId: sourceSessionId } });
                     }
-                    if (progress.disposition === 'return_pending' && original.targetMachineId) {
+                    if ((progress.disposition === 'return_pending' || workflowPublicationChanged) && original.targetMachineId) {
                         const machine = await inTx(tx => resolveMachineAdmissionInTx(tx, {
                             actorAccountId: session.accountId, machineId: original.targetMachineId!,
                         }));
@@ -150,6 +169,25 @@ async function writeOriginal(tx: Tx, original: Original, progress: SessionMessag
             }
         });
     }
+    return progress;
+}
+
+/** Discussion read admission owns the displayed questions; return only their non-content refusal. */
+export async function readDiscussionReplyPublicationFailuresInTx(tx: Tx,
+    addresses: readonly DiscussionAddressingV1[]): Promise<ReadonlyMap<string, SessionMessageReplyPublicationFailureV1>> {
+    const keys = addresses.map(address => ({ sessionId: address.participantSessionId,
+        localId: deriveDiscussionFollowInputLocalIdV1(address) }));
+    const originals = await readOriginals(tx, keys);
+    const failures = new Map<string, SessionMessageReplyPublicationFailureV1>();
+    for (const [index, address] of addresses.entries()) {
+        const key = keys[index]!;
+        const progress = originals.get(replyKey(key))?.progress;
+        if (progress?.returnPublication?.kind === 'failed' && !progress.returnPublication.failure.retryable
+            && progress.disposition === 'released' && isDeepStrictEqual(progress.discussion, address)) {
+            failures.set(key.localId, progress.returnPublication.failure);
+        }
+    }
+    return failures;
 }
 
 /** Keep UNION ordering and cursor comparison at the database's own identifier collation. */
@@ -188,12 +226,11 @@ export async function listSessionMessageRepliesPendingForMachineInTx(tx: Tx, par
     if (!await isSessionMessageReplyMachineCurrentInTx(tx, params)) return empty;
     const originals = await listOriginalReplyKeysInTx(tx, { machineId: params.machineId, accountId: params.accountId }, params.after);
     const entries: SessionMessageReplyMachinePendingPageV1['entries'] = [];
-    for (const row of originals.slice(0, SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1)) {
-        const original = await readOriginal(tx, row.sessionId, row.localId);
-        if (!original || !await canRecoverOriginalReplyInTx(tx, original, params)) continue;
-        const visible = await readSessionMessageReplyInTx(tx, { ...params, ...row });
+    const replies = await readSessionMessageRepliesInTx(tx, { ...params, recoveryMachineId: params.machineId,
+        requests: originals.slice(0, SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1) });
+    for (const { sessionId, localId, reply: visible } of replies) {
         if (visible.status === 'available' && visible.progress.disposition === 'return_pending' && visible.progress.outcome) {
-            entries.push({ requestSessionId: row.sessionId, requestLocalId: row.localId, progress: visible.progress,
+            entries.push({ requestSessionId: sessionId, requestLocalId: localId, progress: visible.progress,
                 ...(visible.returnRecipient ? { returnRecipient: visible.returnRecipient } : {}) });
         }
     }
@@ -201,14 +238,15 @@ export async function listSessionMessageRepliesPendingForMachineInTx(tx: Tx, par
 }
 
 /** Execution custody never confers access to a person's private return Session. */
-async function canRecoverOriginalReplyInTx(tx: Tx, original: Original, params: Readonly<{ accountId: string; machineId: string }>): Promise<boolean> {
+async function canRecoverOriginalReplyInTx(tx: Tx, original: Original, params: Readonly<{ accountId: string; machineId: string }>,
+    sessionOwned?: boolean): Promise<boolean> {
     if (original.progress?.humanOrigin && original.humanRequesterAccountId === params.accountId) {
         // Account credentials recover the request; ordinary send admission
         // independently resolves the destination's current execution Machine.
         return true;
     }
     return original.targetMachineId === params.machineId
-        && await tx.session.findFirst({ where: { id: original.sessionId, accountId: params.accountId }, select: { id: true } }) !== null
+        && (sessionOwned ?? await tx.session.findFirst({ where: { id: original.sessionId, accountId: params.accountId }, select: { id: true } }) !== null)
         && (!original.progress?.humanOrigin || original.humanRequesterAccountId === params.accountId);
 }
 
@@ -216,12 +254,14 @@ async function canRecoverOriginalReplyInTx(tx: Tx, original: Original, params: R
 export async function listSessionMessageRepliesPendingInTx(tx: Tx, params: Readonly<{
     accountId: string; sessionId: string; afterLocalId?: string; authentication: SessionAccessAuthentication;
 }>): Promise<SessionMessageReplyPendingPageV1> {
-    if (!await canRead(tx, params.accountId, params.sessionId, params.authentication)) return { v: 1, entries: [], nextAfterLocalId: null };
+    const access = await resolveEffectiveSessionAccessForSessionsInTx(tx, { ...params, sessionIds: [params.sessionId] });
+    if (!access.get(params.sessionId)?.capabilities.readTranscript) return { v: 1, entries: [], nextAfterLocalId: null };
     const originals = await listOriginalReplyKeysInTx(tx, { sessionId: params.sessionId }, params.afterLocalId
         ? { sessionId: params.sessionId, localId: params.afterLocalId } : undefined);
     const entries: SessionMessageReplyPendingPageV1['entries'] = [];
-    for (const { localId } of originals.slice(0, SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1)) {
-        const result = await readSessionMessageReplyInTx(tx, { ...params, localId });
+    const replies = await readSessionMessageRepliesWithAccessInTx(tx, { ...params,
+        requests: originals.slice(0, SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1) }, access);
+    for (const { localId, reply: result } of replies) {
         if (result.status === 'available' && result.progress.disposition === 'return_pending') entries.push({ requestLocalId: localId, progress: result.progress,
             ...(result.returnRecipient ? { returnRecipient: result.returnRecipient } : {}) });
     }
@@ -331,6 +371,13 @@ async function readWorkflowReplyInvocationInTx(tx: Tx, accountId: string, workfl
 export async function isDiscussionReplyDestinationCurrentInTx(tx: Tx, params: Readonly<{
     accountId: string; discussion: DiscussionAddressingV1; authentication?: SessionAccessAuthentication; workflow?: SessionInputWorkflowV2;
 }>): Promise<boolean> {
+    return isDiscussionReplyDestinationAdmittedInTx(tx, params, false);
+}
+
+/** Retained original reads preserve custody; only write admission requires a live participant Session. */
+async function isDiscussionReplyDestinationAdmittedInTx(tx: Tx, params: Readonly<{
+    accountId: string; discussion: DiscussionAddressingV1; authentication?: SessionAccessAuthentication; workflow?: SessionInputWorkflowV2;
+}>, readRetainedCustody: boolean): Promise<boolean> {
     const { discussion } = params;
     const authentication = params.authentication ?? backgroundDeliveryAuthentication();
     const [question, participant, resource, context] = await Promise.all([
@@ -355,7 +402,7 @@ export async function isDiscussionReplyDestinationCurrentInTx(tx: Tx, params: Re
         // A removed selected Session is not an implicit Workflow leaf. The
         // native birth owner already binds legitimate implicit leaves to this Run.
         || !participant && params.workflow && (session?.originKind !== 'run_step' || session.originRunId !== params.workflow.runId)
-        || session?.accountId !== params.accountId || session.archivedAt !== null
+        || session?.accountId !== params.accountId || !readRetainedCustody && session.archivedAt !== null
         || !resource || resource.archivedAt !== null || !context?.keyReadiness || context.access.level === 'view') return false;
     return (await mayInjectResourceContextInTx(tx, { configuringAccountId: params.accountId, authentication,
         source: { kind: 'resource', resourceId: discussion.discussionId, adapter: discussionContextStorageAdapter },
@@ -404,7 +451,8 @@ export async function settleSessionInputDiscussionReplyReturnInTx(tx: Tx, params
     })) return false;
     if (progress.outcome?.kind === 'answer' && 'publicationRef' in progress.outcome
         && !isDeepStrictEqual(progress.outcome.publicationRef, params.publicationRef)) return false;
-    await writeOriginal(tx, original, { ...progress, outcome: params.outcome,
+    const { returnPublication: _publication, ...captured } = progress;
+    await writeOriginal(tx, original, { ...captured, outcome: params.outcome,
         disposition: 'returned', returnedInputLocalId: params.localId });
     return true;
 }
@@ -481,13 +529,23 @@ export async function readSessionMessageReplyInTx(tx: Tx, params: Readonly<{
     return (await readSessionMessageRepliesInTx(tx, { ...params, requests: [params] }))[0]!.reply;
 }
 
-/** Single and batch transports share original custody and one snapshot's exact access/currentness facts. */
-export async function readSessionMessageRepliesInTx(tx: Tx, params: Readonly<{
+type ReplyReadParams = Readonly<{
     accountId: string; requests: readonly ReplyKey[]; authentication: SessionAccessAuthentication;
-}>): Promise<Array<ReplyKey & { reply: SessionMessageReplyReadResultV1 }>> {
+    /** Recovery additionally requires original-input custody; Machine admission stays with its caller. */
+    recoveryMachineId?: string;
+}>;
+
+/** Single and batch transports share original custody and one snapshot's exact access/currentness facts. */
+export async function readSessionMessageRepliesInTx(tx: Tx, params: ReplyReadParams): Promise<Array<ReplyKey & { reply: SessionMessageReplyReadResultV1 }>> {
     if (!params.requests.length) return [];
     const access = await resolveEffectiveSessionAccessForSessionsInTx(tx, { ...params,
         sessionIds: params.requests.map(key => key.sessionId) });
+    return readSessionMessageRepliesWithAccessInTx(tx, params, access);
+}
+
+/** Recovery may already have admitted access before listing its cursor; reuse that same snapshot. */
+async function readSessionMessageRepliesWithAccessInTx(tx: Tx, params: ReplyReadParams,
+    access: ReadonlyMap<string, EffectiveSessionAccess>): Promise<Array<ReplyKey & { reply: SessionMessageReplyReadResultV1 }>> {
     const originals = await readOriginals(tx, params.requests.filter(key => access.get(key.sessionId)?.capabilities.readTranscript));
     // These are shared decisions inside this read snapshot, not retained result caches.
     const currentness = new Map<string, Promise<boolean>>();
@@ -495,16 +553,26 @@ export async function readSessionMessageRepliesInTx(tx: Tx, params: Readonly<{
     const read = async (key: ReplyKey): Promise<SessionMessageReplyReadResultV1> => {
         const original = originals.get(replyKey(key));
         if (!original || original.malformed) return { v: 1, status: 'unavailable' };
+        if (params.recoveryMachineId !== undefined && !await canRecoverOriginalReplyInTx(tx, original,
+            { accountId: params.accountId, machineId: params.recoveryMachineId }, access.get(key.sessionId)?.level === 'owner')) {
+            return { v: 1, status: 'unavailable' };
+        }
         const progress = original.progress;
         if (!progress) return { v: 1, status: 'none' };
+        const retainedWorkflowCustody = progress.mode === 'wait' && progress.workflow !== undefined
+            && progress.outcome !== undefined && progress.discussion?.participantSessionId === key.sessionId
+            && key.localId === deriveWorkflowSessionInputLocalIdV2(progress.workflow);
         const sourceKey = JSON.stringify(progress.humanOrigin
             ? ['human', progress.humanOrigin.sessionId, original.humanRequesterAccountId, original.sessionId]
-            : progress.discussion ? ['discussion', progress.discussion, progress.workflow]
+            : progress.discussion ? ['discussion', progress.discussion, progress.workflow, retainedWorkflowCustody]
                 : ['session', progress.sourceSession]);
         let current = currentness.get(sourceKey);
         if (!current) {
-            current = isSessionInputReplySourceCurrentInTx(tx, params.accountId, progress, params.authentication,
-                { requesterAccountId: original.humanRequesterAccountId, sessionId: original.sessionId });
+            current = retainedWorkflowCustody && progress.discussion
+                ? isDiscussionReplyDestinationAdmittedInTx(tx, { accountId: params.accountId,
+                    discussion: progress.discussion, workflow: progress.workflow }, true)
+                : isSessionInputReplySourceCurrentInTx(tx, params.accountId, progress, params.authentication,
+                    { requesterAccountId: original.humanRequesterAccountId, sessionId: original.sessionId });
             currentness.set(sourceKey, current);
         }
         if (!await current) return { v: 1, status: 'unavailable' };
@@ -529,12 +597,58 @@ export async function readSessionMessageRepliesInTx(tx: Tx, params: Readonly<{
 export async function mutateSessionMessageReplyForAccountInTx(tx: Tx, params: Readonly<{
     accountId: string; sessionId: string; localId: string; authentication: SessionAccessAuthentication;
 }> & SessionMessageReplyAccountMutationV1): Promise<SessionMessageReplyMutationResultV1> {
-    if (params.kind === 'discussion_review' && (params.authentication.authority !== 'present_user'
-        || params.authentication.sessionRuntimePrincipal || params.authentication.apiTokenGrant)) return { v: 1, ok: false, error: 'forbidden' };
+    const personDecision = params.kind === 'discussion_review'
+        || params.kind === 'discussion_publication' && params.approvalArtifactId !== undefined;
+    if (personDecision && (params.authentication.authority !== 'present_user'
+        || params.authentication.sessionRuntimePrincipal || params.authentication.apiTokenGrant
+        || params.authentication.externalActionExecutionAuthorized && !params.authentication.approvalDecisionAdmission)) {
+        return { v: 1, ok: false, error: 'forbidden' };
+    }
     await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId]);
     if (!await canRead(tx, params.accountId, params.sessionId, params.authentication)) return { v: 1, ok: false, error: 'unavailable' };
     const original = await readOriginal(tx, params.sessionId, params.localId);
     if (!original?.progress) return { v: 1, ok: false, error: 'unavailable' };
+    const decisionAdmission = params.authentication.approvalDecisionAdmission;
+    if (decisionAdmission && personDecision) {
+        const current = original.progress;
+        // The demanded Session/localId selects canonical pending custody (or
+        // its materialized row). Only that row's pending Artifact may advance.
+        if (current.returnPublication?.kind === 'approval_pending') {
+            if (current.returnPublication.artifactId !== decisionAdmission.artifactId) return { v: 1, ok: false, error: 'forbidden' };
+        } else {
+            // A response-lost repeat can observe the same terminal state; it
+            // cannot replace a failure or advance unrelated settled custody.
+            const unchanged = params.kind === 'discussion_review'
+                ? current.disposition === 'released' && current.outcome?.kind === 'declined'
+                : params.kind === 'discussion_publication' && isDeepStrictEqual(current.returnPublication, params.publication);
+            if (!unchanged) return { v: 1, ok: false, error: 'forbidden' };
+        }
+    }
+    if (params.kind === 'discussion_publication') {
+        const session = await tx.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true } });
+        if (session?.accountId !== params.accountId || (await resolveSessionAccessForOperation(tx, {
+            accountId: params.accountId, sessionId: params.sessionId, authentication: params.authentication,
+            capability: 'submitAgentInput' })).status !== 'allowed') return { v: 1, ok: false, error: 'forbidden' };
+        const current = original.progress;
+        const workflowReturn = current.mode === 'wait' && current.workflow !== undefined;
+        if ((!workflowReturn && current.mode !== 'return') || !current.outcome || current.outcome.kind === 'declined'
+            || current.discussion?.discussionId !== params.discussionId || current.discussion.messageId !== params.messageId
+            || current.discussion.participantSessionId !== params.sessionId || current.acceptedTurnId !== params.acceptedTurnId) {
+            return { v: 1, ok: false, error: 'conflict' };
+        }
+        // The append may have committed before its acknowledgement was lost.
+        // Rejoin only after current owner admission and the exact original tuple.
+        if (current.disposition === 'returned') return { v: 1, ok: true, progress: current };
+        if (current.outcome.kind === 'answer' && 'publicationRef' in current.outcome) return { v: 1, ok: false, error: 'conflict' };
+        if (params.approvalArtifactId && current.returnPublication?.kind === 'approval_pending'
+            && current.returnPublication.artifactId !== params.approvalArtifactId) return { v: 1, ok: false, error: 'conflict' };
+        if (current.returnPublication && isDeepStrictEqual(current.returnPublication, params.publication)) return { v: 1, ok: true, progress: current };
+        if (!(workflowReturn ? ['observing', 'inline'] : ['return_pending']).includes(current.disposition)
+            || current.returnPublication?.kind === 'approval_pending' && !params.approvalArtifactId) return { v: 1, ok: false, error: 'conflict' };
+        const progress: SessionMessageReplyProgressV1 = { ...current, returnPublication: params.publication,
+            disposition: params.publication.kind === 'failed' && !params.publication.failure.retryable ? 'released' : current.disposition };
+        return { v: 1, ok: true, progress: await writeOriginal(tx, original, progress) };
+    }
     if (params.kind === 'discussion_review') {
         const session = await tx.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true } });
         if (session?.accountId !== params.accountId || (await resolveSessionAccessForOperation(tx, {
@@ -551,9 +665,9 @@ export async function mutateSessionMessageReplyForAccountInTx(tx: Tx, params: Re
                 || current.outcome.result.sessionId !== params.sessionId)) return { v: 1, ok: false, error: 'conflict' };
         // Rejection discloses no source/body and needs no source-key admission.
         // The private Artifact retains reject versus cancel; C2 only closes the return.
-        const progress: SessionMessageReplyProgressV1 = { ...current, disposition: 'released', outcome: { kind: 'declined' } };
-        await writeOriginal(tx, original, progress);
-        return { v: 1, ok: true, progress };
+        const { returnPublication: _publication, ...captured } = current;
+        const progress: SessionMessageReplyProgressV1 = { ...captured, disposition: 'released', outcome: { kind: 'declined' } };
+        return { v: 1, ok: true, progress: await writeOriginal(tx, original, progress) };
     }
     if (original.progress.sourceSession || original.progress.discussion) return { v: 1, ok: false, error: 'forbidden' };
     if (!await isSessionInputReplySourceCurrentInTx(tx, params.accountId, original.progress, params.authentication,
@@ -573,8 +687,7 @@ export async function mutateSessionMessageReplyForAccountInTx(tx: Tx, params: Re
     if (params.kind === 'inline' && (!current.outcome || !['observing', 'inline'].includes(current.disposition))) return { v: 1, ok: false, error: 'conflict' };
     const progress: SessionMessageReplyProgressV1 = params.kind === 'inline' ? { ...current, disposition: 'inline' }
         : current.disposition === 'observing' ? { ...current, disposition: 'released' } : current;
-    await writeOriginal(tx, original, progress);
-    return { v: 1, ok: true, progress };
+    return { v: 1, ok: true, progress: await writeOriginal(tx, original, progress) };
 }
 
 async function isCommittedResultInTx(tx: Tx, original: Original, turnId: string, messageId: string,
@@ -620,8 +733,7 @@ async function acknowledgeReturnedInputInTx(tx: Tx, original: Original, returned
     if (!receipt.success || receipt.data.issuer !== 'authenticatedMachine'
         || returned?.targetExecutionRunId !== await resolveReturnExecutionRunIdInTx(tx, current)) return { v: 1, ok: false, error: 'conflict' };
     const progress: SessionMessageReplyProgressV1 = { ...current, disposition: 'returned', returnedInputLocalId };
-    await writeOriginal(tx, original, progress);
-    return { v: 1, ok: true, progress };
+    return { v: 1, ok: true, progress: await writeOriginal(tx, original, progress) };
 }
 
 export async function mutateSessionMessageReplyForMachineInTx(tx: Tx, params: Readonly<{
@@ -688,8 +800,7 @@ export async function mutateSessionMessageReplyInTx(tx: Tx, params: Readonly<{
             return acknowledgeReturnedInputInTx(tx, original, operation.returnedInputLocalId);
         }
     }
-    await writeOriginal(tx, original, progress);
-    return { v: 1, ok: true, progress };
+    return { v: 1, ok: true, progress: await writeOriginal(tx, original, progress) };
 }
 
 /** Resource owners call this only after a successful named publication in the same transaction. */

@@ -1,15 +1,17 @@
+import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { AccountHistoricalEncryptionKeyForgetInputV1Schema, AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverInputV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '../../../auth/accountSecurity.js';
 import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1 } from '../../../auth/accountSecurity.js';
 import { PluginAccountDataEraseActionInputV1Schema, PluginAccountDataEraseActionOutputV1Schema } from '../../../plugins/data/accountEraseV1.js';
 import { AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereActionOutputV1Schema } from '../../../auth/accountSessions.js';
-import { AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1 } from '../../../auth/accountSecurity.js';
+import { AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetRequestV1Schema, AccountSecurityGetResponseV1Schema } from '../../../auth/accountSecurity.js';
 import { ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, projectAccountApiTokenCreationObservation, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema } from '../../../auth/accountApiTokens.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
 
-export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
+function createAccountSecurityActionSpecs() {
+  return Object.freeze([
   {
-    id: 'account.plugins.data.erase', approval: {result: 'required'},
+    id: 'account.plugins.data.erase', executionPlacement: 'account', approval: {result: 'required'},
     irreversible: true,
     title: 'Erase Account plugin data',
     description: 'Erase the current Account’s retained data for one plugin without uninstalling local plugin code.',
@@ -35,7 +37,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.sessions.signOutEverywhere', approval: {result: 'required'},
+    id: 'account.sessions.signOutEverywhere', executionPlacement: 'account', approval: {result: 'required'},
     accountAuthorityRetirementStatuses: ['signed_out'],
     title: 'Sign out everywhere',
     description: 'Invalidate all signed sessions for the current Account. API tokens remain active.',
@@ -59,7 +61,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.encryption.automationTemplates.recover', approval: {result: 'required'},
+    id: 'account.encryption.automationTemplates.recover', executionPlacement: 'client', approval: {result: 'required'},
     placements: [],
     bindings: { mcpToolName: 'account_encryption_automation_templates_recover' },
     title: 'Recover older automation templates',
@@ -73,7 +75,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     inputHints: { title: 'Recover older automation templates', fields: [] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.encryption.historicalKey.forget', approval: {result: 'required'},
+    id: 'account.encryption.historicalKey.forget', executionPlacement: 'client', approval: {result: 'required'},
     confirmVerb: { key: 'common.remove', fallback: 'Remove' }, irreversible: true,
     placements: [],
     bindings: { mcpToolName: 'account_encryption_historical_key_forget' },
@@ -89,7 +91,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
   } satisfies PreNormalizedActionSpec,
   ...(([
     {
-      id: 'account.security.get', approval: {result: 'required'},
+      id: 'account.security.get', executionPlacement: 'account', approval: {result: 'required'},
       bindings: { mcpToolName: 'account_security_get' },
       title: 'View Account security',
       description: 'Read the current Account authentication summary without exposing credential material.',
@@ -100,18 +102,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
       serverTransport: { method: 'GET', path: ACCOUNT_SECURITY_PATH_V1 },
     },
     {
-      id: 'account.security.terminalPresentUser.set', approval: {result: 'required'},
-      bindings: { mcpToolName: 'account_security_terminal_present_user_set' },
-      title: 'Set terminal present-user policy',
-      description: 'Set whether trusted terminal credentials may prove present-user authority for this Account.',
-      safety: 'danger',
-      sideEffectClass: 'danger',
-      inputSchema: AccountTerminalPresentUserPolicySetRequestV1Schema,
-      outputSchema: AccountTerminalPresentUserPolicySetResponseV1Schema,
-      serverTransport: { method: 'POST', path: ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1 },
-    },
-    {
-      id: 'account.password.enroll', approval: {result: 'required'},
+      id: 'account.password.enroll', executionPlacement: 'account', approval: {result: 'required'},
       title: 'Add a password',
       description: 'Enroll email and password authentication for the current Account.',
       safety: 'danger',
@@ -121,7 +112,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
       serverTransport: { method: 'POST', path: ACCOUNT_PASSWORD_ENROLL_PATH_V1 },
     },
     {
-      id: 'account.password.change', approval: {result: 'required'},
+      id: 'account.password.change', executionPlacement: 'account', approval: {result: 'required'},
       title: 'Change password',
       description: 'Replace the current Account password credential.',
       safety: 'danger',
@@ -131,7 +122,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
       serverTransport: { method: 'POST', path: ACCOUNT_PASSWORD_CHANGE_PATH_V1 },
     },
     {
-      id: 'account.password.remove', approval: {result: 'required'},
+      id: 'account.password.remove', executionPlacement: 'account', approval: {result: 'required'},
       irreversible: true,
       title: 'Remove password',
       description: 'Remove email and password authentication after verifying another viable sign-in route.',
@@ -142,7 +133,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
       serverTransport: { method: 'POST', path: ACCOUNT_PASSWORD_REMOVE_PATH_V1 },
     },
     {
-      id: 'account.email.change.request', approval: {result: 'required'},
+      id: 'account.email.change.request', executionPlacement: 'account', approval: {result: 'required'},
       title: 'Change sign-in email',
       description: 'Send verification for a replacement sign-in email address.',
       safety: 'danger',
@@ -153,11 +144,6 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   ] as const).map((spec): PreNormalizedActionSpec => ({
     ...spec,
-    // This private security choice must be reviewed even though the shared security
-    // observer projection below deliberately omits Account policy values.
-    ...(spec.id === 'account.security.terminalPresentUser.set'
-      ? { approvalPresentation: { summary: () => null, projectInput: (input: unknown) => input } }
-      : {}),
     // Enrollment, change and removal carry credential material, one-time
     // verification bearers and reauthentication proofs. That input may never
     // become durable Approval Artifact custody: a required confirmation keeps
@@ -195,7 +181,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   })) satisfies readonly PreNormalizedActionSpec[]),
   {
-    id: 'account.apiTokens.create', approval: { flow: 'blocking', result: 'required' },
+    id: 'account.apiTokens.create', executionPlacement: 'account', approval: { flow: 'blocking', result: 'required' },
     bindings: { mcpToolName: 'account_api_tokens_create' },
     title: 'Create API token',
     description: 'Create a named API token for the current Account, optionally with trusted-device-prepared encryption access. The token secret is shown once.',
@@ -242,7 +228,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.apiTokens.list', approval: {result: 'required'},
+    id: 'account.apiTokens.list', executionPlacement: 'account', approval: {result: 'required'},
     bindings: { mcpToolName: 'account_api_tokens_list' },
     title: 'List API tokens',
     description: 'List non-secret API-token summaries for the current Account.',
@@ -270,7 +256,8 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.apiTokens.update', approval: {result: 'required'},
+    id: 'account.apiTokens.update', executionPlacement: 'account', approval: {result: 'required'},
+    permissionChanging: true,
     bindings: { mcpToolName: 'account_api_tokens_update' },
     title: 'Update API token access',
     description: 'Update the label, grant, or embed configuration of one API token for the current Account.',
@@ -289,7 +276,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.apiTokens.revoke', approval: {result: 'required'},
+    id: 'account.apiTokens.revoke', executionPlacement: 'account', approval: {result: 'required'},
     confirmVerb: { key: 'files.reviewComments.durable.directWriteGrant.revoke', fallback: 'Revoke' }, irreversible: true,
     bindings: { mcpToolName: 'account_api_tokens_revoke' },
     title: 'Revoke API token',
@@ -317,7 +304,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'account.apiTokens.revokeAll', approval: {result: 'required'},
+    id: 'account.apiTokens.revokeAll', executionPlacement: 'account', approval: {result: 'required'},
     confirmVerb: { key: 'files.reviewComments.durable.directWriteGrant.revoke', fallback: 'Revoke' }, irreversible: true,
     bindings: { mcpToolName: 'account_api_tokens_revoke_all' },
     title: 'Revoke all API tokens',
@@ -343,4 +330,7 @@ export const ACCOUNT_SECURITY_ACTION_SPECS = Object.freeze([
     },
   } satisfies PreNormalizedActionSpec,
 ] as const);
+}
+
+export const ACCOUNT_SECURITY_ACTION_SPECS: ReturnType<typeof createAccountSecurityActionSpecs> = lazyActionSpecArray(createAccountSecurityActionSpecs);
 

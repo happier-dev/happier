@@ -1,25 +1,27 @@
-import type { AutomationDefinitionCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
-import { readSharedWorkflowTriggerSummaryRecipientsInTx, type SharedWorkflowSummaryDefinition } from '@/app/automations/automationSharedWorkflowSummaries';
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
-import { readAutomationSessionReviewProjectionIdsInTx } from "@/app/automations/sessionReviewProjectionInvalidation";
+import { getSessionReviewProjectionIdForRun } from "@/app/automations/sessionReviewProjectionInvalidation";
 import { automationRunCauseSelect } from "@/app/automations/automationPersistenceSelect";
 import { isAutomationCauseRow, retainedV2OriginKindForRun } from "@/app/automations/automationRunCauseCodec";
 import { resolveAutomationPendingInputSessionIdTx } from "@/app/automations/automationRunSessionTarget";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { readManagedWakePublicationAccountIdsInTx } from "@/app/machines/managed/managedWake";
+import type { AutomationDefinitionCreateRequest } from '@happier-dev/protocol/automations/automationApiV3';
+import { readSharedWorkflowTriggerSummaryRecipientsInTx, type SharedWorkflowSummaryDefinition } from '@/app/automations/automationSharedWorkflowSummaries';
 import {
     resolveWorkflowRunAdmissionRecipientAccountIdsInTx,
     resolveWorkflowRunAdmissionVisibilityInTx,
-    resolveWorkflowRunRecipientAccountIdsInTx,
 } from "./workflowRunAccess";
 
 export interface WorkflowPublicationScope {
     accountId: string;
+    /** Composed list projection, admitted with the Workflow's complete publication cohort. */
+    discussionId?: string;
     runIds?: readonly string[];
-    runWhere?: Prisma.AutomationRunWhereInput;
+    /** Multiple filters are OR-equivalent portable query batches. */
+    runWhere?: Prisma.AutomationRunWhereInput | Prisma.AutomationRunWhereInput[];
     automationIds?: readonly string[];
     /** Prospective structural facts must be admitted before a definition reseal. */
     automationDefinitionWrite?: Readonly<Pick<AutomationDefinitionCreateRequest, 'workflowDefinitionId' | 'scopeSessionId' | 'executionRecipe'> & {
@@ -30,6 +32,7 @@ export interface WorkflowPublicationScope {
     runSourceTriggerWhere?: Prisma.AutomationTriggerWhereInput;
     sessionIds?: readonly string[];
     machineIds?: readonly string[];
+    machineTargets?: readonly Readonly<{ accountId: string; machineId: string }>[];
     admission?: Readonly<{
         sourceArtifactId: string | null;
         visibleTeamId?: string | null;
@@ -55,10 +58,7 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
         } });
         automations.push(...rows);
     }
-    const sessionIds = [...new Set([
-        ...automations.flatMap(automation => automation.scopeSessionId ? [automation.scopeSessionId] : []),
-        ...await readAutomationSessionReviewProjectionIdsInTx(tx, automationIds),
-    ])].sort();
+    const sessionIds = [...new Set(automations.flatMap(automation => automation.scopeSessionId ? [automation.scopeSessionId] : []))].sort();
     const managedAccounts = await readManagedWakePublicationAccountIdsInTx(tx, {
         machineTargets: automations.flatMap(automation => automation.assignments.map(assignment => ({
             accountId: automation.accountId, machineId: assignment.machineId,
@@ -83,15 +83,20 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
 export async function getSessionLifecycleAutomationPublicationAudienceInTx(tx: Tx, sourceSessionIds: readonly string[]): Promise<WorkflowPublicationAudience> {
     if (sourceSessionIds.length === 0) return { accountIds: [], sessionIds: [] };
     const automationIds = new Set<string>();
+    const reviewSourceSessionIds = new Set<string>();
     // Kind, both enabled predicates and the portable Prisma offset are fixed bindings.
     for (const ids of portableQueryChunks({ values: [...new Set(sourceSessionIds)], bindingsPerValue: 1, fixedBindings: 4 })) {
         const triggers = await tx.automationTrigger.findMany({ where: {
             kind: "sessionLifecycle", sourceSessionId: { in: [...ids] }, enabled: true, deletedAt: null,
             automation: { enabled: true, deletedAt: null },
-        }, distinct: ["automationId"], select: { automationId: true } });
-        for (const trigger of triggers) automationIds.add(trigger.automationId);
+        }, distinct: ["automationId", "sourceSessionId"], select: { automationId: true, sourceSessionId: true } });
+        for (const trigger of triggers) {
+            automationIds.add(trigger.automationId);
+            if (trigger.sourceSessionId) reviewSourceSessionIds.add(trigger.sourceSessionId);
+        }
     }
-    return readAutomationPublicationAudienceInTx(tx, [...automationIds]);
+    const audience = await readAutomationPublicationAudienceInTx(tx, [...automationIds]);
+    return { ...audience, sessionIds: [...new Set([...reviewSourceSessionIds, ...audience.sessionIds])].sort() };
 }
 
 /** Pure census of the immediate source, watcher, review and managed-wake composition; never acquires locks. */
@@ -109,23 +114,32 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         AND: [scope.runSourceTriggerWhere], kind: "runLifecycle", sourceRunMachineId: null, deletedAt: null,
     }, select: { sourceRunId: true } }) : [];
     const runIds = [...new Set([...(scope.runIds ?? []), ...sourceTriggers.flatMap(trigger => trigger.sourceRunId ? [trigger.sourceRunId] : [])])];
-    const runs = runIds.length > 0 || scope.runWhere ? await tx.automationRun.findMany({ where: { OR: [
-        ...(runIds.length > 0 ? [{ id: { in: runIds } }] : []),
-        ...(scope.runWhere ? [scope.runWhere] : []),
-    ] }, select: { ...automationRunCauseSelect, id: true, accountId: true, automationId: true,
+    const runFilters: Prisma.AutomationRunWhereInput[] = portableQueryChunks({
+        values: runIds, bindingsPerValue: 1, fixedBindings: 1,
+    }).map(ids => ({ id: { in: [...ids] } }));
+    if (scope.runWhere) runFilters.push(...(Array.isArray(scope.runWhere) ? scope.runWhere : [scope.runWhere]));
+    const runSelect = { ...automationRunCauseSelect, id: true, accountId: true, automationId: true,
         originSessionId: true, producedSessionId: true, executionInputEnvelope: true,
         account: { select: { encryptionMode: true } },
-        workflowCustodyState: true, assignments: { select: { machineId: true } } } }) : [];
+        workflowCustodyState: true, sourceArtifactId: true, visibleTeamId: true,
+        assignments: { select: { machineId: true } } } satisfies Prisma.AutomationRunSelect;
+    const runs = [...new Map((await Promise.all(runFilters.map(where => tx.automationRun.findMany({
+        where, select: runSelect,
+    })))).flat().map(run => [run.id, run] as const)).values()];
     for (const run of runs) if (run.automationId) automationIds.add(run.automationId);
-    const watchers = runs.length > 0 ? await tx.automationTrigger.findMany({ where: {
-        kind: "runLifecycle", sourceRunId: { in: runs.map(run => run.id) }, sourceRunMachineId: null,
+    const watchers = (await Promise.all(portableQueryChunks({
+        values: runs.map(run => run.id), bindingsPerValue: 1, fixedBindings: 5,
+    }).map(ids => tx.automationTrigger.findMany({ where: {
+        kind: "runLifecycle", sourceRunId: { in: [...ids] }, sourceRunMachineId: null,
         enabled: true, deletedAt: null, remainingOccurrences: 1, automation: { enabled: true, deletedAt: null },
-    }, distinct: ["automationId"], select: { automationId: true } }) : [];
+    }, distinct: ["automationId"], select: { automationId: true } })))).flat();
     for (const watcher of watchers) automationIds.add(watcher.automationId);
     const automationAudience = await readAutomationPublicationAudienceInTx(tx, [...automationIds], scope.automationDefinitionWrite);
-    const followDestinations = runs.length ? await tx.sessionFollowEdge.findMany({ where: {
-        sourceWorkflowRunId: { in: runs.map(run => run.id) }, relation: 'follower',
-    }, select: { destinationSessionId: true } }) : [];
+    const followDestinations = (await Promise.all(portableQueryChunks({
+        values: runs.map(run => run.id), bindingsPerValue: 1, fixedBindings: 2,
+    }).map(ids => tx.sessionFollowEdge.findMany({ where: {
+        sourceWorkflowRunId: { in: [...ids] }, relation: 'follower',
+    }, select: { destinationSessionId: true } })))).flat();
     const pendingTargetSessionIds: string[] = [];
     for (const run of runs) {
         if (!isAutomationCauseRow(run)) continue;
@@ -142,14 +156,23 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
     }
     const sessionIds = [...new Set([...(scope.sessionIds ?? []), ...automationAudience.sessionIds,
         ...pendingTargetSessionIds,
+        ...runs.flatMap(run => {
+            const sourceSessionId = getSessionReviewProjectionIdForRun(run);
+            return sourceSessionId === null ? [] : [sourceSessionId];
+        }),
         ...followDestinations.map(edge => edge.destinationSessionId),
         ...runs.flatMap(run => [run.originSessionId, run.producedSessionId].filter((id): id is string => id !== null)),
     ])].sort();
     const accountIds = new Set([scope.accountId, ...runs.map(run => run.accountId), ...automationAudience.accountIds]);
+    // Each census rereads live authority. Runs with the same frozen authority
+    // inputs share that decision only within this capture, recheck or precommit.
+    const runAudiences = new Set<string>();
     for (const run of runs) {
-        if (run.workflowCustodyState !== null) {
-            for (const accountId of await resolveWorkflowRunRecipientAccountIdsInTx(tx, run.id)) accountIds.add(accountId);
-        }
+        if (run.workflowCustodyState === null) continue;
+        const authority = JSON.stringify([run.accountId, run.sourceArtifactId, run.visibleTeamId]);
+        if (runAudiences.has(authority)) continue;
+        runAudiences.add(authority);
+        for (const accountId of await resolveWorkflowRunAdmissionRecipientAccountIdsInTx(tx, run)) accountIds.add(accountId);
     }
     if (scope.admission) {
         const visibleTeamId = await resolveWorkflowRunAdmissionVisibilityInTx(tx, {
@@ -163,6 +186,7 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
         machineTargets: [
             ...runs.flatMap(run => run.assignments.map(assignment => ({ accountId: run.accountId, machineId: assignment.machineId }))),
             ...(scope.machineIds ?? []).map(machineId => ({ accountId: scope.accountId, machineId })),
+            ...(scope.machineTargets ?? []),
         ], sessionIds,
     })) accountIds.add(accountId);
     return { accountIds: [...accountIds].sort(), sessionIds, runIds: runs.map(run => run.id).sort() };

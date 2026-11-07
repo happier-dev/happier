@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 import { ExecutionRunPermissionRequestIdentitySchema } from './runPrimitives.js';
 import { ExecutionRunTransportErrorCodeSchema } from './runPrimitives.js';
@@ -51,6 +52,7 @@ import { SessionRuntimeIssueV1Schema } from '../../sessions/control/runtimeIssue
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 import { ActionErrorClassV1Schema, type ActionErrorClassV1 } from '../../actions/actionErrorClassV1.js';
 import { WorkflowTargetUnavailableReasonV1Schema } from '../../workflows/workflowTargetUnavailableReasonV1.js';
+import { ExecutionRunPreflightFailureV1Schema } from './preflight.js';
 import { ConnectedServiceUxDiagnosticV1Schema, readConnectedServiceUxDiagnosticFromError } from '../../connect/connectedServiceUxDiagnostics.js';
 
 /** A refusal offers choices, never credential material or permission to use a route. */
@@ -93,6 +95,7 @@ const ExecutionRunStartFailureEvidenceV1Schema = lazyZodSchema(() => z.strictObj
  */
 export const ExecutionRunStartFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   executionRunStart: ExecutionRunStartFailureEvidenceV1Schema,
+  executionRunPreflight: z.optional(ExecutionRunPreflightFailureV1Schema),
   updateRequired: z.optional(OperationUpdateRequiredV1Schema),
   childChoice: z.optional(ExecutionRunChildChoiceV1Schema),
   providerError: z.optional(ProviderErrorV1Schema),
@@ -118,8 +121,10 @@ export function withExecutionRunStartFailureDetails(
     ? details.executionRunStart : undefined;
   const parsedClass = ActionErrorClassV1Schema.safeParse(errorClass ?? (
     evidence && typeof evidence === 'object' && 'errorClass' in evidence ? evidence.errorClass : undefined));
-  const refusal = ExecutionRunStartRefusalV1Schema.safeParse(evidence && typeof evidence === 'object'
-    && 'refusal' in evidence ? evidence.refusal : undefined);
+  const refusal = ExecutionRunStartRefusalV1Schema.safeParse((evidence && typeof evidence === 'object'
+    && 'refusal' in evidence ? evidence.refusal : undefined)
+    ?? (details && typeof details === 'object' && 'code' in details && details.code === 'target_unavailable'
+      && 'reason' in details ? { code: details.reason, phase: 'agent_start_context' } : undefined));
   const updateRequired = details && typeof details === 'object' && !Array.isArray(details)
     ? OperationUpdateRequiredV1Schema.safeParse(
         (details as Readonly<Record<string, unknown>>).updateRequired,
@@ -131,6 +136,8 @@ export function withExecutionRunStartFailureDetails(
     && 'providerError' in details ? details.providerError : undefined);
   const issues = z.array(ActionInputIssueSchema).safeParse(details && typeof details === 'object'
     && 'issues' in details ? details.issues : undefined);
+  const preflight = ExecutionRunPreflightFailureV1Schema.safeParse(details && typeof details === 'object'
+    && 'executionRunPreflight' in details ? details.executionRunPreflight : undefined);
   const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(details);
   return {
     executionRunStart: { v: 1, runCreation, ...(parsedClass.success ? { errorClass: parsedClass.data } : {}),
@@ -139,6 +146,7 @@ export function withExecutionRunStartFailureDetails(
     ...(childChoice.success ? { childChoice: childChoice.data } : {}),
     ...(providerError.success ? { providerError: providerError.data } : {}),
     ...(issues.success ? { issues: issues.data } : {}),
+    ...(preflight.success ? { executionRunPreflight: preflight.data } : {}),
     ...(uxDiagnostic ? { uxDiagnostic } : {}),
   };
 }
@@ -170,11 +178,16 @@ export const ExecutionRunTurnResultV1Schema = lazyZodSchema(() => z.discriminate
 ]));
 export type ExecutionRunTurnResultV1 = z.infer<typeof ExecutionRunTurnResultV1Schema>;
 
-export const ExecutionRunInputTurnV1Schema = lazyZodSchema(() => z.strictObject({
+const executionRunInputTurnWitnessFields = () => ({
   turnId: z.string().check(z.minLength(1)),
   inputIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
   state: z.enum(['active', 'completed', 'failed', 'cancelled']),
+});
+
+export const ExecutionRunInputTurnV1Schema = lazyZodSchema(() => z.strictObject({
+  ...executionRunInputTurnWitnessFields(),
   result: z.optional(ExecutionRunTurnResultV1Schema),
+  error: z.optional(ExecutionRunErrorSchema),
 }));
 export type ExecutionRunInputTurnV1 = z.infer<typeof ExecutionRunInputTurnV1Schema>;
 
@@ -206,6 +219,7 @@ export const ExecutionRunPublicStateSchema = lazyZodSchema(() => z.looseObject({
   resolvedSelection: z.optional(ExecutionRunResolvedSelectionSchema),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).
   permissionMode: z.string().check(z.minLength(1)),
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,
@@ -233,6 +247,20 @@ export const ExecutionRunPublicStateSchema = lazyZodSchema(() => z.looseObject({
   error: z.optional(ExecutionRunErrorSchema),
 }));
 export type ExecutionRunPublicState = z.infer<typeof ExecutionRunPublicStateSchema>;
+
+/**
+ * Run state on the Session socket, which the server reads in clear in every
+ * Account mode. Turns carry only their witness; results and errors stay on Run reads.
+ */
+export const ExecutionRunSessionUpdateStateSchema = lazyZodSchema(() => z.looseObject({
+  ...ExecutionRunPublicStateSchema.shape,
+  inputTurns: z.optional(z.strictObject({
+    occurrenceId: z.string().check(z.minLength(1)),
+    current: z.optional(z.strictObject(executionRunInputTurnWitnessFields())),
+    last: z.optional(z.strictObject(executionRunInputTurnWitnessFields())),
+  })),
+}));
+export type ExecutionRunSessionUpdateState = z.infer<typeof ExecutionRunSessionUpdateStateSchema>;
 
 /** Retained lifetime and current work are separate: an idle interactive run remains sendable. */
 export function isExecutionRunActive(run: Readonly<{

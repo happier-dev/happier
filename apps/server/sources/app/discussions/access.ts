@@ -23,6 +23,7 @@ import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES, ENCRYPTED_DATA_KEY_ENVELOPE_V1_VE
 import { DISCUSSION_DEFAULT_PAGE_SIZE_V1 } from '@happier-dev/protocol/discussions/api';
 import { beforeAccountChangePublication } from '@/app/changes/markAccountChanged';
 import { fenceSessionAccountCursorAudienceInTx, readSessionAccountCursorAudienceInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 type DiscussionMutationAudienceInput = Readonly<{
     discussionId: string; actorAccountId?: string; additionalAccountIds?: readonly string[];
@@ -146,6 +147,8 @@ export interface DiscussionContext {
     access: ResourceGrantAccess;
     keyReadiness: boolean;
     dataEncryptionKey: string | null;
+    /** Complete explicit entitlement audience when the response also projects Account actors. */
+    audienceAccountIds?: readonly string[];
 }
 
 function discussionAccessFactsSelect(actorAccountId?: string) {
@@ -256,24 +259,10 @@ export async function isDiscussionCredentialCurrentInTx(tx: Tx, input: Readonly<
 export async function resolveDiscussionContextInTx(tx: Tx, params: Readonly<{
     discussionId: string; accountId: string; authentication: SessionAccessAuthentication;
     lockMembershipAuthority?: boolean;
+    includeActorAudience?: boolean;
 }>): Promise<DiscussionContext | null> {
     const contexts = await resolveDiscussionContextsInTx(tx, { ...params, discussionIds: [params.discussionId] });
     return contexts.get(params.discussionId) ?? null;
-}
-
-/** Recheck mutable collective authority after the existing terminal Account locks. */
-export function recheckDiscussionMutationContextBeforePublication(tx: Tx, input: Readonly<{
-    discussionId: string; accountId: string; authentication: SessionAccessAuthentication;
-    admitted: DiscussionContext; manage?: boolean; requireContent?: boolean;
-}>): void {
-    beforeAccountChangePublication(tx, [input.accountId], async client => {
-        const current = await resolveDiscussionContextInTx(client, input);
-        if (!current || current.storageMode !== input.admitted.storageMode
-            || (input.manage && current.access.level !== 'owner' && current.access.level !== 'admin')
-            || (input.requireContent && !current.keyReadiness)) {
-            throw new TransactionReplayRequiredError('transaction-account-audience-changed');
-        }
-    });
 }
 
 /** Lists and exact reads share one batched capture and the same grant/key projection. */
@@ -281,12 +270,13 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
     discussionIds: readonly string[]; accountId: string; authentication: SessionAccessAuthentication;
     /** Prepared append holds its resource parents before locking authority rows. */
     lockMembershipAuthority?: boolean;
+    includeActorAudience?: boolean;
 }>): Promise<ReadonlyMap<string, DiscussionContext>> {
     const contexts = new Map<string, DiscussionContext>();
     if (params.discussionIds.length === 0 || !await isDiscussionCredentialCurrentInTx(tx, params)) return contexts;
     const principal = params.authentication.sessionRuntimePrincipal;
     const readRows = () => tx.discussion.findMany({ where: { id: { in: [...params.discussionIds] } }, select: {
-            ...discussionAccessFactsSelect(params.accountId), dataEncryptionKey: true,
+            ...discussionAccessFactsSelect(params.includeActorAudience ? undefined : params.accountId), dataEncryptionKey: true,
             keyEnvelopes: { where: { recipientAccountId: params.accountId }, select: {
                 encryptedDataKey: true, recipientContentPublicKeyFingerprint: true,
             } },
@@ -330,10 +320,11 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
         const access = resolveResourceGrantAccessFromFacts(discussionGrantFacts(row, qualified), params.accountId);
         if (!access?.encryptionMode) continue;
         const admittedAccess = principal && access.level !== "view" ? { ...access, level: "edit" as const } : access;
+        const audienceAccountIds = params.includeActorAudience ? projectDiscussionAudienceFromFacts(row) : undefined;
         if (access.encryptionMode === "plain") {
             if (privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)) !== ARTIFACT_PLAIN_DATA_KEY_MARKER) continue;
             contexts.set(row.id, { discussionId: row.id, ownerAccountId: row.ownerAccountId, storageMode: "plain",
-                access: admittedAccess, keyReadiness: true, dataEncryptionKey: null });
+                access: admittedAccess, keyReadiness: true, dataEncryptionKey: null, ...(audienceAccountIds ? { audienceAccountIds } : {}) });
             continue;
         }
         const envelope = params.accountId === row.ownerAccountId && readiness.status === "available"
@@ -341,7 +332,8 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
             : row.keyEnvelopes[0];
         const key = envelope ? projectResourceRecipientEnvelope(account, envelope, readiness) : null;
         contexts.set(row.id, { discussionId: row.id, ownerAccountId: row.ownerAccountId, storageMode: "e2ee", access: admittedAccess,
-            keyReadiness: key !== null, dataEncryptionKey: key ? privacyKit.encodeBase64(key) : null });
+            keyReadiness: key !== null, dataEncryptionKey: key ? privacyKit.encodeBase64(key) : null,
+            ...(audienceAccountIds ? { audienceAccountIds } : {}) });
     }
     return contexts;
 }
@@ -379,12 +371,12 @@ export function discussionCandidateSql(accountId: string): Prisma.Sql {
             WHERE g.${name('discussionId')} = d.${name('id')} AND m.${name('accountId')} = ${accountId}))`;
 }
 
-/** Preserve the Account-wide incomplete fact without loading every ready resource.
+/** Preserve the requested Account-wide or exact Discussion incomplete fact without loading every ready resource.
  * SQL only selects structurally unusable envelope candidates; ordinary live
  * grant/credential/mode admission still decides whether any is visible.
  */
 export async function hasDiscussionWithUnavailableKeyInTx(tx: Tx, input: Readonly<{
-    accountId: string; authentication: SessionAccessAuthentication;
+    accountId: string; authentication: SessionAccessAuthentication; discussionId?: string;
 }>): Promise<boolean> {
     if (!await isDiscussionCredentialCurrentInTx(tx, input)) return false;
     const account = await tx.account.findUnique({ where: { id: input.accountId }, select: RECIPIENT_READINESS_SELECT });
@@ -403,6 +395,7 @@ export async function hasDiscussionWithUnavailableKeyInTx(tx: Tx, input: Readonl
     for (;;) {
         const rows: { id: string }[] = await tx.$queryRaw(sql.sql`SELECT d.${name('id')} AS id FROM ${name('Discussion')} d
             WHERE ${discussionCandidateSql(input.accountId)} AND d.${name('archivedAt')} IS NULL
+            ${input.discussionId === undefined ? sql.empty : sql.sql`AND d.${name('id')} = ${input.discussionId}`}
             AND d.${name('encryptionMode')} = 'e2ee' AND NOT (${ready})
             ${after === null ? sql.empty : sql.sql`AND d.${name('id')} > ${after}`}
             ORDER BY d.${name('id')} ASC LIMIT ${DISCUSSION_DEFAULT_PAGE_SIZE_V1}`);
@@ -413,15 +406,62 @@ export async function hasDiscussionWithUnavailableKeyInTx(tx: Tx, input: Readonl
     }
 }
 
-/** A disclosure audience describes entitlement, independently of one request's credentials. */
+/** Disclosure audiences describe entitlement, independently of one request's credentials. */
+export async function resolveDiscussionAudiencesInTx(tx: Tx, discussionIds: readonly string[]): Promise<ReadonlyMap<string, readonly string[]>> {
+    const ids = [...new Set(discussionIds)];
+    const result = new Map<string, readonly string[]>(ids.map(id => [id, []]));
+    if (ids.length === 0) return result;
+    const rows: DiscussionAccessFacts[] = [];
+    for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1 })) {
+        rows.push(...await tx.discussion.findMany({ where: { id: { in: [...chunk] } }, select: discussionAccessFactsSelect() }));
+    }
+    for (const row of rows) {
+        result.set(row.id, projectDiscussionAudienceFromFacts(row));
+    }
+    return result;
+}
+
+/** The single-resource seam delegates to the same bounded set-wise owner. */
 export async function resolveDiscussionAudienceInTx(tx: Tx, discussionId: string): Promise<string[]> {
-    const row = await readDiscussionAccessFactsInTx(tx, discussionId);
-    if (!row) return [];
+    const audiences = await resolveDiscussionAudiencesInTx(tx, [discussionId]);
+    return [...audiences.get(discussionId) ?? []];
+}
+
+function projectDiscussionAudienceFromFacts(row: DiscussionAccessFacts): string[] {
     const facts = discussionGrantFacts(row);
-    if (!facts.encryptionMode) return [];
-    const candidates = resolveResourceGrantAudienceFromFacts(facts);
-    const accounts = await tx.account.findMany({ where: { id: { in: candidates }, status: "active" }, select: { id: true } });
-    return accounts.map(account => account.id).sort();
+    const candidates = facts.encryptionMode ? resolveResourceGrantAudienceFromFacts(facts) : [];
+    // Grant/member facts already carry Account status. Ownership is the only
+    // unconditional resource arm, so qualify it from the same selected row.
+    return candidates.filter(accountId => accountId !== row.ownerAccountId
+        || isActiveHomeAccountStatus(row.ownerAccount.status));
+}
+
+/**
+ * Exact-detail demand for the existing recipient preparer. This is projected
+ * only after the caller has opened the current Discussion key; unavailable
+ * Account bindings are not actionable and therefore do not create demand.
+ */
+export async function isDiscussionRecipientKeyPreparationRequiredInTx(tx: Tx, input: Readonly<{
+    discussionId: string; context: DiscussionContext;
+}>): Promise<boolean> {
+    if (input.context.storageMode !== 'e2ee' || !input.context.keyReadiness) return false;
+    const audience = input.context.audienceAccountIds ?? await resolveDiscussionAudienceInTx(tx, input.discussionId);
+    const recipientIds = audience.filter(accountId => accountId !== input.context.ownerAccountId);
+    if (recipientIds.length === 0) return false;
+    const [accounts, envelopes] = await Promise.all([
+        tx.account.findMany({ where: { id: { in: recipientIds } }, select: RECIPIENT_READINESS_SELECT }),
+        tx.discussionKeyEnvelope.findMany({ where: { discussionId: input.discussionId,
+            recipientAccountId: { in: recipientIds } }, select: {
+                recipientAccountId: true, encryptedDataKey: true, recipientContentPublicKeyFingerprint: true,
+            } }),
+    ]);
+    const envelopesByAccountId = new Map(envelopes.map(envelope => [envelope.recipientAccountId, envelope]));
+    return accounts.some(account => {
+        const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
+        if (readiness.status !== 'available') return false;
+        const envelope = envelopesByAccountId.get(account.id);
+        return envelope === undefined || projectResourceRecipientEnvelope(account, envelope, readiness) === null;
+    });
 }
 
 /** Set-wise admission serves mentions, private attention and grant-entry cursors. Keys are separate. */

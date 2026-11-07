@@ -8,6 +8,18 @@ export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active
 export type PendingClaimDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
 export type { PendingProviderAction } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
 
+/** A definitive pre-claim Run refusal stays visible without fencing fresh input after recovery. */
+export function isUnclaimedUnavailableExecutionRunInput(targetExecutionRunId: string | null, row: Readonly<{
+    deliveryState: string | null;
+    deliveryBlockedReason: string | null;
+    providerAction: string | null;
+}>): boolean {
+    return targetExecutionRunId !== null
+        && row.deliveryState === 'blocked'
+        && row.deliveryBlockedReason === 'session_input_target_unavailable'
+        && row.providerAction === null;
+}
+
 type PendingInvocationCandidate = Readonly<{
     localId: string;
     position: number;
@@ -42,6 +54,9 @@ function selectExactAction(
         action = normalizePendingRequestedActionV1(row.requestedAction, 'stored');
     } catch {
         return null;
+    }
+    if (action.kind === 'recover_execution_run') {
+        return foregroundState === 'ready' ? { localId: row.localId, providerAction: 'send' } : null;
     }
     if (action.kind === 'send_now') {
         return {

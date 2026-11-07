@@ -3,8 +3,8 @@ import { isInternalActionId } from '../pluginActionSurface.js';
 import { getActionSpec } from '../actionSpecs.js';
 import type { createActionExecutor } from '../actionExecutor.js';
 import type { ActionExecuteFailure, ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
-import { StoredApprovalRequestSchema, admitApprovalRequesterDecisionV1, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
-import { requiresPresentUserDecisionForActionInputV1 } from '../decisionAuthority.js';
+import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, admitApprovalRequesterDecisionV1, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../decisionAuthority.js';
 import { readPluginInstallApprovalPendingReview } from '../actionApprovalPresentation.js';
 import { isApprovalActionId, isBlockingApprovalRequest } from './approvalOrigins.js';
 import { buildApprovalDecisionResult } from './approvalResults.js';
@@ -17,7 +17,7 @@ type Replay = ReturnType<typeof createActionExecutor>['replayApprovedApprovalReq
 /** Admission and effect-entry facts for the existing canonical approval execution owner. */
 export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGet' | 'approvalsUpdate'> & Readonly<{
   requireDiscussionDraftReviewAuthority(request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
-  settleFailedDiscussionApprovalPublication(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
+  settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
   resolveBlockingDecisionIfClaimed(args: Readonly<{
     artifactId: string; request: ApprovalRequest; decision: 'approve';
     decisionAuthority: NonNullable<ActionExecutorContext['authority']>; serverId: string | null;
@@ -47,6 +47,9 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       const parsed = StoredApprovalRequestSchema.safeParse(existingRaw);
       if (!parsed.success) return { ok: false, effectAttempted: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
       const request = parsed.data;
+      if (isHistoricalPublishApprovalRequestV2(request)) {
+        return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
+      }
       // Durable replay cannot reconstruct a requester's live decision proof.
       if (request.v === 2) {
         const admission = await admitApprovalRequesterDecisionV1({ request, context: {
@@ -63,7 +66,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       }
       if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
         && request.decision?.kind === 'approve') {
-        const settlementFailure = await deps.settleFailedDiscussionApprovalPublication(artifactId, request, {
+        const settlementFailure = await deps.settleApprovalExecutionPublication(artifactId, request, {
           ...(args.callerAuthority ? { authority: args.callerAuthority } : {}),
           ...(args.currentAccount ? { runtimeAccountId: args.currentAccount.accountId, serverId: args.currentAccount.serverId,
             serverIdentityId: args.currentAccount.serverIdentityId } : {}),
@@ -81,7 +84,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
         { ...(args.callerAuthority ? { authority: args.callerAuthority } : {}), ...(args.signal ? { signal: args.signal } : {}) });
       if (draftReviewFailure) return { ...draftReviewFailure, effectAttempted: false };
       const requiresHumanDecision = parsedRequestActionId.success
-        && (requiresPresentUserDecisionForActionInputV1(getActionSpec(parsedRequestActionId.data), request.actionArgs)
+        && (requiresPresentUserExecutionAuthorityForActionInputV1(getActionSpec(parsedRequestActionId.data), request.actionArgs)
           || (parsedRequestActionId.data === 'plugins.install' && readPluginInstallApprovalPendingReview(request.preview) !== null));
       // A caller-writable approved Artifact is not authenticated human authority.
       if (requiresHumanDecision && args.callerAuthority !== 'present_user') {
@@ -89,6 +92,14 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       }
       const artifactServerId = request.v === 2
         ? normalizeId(request.executionOriginV1.serverId) || null : normalizeId(request.serverId) || null;
+      // The signed logs envelope exists only for its original private Resource
+      // invocation. A stored approved label cannot release that live waiter or
+      // reconstruct its observer; authenticated decide owns its continuation.
+      if (request.v === 2 && request.actionId === 'machines.services.logs.read'
+        && request.executionOriginV1.originalActionEnvelope) {
+        return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale',
+          details: { reason: 'live_invocation_unavailable' } };
+      }
       effectMayHaveStarted = true;
       if (request.v === 1) {
         const failed = await deps.executeApprovedActionForRequest({ artifactId, request, artifactServerId,

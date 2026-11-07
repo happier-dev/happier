@@ -30,7 +30,7 @@ vi.mock("@/app/monitoring/metrics/sessionBindingMetrics", () => ({
 
 import {
     canReadAccessKeyFromSessionScopedSocket,
-    canPublishFromSessionScopedSocket,
+    isMachineBoundPublisherSocketForSession,
     resolveSessionScopedSocketBinding,
 } from "./sessionScopedBinding";
 
@@ -179,37 +179,16 @@ describe("resolveSessionScopedSocketBinding", () => {
         });
     });
 
-    it("rejects machine-bound publishes when a lingering access key points at a replaced machine", async () => {
-        accessKeyFindUniqueMock.mockResolvedValueOnce({
-            machineId: "m1",
-            machine: {
-                revokedAt: null,
-                replacedByMachineId: "m2",
-            },
-        });
-
-        await expect(
-            canPublishFromSessionScopedSocket({
-                socket: {
-                    data: {
-                        clientType: "session-scoped",
-                        sessionScopedBinding: {
-                            sessionId: "s1",
-                            machineId: "m1",
-                            proof: "machine-access-key",
-                        },
-                    },
-                } as any,
-                connection: {
-                    connectionType: "session-scoped",
-                    socket: {} as any,
-                    userId: "u1",
-                    sessionId: "s1",
-                },
-                sessionId: "s1",
-                requireMachineBinding: true,
-            }),
-        ).resolves.toBe(false);
+    it("recognizes only the exact Machine-bound publisher of the targeted Session", () => {
+        const connection = { connectionType: "session-scoped", socket: {} as any, userId: "u1", sessionId: "s1" } as const;
+        const socket = (sessionScopedBinding: unknown) => ({ data: { clientType: "session-scoped", sessionScopedBinding } }) as any;
+        const machineBound = socket({ sessionId: "s1", machineId: "m1", proof: "machine-access-key" });
+        expect(isMachineBoundPublisherSocketForSession({ socket: machineBound, connection, sessionId: "s1" })).toBe(true);
+        expect(isMachineBoundPublisherSocketForSession({ socket: machineBound, connection, sessionId: "s2" })).toBe(false);
+        expect(isMachineBoundPublisherSocketForSession({ socket: socket({ sessionId: "s1", machineId: null, proof: "owner-session" }),
+            connection, sessionId: "s1" })).toBe(false);
+        expect(isMachineBoundPublisherSocketForSession({ socket: machineBound,
+            connection: { connectionType: "user-scoped", socket: {} as any, userId: "u1" }, sessionId: "s1" })).toBe(false);
     });
 
     it("keeps owner-session sockets authorized to read machine access keys within the bound session", async () => {

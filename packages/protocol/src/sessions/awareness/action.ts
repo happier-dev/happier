@@ -1,4 +1,8 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { SessionRecapActionResultV1Schema, type SessionRecapActionResultV1 } from './recap.js';
+export { resolveSessionRecap, resolveSessionRecapState, SessionRecapSchema, SessionRecapStateSchema,
+  SessionRecapActionResultV1Schema, type SessionRecap, type SessionRecapState, type SessionRecapSynopsis,
+  type SessionRecapWorkerUpdate, type SessionRecapActionResultV1 } from './recap.js';
 import { z } from 'zod/mini';
 import { QualifiedProjectKeyV1Schema, type QualifiedProjectKeyV1 } from '../../workspaces/workspaceRefV1.js';
 import { SessionListResultSchema, SessionSummarySchema, SessionListMetadataUpgradeRequiredCountSchema, SessionListBotFilterUnavailableCountSchema } from '../control/listResult.js';
@@ -31,6 +35,10 @@ export const SessionListViewV1Schema = lazyZodSchema(() => z.enum([
   SESSION_LIST_AWARENESS_VIEW_V1,
 ]));
 export type SessionListViewV1 = z.infer<typeof SessionListViewV1Schema>;
+
+/** Recap is a single-Session content read, never a Session-list representation. */
+export const SessionActivityViewV1Schema = lazyZodSchema(() => z.enum(['summary', 'awareness', 'recap']));
+export type SessionActivityViewV1 = z.infer<typeof SessionActivityViewV1Schema>;
 
 /** The typed unsupported-view failure every awareness caller must be able to distinguish. */
 export const SESSION_LIST_AWARENESS_UNSUPPORTED_ERROR_CODE = 'awareness_view_unsupported' as const;
@@ -338,11 +346,12 @@ export type SessionActivityCompatibilityResultV1 = Readonly<
  * protection the marked list result provides (AWI-09), without a second single-Session envelope.
  */
 export const SessionActivityActionResultV1Schema = lazyZodSchema(() => z.union([
+  SessionRecapActionResultV1Schema,
   SessionAwarenessProjectionV1Schema,
   SessionActivityCompatibilityResultV1Schema,
 ]));
 export type SessionActivityActionResultV1 = Readonly<
-  SessionAwarenessProjectionV1 | SessionActivityCompatibilityResultV1
+  SessionAwarenessProjectionV1 | SessionActivityCompatibilityResultV1 | SessionRecapActionResultV1
 >;
 
 export function projectSessionActivityCompatibilityV1(params: Readonly<{

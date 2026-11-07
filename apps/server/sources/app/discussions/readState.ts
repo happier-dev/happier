@@ -3,7 +3,7 @@ import type { DiscussionReadCursorV1 } from '@happier-dev/protocol/discussions/m
 import { prismaRuntime as Prisma, getDbProviderFromEnv } from '@/storage/prisma';
 import { inTx, type Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { acquireDiscussionMutationAccountsInTx, resolveDiscussionContextInTx, recheckDiscussionMutationContextBeforePublication } from './access';
+import { acquireDiscussionMutationAccountsInTx, resolveDiscussionContextInTx } from './access';
 import { markDiscussionPrivateReaderChangedInTx, scheduleDiscussionReaderBadgeRefreshInTx } from './changes';
 import { readDiscussionRowInTx } from './queries';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
@@ -37,8 +37,6 @@ export async function setDiscussionReadCursor(input: Readonly<{
         await acquireDiscussionMutationAccountsInTx(tx, { ...input, includeDiscussionPublication: false });
         const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
         if (!context) return discussionFailure('discussion_not_found');
-        recheckDiscussionMutationContextBeforePublication(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
-            authentication: input.authentication, admitted: context });
         // Tools may read but cannot silently acknowledge for a person.
         if (input.authentication.authority !== 'present_user' || input.authentication.sessionRuntimePrincipal) return discussionFailure('discussion_read_denied');
         const discussion = await readDiscussionRowInTx(tx, input);

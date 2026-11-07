@@ -1,6 +1,5 @@
-import { AutomationAccountCurrentnessWitnessV1Schema, sameAutomationAccountContentIdentityV1, sameAutomationAccountCurrentnessWitnessV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { AutomationAccountCurrentnessWitnessV1Schema, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { AutomationReplyHandoffSettlementV1Schema, type AutomationReplyHandoffSettlementV1 } from '@happier-dev/protocol/automations/event';
-import { MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS } from '@happier-dev/protocol/automations/result-delivery';
 import { nextAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { Prisma } from "@prisma/client";
@@ -9,13 +8,13 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     acquireAccountEncryptionTransitionFenceInTx,
 } from "@/app/encryption/accountEncryptionTransition";
-import { afterTx, inTx, transactionResult, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { db } from "@/storage/db";
 
 import { resolveClaimLeaseExpiresAt } from "./automationClaimService";
 import { emitAutomationRunUpdated } from "./automationChangePublisher";
 import {
     automationAccountCurrentnessSelect,
-    captureAutomationAccountCurrentnessAfterPublication,
     deriveAutomationAccountCurrentnessWitness,
 } from "./automationAccountCurrentness";
 import {
@@ -27,14 +26,6 @@ import { decodeAutomationRunCause, isAutomationCauseRow } from "./automationRunC
 import type { AutomationRunItem } from "./automationTypes";
 
 export const DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS = 30_000;
-/**
- * Base durable retry cadence when a retrying daemon or Action does not supply
- * a positive timing hint: the first retry waits this long and each later
- * hint-less retry doubles it, capped by the Protocol-owned 24-hour maximum
- * (`MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS`). The Protocol schema remains the
- * upper-bound owner for supplied hints.
- */
-export const DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS = 10_000;
 
 export type AutomationReplyHandoffClaim = Readonly<{
     accountId: string;
@@ -115,32 +106,11 @@ function isRetryOutcomeWithoutHint(value: unknown): value is Readonly<{ kind: "r
 }
 
 function normalizeAutomationReplyHandoffRetryOutcome(value: unknown): unknown {
-    // Zero is the settlement schema's "no cadence preference" hint: the wake
-    // is derived from the persisted attempt instead of being honored.
+    // Zero means no external deadline; retain the current claim's existing
+    // recovery boundary rather than inventing an attempt-derived cadence.
     return isRetryOutcomeWithoutHint(value)
         ? { kind: "retry", retryAfterMs: 0 }
         : value;
-}
-
-/**
- * Resolves the durable wake for one retry settlement. A positive supplied
- * hint is the provider's explicit cadence and is honored up to the same
- * Protocol-owned 24-hour maximum the settlement schema enforces. Without a
- * hint, each persisted attempt doubles the default cadence so an unreachable
- * target is not re-attempted every few seconds forever while the same handoff
- * stays open until it is accepted, suppressed, or blocked.
- */
-function resolveAutomationReplyHandoffRetryDelayMs(input: Readonly<{
-    /** Persisted `replyHandoffAttempt` of the delivery that just failed. */
-    attempt: number;
-    retryAfterMs: number;
-}>): number {
-    if (input.retryAfterMs > 0) {
-        return Math.min(input.retryAfterMs, MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS);
-    }
-    const derivedDelayMs = DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS
-        * 2 ** Math.max(0, input.attempt - 1);
-    return Math.min(derivedDelayMs, MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS);
 }
 
 function handoffCandidateWhere(candidate: AutomationReplyHandoffCandidate): Prisma.AutomationRunWhereInput {
@@ -191,31 +161,8 @@ function isClaimCurrent(
 ): boolean {
     const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
     return currentness !== null
-        && sameAutomationAccountCurrentnessWitnessV1(claim.accountCurrentness, currentness)
+        && sameAutomationAccountContentIdentityV1(claim.accountCurrentness, currentness)
         && hasClaimedFrozenIdentity(candidate, claim);
-}
-
-/**
- * A successful custody Action may advance the Account-wide change cursor by
- * writing the custody row it was asked to create. Settlement may consume that
- * post-effect content identity when the Run/target bytes are unchanged and the
- * Account still uses the same content mode/key. Account.seq may advance again
- * before settlement without invalidating the already-created custody. This is not redispatch
- * authority: claim and pre-effect opening continue to require the exact
- * witness, while encryption movement still requeues transformed bytes.
- */
-function isClaimPostEffectSuccessorCurrent(input: Readonly<{
-    candidate: AutomationReplyHandoffCandidate;
-    claim: AutomationReplyHandoffClaim;
-    suppliedCurrentness: AutomationAccountCurrentnessWitnessV1 | undefined;
-}>): boolean {
-    if (!input.suppliedCurrentness || !hasClaimedFrozenIdentity(input.candidate, input.claim)) {
-        return false;
-    }
-    const currentness = deriveAutomationAccountCurrentnessWitness(input.candidate.account);
-    return currentness !== null
-        && sameAutomationAccountContentIdentityV1(input.claim.accountCurrentness, currentness)
-        && sameAutomationAccountContentIdentityV1(input.suppliedCurrentness, currentness);
 }
 
 function isDispatchableCandidate(
@@ -254,8 +201,8 @@ function openReplyHandoffWhere(): Prisma.AutomationRunWhereInput {
     };
 }
 
-async function findReplyHandoffDiscoveryPageTx(params: Readonly<{
-    tx: Tx;
+async function findReplyHandoffDiscoveryPage(params: Readonly<{
+    reader: Pick<Tx, "automationRun">;
     where: Prisma.AutomationRunWhereInput;
     after?: Readonly<{
         dueAt: Date;
@@ -284,7 +231,7 @@ async function findReplyHandoffDiscoveryPageTx(params: Readonly<{
             ],
         }
         : params.where;
-    const candidates = await params.tx.automationRun.findMany({
+    const candidates = await params.reader.automationRun.findMany({
         where,
         orderBy: [{ replyHandoffDueAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         take: AUTOMATION_REPLY_HANDOFF_DISCOVERY_PAGE_SIZE,
@@ -298,13 +245,13 @@ async function findReplyHandoffDiscoveryPageTx(params: Readonly<{
  * unresolved Accounts. The selected candidate is revalidated with the
  * canonical transition fence before its opaque payload is read or mutated.
  */
-async function findFirstReadReadyAccountHandoffDiscoveryTx(params: Readonly<{
-    tx: Tx;
+async function findFirstReadReadyAccountHandoffDiscovery(params: Readonly<{
+    reader: Pick<Tx, "automationRun">;
     where: Prisma.AutomationRunWhereInput;
 }>): Promise<AutomationReplyHandoffDiscoveryCandidate | null> {
     let after: Readonly<{ dueAt: Date; createdAt: Date; id: string }> | undefined;
     while (true) {
-        const candidates = await findReplyHandoffDiscoveryPageTx({ ...params, after });
+        const candidates = await findReplyHandoffDiscoveryPage({ ...params, after });
         if (candidates.length === 0) return null;
 
         for (const candidate of candidates) {
@@ -485,13 +432,15 @@ async function blockInvalidCandidateTx(
 export async function claimNextAutomationReplyHandoff(params: Readonly<{
     now: Date;
     leaseDurationMs?: number;
+    /** One traversal's due work; leases still use the actual claim time. */
+    dueThrough?: Date;
 }>): Promise<AutomationReplyHandoffClaim | null> {
     if (!isValidDate(params.now)) return null;
 
     return await inTx(async (tx) => {
-        const initialCandidate = await findFirstReadReadyAccountHandoffDiscoveryTx({
-            tx,
-            where: dueReplyHandoffWhere(params.now),
+        const initialCandidate = await findFirstReadReadyAccountHandoffDiscovery({
+            reader: tx,
+            where: dueReplyHandoffWhere(params.dueThrough ?? params.now),
         });
         if (!initialCandidate) return null;
 
@@ -544,11 +493,8 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
         ) {
             return null;
         }
-        // Publishing the claimed Run advances Account.seq for the account
-        // change cursor. Return the post-publication witness—the value a
-        // daemon will read from the canonical currentness endpoint—not the
-        // pre-claim sequence that this transaction intentionally advanced.
-        const terminalCurrentness = captureAutomationAccountCurrentnessAfterPublication(tx, candidate.accountId);
+        const accountCurrentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
+        if (!accountCurrentness) return null;
         const claim = {
             accountId: candidate.accountId,
             automationId: candidate.automationId,
@@ -569,24 +515,25 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
                 materializationId: candidate.replyHandoffTargetMaterializationId,
             },
         } satisfies Omit<AutomationReplyHandoffClaim, "accountCurrentness">;
-        return transactionResult(() => {
-            const accountCurrentness = terminalCurrentness.resolveResult();
-            return accountCurrentness ? { ...claim, accountCurrentness } : null;
-        });
+        return { ...claim, accountCurrentness };
     }, { transactionClass: "automation-reply-handoff-claim" });
 }
 
 /** Returns the next durable wake, including recovery of an expired handoff lease. */
-export async function findNextAutomationReplyHandoffDueAt(_params: Readonly<{
+export async function findNextAutomationReplyHandoffDueAt(params: Readonly<{
     now: Date;
+    futureOnly?: boolean;
 }>): Promise<Date | null> {
-    return await inTx(async (tx) => {
-        const next = await findFirstReadReadyAccountHandoffDiscoveryTx({
-            tx,
-            where: openReplyHandoffWhere(),
-        });
-        return next?.replyHandoffDueAt ?? null;
-    }, { transactionClass: "automation-reply-handoff-next-due" });
+    // Scheduling reads only ordering/currentness metadata. The claim still
+    // acquires its transition fence and re-reads the due candidate inTx.
+    const next = await findFirstReadReadyAccountHandoffDiscovery({
+        reader: db,
+        where: {
+            ...openReplyHandoffWhere(),
+            ...(params.futureOnly ? { replyHandoffDueAt: { gt: params.now } } : {}),
+        },
+    });
+    return next?.replyHandoffDueAt ?? null;
 }
 
 /**
@@ -828,9 +775,7 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
         ? undefined
         : AutomationAccountCurrentnessWitnessV1Schema.safeParse(params.accountCurrentness);
     if (suppliedCurrentness && !suppliedCurrentness.success) return { applied: false };
-    // `accepted`/`suppressed` are the only outcomes Channels can return after
-    // it has taken or refused custody, so they are also the only ones that may
-    // consume the post-effect content-identity fence below.
+    // A settled custody report must name the content identity it consumed.
     const settledExternalCustody = outcome.data.kind === "accepted"
         || outcome.data.kind === "suppressed";
     if (settledExternalCustody && suppliedCurrentness === undefined) {
@@ -859,15 +804,7 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
         const suppliedWitness = suppliedCurrentness?.success
             ? suppliedCurrentness.data
             : undefined;
-        const postEffectSuccessorCurrent = isClaimPostEffectSuccessorCurrent({
-            candidate,
-            claim: params.claim,
-            suppliedCurrentness: suppliedWitness,
-        });
-        if (
-            !isClaimCurrent(candidate, params.claim)
-            && !postEffectSuccessorCurrent
-        ) {
+        if (!isClaimCurrent(candidate, params.claim)) {
             return await returnStaleClaimToReadyTx({
                 tx,
                 candidate,
@@ -884,19 +821,8 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
             return { applied: false };
         }
         if (
-            suppliedCurrentness !== undefined
-            && (
-                !suppliedCurrentness.success
-                || !currentness
-                || (
-                    !sameAutomationAccountCurrentnessWitnessV1(suppliedCurrentness.data, currentness)
-                    // Custody settled before a later unrelated Account write.
-                    // The daemon's sequence may be older, but the same mode/key
-                    // plus the unchanged frozen handoff still proves the exact
-                    // content authority under which the effect settled.
-                    && !(settledExternalCustody && postEffectSuccessorCurrent)
-                )
-            )
+            suppliedWitness !== undefined
+            && !sameAutomationAccountContentIdentityV1(suppliedWitness, currentness)
         ) {
             return { applied: false };
         }
@@ -911,12 +837,12 @@ export async function settleAutomationReplyHandoff(params: Readonly<{
         } else {
             data = {
                 replyHandoffState: "ready",
-                replyHandoffDueAt: new Date(
-                    params.now.getTime() + resolveAutomationReplyHandoffRetryDelayMs({
-                        attempt: candidate.replyHandoffAttempt,
-                        retryAfterMs: outcome.data.retryAfterMs,
-                    }),
-                ),
+                // The strict external settlement schema owns positive hints.
+                // Without one, this exact lease expiry is already persisted;
+                // it is a recovery boundary, not a new cooldown or active lease.
+                replyHandoffDueAt: outcome.data.retryAfterMs > 0
+                    ? new Date(params.now.getTime() + outcome.data.retryAfterMs)
+                    : candidate.replyHandoffDueAt,
                 updatedAt: params.now,
             };
         }

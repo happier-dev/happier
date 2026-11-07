@@ -103,6 +103,15 @@ export const PluginDiagnosticRecordV1Schema = lazyZodSchema(() => z.strictObject
 }));
 export type PluginDiagnosticRecordV1 = z.infer<typeof PluginDiagnosticRecordV1Schema>;
 
+export function mapPluginSourceToDiagnosticSource(
+  source: Readonly<{ kind: string; devWatch?: boolean }>,
+): PluginDiagnosticRecordV1['plugin']['source'] {
+  if (source.kind === 'bundled') return 'bundled';
+  if (source.kind === 'archive') return 'archive';
+  if (source.kind === 'package' || source.kind === 'marketplace') return 'npm';
+  return source.devWatch === true ? 'development' : 'localPath';
+}
+
 /**
  * Static presentation is projection evidence, not a UI catalog. It is present
  * only for the contribution family whose manifest owns these facts.
