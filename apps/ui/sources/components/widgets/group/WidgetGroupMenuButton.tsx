@@ -44,6 +44,7 @@ export function WidgetGroupMenuButton(
       {/* The shared reveal owner: it fades, takes no clicks while hidden, and shows itself on keyboard focus. */}
       <RowActionRevealSlot revealed={revealed}>
       <ItemRowActions
+        currentUiContext
         // Names the menu for assistive tech only: it is anchored to its group, so no row repeats the name.
         title={title}
         compactThreshold={ALWAYS_OVERFLOW}

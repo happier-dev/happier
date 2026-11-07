@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
@@ -25,6 +26,10 @@ export function SaveWidgetGroupPanel(props: Readonly<{
 }>): React.ReactElement {
     const [name, setName] = React.useState(props.defaultName);
     const [state, setState] = React.useState<Readonly<{ kind: 'idle' | 'busy' }> | Readonly<{ kind: 'failed'; message: string }>>({ kind: 'idle' });
+    const commands = useCurrentUiContextLocalCommands(state.kind === 'busy' ? [] : [{ key: 'name',
+        title: `${t('widgetFrame.groupSaveTitle')}: ${t('widgetDefinition.name')}`, description: `${props.testID}.name`,
+        invoke: value => { if (typeof value !== 'string') return false; setName(value); },
+    }], { contextKey: props.testID, unbound: 'local' });
     const trimmed = name.trim();
     const { onSave, onDone } = props;
     const save = React.useCallback(async () => {
@@ -55,7 +60,7 @@ export function SaveWidgetGroupPanel(props: Readonly<{
                         accessoryLayout="stacked"
                         rightElement={(
                             <FieldTextInput testID={`${props.testID}.nameInput`} accessibilityLabel={t('widgetDefinition.name')}
-                                value={name} onChangeText={setName} editable={state.kind !== 'busy'} autoFocus selectTextOnFocus
+                                value={name} onChangeText={value => { void commands.invoke('name', value); }} editable={state.kind !== 'busy'} autoFocus selectTextOnFocus
                                 onSubmitEditing={() => { void save(); }} />
                         )}
                     />

@@ -1,6 +1,6 @@
 # USAGE-PARITY-1107
 
-**Verdict: IN PROGRESS.** Five coarse commits landed and three loaded UI/native comparisons match. Authenticated Session-to-browser follow-up reads remain blocked by the existing wire contract; a narrow exception to the no-schema instruction awaits the user. SEC-R4's mounted caller attribution and obsolete Coach settings authority are being corrected. This lane has neither restarted nor reloaded QA.
+**Verdict: IN PROGRESS.** Six coarse commits landed and three loaded UI/native comparisons match. SEC-R4's obsolete Coach settings authority is fixed; default mounted caller attribution remains active. Authenticated Session-to-browser follow-up reads remain blocked by the existing wire contract; a narrow exception to the no-schema instruction awaits the user. This lane has neither restarted nor reloaded QA.
 
 ## Deliverables and basis
 
@@ -45,9 +45,10 @@ The genuine Session-agent/finite-CLI/server path passed both present/absent-row 
 | Work details, disclosures, retries | Mounted page commands | Yes | Yes | Core controls GREEN; held-chart relay and Project-label fixtures pending |
 | Prices and night hours | Mounted controls → declared settings / price Actions | Yes | Yes | Controls10 + settings23 pass; native finite writer verified |
 | Sources / Continue | Mounted controls → external-session Actions | Yes | Yes | 72 cases, agent folder confirmation, pagination42 and conversation search18 pass |
+| Folder chooser follow-up reads | `daemon.filesystem.listRoots/browseDirectory/listFiles` | No, for Session | Yes, finite Account path | Session child wire/lifetime blocked; raw fallback now refused7/7 |
 | Coach / checks / trigger editor | Mounted controls → declared settings / digest Actions | Yes | Yes | Actual confirming caller retained; overlay discovery gap under test |
 | Recap / export / image | Mounted controls → existing Usage Actions | Yes | Yes | 84 focused cases pass; public build blocked before plugin-UI compiler |
-| Shared selectors, widgets, modal, charts | Existing local-command composition | Yes | Yes | Foreground5, About73, modal63, chart6 pass; group checks pending |
+| Shared selectors, widgets, modal, charts | Existing local-command composition | Yes | Yes | Foreground5, About73, modal63, chart6 and group4+adjacent47 pass |
 | Pacing targets / quota preferences | Existing settings Actions | Yes | Existing settings owner | Session settings only; no reachable Usage control found |
 
 ## Validation and ownership
@@ -64,7 +65,7 @@ Earlier deployment/importer/lockfile prerequisites stopped checks before collect
 ChartTooltip's real mounted exact-value journey passes after actual missing-command RED; all three existing tooltip interactions also pass, with boundary exports retained and cold imports collected before tests. Lens owner/series15 plus real DOM placement1 pass. Earlier deployment initialization failures were repaired at 15:05Z.
 Entry-loads4,5,8 and9 passed7/7; run9 finished17:33Z. Run6 passed6/7 on a filesystem export during publication; run7 passed6/7 on the foreign readiness export. Later runs load both producers. Network passes without valid pre-producer RED; that chronology exception remains explicit.
 No source-fix live pass is claimed from the retained reload-121 browser. Three existing controls were compared in the loaded product.
-Committed `332b4603`, `eb0202c1`, `f2269bfd`, `4759d29f`, `d470f6d8`: native-price, Sources/Coach, recap, selectors, Plans, modal bridge, delegated approvals, charts, Resource and generic widget owners. Private index/CAS; compatible UIFIX/WIDE, composer, projection and pointer hunks named. Remaining checks continue; final Usage RESULT pending.
+Committed `332b4603`, `eb0202c1`, `f2269bfd`, `4759d29f`, `d470f6d8`, `3d4454f8`: native-price, Sources/Coach, recap, selectors, Plans, modal bridge, delegated approvals, charts, Resource, widgets, comparison continuity, named views and SEC-R4 S1. Private index/CAS; compatible UIFIX/WIDE, composer, projection, pointer and readiness/custody hunks named. Shared index left untouched under16:54Z ruling. F1 remains active.
 The shared compiler wave ended with CLI/UI **not run** on Cloudflare declaration preparation; no UI delta proof is claimed or duplicate compiler queued. Plugin-UI's two new public-props assertions concern foreign Collection/DetailsPane props. The 11:42Z ruling keeps focused GREEN + entry-loads as the commit gate; integration owns compiler recovery.
 
 ## Residual risk

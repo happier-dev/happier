@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_WIDGET_FRAME_METRICS,
   happierPageRowDividerWidth,
+  orderWidgetGroupCellsForStack,
   type HappierWidgetFrameSourceDescriptor,
 } from '@happier-dev/plugin-ui/presentation';
 import type { WidgetLayoutGroupV1 } from '@happier-dev/protocol/widgets';
@@ -33,7 +35,7 @@ export type WidgetGroupChildPlacement = Readonly<{ wide: boolean }>;
 
 export type WidgetGroupFrameProps = Readonly<{
   testID: string;
-  group: Pick<WidgetLayoutGroupV1, 'id' | 'frameStyle' | 'dividers'>;
+  group: Pick<WidgetLayoutGroupV1, 'id' | 'frameStyle' | 'dividers'> & Partial<Pick<WidgetLayoutGroupV1, 'width'>>;
   placement: WidgetFramePlacement;
   /** The children's footprints, in reading order (A3 sizes; never changed by the group). */
   cells: readonly WidgetGroupCellInput[];
@@ -75,11 +77,13 @@ export const WidgetGroupFrame = React.memo(function WidgetGroupFrame(
   const bands = React.useMemo(
     () =>
       packWidgetGroupBands(
-        props.cells,
+        // A full group stacked in one column (a phone) reads in its two columns' order; Customize keeps the stored order.
+        props.columns === 1 && props.group.width === 'full' && !props.customizing
+          ? orderWidgetGroupCellsForStack(props.cells) : props.cells,
         props.columns,
         props.customizing ? 'customize' : 'view',
       ),
-    [props.cells, props.columns, props.customizing],
+    [props.cells, props.columns, props.customizing, props.group.width],
   );
   const titled = props.title !== null;
   const body = React.useMemo(
@@ -260,6 +264,8 @@ function WidgetGroupEmptySlot(
     seam: Readonly<{ borderTopWidth: number; borderTopColor: string }> | null;
   }>,
 ) {
+  const commands = useCurrentUiContextLocalCommands(props.onAdd ? [{ key: 'open', title: t('widgetFrame.groupSlotAdd'),
+    description: `${props.testID}.open`, invoke: props.onAdd }] : [], { contextKey: props.testID, unbound: 'local' });
   return (
     <View
       ref={props.anchorRef}
@@ -274,7 +280,7 @@ function WidgetGroupEmptySlot(
           ? {
               action: {
                 label: t('widgetFrame.groupSlotAdd'),
-                onPress: props.onAdd,
+                onPress: () => { void commands.invoke('open'); },
                 testID: `${props.testID}.add`,
               },
             }

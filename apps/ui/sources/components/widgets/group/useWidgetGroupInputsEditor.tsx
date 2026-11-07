@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
@@ -61,13 +63,20 @@ export function useWidgetGroupInputsEditor(
   labels: WidgetBindingValueLabels;
 }> {
   const anchorRef = React.useRef<View | null>(null);
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState<Readonly<{ callerContext: ActionExecutorContext | undefined }> | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const { group, scope, context, setInputs, testID } = input;
   // Built once when the step opens (the popover keeps its first setup); cheap to derive per render.
   const candidate = React.useMemo(() => buildWidgetGroupInputsCandidate({ title: input.title, candidates: input.candidates }), [input.title, input.candidates]);
-  const show = React.useCallback(() => { setNotice(null); setOpen(true); }, []);
-  const close = React.useCallback(() => setOpen(false), []);
+  const editable = candidate !== null && scope !== null && setInputs !== undefined;
+  const commands = useCurrentUiContextLocalCommands(editable ? [
+    { key: 'open', title: t('widgetFrame.groupInputsTitle', { group: input.title }), description: `${testID}.groupInputs.open`,
+      invoke: (_value, callerContext) => { setNotice(null); setOpen({ callerContext }); } },
+    ...(open ? [{ key: 'close', title: `${t('common.close')}: ${input.title}`, description: `${testID}.groupInputs.close`,
+      invoke: () => setOpen(null) }] : []),
+  ] : [], { contextKey: `${testID}.groupInputs`, unbound: 'local' });
+  const show = React.useCallback(() => { void commands.invoke('open'); }, [commands]);
+  const close = React.useCallback(() => { void commands.invoke('close'); }, [commands]);
   const done = React.useCallback((result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
     if (result.approvalPending) setNotice(t('widgetAdd.areaApprovalPending'));
     else close();
@@ -75,8 +84,6 @@ export function useWidgetGroupInputsEditor(
   const labels = useWidgetBindingValueLabels(group.context ?? {}, candidate, input.candidates);
   // The Inputs… row names what is bound before its value (lab wgmenu M "Project: happier").
   const binding = describeWidgetGroupInputsBinding(group.context, labels, candidate?.inputs?.fields ?? NO_FIELDS);
-  const editable =
-    candidate !== null && scope !== null && setInputs !== undefined;
   const editInputs = React.useMemo(
     () => (editable ? { onPress: show, binding } : undefined),
     [binding, editable, show],
@@ -133,6 +140,7 @@ export function useWidgetGroupInputsEditor(
     editable && open ? (
       <WidgetSetupPopover
         open
+        callerContext={open.callerContext}
         anchorRef={anchorRef}
         setup={buildSetup}
         onRequestClose={close}

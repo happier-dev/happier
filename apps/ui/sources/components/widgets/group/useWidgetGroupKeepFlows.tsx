@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { View } from 'react-native';
 import type {
   WidgetLayoutGroupV1,
@@ -41,7 +42,6 @@ export function useWidgetGroupKeepFlows(
   overlay: React.ReactElement | null;
 }> {
   const [open, setOpen] = React.useState<'save' | 'addTo' | null>(null);
-  const close = React.useCallback(() => setOpen(null), []);
   const latest = React.useRef(input);
   latest.current = input;
   const saveAttempt = React.useRef<Readonly<{
@@ -94,13 +94,22 @@ export function useWidgetGroupKeepFlows(
     [],
   );
   const available = input.scope !== null;
+  const commands = useCurrentUiContextLocalCommands(available ? [
+    { key: 'save', title: `${t('widgetFrame.groupSave')}: ${input.name}`, description: `${input.testID}.groupKeep.save`,
+      invoke: () => { saveAttempt.current = null; setOpen('save'); } },
+    { key: 'addTo', title: `${t('widgetFrame.groupAddTo')}: ${input.name}`, description: `${input.testID}.groupKeep.addTo`,
+      invoke: () => setOpen('addTo') },
+    ...(open ? [{ key: 'close', title: `${t('common.close')}: ${input.name}`, description: `${input.testID}.groupKeep.close`,
+      invoke: () => setOpen(null) }] : []),
+  ] : [], { contextKey: `${input.testID}.groupKeep`, unbound: 'local' });
+  const close = React.useCallback(() => { void commands.invoke('close'); }, [commands]);
   const onSave = React.useMemo(
-    () => (available ? () => { saveAttempt.current = null; setOpen('save'); } : undefined),
-    [available],
+    () => (available ? () => { void commands.invoke('save'); } : undefined),
+    [available, commands],
   );
   const onAddTo = React.useMemo(
-    () => (available ? () => setOpen('addTo') : undefined),
-    [available],
+    () => (available ? () => { void commands.invoke('addTo'); } : undefined),
+    [available, commands],
   );
   const { group, name, scope, anchorRef, testID } = input;
   const overlay = !scope ? null : open === 'save' ? (

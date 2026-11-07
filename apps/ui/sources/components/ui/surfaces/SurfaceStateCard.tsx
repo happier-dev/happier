@@ -17,6 +17,7 @@ import { t } from '@/text';
 import { useSurfaceStateCardSize, useSurfaceStateQuietActions } from './surfaceStateSize';
 import { useSurfaceStateElapsedSeconds } from './useSurfaceStateElapsedSeconds';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useModalContentId } from '@/modal/ModalProvider';
 
 export type SurfaceStateKind = HappierSurfaceStateKind;
 /**
@@ -373,8 +374,9 @@ function useSurfaceStateBindings(testID: string | undefined, animationEnabled: b
 /** The shared disclosure owns its state; core exposes that same intent through the mounted command. */
 function SurfaceStateDetailsToggle(props: React.ComponentProps<typeof HappierDisclosureToggle> & Readonly<{ title: string }>) {
     const { title, ...toggleProps } = props;
+    const modalId = useModalContentId();
     const commands = useCurrentUiContextLocalCommands([{ key: 'toggle', title: `${title}: ${props.label}`, invoke: props.onPress }],
-        { foregroundOverlay: true, unbound: 'local' });
+        { foregroundOverlay: modalId !== null, unbound: 'local' });
     return <HappierDisclosureToggle {...toggleProps} onPress={() => { void commands.invoke('toggle'); }} />;
 }
 
