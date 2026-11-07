@@ -5,7 +5,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key, params) => (params ? `${key}:${JSON.stringify(params)}` : key) });
 });
 
-import { describeWorkflowTriggerRunFold } from './workflowTriggerRunFoldPresentation';
+import { describeReviewAndConvergeRound, describeWorkflowTriggerRunFold } from './workflowTriggerRunFoldPresentation';
 
 const turnEnd = { kind: 'trigger', triggerId: 't', triggerRevision: 1, triggerKind: 'sessionLifecycle', occurrenceKey: 'o', occurredAt: 1,
     evidence: { event: 'parentTurnCompleted', sourceSessionId: 's', sourceTurnId: 'turn', policy: { kind: 'everyMatch' } } } as const as unknown as
@@ -51,5 +51,12 @@ describe('trigger-run fold presentation (07 S15)', () => {
         expect(settled(undefined).details[1]).not.toMatch(/goalReached|outOfBudget|noProgress|stoppedAfter/);
         expect(settled({ kind: 'stop_condition', arm: 0 }, { run: { state: 'failed', workflowCustodyState: 'settled' } }).details[1])
             .not.toBe('workflows.triggerRunFold.goalReached');
+    });
+
+    it('states a running review round against its own limit, and Verify only as one round (cards-T3)', () => {
+        expect(describeReviewAndConvergeRound({ maxRounds: 4 }, 2)).toBe('workflows.transcriptCard.reviewRound:{"round":2,"max":4}');
+        expect(describeReviewAndConvergeRound(null, 1)).toBe('workflows.transcriptCard.reviewRound:{"round":1,"max":3}');
+        expect(describeReviewAndConvergeRound({ apply: 'report', maxRounds: 4 }, 1)).toBe('workflows.transcriptCard.reviewRound:{"round":1,"max":1}');
+        expect(describeReviewAndConvergeRound({ maxRounds: 3 }, 0)).toBeNull();
     });
 });

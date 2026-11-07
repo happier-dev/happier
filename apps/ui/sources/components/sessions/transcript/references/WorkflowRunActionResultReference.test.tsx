@@ -132,6 +132,11 @@ async function answerRun(state: 'running' | 'succeeded' | 'interrupted', revisio
     home.answer(serverId, STORAGE_ROUTE, { body: await getResult(state, revision, metadata) });
 }
 
+/** The row's own exact Run reads; the mounted live mini-map reads the Run's map separately (07 S15). */
+function rowReads() {
+    return home.requestsFor(STORAGE_ROUTE).filter((request) => (request.input as { operation?: unknown }).operation === 'list');
+}
+
 async function renderCardRow(
     tool = startToolCall(),
     targetServerId: string | null = serverId,
@@ -198,7 +203,7 @@ describe('inline transcript workflow Run result', () => {
             metadataByRunId: {}, mode: 'replace', nextCursor: null });
         await answerRun('running', 2);
         const screen = await renderCardRow(); await settle();
-        expect(home.requestsFor(STORAGE_ROUTE).map(request => request.input)).toEqual([
+        expect(rowReads().map(request => request.input)).toEqual([
             expect.objectContaining({ operation: 'list', request: WorkflowRunListRequestV1Schema.parse({ runIds: [RUN_ID], invocationProvenance: [] }) }),
         ]);
         expect(collectHostText(screen.tree)).toContain('Release audit');
@@ -213,7 +218,7 @@ describe('inline transcript workflow Run result', () => {
         expect(screen.findByTestId(`transcript-workflow-run-${RUN_ID}`)).toBeTruthy();
         // The observed HTTP request comes through real Account Action admission.
         // It remains the exact lean list, without detail or invocation history.
-        expect(home.requestsFor(STORAGE_ROUTE).map(request => request.input)).toEqual([
+        expect(rowReads().map(request => request.input)).toEqual([
             expect.objectContaining({ operation: 'list', request: WorkflowRunListRequestV1Schema.parse({ runIds: [RUN_ID], invocationProvenance: [] }) }),
         ]);
         expect(storage.getState().workflowRunsById[workflowRunStoreKey(RUN_ID)]?.summary?.state).toBe('running');
@@ -294,7 +299,7 @@ describe('inline transcript workflow Run result', () => {
         const screen = await renderCardRow();
         await settle();
 
-        expect(home.requestsFor(STORAGE_ROUTE)).toHaveLength(0);
+        expect(rowReads()).toHaveLength(0);
         expect(collectHostText(screen.tree)).toContain('workflows.runState.running');
 
         // The canonical invalidation owner upserts the newer revision; the
@@ -314,6 +319,31 @@ describe('inline transcript workflow Run result', () => {
         expect(text).not.toContain('workflows.runState.running');
     });
 
+    it('offers Save as workflow only for a workflow written for this task, and saving writes nothing', async () => {
+        const seed = (sourceArtifactId: string | null) => storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id: RUN_ID, ownerAccountId: ACCOUNT_ID, origin: { kind: 'direct', originSessionId: 'session-1' },
+            state: 'running', revision: 3, sourceArtifactId,
+        }))]);
+        seed(null);
+        const sourceless = await renderCardRow();
+        await settle();
+        expect(collectHostText(sourceless.tree)).toContain('workflows.transcriptCard.writtenForTask');
+        await sourceless.pressByTestIdAsync(`transcript-workflow-run-${RUN_ID}-save`);
+        await settle();
+        const operations = home.requestsFor(STORAGE_ROUTE).map((request) => (request.input as { operation?: unknown }).operation);
+        // Save reads the exact Run for its draft; nothing is created, saved or changed.
+        expect(operations).toContain('get');
+        expect(operations.every((operation) => operation === 'get' || operation === 'invocations.list')).toBe(true);
+        await sourceless.unmount();
+
+        storage.setState({ workflowRunsById: {} });
+        seed('11111111-1111-4111-8111-111111111111');
+        const saved = await renderCardRow();
+        await settle();
+        expect(saved.findAllHostsByTestId(`transcript-workflow-run-${RUN_ID}-save`)).toHaveLength(0);
+        expect(collectHostText(saved.tree)).not.toContain('workflows.transcriptCard.writtenForTask');
+    });
+
     it('opens the exact Run route, never a latest-run lookup', async () => {
         await answerRun('running');
         const screen = await renderCardRow();
@@ -329,7 +359,7 @@ describe('inline transcript workflow Run result', () => {
         await settle();
 
         expect(screen.findByTestId(`transcript-workflow-run-${RUN_ID}`)).toBeTruthy();
-        expect(home.requestsFor(STORAGE_ROUTE)).toHaveLength(1);
+        expect(rowReads()).toHaveLength(1);
     });
 
     it('stays truthful when the exact read fails: the link remains, no status is invented', async () => {

@@ -1,12 +1,37 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import {
+  HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX,
+  HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX,
+  HappierWorkUpdateCard,
+  joinHappierFacts,
+  type HappierWorkUpdateCardFact,
+} from '@happier-dev/plugin-ui/presentation';
 
+import { describeWorkKind } from '@/components/sessions/work/workerKindGlyphs';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
+import { WorkflowFlowView } from '@/components/workflows/flow/WorkflowFlowView';
+import { WorkflowPurposeGlyph } from '@/components/workflows/presentation/WorkflowPurposeGlyph';
+import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { t } from '@/text';
+import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
 import { WorkflowRunFoldHeader } from '@/components/workflows/presentation/WorkflowRunFoldHeader';
-import { describeWorkflowTriggerRunFold } from '@/components/workflows/presentation/workflowTriggerRunFoldPresentation';
+import {
+  describeReviewAndConvergeRound,
+  describeWorkflowTriggerRunFold,
+  REVIEW_AND_CONVERGE_CATALOG_REF,
+  type WorkflowTriggerRunFoldPresentation,
+} from '@/components/workflows/presentation/workflowTriggerRunFoldPresentation';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { useSessionManagedWorkflowRunFlow } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -16,6 +41,7 @@ import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRout
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
 import {
   useActiveServerAccountScope,
+  useActiveServerAccountScopeLifetime,
   useWorkflowRun,
 } from '@/sync/store/hooks';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
@@ -152,6 +178,23 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
       trigger:
         summary?.origin.kind === 'automation' ? summary.origin.cause : null,
     });
+    // A Review & converge that is still running is its round card (cards-T3); once it settles it folds.
+    if (catalogRef === REVIEW_AND_CONVERGE_CATALOG_REF && summary !== null && !isTerminalWorkflowRunState(summary.state)) {
+      return (
+        <View style={styles.container}>
+          <ReviewRoundCard
+            runId={props.run.runId}
+            serverId={props.serverId ?? null}
+            summary={summary}
+            inputs={inputs ?? null}
+            presentation={presentation}
+            canEdit={detail?.callerAccess.canEdit === true}
+            onOpen={open}
+          />
+          {props.run.turnCount > 0 ? <View style={styles.body}>{props.children}</View> : null}
+        </View>
+      );
+    }
     // A run that wrote no turn here has nothing to expand: the row only names its outcome and opens the run.
     if (props.run.turnCount === 0) {
       return (
@@ -202,6 +245,97 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
     </View>
   );
 });
+
+/**
+ * A running Review & converge in the session it reviews (07 S15, lab cards-T3): the Work update card
+ * with the round it is on, its live map, what started it, and Stop reviewing / Open run. The map
+ * reads the run once while the card is mounted, through the same owner the Work rows use.
+ */
+const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
+  runId: string;
+  serverId: string | null;
+  summary: WorkflowRunSummaryV1;
+  inputs: Readonly<Record<string, unknown>> | null;
+  presentation: WorkflowTriggerRunFoldPresentation;
+  canEdit: boolean;
+  onOpen: (() => void) | null;
+}>) {
+  const { theme } = useUnistyles();
+  const workTheme = useWorkTheme();
+  const accountLifetime = useActiveServerAccountScopeLifetime();
+  const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
+  // Every round records its first step (skipped on round one) and its panel.
+  const roundsStarted = Math.max(flow?.runStates.get('verify')?.length ?? 0, flow?.runStates.get('panel')?.length ?? 0);
+  const round = describeReviewAndConvergeRound(props.inputs, roundsStarted);
+  const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(props.summary) });
+  const facts: HappierWorkUpdateCardFact[] = props.presentation.trigger === null ? [] : [{
+    id: 'trigger',
+    icon: <Icon name="repeat" size={HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX} color={theme.colors.text.tertiary} />,
+    label: props.presentation.trigger,
+  }];
+  const testID = `workflow-review-round:${props.runId}`;
+  return (
+    <HappierWorkUpdateCard
+      testID={testID}
+      tone={status.tone}
+      theme={workTheme}
+      host={WORK_HOST}
+      renderSurface={renderWorkUpdateCardSurface}
+      mark={props.presentation.purpose
+        ? <WorkflowPurposeGlyph purpose={props.presentation.purpose} size={HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX} color={theme.colors.text.secondary} />
+        : <Icon name="tree-structure" size={HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX} color={theme.colors.text.secondary} />}
+      title={props.presentation.workflowName ?? t('workflows.run.untitled')}
+      state={round ?? status.word}
+      meta={joinHappierFacts(describeWorkKind('workflow_run'), formatShortRelativeTime(Date.parse(props.summary.createdAt)))}
+      facts={facts}
+      actions={(
+        <>
+          {accountLifetime !== null && props.canEdit && props.summary.availability.cancel ? (
+            <StopReviewingAction run={props.summary} accountLifetime={accountLifetime} testID={`${testID}-stop`} />
+          ) : null}
+          {props.onOpen ? (
+            <RoundButton testID={`${testID}-open`} size="small" display="secondary" title={t('workflows.run.open')} onPress={props.onOpen} />
+          ) : null}
+        </>
+      )}
+    >
+      {flow === null ? null : (
+        <WorkflowFlowView
+          projection={flow.projection}
+          runStates={flow.runStates}
+          selectedNodeId={null}
+          onSelectNode={props.onOpen ?? undefined}
+          density="compact"
+          testIDPrefix={`${testID}-map`}
+        />
+      )}
+    </HappierWorkUpdateCard>
+  );
+});
+
+/** Stop reviewing is the Run's own Stop, through the inline Run controls owner; the run then folds. */
+function StopReviewingAction(props: Readonly<{
+  run: WorkflowRunSummaryV1;
+  accountLifetime: ServerAccountScopeLifetime;
+  testID: string;
+}>) {
+  const controls = useWorkflowInlineRunControls({
+    run: props.run,
+    definition: null,
+    acceptedContext: null,
+    accountLifetime: props.accountLifetime,
+    canEdit: true,
+    onStarted: noop,
+  });
+  if (controls.cancelRequested) return null;
+  return (
+    <RoundButton testID={props.testID} size="small" display="inverted" title={t('workflows.transcriptCard.stopReviewing')}
+      loading={controls.pendingControl === 'cancel'} disabled={controls.pendingControl !== null}
+      onPress={() => void controls.submitControl('cancel')} />
+  );
+}
+
+function noop(): void {}
 
 const styles = StyleSheet.create((theme) => ({
   // The row sits in the transcript column exactly like a message: centered, at most the column's width.

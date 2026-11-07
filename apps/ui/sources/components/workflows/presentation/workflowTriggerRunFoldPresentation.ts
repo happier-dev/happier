@@ -41,6 +41,10 @@ export type WorkflowTriggerRunFoldPresentation = Readonly<{
   /** The trailing fact: the workflow and its trigger ("Keep going until done · on turn end"). */
   meta: string | null;
   purpose: BuiltinWorkflowPurposeV1 | null;
+  /** The workflow's own name ("Review & converge"), when known. */
+  workflowName: string | null;
+  /** What started the run ("on turn end"), when it was a trigger. */
+  trigger: string | null;
 }>;
 
 type LoopOutcome =
@@ -149,6 +153,8 @@ export function describeWorkflowTriggerRunFold(
       details: outcome?.kind === 'exhausted' ? line(said) : line(turns, said),
       meta,
       purpose: entry.purpose,
+      workflowName,
+      trigger,
     };
   }
   if (entry?.id === 'builtin:review-and-converge') {
@@ -172,6 +178,8 @@ export function describeWorkflowTriggerRunFold(
       details: said ? [said] : [],
       meta,
       purpose: entry.purpose,
+      workflowName,
+      trigger,
     };
   }
   return {
@@ -179,5 +187,25 @@ export function describeWorkflowTriggerRunFold(
     details: line(turns, stateWord),
     meta: trigger,
     purpose: entry?.purpose ?? null,
+    workflowName,
+    trigger,
   };
+}
+
+/** The Review & converge catalog source: while it runs, the transcript shows its round card (cards-T3). */
+export const REVIEW_AND_CONVERGE_CATALOG_REF = 'builtin:review-and-converge';
+
+/**
+ * A running Review & converge's round (07 S15, lab cards-T3): "round {n} of up to {max}".
+ *
+ * `roundsStarted` counts the rounds the run recorded; the limit is the run's own Stop after input
+ * (prefilled 3), and Verify only runs one round. Before the first round starts there is no round.
+ */
+export function describeReviewAndConvergeRound(
+  inputs: WorkflowTriggerRunFoldInput['inputs'],
+  roundsStarted: number,
+): string | null {
+  if (roundsStarted < 1) return null;
+  const max = inputs?.apply === 'report' ? 1 : readCount(inputs, 'maxRounds', 3);
+  return t('workflows.transcriptCard.reviewRound', { round: Math.min(roundsStarted, max), max });
 }

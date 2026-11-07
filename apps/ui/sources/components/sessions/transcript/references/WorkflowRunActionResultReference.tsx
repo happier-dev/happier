@@ -1,20 +1,33 @@
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import * as React from 'react';
 import { View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { StyleSheet } from 'react-native-unistyles';
+import {
+    HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX,
+    HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX,
+    HappierWorkUpdateCard,
+    type HappierWorkUpdateCardFact,
+} from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ManagedRunMiniMap } from '@/components/sessions/work/WorkItemRow';
+import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
+import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { useWorkflowsAvailability } from '@/components/workflows/gating/workflowsAvailability';
-import { WorkflowRunStateStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
-import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { formatWorkflowRunOriginLabel } from '@/components/workflows/run/workflowRunDetailPresentation';
+import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+import { useSaveRunAsWorkflow } from '@/components/workflows/run/useSaveRunAsWorkflow';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import { useActiveServerAccountScope, useWorkflowRun } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useServerScopedMachineLabel, useWorkflowRun } from '@/sync/store/hooks';
 import { refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
@@ -43,30 +56,29 @@ import {
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: { paddingTop: theme.space.s8 },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-        paddingVertical: theme.space.s4,
-    },
-    body: {
-        flexShrink: 1,
-        gap: theme.space.s4,
-    },
+    // The head reads "Started a workflow · {name}": the verb quiet, the workflow's name the title.
     title: {
-        ...Typography.default('semiBold'),
+        ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
     },
-    meta: {
-        ...Typography.default('regular'),
+    verb: {
+        ...Typography.variant('label'),
         color: theme.colors.text.secondary,
     },
-    action: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.button.secondary.tint,
-        marginLeft: 'auto',
+    body: { gap: theme.space.s8 },
+    fact: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    progress: {
+        ...Typography.variant('meta'),
+        ...Typography.tabular(),
+        color: theme.colors.text.secondary,
     },
 }));
+
+const MARK_SIZE = HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX;
+const FACT_ICON_SIZE = HAPPIER_WORK_UPDATE_CARD_FACT_ICON_SIZE_PX;
 
 export const WorkflowRunActionResultReference = React.memo(function WorkflowRunActionResultReference(
     props: Readonly<{
@@ -93,8 +105,10 @@ function MountedWorkflowRunReference(props: Readonly<{
     serverId: string;
 }>): React.ReactElement | null {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const workTheme = useWorkTheme();
     const transcriptSource = useSessionTranscriptSource();
-    const { runId, origin } = props.reference;
+    const { runId } = props.reference;
     const activeScope = useActiveServerAccountScope();
     // The card answers the one canonical Workflows decision its destination
     // route answers. A historical start result outlives the feature being
@@ -139,38 +153,88 @@ function MountedWorkflowRunReference(props: Readonly<{
         : metadata?.kind === 'unavailable'
             ? t('workflows.contentUnavailable')
             : t('workflows.run.untitled');
-    const originLabel = formatWorkflowRunOriginLabel(origin);
-    const stateLabel = summary ? describeWorkflowRunState(summary.state, { workflowCustodyState: summary.workflowCustodyState }).label : null;
+    const status = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null;
+    const progress = summary ? describeWorkflowRunProgress(summary.stepProgress) : null;
+    const canNavigate = transcriptSource.navigate !== null;
     const open = (): void => {
         navigateWithBlurOnWeb(() => {
             transcriptSource.navigate?.(createWorkflowRunRoute(runId, props.serverId));
         });
     };
+    // A workflow written for this task has no source in the library; only it can be saved as one.
+    const sourceless = summary?.sourceArtifactId === null;
+    const facts: HappierWorkUpdateCardFact[] = summary ? [{
+        id: 'machine',
+        icon: <Icon name="laptop" size={FACT_ICON_SIZE} color={theme.colors.text.tertiary} />,
+        label: <RunMachineLabel serverId={props.serverId} machineId={summary.machineId} />,
+    }] : [];
 
     return (
-        <View style={styles.root} testID={`transcript-workflow-run-${runId}`}>
-            <HappierPressable
-                testID={`transcript-workflow-run-${runId}-open`}
-                accessibilityRole="button"
-                accessibilityLabel={[title, originLabel, stateLabel].filter((part) => part !== null).join(', ')}
-                accessibilityHint={t('workflows.run.open')}
-                onPress={open}
-                disabled={transcriptSource.navigate === null}
-                style={styles.row}
+        <View style={styles.root}>
+            <HappierWorkUpdateCard
+                testID={`transcript-workflow-run-${runId}`}
+                slotTestIDPrefix={`transcript-workflow-run-${runId}`}
+                tone={status?.tone ?? 'neutral'}
+                theme={workTheme}
+                host={WORK_HOST}
+                renderSurface={renderWorkUpdateCardSurface}
+                mark={<Icon name={WORKER_KIND_GLYPHS.workflow_run} size={MARK_SIZE} color={theme.colors.text.secondary} />}
+                title={(
+                    <Text numberOfLines={1} style={styles.title}>
+                        <Text style={styles.verb}>{`${t('workflows.transcriptCard.startedWorkflow')} \u00b7 `}</Text>
+                        {title}
+                    </Text>
+                )}
+                state={status?.word}
+                meta={summary ? formatShortRelativeTime(Date.parse(summary.createdAt)) : undefined}
+                facts={facts}
+                actions={canNavigate ? (
+                    <>
+                        {sourceless && summary ? <SaveRunAsWorkflowAction runId={runId} serverId={props.serverId} /> : null}
+                        <RoundButton testID={`transcript-workflow-run-${runId}-open`} size="small" display="secondary"
+                            title={t('workflows.run.open')} accessibilityLabel={[t('workflows.run.open'), title].join(', ')} onPress={open} />
+                    </>
+                ) : undefined}
             >
-                <View style={styles.body}>
-                    <Text style={styles.title}>{title}</Text>
-                    <Text style={styles.meta} numberOfLines={1}>{originLabel}</Text>
-                    {summary ? (
-                        <WorkflowRunStateStatus
-                            testID={`transcript-workflow-run-${runId}-state`}
-                            state={summary.state}
-                            workflowCustodyState={summary.workflowCustodyState}
-                        />
-                    ) : null}
-                </View>
-                {transcriptSource.navigate !== null ? <Text style={styles.action}>{t('workflows.run.open')}</Text> : null}
-            </HappierPressable>
+                {summary ? (
+                    <View style={styles.body}>
+                        {sourceless ? <Text style={styles.fact}>{t('workflows.transcriptCard.writtenForTask')}</Text> : null}
+                        <ManagedRunMiniMap runId={runId} serverId={props.serverId}
+                            testIDPrefix={`transcript-workflow-run-${runId}-map`} onOpen={open} />
+                        {progress ? <Text testID={`transcript-workflow-run-${runId}-progress`} style={styles.progress}>{progress}</Text> : null}
+                    </View>
+                ) : null}
+            </HappierWorkUpdateCard>
         </View>
     );
 }
+
+const RunMachineLabel = React.memo(function RunMachineLabel(props: Readonly<{ serverId: string; machineId: string }>) {
+    const label = useServerScopedMachineLabel(props.serverId, props.machineId);
+    return label ? <Text numberOfLines={1} style={stylesheet.fact}>{label}</Text> : null;
+});
+
+/**
+ * Save as workflow (07 S15): opens the run's workflow as an unsaved draft for review, with zero writes.
+ * The draft needs the accepted definition and context, which the exact Run read carries; the card reads
+ * it only when the person asks, then hands it to the one Save owner the Run page uses.
+ */
+const SaveRunAsWorkflowAction = React.memo(function SaveRunAsWorkflowAction(props: Readonly<{ runId: string; serverId: string }>) {
+    const accountLifetime = useActiveServerAccountScopeLifetime();
+    const isCurrent = React.useCallback(() => true, []);
+    const save = useSaveRunAsWorkflow({ accountLifetime, serverId: props.serverId, isCurrent });
+    const [reading, setReading] = React.useState(false);
+    const press = (): void => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null || reading) return;
+        setReading(true);
+        void workflowRunDetailActions.getRun(props.runId).then((opened) => {
+            if (!lifetime.isCurrent()) return;
+            save({ run: opened.run, definition: opened.authoredDefinition, acceptedContext: opened.acceptedContext });
+        }, () => undefined).finally(() => setReading(false));
+    };
+    return (
+        <RoundButton testID={`transcript-workflow-run-${props.runId}-save`} size="small" display="inverted"
+            title={t('workflows.run.saveAsWorkflow')} loading={reading} onPress={press} />
+    );
+});
