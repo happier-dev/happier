@@ -360,12 +360,11 @@ export const DeploymentEnvironmentDraft = React.memo(
                 accessibilityLabel={t('projects.deployments.whereTitle')}
                 testIdPrefix="project-deployments.draft.target"
                 surface="sheet"
-                subtitleLines={2}
                 options={targetTiles}
                 value={platformTarget?.key ?? MACHINE_TILE}
                 onChange={chooseTarget}
                 minimumColumns={1}
-                maximumColumns={props.phone ? 1 : 3}
+                maximumColumns={props.phone ? 1 : targetTileColumns(targetTiles.length)}
               />
             ) : null}
             {machines.length === 0 ? (
@@ -560,6 +559,11 @@ const DATA_COPY_OPTIONS = (): ReadonlyArray<SegmentedChoiceOption<DataCopyChoice
   { id: 'createEmpty', label: t('projects.deployments.copy.dataEmpty'), description: t('projects.deployments.copy.dataEmptyHint') },
   { id: 'restoreBackup', label: t('projects.deployments.copy.dataRestore'), description: t('projects.deployments.copy.dataRestoreHint') },
 ];
+
+/** Where it runs fills whole rows: three across, or two when three would leave one tile alone (four choices). */
+function targetTileColumns(count: number): number {
+  return count <= 3 ? Math.max(count, 1) : count % 3 === 1 ? 2 : 3;
+}
 
 const HOST_APPLY_IDLE = Object.freeze({ pending: false, error: null });
 const hostSetupExecute = createFrontDoorActionExecute();
