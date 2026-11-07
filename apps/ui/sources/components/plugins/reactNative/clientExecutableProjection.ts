@@ -1,16 +1,16 @@
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import { DaemonPluginUiArtifactByteIdentityV1Schema, type PluginProjectedDragSourceEntryV1, type PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginProjectedDragSourceEntryV1, PluginProjectedDropTargetEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type { PluginProjectedWorkItemsEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
-import {
-    PluginUiArtifactsManifestEntryV2Schema,
-    type PluginUiArtifactsManifestEntryV2,
-    type PluginUiArtifactDigestV1,
+import type {
+    PluginUiArtifactsManifestEntryV2,
+    PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginReactNativeExecutableModuleReference } from './loader';
+import { readDaemonPluginUiArtifactByteIdentity, readPluginUiArtifactGraph } from '@/sync/domains/plugins/ui/artifactIdentityRead';
 import { arePluginUiExecutableAuthoritiesEqual, readPluginUiAccountExecutableOrigin } from './executableModuleHost';
 import {
     getPluginUiClientExecutableTargetAddressKey,
@@ -43,6 +43,29 @@ export type PluginUiClientExecutableProjectionSource = Readonly<{
         serverId: string | null;
     }>;
 }>;
+
+type ClientExecutableProjectionFacts = Pick<PluginUiProjectionModel,
+    'generation' | 'installedPackagesById' | 'reactNativeBundlesById' | 'actionsById' | 'resourcesById'
+    | 'connectedAccountDescriptorsById' | 'dragSourcesById' | 'dropTargetsById' | 'workItemsById' | 'voiceProvidersById'>;
+type ExecutableProjectionSource = Omit<PluginUiClientExecutableProjectionSource, 'projection'> & Readonly<{
+    projection: ClientExecutableProjectionFacts;
+}>;
+
+/** Presentation changes do not replace the inputs which admit executable targets. */
+export function readPluginUiClientExecutableProjectionFacts(projection: PluginUiProjectionModel): ClientExecutableProjectionFacts {
+    return {
+        generation: projection.generation,
+        installedPackagesById: projection.installedPackagesById,
+        reactNativeBundlesById: projection.reactNativeBundlesById,
+        actionsById: projection.actionsById,
+        resourcesById: projection.resourcesById,
+        connectedAccountDescriptorsById: projection.connectedAccountDescriptorsById,
+        dragSourcesById: projection.dragSourcesById,
+        dropTargetsById: projection.dropTargetsById,
+        workItemsById: projection.workItemsById,
+        voiceProvidersById: projection.voiceProvidersById,
+    };
+}
 
 export type PluginUiClientExecutableArtifactAnchor =
     | Readonly<{
@@ -163,7 +186,7 @@ function originServesPlugin(origin: ProjectedExecutableOrigin, pluginId: string)
 
 function readCurrentProjectedExecutableOrigin(input: Readonly<{
     entry: unknown;
-    source: PluginUiClientExecutableProjectionSource;
+    source: ExecutableProjectionSource;
 }>): ProjectedExecutableOrigin | null {
     if (asRecord(input.entry)?.hostAccountOrigin !== undefined) {
         const account = readPluginUiAccountExecutableOrigin(input.entry);
@@ -219,11 +242,11 @@ function readRuntimeFacts(bundle: UnknownRecord): Readonly<{
     const runtime = asRecord(bundle.runtime);
     const decision = asRecord(runtime?.decision);
     const loadPolicy = asRecord(runtime?.loadPolicy);
-    const identity = DaemonPluginUiArtifactByteIdentityV1Schema.safeParse(runtime?.cacheIdentity);
+    const identity = readDaemonPluginUiArtifactByteIdentity(runtime?.cacheIdentity);
     return Object.freeze({
         state: typeof decision?.state === 'string' ? decision.state : null,
         source: typeof loadPolicy?.source === 'string' ? loadPolicy.source : null,
-        artifactDigest: identity.success ? identity.data.artifactDigest : null,
+        artifactDigest: identity === null ? null : identity.artifactDigest,
     });
 }
 
@@ -241,7 +264,7 @@ function readModuleReference(input: Readonly<{
 }
 
 function readInstalledPluginVersion(
-    projection: PluginUiProjectionModel,
+    projection: ClientExecutableProjectionFacts,
     pluginId: string,
 ): string | undefined {
     const version = projection.installedPackagesById[pluginId]?.version;
@@ -264,7 +287,7 @@ function targetTechnicalKey(candidate: ResolvedProjectedClientExecutableContribu
 
 function readActionCandidate(input: Readonly<{
     action: PluginUiProjectionModel['actionsById'][string];
-    source: PluginUiClientExecutableProjectionSource;
+    source: ExecutableProjectionSource;
     platform: PluginContributionClientPlatform;
 }>): ResolvedProjectedClientExecutableContribution | null {
     const { action } = input;
@@ -274,6 +297,22 @@ function readActionCandidate(input: Readonly<{
         contributionId: action.id, client: action.execution.target === 'account' ? action.execution.account : action.execution.client, action });
 }
 
+/** Pending admission applies only to the exact target this complete set will activate. */
+export function isProjectedPluginUiClientActionTarget(input: Readonly<{
+    action: PluginUiProjectionModel['actionsById'][string];
+    source: ExecutableProjectionSource;
+    platform: PluginContributionClientPlatform;
+}>): boolean {
+    const expected = readActionCandidate(input);
+    if (!expected) return false;
+    const address = getPluginUiClientExecutableTargetAddressKey(expected);
+    return resolveProjectedPluginUiClientExecutables({ actionProjection: input.source, platform: input.platform })
+        .some(target => target.occurrenceId === expected.occurrenceId
+            && getPluginUiClientExecutableTargetAddressKey(target) === address
+            && target.cacheIdentity.artifactDigest === expected.cacheIdentity.artifactDigest
+            && target.actions.some(action => action.pluginId === input.action.pluginId && action.id === input.action.id));
+}
+
 /** The same artifact/currentness admission serves every client callback family. */
 function readClientContributionCandidate(input: Readonly<{
     family: 'actions' | 'resources' | 'connectedAccountDescriptors' | 'dragSources' | 'dropTargets' | 'workItems';
@@ -281,7 +320,7 @@ function readClientContributionCandidate(input: Readonly<{
     localId: string;
     contributionId: string;
     client: Readonly<{ artifactId: string; exportName: string }>;
-    source: PluginUiClientExecutableProjectionSource;
+    source: ExecutableProjectionSource;
     platform: PluginContributionClientPlatform;
     action?: PluginUiProjectionModel['actionsById'][string];
     resource?: PluginUiProjectionModel['resourcesById'][string];
@@ -292,10 +331,10 @@ function readClientContributionCandidate(input: Readonly<{
     if (!entry.occurrenceId) return null;
     const origin = readCurrentProjectedExecutableOrigin({ entry, source: input.source });
     if (!origin || !originServesPlugin(origin, entry.pluginId)) return null;
-    const account = input.action?.execution.target === 'account' || input.resource?.execution?.target === 'account'
+    const accountRealm = input.action?.execution.target === 'account' || input.resource?.execution?.target === 'account'
         || input.connectedAccountDescriptor !== undefined;
-    if (account !== ('kind' in origin.authority)
-        || (account && 'kind' in origin.authority && entry.occurrenceId !== origin.authority.custodyId)) return null;
+    if ((accountRealm && !('kind' in origin.authority))
+        || ('kind' in origin.authority && entry.occurrenceId !== origin.authority.custodyId)) return null;
     const bundle = input.source.projection.reactNativeBundlesById[
         `reactNativeBundle:${entry.pluginId}:${contributionId}`
     ];
@@ -310,7 +349,7 @@ function readClientContributionCandidate(input: Readonly<{
     const bundleOrigin = readCurrentProjectedExecutableOrigin({ entry: bundle, source: input.source });
     if (!bundleOrigin || !areProjectedExecutableOriginsEqual(origin, bundleOrigin)) return null;
 
-    const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.safeParse(bundle.artifactGraph);
+    const artifactGraph = readPluginUiArtifactGraph(bundle.artifactGraph);
     const runtime = readRuntimeFacts(bundle);
     const cacheIdentity: PluginReactNativeBundleCacheIdentity | null = runtime.artifactDigest
         ? Object.freeze({
@@ -322,15 +361,15 @@ function readClientContributionCandidate(input: Readonly<{
         })
         : null;
     if (
-        !artifactGraph.success
+        artifactGraph === null
         || runtime.state !== 'load'
         || runtime.source !== 'installedArtifact'
         || cacheIdentity === null
-        || artifactGraph.data.tier !== 'reactNative'
-        || artifactGraph.data.artifactId !== client.artifactId
+        || artifactGraph.tier !== 'reactNative'
+        || artifactGraph.artifactId !== client.artifactId
         || cacheIdentity.pluginId !== entry.pluginId
         || cacheIdentity.contributionId !== contributionId
-        || cacheIdentity.artifactDigest !== artifactGraph.data.digest
+        || cacheIdentity.artifactDigest !== artifactGraph.digest
         || cacheIdentity.platform !== input.platform
         || (bundle.artifactSelectionOwner !== undefined
             && bundle.artifactSelectionOwner !== 'accountRelease'
@@ -339,7 +378,7 @@ function readClientContributionCandidate(input: Readonly<{
         return null;
     }
     const target = Object.freeze({
-        ...(account ? { realm: 'account' as const } : {}),
+        ...(accountRealm ? { realm: 'account' as const } : {}),
         artifactId: client.artifactId,
         exportName: client.exportName,
         platform: input.platform,
@@ -348,7 +387,7 @@ function readClientContributionCandidate(input: Readonly<{
         pluginId: entry.pluginId,
         artifactId: client.artifactId,
         target,
-        artifactGraph: artifactGraph.data,
+        artifactGraph,
     });
     if (!moduleReference) return null;
 
@@ -374,7 +413,7 @@ function readClientContributionCandidate(input: Readonly<{
         target,
         executionOrigin: origin.executionOrigin,
         authority: origin.authority,
-        artifactGraph: artifactGraph.data,
+        artifactGraph,
         cacheIdentity,
         moduleReference,
         artifactAnchor,
@@ -390,7 +429,7 @@ function readClientContributionCandidate(input: Readonly<{
 
 function readVoiceCandidate(input: Readonly<{
     entry: PluginUiProjectionModel['voiceProvidersById'][string];
-    source: PluginUiClientExecutableProjectionSource;
+    source: ExecutableProjectionSource;
     platform: PluginContributionClientPlatform;
 }>): ResolvedProjectedClientExecutableContribution | null {
     const { entry } = input;
@@ -425,7 +464,7 @@ function readVoiceCandidate(input: Readonly<{
     const bundleOrigin = readCurrentProjectedExecutableOrigin({ entry: bundle, source: input.source });
     if (!bundleOrigin || !areProjectedExecutableOriginsEqual(origin, bundleOrigin)) return null;
 
-    const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.safeParse(bundle.artifactGraph);
+    const artifactGraph = readPluginUiArtifactGraph(bundle.artifactGraph);
     const runtime = readRuntimeFacts(bundle);
     const cacheIdentity: PluginReactNativeBundleCacheIdentity | null = runtime.artifactDigest
         ? Object.freeze({
@@ -437,15 +476,15 @@ function readVoiceCandidate(input: Readonly<{
         })
         : null;
     if (
-        !artifactGraph.success
+        artifactGraph === null
         || runtime.state !== 'load'
         || runtime.source !== 'installedArtifact'
         || cacheIdentity === null
-        || artifactGraph.data.tier !== 'reactNative'
-        || artifactGraph.data.artifactId !== declaration.client.artifactId
+        || artifactGraph.tier !== 'reactNative'
+        || artifactGraph.artifactId !== declaration.client.artifactId
         || cacheIdentity.pluginId !== entry.pluginId
         || cacheIdentity.contributionId !== declaration.id
-        || cacheIdentity.artifactDigest !== artifactGraph.data.digest
+        || cacheIdentity.artifactDigest !== artifactGraph.digest
         || cacheIdentity.platform !== input.platform
         || (bundle.artifactSelectionOwner !== undefined
             && bundle.artifactSelectionOwner !== 'accountRelease'
@@ -462,7 +501,7 @@ function readVoiceCandidate(input: Readonly<{
         pluginId: entry.pluginId,
         artifactId: declaration.client.artifactId,
         target,
-        artifactGraph: artifactGraph.data,
+        artifactGraph,
     });
     if (!moduleReference) return null;
 
@@ -478,7 +517,7 @@ function readVoiceCandidate(input: Readonly<{
         target,
         executionOrigin: origin.executionOrigin,
         authority: origin.authority,
-        artifactGraph: artifactGraph.data,
+        artifactGraph,
         cacheIdentity,
         moduleReference,
         artifactAnchor: Object.freeze({ artifactOwnerKind: 'voiceProvider' as const }),
@@ -499,8 +538,10 @@ function candidateSortKey(candidate: ResolvedProjectedClientExecutableContributi
  * app-bundled origin-less Voice keeps its separate approved bridge.
  */
 export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
-    actionProjection?: PluginUiClientExecutableProjectionSource | null;
-    voiceProjection?: PluginUiClientExecutableProjectionSource | null;
+    actionProjection?: ExecutableProjectionSource | null;
+    /** Exact admitted Actions of live mounts, not ambient discovery. */
+    mountedActionProjections?: readonly ExecutableProjectionSource[];
+    voiceProjection?: ExecutableProjectionSource | null;
     voiceProviderIds?: ReadonlySet<string>;
     platform: PluginContributionClientPlatform;
 }>): readonly PluginUiProjectedClientExecutableTarget[] {
@@ -532,10 +573,12 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
                 if (candidate) candidates.push(candidate);
             }
         }
-        for (const action of Object.values(input.actionProjection.projection.actionsById)) {
+    }
+    for (const source of [...(input.actionProjection ? [input.actionProjection] : []), ...(input.mountedActionProjections ?? [])]) {
+        for (const action of Object.values(source.projection.actionsById)) {
             const candidate = readActionCandidate({
                 action,
-                source: input.actionProjection,
+                source,
                 platform: input.platform,
             });
             if (candidate) candidates.push(candidate);
@@ -590,7 +633,11 @@ export function resolveProjectedPluginUiClientExecutables(input: Readonly<{
     return Object.freeze([...grouped.values()]
         .filter((group) => !group.conflict)
         .map((group) => {
-            const contributions = group.contributions;
+            // Overlapping ambient/mounted sources grant one right, while the
+            // target/bytes/occurrence conflict check above still fails closed.
+            const contributions = [...new Map(group.contributions.map(candidate => [
+                `${candidate.family}\u0000${candidate.localId}`, candidate,
+            ])).values()];
             const actions = Object.freeze(contributions.flatMap((candidate) => (
                 candidate.action ? [candidate.action] : []
             )));

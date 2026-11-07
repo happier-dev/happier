@@ -1,4 +1,4 @@
-import type { PluginContributionClientPlatform } from '@happier-dev/protocol';
+import type { PluginContributionClientPlatform } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import {
     getPluginUiClientExecutableComposition,
@@ -13,6 +13,7 @@ import {
     type PluginUiExecutableModuleHost,
 } from '@/components/plugins/reactNative/executableModuleHost';
 import type { PluginReactNativeLoaderBackend } from '@/components/plugins/reactNative/loader';
+import type { PluginUiClientExecutableProjectionSource } from '@/components/plugins/reactNative/clientExecutableProjection';
 import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -32,12 +33,14 @@ type AppShellVoiceExecutableProjection = Readonly<{
 
 export function retainAppShellProjectedClientExecutables(input: Readonly<{
     projection: PluginUiProjectionModel | null;
+    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     voice: AppShellVoiceExecutableProjection | null;
     platform: PluginContributionClientPlatform;
     accountLifetime?: ActiveServerAccountScopeLifetime | null;
 }>): Promise<void> {
     return retainProjectedPluginUiClientExecutables({
         actionProjection: input.projection ? { projection: input.projection } : null,
+        mountedActionProjections: input.mountedActionProjections,
         voiceProjection: input.voice ? { projection: input.voice.projection, directMachineAuthority: {
             machineId: input.voice.machineId, serverId: input.voice.serverId,
         } } : null,
@@ -47,12 +50,12 @@ export function retainAppShellProjectedClientExecutables(input: Readonly<{
 }
 
 /**
- * AppShell owns the only production complete-set update. Its caller already
- * serializes updates in `pluginRuntimeUpdateTailRef`, so this function adds no
- * competing queue, lock, or lifecycle state machine.
+ * AppShell publishes the complete admitted set before independent target
+ * preparation. The existing composition fences superseded target adoption.
  */
 export async function reconcileAppShellProjectedClientExecutables(input: Readonly<{
     projection: PluginUiProjectionModel | null;
+    mountedActionProjections?: readonly PluginUiClientExecutableProjectionSource[];
     platform: PluginContributionClientPlatform;
     voice: AppShellVoiceExecutableProjection | null;
     /** Current daemon Voice catalog even when interaction/runtime activation is unavailable. */
@@ -76,6 +79,7 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
         createInvocationUi: createAppShellPluginUiInvocationHost,
     });
     return await reconcileProjectedPluginUiClientExecutables({
+        mountedActionProjections: input.mountedActionProjections,
         actionProjection: input.projection
             ? Object.freeze({ projection: input.projection })
             : null,
@@ -104,6 +108,8 @@ export async function reconcileAppShellProjectedClientExecutables(input: Readonl
 export async function unloadAppShellProjectedClientExecutables(
     executableHost: PluginUiExecutableModuleHost = getInstalledPluginUiExecutableModuleHost(),
 ): Promise<void> {
-    await withdrawProjectedExternalVoiceProviders(executableHost);
-    await getPluginUiClientExecutableComposition(executableHost).unload();
+    await Promise.all([
+        withdrawProjectedExternalVoiceProviders(executableHost),
+        getPluginUiClientExecutableComposition(executableHost).unload(),
+    ]);
 }

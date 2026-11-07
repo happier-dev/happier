@@ -13,7 +13,7 @@ import {
     readPluginUiReactNativeBundleCacheIdentity,
 } from '@/sync/domains/plugins/ui/artifactAdoption';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { PluginUiArtifactsManifestEntryV2Schema } from '@happier-dev/protocol/plugins/ui';
+import { readPluginUiArtifactGraph } from '@/sync/domains/plugins/ui/artifactIdentityRead';
 import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 
 export type PluginUiReactNativeRuntimeProjectionReconcilerTargets = Readonly<{
@@ -96,12 +96,12 @@ export function createPluginUiReactNativeRuntimeProjectionReconciler(
                 const cacheKey = readNonEmptyString(runtime?.cacheKey);
                 const pluginId = readNonEmptyString(entry?.pluginId);
                 const contributionId = readNonEmptyString(entry?.contributionId);
-                const graph = PluginUiArtifactsManifestEntryV2Schema.safeParse(entry?.artifactGraph);
-                const identity = pluginId && contributionId && graph.success && graph.data.tier === 'reactNative'
+                const graph = readPluginUiArtifactGraph(entry?.artifactGraph);
+                const identity = pluginId && contributionId && graph !== null && graph.tier === 'reactNative'
                     ? readPluginUiReactNativeBundleCacheIdentity(runtime?.cacheIdentity, {
                         pluginId,
                         contributionId,
-                        artifactId: graph.data.artifactId,
+                        artifactId: graph.artifactId,
                         platform: 'web',
                     })
                     : null;

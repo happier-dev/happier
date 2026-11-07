@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { PluginContributesV2Schema, PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { PluginProjectionV2Schema, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSearchQueryV1Schema, PluginSearchResultV1Schema } from '@happier-dev/protocol/plugins/contributions/search-providers';
 import type { PluginActionPresentUserAuthorizationFacts } from '@happier-dev/protocol/plugins/actions/invocation';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -9,18 +10,26 @@ import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plu
 import { DaemonPluginUiArtifactBytesReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     PluginUiArtifactsManifestEntryV2Schema,
+    PluginUiTargetedContributionsV1Schema,
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
     type PluginUiArtifactDigestV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionOutputV1Schema,
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { resolvePluginUiClientExecutablePlatform, usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { clearPluginAccountAvailabilityProjection, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import * as availabilityProjection from '@/sync/domains/plugins/availability/projection';
 import * as executionOriginSelection from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
@@ -30,34 +39,46 @@ import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/plugi
 import { createPluginUiProjectedActionResolver, normalizePluginInstalledUiDeclarations } from '@/sync/domains/plugins/ui/projection';
 import { mergeInstalledPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import { getInstalledPluginUiClientExecutableComposition } from '@/components/plugins/reactNative/clientExecutableContributions';
-import { derivePluginReactNativeBundleCacheKey } from '@/components/plugins/reactNative/bundleCache';
+import { derivePluginReactNativeBundleCacheKey, getInstalledPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { resolveProjectedPluginUiClientExecutables } from '@/components/plugins/reactNative/clientExecutableProjection';
 import { buildPluginSearchProviderSections } from '@/components/appShell/search/pluginSearchProviderSections';
+import { useMountedTargetedContributions } from '@/components/plugins/surfaces/mountedTargetedContributions';
+import { useBoundPluginSurfaceController } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import { useManagedProvisionerPresentation } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { unloadAppShellProjectedClientExecutables } from './appShellClientExecutableActivation';
 import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from './AppShellPluginUiProjection';
 
-const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null, bytes: new Uint8Array(), artifactDigest: '',
+const daemon = vi.hoisted(() => ({ projection: null as PluginProjectionV2 | null, peerProjection: null as PluginProjectionV2 | null,
+    mountedProjection: null as PluginProjectionV2 | null, peerMountedProjection: null as PluginProjectionV2 | null,
+    peerMountedReads: 0, bytes: new Uint8Array(), artifactDigest: '',
     successorBytes: new Uint8Array(), successorDigest: '' }));
 // Only the real network transport is replaced. Account, storage, projection,
 // Artifact leases, CommonJS evaluation, registration and reconciliation stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    const { createPluginArtifactTransferBoundary } = await import('@/dev/testkit/harness/pluginArtifactTransferBoundary');
+    const artifacts = createPluginArtifactTransferBoundary(async ({ payload }) => {
+        const successor = payload.cacheIdentity.artifactDigest === daemon.successorDigest;
+        const bytes = successor ? daemon.successorBytes : daemon.bytes;
+        const digest = successor ? daemon.successorDigest : daemon.artifactDigest;
+        const { computePluginUiArtifactSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
+        return DaemonPluginUiArtifactBytesReadResponseSchema.parse({ ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: digest },
+            artifact: { artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: bytes.byteLength },
+            files: [{ relativePath: successor ? 'react-native/next/entry.cjs.bundle' : 'react-native/continuity/entry.cjs.bundle', digest: computePluginUiArtifactSha256DigestV1(bytes),
+                byteSize: bytes.byteLength, bytesBase64: Buffer.from(bytes).toString('base64') }] });
+    });
     return createServerScopedMachineRpcBoundaryMock(async ({ method, payload, machineId }) => {
         if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            if (payload && typeof payload === 'object' && 'selection' in payload && payload.selection === 'mountedActions') {
+                if (machineId === 'machine-peer') {
+                    daemon.peerMountedReads += 1;
+                    return { protocolVersion: 1, projection: daemon.peerMountedProjection };
+                }
+                return { protocolVersion: 1, projection: daemon.mountedProjection };
+            }
             return { protocolVersion: 1, projection: machineId === 'machine-peer' ? daemon.peerProjection : daemon.projection };
         }
-        if (method === RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ) {
-            const successor = typeof payload === 'object' && payload !== null && 'cacheIdentity' in payload
-                && typeof payload.cacheIdentity === 'object' && payload.cacheIdentity !== null && 'artifactDigest' in payload.cacheIdentity
-                && payload.cacheIdentity.artifactDigest === daemon.successorDigest;
-            const bytes = successor ? daemon.successorBytes : daemon.bytes;
-            const digest = successor ? daemon.successorDigest : daemon.artifactDigest;
-            const { computePluginUiArtifactSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
-            return DaemonPluginUiArtifactBytesReadResponseSchema.parse({ ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: digest },
-                artifact: { artifactKind: 'reactNativeBundle', digest, format: 'plainJs', byteSize: bytes.byteLength },
-                files: [{ relativePath: successor ? 'react-native/next/entry.cjs.bundle' : 'react-native/continuity/entry.cjs.bundle', digest: computePluginUiArtifactSha256DigestV1(bytes),
-                    byteSize: bytes.byteLength, bytesBase64: Buffer.from(bytes).toString('base64') }] });
-        }
+        if (artifacts.handles(method)) return artifacts.request({ method, payload, machineId });
         if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true, inputSchema: {} };
         throw new Error(`Unexpected executable fixture RPC: ${method}`);
     });
@@ -78,12 +99,18 @@ const origin = { serverIdentityId, materializationRef: { machineId: 'machine-liv
 // This is a foreign plugin executable fixture, loaded and evaluated by the
 // production CommonJS owner. Its pending work crosses no mocked internal owner.
 const pluginBoundary: { pending: ReturnType<typeof createDeferred<string>>; cleanups: number; signal: AbortSignal | null;
-    activationGate: ReturnType<typeof createDeferred<void>> | null; enteredActivation: boolean; evaluations: number;
+    activationGate: ReturnType<typeof createDeferred<void>> | null; enteredActivation: boolean; evaluations: number; peerActivations: number;
     peerCleanupGate: ReturnType<typeof createDeferred<void>> | null; peerCleanupEntered: boolean; peerCleanupFinished: boolean } = {
-    pending: createDeferred<string>(), cleanups: 0, signal: null, activationGate: null, enteredActivation: false, evaluations: 0,
+    pending: createDeferred<string>(), cleanups: 0, signal: null, activationGate: null, enteredActivation: false, evaluations: 0, peerActivations: 0,
     peerCleanupGate: null, peerCleanupEntered: false, peerCleanupFinished: false,
 };
 const fixtureGlobal = globalThis as typeof globalThis & { executableContinuityFixture?: typeof pluginBoundary };
+
+/** AppShell observes catalogs passively; these fixture consumers own actual demand. */
+function CatalogDemand(props: Readonly<{ machineId: string; serverId: string }>) {
+    usePluginUiProjectionCurrentness(props);
+    return null;
+}
 
 afterEach(async () => {
     pluginBoundary.pending.resolve('cleanup');
@@ -101,7 +128,8 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-async function mountClientExecutableFixture(options: { waitForAdmission?: boolean; admitPeer?: boolean; searchProvider?: boolean; coldDaemon?: boolean;
+async function mountClientExecutableFixture(options: { waitForAdmission?: boolean; admitPeer?: boolean; searchProvider?: boolean; coldDaemon?: boolean; mountedOnly?: boolean;
+    managedRepair?: boolean;
     artifactLabel?: string;
     scopedGrants?: PluginActionPresentUserAuthorizationFacts['scopedGrants'] } = {}) {
     pluginBoundary.pending = createDeferred<string>();
@@ -109,25 +137,47 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     pluginBoundary.signal = null;
     pluginBoundary.enteredActivation = false;
     pluginBoundary.evaluations = 0;
+    pluginBoundary.peerActivations = 0;
+    daemon.peerMountedReads = 0;
     pluginBoundary.peerCleanupEntered = false;
     pluginBoundary.peerCleanupFinished = false;
+    // Bootstrap and the explicit projection fixture publish the same daemon
+    // inventory; its HTTP response waits until the fixture has built that set.
+    const availabilityReady = createDeferred<PluginAccountAvailabilitySnapshot>();
     connection = await restoreServerAccountForTest({ serverUrl: 'https://executable-continuity.test', serverIdentityId, accountId: 'account-continuity',
-        request: async url => {
+        request: async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/health') return Response.json({ status: 'ok' });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+                features: { machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } },
+                    plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } } },
+            }));
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                const snapshot = await availabilityReady.promise;
+                return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({
+                    availabilityCursor: snapshot.availabilityCursor, snapshots: snapshot.snapshots,
+                }));
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+                const snapshot = await availabilityReady.promise;
+                return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+                    availabilityCursor: snapshot.availabilityCursor,
+                    pluginIds: snapshot.intentReads.map(entry => entry.pluginId), intentReads: snapshot.intentReads, failedPluginIds: [],
+                }));
+            }
             // Real Sync owns census admission after restoration. An unserved
             // list would turn these hydrated fixture rows into stale supplies.
             if (path === '/v1/machines') return Response.json(['machine-live', 'machine-peer'].map(id =>
-                createPlainMachineRowFixture({ id, accountId: 'account-continuity' })));
-            return Response.json({ error: 'not_found' }, { status: 404 });
+                createPlainMachineRowFixture({ id, accountId: 'account-continuity', machine: createMachineFixture({ id, activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState }) })));
+            return createEmptyAccountBootstrapHttpResponse(path, init) ?? Response.json({ error: 'not_found' }, { status: 404 });
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Missing real Account lifetime');
     const serverId = lifetime.scope.serverId;
-    const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
-    const peerMachine = createMachineFixture({ id: 'machine-peer', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
+    const machine = createMachineFixture({ id: 'machine-live', active: true, activeAt: Date.now(), daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
+    const peerMachine = createMachineFixture({ id: 'machine-peer', active: true, activeAt: Date.now(), daemonStateVersion: 1, daemonState: pluginArtifactTransferDaemonState });
     storage.setState({ profileScope: lifetime.scope, settingsScope: lifetime.scope, endpointStatus: 'online', isDataReady: true,
         machines: { [machine.id]: machine, [peerMachine.id]: peerMachine }, machineListByServerId: { [serverId]: [machine, peerMachine] },
         machineListStatusByServerId: { [serverId]: 'idle' }, settings: { ...storage.getState().settings,
@@ -157,6 +207,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
     daemon.artifactDigest = artifactDigest;
     daemon.successorBytes = new TextEncoder().encode(`exports.activate = function(api) {
+        globalThis.executableContinuityFixture.peerActivations += 1;
         api.actions.register('next', async function() { return 'next'; });
         return async function() {
             globalThis.executableContinuityFixture.peerCleanupEntered = true;
@@ -169,7 +220,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     daemon.successorDigest = successorDigest;
     const nextGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ ...artifactGraph, artifactId: 'next', entry: nextPath, digest: successorDigest,
         files: [{ relativePath: nextPath, digest: computePluginUiArtifactSha256DigestV1(daemon.successorBytes), byteSize: daemon.successorBytes.byteLength }] });
-    const action = { id: actionId, title: 'Hold', scopes: [options.searchProvider ? 'global' : 'session'], surfaces: ['ui'],
+    const action = { id: actionId, title: 'Hold', scopes: [options.searchProvider || options.managedRepair ? 'global' : 'session'], surfaces: ['ui'],
         placementBindings: options.searchProvider ? [] : ['detailsPanel'], dangerLevel: 'safe',
         ...(options.searchProvider ? { inputSchema: PluginSearchQueryV1Schema.jsonSchema, resultSchema: PluginSearchResultV1Schema.jsonSchema } : {}),
         execution: { target: 'client', client: { artifactId, exportName: 'activate' }, platforms: [platform] } };
@@ -187,7 +238,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         installedPackagesById: { [pluginId]: { id: pluginId, displayName: pluginId, version: '1.0.0', enabled: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
             source: { kind: 'registryPackage', locator: pluginId } } },
-        agentsById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+        agentsById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         actionsById: { [`${pluginId}/${actionId}`]: { ...projectedAction, pluginId, available: true,
             occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin,
             authorization: { generation: { targetGeneration: origin.materializationRef.materializationId,
@@ -201,6 +252,7 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
                 cacheKey: derivePluginReactNativeBundleCacheKey({ pluginId, contributionId: actionId, artifactId, artifactDigest, platform }) },
         } } } } });
     const firstAction = daemon.projection.actionsById[`${pluginId}/${actionId}`];
+    if (!firstAction?.authorization) throw new Error('Missing fixture Action authorization');
     const ownPluginUi = daemon.projection.familiesById.pluginUi;
     if (!ownPluginUi) throw new Error('Missing fixture plugin UI family');
     const firstBundle = ownPluginUi.entriesById[`reactNativeBundle:${pluginId}:${actionId}`];
@@ -209,6 +261,8 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
             occurrenceId: 'peer-install', executionOrigin: { serverIdentityId, materializationRef: { machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install' } },
             displayName: peerPluginId, source: { kind: 'registryPackage', locator: peerPluginId } } },
         actionsById: { ...daemon.projection.actionsById, [`${peerPluginId}/next`]: { ...firstAction, ...projectedPeerAction, pluginId: peerPluginId,
+            authorization: { ...firstAction.authorization, generation: { targetGeneration: 'peer-install',
+                desiredGeneration: 'peer-install', appliedGeneration: options.coldDaemon ? null : 'peer-install' } },
             occurrenceId: 'peer-install', executionOrigin: { serverIdentityId, materializationRef: { machineId: peerMachine.id, pluginId: peerPluginId, materializationId: 'peer-install' } }, available: options.admitPeer === true } },
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: { ...ownPluginUi.entriesById,
             [`reactNativeBundle:${peerPluginId}:next`]: { ...firstBundle, id: `reactNativeBundle:${peerPluginId}:next`, pluginId: peerPluginId, contributionId: 'next',
@@ -232,6 +286,14 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
                 identity: { pluginId, localId: 'entries' }, action: { pluginId, localId: actionId },
             } } : {}),
         } } } });
+    daemon.mountedProjection = daemon.projection;
+    daemon.peerMountedProjection = daemon.peerProjection;
+    if (options.mountedOnly) {
+        daemon.projection = PluginProjectionV2Schema.parse({ ...daemon.projection,
+            actionsById: {}, familiesById: { pluginUi: { family: 'pluginUi', entriesById: {} } } });
+        daemon.peerProjection = PluginProjectionV2Schema.parse({ ...daemon.peerProjection,
+            actionsById: {}, familiesById: { pluginUi: { family: 'pluginUi', entriesById: {} } } });
+    }
     const slot = { contributionId: actionId, artifactId, tier: 'reactNative' as const, platform, artifactDigest, hostUiApiRange: '^1.0.0' };
     const slots = [slot];
     const peerSlot = { ...slot, contributionId: 'next', artifactId: 'next', artifactDigest: successorDigest };
@@ -256,11 +318,53 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     const materializations = [...snapshot.materializations, peerMaterialization];
     snapshot = { ...snapshot, intentReads, materializations, snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] },
         { serverIdentityId, machineId: peerMachine.id, materializations: [peerMaterialization] }] };
+    availabilityReady.resolve(snapshot);
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot });
     const reader = readPluginAccountAvailability(lifetime.scope);
     expect(reader.readCurrentArtifact({ pluginId, contributionId: actionId, tier: 'reactNative', platform })).toMatchObject({ kind: 'available' });
     let observed: ReturnType<typeof useAppShellPluginUiProjection> | null = null;
     const readObserved = (): ReturnType<typeof useAppShellPluginUiProjection> | null => observed;
+    let mountedState: ReturnType<typeof useMountedTargetedContributions> | null = null;
+    const readMounted = (): ReturnType<typeof useMountedTargetedContributions> | null => mountedState;
+    let mountedController: ReturnType<typeof useBoundPluginSurfaceController> | null = null;
+    const readMountedController = (): ReturnType<typeof useBoundPluginSurfaceController> | null => mountedController;
+    let mountedLifetime: ReturnType<typeof useServerCredentialAccountScopeBinding>['binding'] = null;
+    const readMountedLifetime = (): ReturnType<typeof useServerCredentialAccountScopeBinding>['binding'] => mountedLifetime;
+    let managedPresentation: ReturnType<typeof useManagedProvisionerPresentation> | null = null;
+    function ManagedRepairDemand() {
+        mountedLifetime = useServerCredentialAccountScopeBinding(serverId).binding;
+        managedPresentation = useManagedProvisionerPresentation({ serverId, purpose: 'repair',
+            controller: { machineId: machine.id, installationId: 'test-installation' } });
+        return null;
+    }
+    const emptyTarget = PluginUiTargetedContributionsV1Schema.parse({
+        target: { pluginId, occurrenceId: origin.materializationRef.materializationId,
+            sourceCustody: { kind: 'managed', immutableGenerationId: origin.materializationRef.materializationId, installSource: 'npm' } },
+        points: [],
+    });
+    function MountedDemand() {
+        const owner = useAppShellPluginUiProjection();
+        mountedLifetime = useServerCredentialAccountScopeBinding(serverId).binding;
+        mountedState = useMountedTargetedContributions({ accountLifetime: mountedLifetime, machineId: machine.id, serverId,
+            pluginId, mountedOccurrenceId: origin.materializationRef.materializationId, enabled: true,
+            emptyTargetedContributions: emptyTarget });
+        mountedController = useBoundPluginSurfaceController({ facts: {
+            pluginId, contributionId: 'panel', surfaceId: 'mounted-only-client-action',
+            placement: 'appSurface', platform, channel: 'internal', machineId: machine.id, serverId, sessionId: 'session-continuity',
+            occurrenceId: origin.materializationRef.materializationId, executionOrigin: origin, accountLifetime: mountedLifetime,
+            targetedContributions: mountedState.targetedContributions,
+            targetSourceCustody: emptyTarget.target.sourceCustody,
+            actionInputSelectionFactsKey: mountedState.actionInputSelectionFactsKey,
+            pluginUiProjection: mountedState.pluginUiProjection,
+            pluginProjectionById: mountedState.projectionInputs?.pluginProjectionById,
+            interactionEnabled: true, daemonInteractionEnabled: mountedState.phase === 'ready',
+            resolveContributedAction: createPluginUiProjectedActionResolver(mountedState.pluginUiProjection?.actionsById),
+            readClientExecutableAdmission: () => ({ projection: owner.pluginUiProjection,
+                mountedActionProjections: owner.mountedActionProjections, platform,
+                activation: owner.clientExecutableActivation, accountLifetime: owner.accountLifetime }),
+        } });
+        return null;
+    }
     let observedAt: number | undefined;
     function Probe() {
         observed = useAppShellPluginUiProjection();
@@ -268,14 +372,23 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
         observedAt = inventory?.kind === 'available' ? inventory.materializations[0]?.observedAt : undefined;
         return null;
     }
-    const screen = await renderScreen(<AppShellPluginUiProjectionProvider><Probe /></AppShellPluginUiProjectionProvider>);
+    let mountDemand = options.mountedOnly === true;
+    const render = () => <AppShellPluginUiProjectionProvider>
+        {options.managedRepair ? <ManagedRepairDemand /> : <CatalogDemand machineId={machine.id} serverId={serverId} />}
+        <CatalogDemand machineId={peerMachine.id} serverId={serverId} />
+        {mountDemand ? <MountedDemand /> : null}
+        <Probe />
+    </AppShellPluginUiProjectionProvider>;
+    const screen = await renderScreen(render());
+    const unmountDemand = async () => { mountDemand = false; await screen.update(render()); };
     const composition = getInstalledPluginUiClientExecutableComposition();
     const address = { family: 'actions' as const, pluginId, localId: actionId, target: { artifactId, exportName: 'activate', platform }, executionOrigin: origin,
         occurrenceId: origin.materializationRef.materializationId };
     const dispatch = () => dispatchPluginSurfaceAction({ action: { pluginId, localId: actionId }, input: null, clientAction: { sessionId: 'session-continuity' },
         resolveContributedAction: identity => createPluginUiProjectedActionResolver(readObserved()?.pluginUiProjection?.actionsById)(identity) });
     const fixture = { lifetime, machine, peerMachine, materialization, snapshot, address, composition, screen, dispatch,
-        readObserved, readObservedAt: () => observedAt };
+        readObserved, readMounted, readMountedController, readMountedLifetime, unmountDemand, readObservedAt: () => observedAt,
+        readManagedPresentation: () => managedPresentation };
     if (options.waitForAdmission === false) return { ...fixture, registration: null };
     await vi.waitFor(async () => {
         await flushHookEffects();
@@ -300,6 +413,127 @@ async function mountClientExecutableFixture(options: { waitForAdmission?: boolea
     if (!registration || registration.registration.family !== 'actions') throw new Error('Missing actual client Action registration');
     return { ...fixture, registration };
 }
+
+it('dispatches a controller prerequisite repair through the mounted managed catalog and AppShell activation', async () => {
+    const fixture = await mountClientExecutableFixture({ managedRepair: true, waitForAdmission: false });
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.readManagedPresentation()?.projectionReady).toBe(true);
+    });
+    // The card's repair callback must execute the declared client Action, even
+    // when this controller is not an ambient AppShell catalog demand.
+    pluginBoundary.pending.resolve('install reviewed');
+    const binding = fixture.readMountedLifetime();
+    if (!binding) throw new Error('Missing routed repair lifetime');
+    const result = await fixture.readManagedPresentation()?.repair({ action: { pluginId, localId: actionId }, input: null }, binding);
+    expect(result).toMatchObject({ ok: true, result: 'install reviewed' });
+});
+
+it('withdraws executable authority before AppShell unmount cleanup yields to a successor', async () => {
+    const { registration, composition, address } = await mountClientExecutableFixture();
+    if (!registration) throw new Error('Missing committed Action');
+    const cleanup = unloadAppShellProjectedClientExecutables();
+    try {
+        // React can replay mount effects before awaiting cleanup. The old
+        // authority must already be withdrawn before that successor starts.
+        expect(registration.lifecycle.signal.aborted).toBe(true);
+        expect(registration.lifecycle.isCurrent()).toBe(false);
+        expect(composition.read(address)).toBeNull();
+    } finally { await cleanup; }
+});
+
+it('activates an exact mounted-only client Action through AppShell and releases it with its mounted demand', async () => {
+    pluginBoundary.activationGate = createDeferred<void>();
+    const fixture = await mountClientExecutableFixture({ mountedOnly: true, admitPeer: true, waitForAdmission: false,
+        artifactLabel: 'mounted-only-client-action' });
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.readMounted()?.phase).toBe('ready');
+        expect(fixture.readMounted()?.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`]).toMatchObject({ available: true });
+        expect(fixture.readObserved()?.mountedActionProjections).toHaveLength(1);
+        expect(resolveProjectedPluginUiClientExecutables({ mountedActionProjections: fixture.readObserved()?.mountedActionProjections, platform })).toHaveLength(1);
+        expect(pluginBoundary.enteredActivation, JSON.stringify(fixture.readObserved()?.clientExecutableActivation)).toBe(true);
+    });
+    expect(fixture.readObserved()?.pluginUiProjection?.actionsById[`${pluginId}/${actionId}`]).toBeUndefined();
+    expect(fixture.readObserved()?.pluginUiProjection?.actionsById[`${peerPluginId}/next`]).toBeUndefined();
+    expect(daemon.peerMountedProjection?.actionsById[`${peerPluginId}/next`]).toMatchObject({ available: true,
+        occurrenceId: 'peer-install', authorization: { generation: { targetGeneration: 'peer-install',
+            desiredGeneration: 'peer-install', appliedGeneration: 'peer-install' } } });
+    expect(fixture.composition.read(fixture.address)).toBeNull();
+    expect(pluginBoundary.signal).toBeNull();
+    expect(pluginBoundary.evaluations).toBe(1);
+    expect(pluginBoundary.peerActivations).toBe(0);
+    expect(daemon.peerMountedReads).toBe(0);
+    expect(fixture.readMountedLifetime()).not.toBe(fixture.lifetime);
+    expect(fixture.readMountedLifetime()?.scope).toEqual(fixture.lifetime.scope);
+    expect(fixture.readMountedLifetime()?.isCurrent()).toBe(true);
+
+    const controller = fixture.readMountedController();
+    if (!controller) throw new Error('Missing actual mounted surface controller');
+    expect(controller.isRequesterAdmitted()).toBe(true);
+    expect(controller.canInteractWithDaemon()).toBe(true);
+    let settled = false;
+    const pendingAction = Promise.resolve(controller.hostApi.handleRequest({ version: 1, requestId: 'mounted-only-invocation',
+        surface: controller.surfaceContext, method: 'executeAction',
+        payload: { action: { pluginId, localId: actionId }, input: null },
+    }));
+    void pendingAction.then(() => { settled = true; }, () => { settled = true; });
+    await act(async () => {});
+    expect(settled, 'the real mounted admission waiter must retain an invocation until exact registration commits').toBe(false);
+    expect(pluginBoundary.signal).toBeNull();
+
+    pluginBoundary.activationGate.resolve();
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.composition.read(fixture.address)).not.toBeNull();
+    });
+    const registration = fixture.composition.read(fixture.address);
+    if (!registration) throw new Error('Missing mounted-only Action registration');
+    const cache = getInstalledPluginReactNativeBundleCache();
+    const artifactIdentity = { artifactDigest: daemon.artifactDigest as PluginUiArtifactDigestV1 };
+    expect(cache.readInstalledArtifact(artifactIdentity, fixture.lifetime.scope)).not.toBeNull();
+    await vi.waitFor(() => expect(pluginBoundary.signal).not.toBeNull());
+    pluginBoundary.pending.resolve('mounted-finished');
+    await expect(pendingAction).resolves.toBe('mounted-finished');
+
+    await fixture.unmountDemand();
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.composition.read(fixture.address)).toBeNull();
+        expect(pluginBoundary.cleanups).toBe(1);
+        expect(cache.readInstalledArtifact(artifactIdentity, fixture.lifetime.scope)).toBeNull();
+    });
+    expect(registration.lifecycle.signal.aborted).toBe(true);
+    expect(fixture.lifetime.isCurrent()).toBe(true);
+    expect(pluginBoundary.peerActivations).toBe(0);
+    expect(daemon.peerMountedReads).toBe(0);
+});
+
+it('prevents a gated mounted-only client Action from attaching after its mounted demand unmounts', async () => {
+    pluginBoundary.activationGate = createDeferred<void>();
+    const fixture = await mountClientExecutableFixture({ mountedOnly: true, admitPeer: true, waitForAdmission: false,
+        artifactLabel: 'mounted-only-client-action-unmounted' });
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(fixture.readMounted()?.phase).toBe('ready');
+        expect(fixture.readObserved()?.mountedActionProjections).toHaveLength(1);
+        expect(resolveProjectedPluginUiClientExecutables({ mountedActionProjections: fixture.readObserved()?.mountedActionProjections, platform })).toHaveLength(1);
+        expect(pluginBoundary.enteredActivation, JSON.stringify(fixture.readObserved()?.clientExecutableActivation)).toBe(true);
+    });
+    expect(fixture.composition.read(fixture.address)).toBeNull();
+    await fixture.unmountDemand();
+    await flushHookEffects();
+    pluginBoundary.activationGate.resolve();
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(pluginBoundary.cleanups).toBe(1);
+    });
+    expect(fixture.composition.read(fixture.address)).toBeNull();
+    expect(pluginBoundary.signal).toBeNull();
+    expect(fixture.lifetime.isCurrent()).toBe(true);
+    expect(pluginBoundary.peerActivations).toBe(0);
+    expect(daemon.peerMountedReads).toBe(0);
+});
 
 it('waits for the exact client search registration and applies it independently of cold daemon activation', async () => {
     pluginBoundary.activationGate = createDeferred<void>();
@@ -510,6 +744,36 @@ it('keeps one preparing client artifact evaluation across equivalent Availabilit
         expect(composition.read(address)).not.toBeNull();
     });
     expect(pluginBoundary.evaluations).toBe(1);
+});
+
+it('admits a newly demanded peer through mounted AppShell while the preceding activation is parked', async () => {
+    pluginBoundary.activationGate = createDeferred<void>();
+    const { lifetime, peerMachine, composition, readObserved } = await mountClientExecutableFixture({
+        waitForAdmission: false, artifactLabel: 'independent-shell-admission',
+    });
+    await vi.waitFor(() => expect(pluginBoundary.enteredActivation).toBe(true));
+    if (!daemon.peerProjection) throw new Error('Missing peer producer fixture');
+    daemon.peerProjection = PluginProjectionV2Schema.parse({ ...daemon.peerProjection,
+        actionsById: Object.fromEntries(Object.entries(daemon.peerProjection.actionsById)
+            .map(([key, action]) => [key, { ...action, available: true }])) });
+    await act(async () => {
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: peerMachine.id, serverId: lifetime.scope.serverId }, 'authority');
+    });
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        const projection = readObserved()?.pluginUiProjection;
+        const target = projection && resolveProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform })
+            .find(target => target.pluginId === peerPluginId);
+        expect(target).toBeDefined();
+        if (!target) return;
+        const registration = composition.read({ family: 'actions', pluginId: target.pluginId, localId: 'next',
+            target: target.target, occurrenceId: target.occurrenceId, executionOrigin: target.executionOrigin });
+        expect(registration).not.toBeNull();
+        const handler = registration?.registration.value;
+        if (typeof handler !== 'function') throw new Error('Missing peer Action');
+        expect(await Reflect.apply(handler, undefined, [{}])).toBe('next');
+    });
+    expect(pluginBoundary.activationGate).not.toBeNull();
 });
 
 it.each(['Machine', 'Account'] as const)('cancels an unfinished real executable activation before it can publish after exact %s withdrawal', async (withdrawal) => {

@@ -3,7 +3,7 @@ import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@ha
 import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 export const MACHINE_PRESENTATION_LABELS = {
-  "en": {"kind":"sandbox","description":"Isolated machines from Docker Sandboxes; requires Docker’s sbx.","ready":"Installed","unavailable":"Not installed"},
+  "en": {"kind":"sandbox","description":"Isolated machines from Docker Sandboxes; requires Docker’s sbx.","ready":"sbx installed","unavailable":"Needs sbx"},
 } as const;
 
 export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_LABELS.en): PresentationLocalizedString {

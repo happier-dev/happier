@@ -1147,6 +1147,10 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
             const settled = result.ok
                 ? (!remainsAdmitted() || !isClientExecutableActivationCurrent(activation) ? retiredClientExecutableResult() : result)
                 : { ...result, layer: 'registration' as const, phase: 'activation' as const, retryable: false };
+            // The host confirmed the incumbent without a new scope. If this attempt's own
+            // request retired meanwhile, the incumbent is still the committed activation:
+            // only retain() (a changed admission) or a host refusal may tear it down.
+            const confirmedIncumbent = result.ok && !createdScope && active === incumbent;
             for (const index of preparedTarget.inputIndexes) results[index] = settled;
             for (const index of preparedTarget.inputIndexes) {
                 reused[index] = result.ok && incumbentRemainsCurrent && !createdScope;
@@ -1164,7 +1168,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
                         executableHost: leaf.executableHost,
                     }));
                 }
-            } else if (activeByTargetKey.get(preparedTarget.key) === active) {
+            } else if (!confirmedIncumbent && activeByTargetKey.get(preparedTarget.key) === active) {
                 active.controller.abort();
                 activeByTargetKey.delete(preparedTarget.key);
             }

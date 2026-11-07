@@ -17,7 +17,9 @@ import { resolvePluginContributedActionIconName } from '@/components/plugins/act
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
 import { createPluginUiProjectedActionResolver } from '@/sync/domains/plugins/ui/projection';
 import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useMountedClientActionDemand } from '@/components/appShell/plugins/mountedClientActionDemand';
+import type { PluginUiClientExecutableProjectionSource } from '@/components/plugins/reactNative/clientExecutableProjection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -143,8 +145,8 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     provider?: Provisioner['contribution']; schemaVersion?: number;
     /** Changes when the person asks to read again: the projection is read anew. */
     refreshKey?: number;
-    /** `mark`: the caller draws only the mark (`mark`/`markAt`), so only the sections it reads are demanded. */
-    purpose?: 'presentation' | 'mark';
+    /** Only repair surfaces activate client Actions; marks demand only the identity sections they draw. */
+    purpose?: 'presentation' | 'mark' | 'repair';
 }>) {
     const pluginId = input.provisioner?.contribution.pluginId ?? input.provider?.pluginId;
     const accountReader = usePluginAccountAvailabilityReader(input.accountScope ?? null, pluginId, { enabled: !input.controller });
@@ -155,11 +157,19 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     }, [accountReader, input.controller, pluginId, accountSelection?.kind, accountSelection?.kind === 'unavailable' ? accountSelection.code : null]);
     const controllerInstallationId = useServerScopedMachine(input.serverId, input.controller?.machineId ?? '', selectInstallationId);
     const controllerAdmitted = !!input.controller && controllerInstallationId === input.controller.installationId;
+    const { binding: controllerAccountLifetime } = useServerCredentialAccountScopeBinding(controllerAdmitted ? input.serverId : null);
     const projection = useDaemonMergedProjectionInputs({ serverId: input.serverId, machineId: controllerAdmitted ? input.controller?.machineId : undefined, enabled: controllerAdmitted,
+        accountLifetime: controllerAccountLifetime,
         sections: input.purpose === 'mark' ? MARK_SECTIONS : PRESENTATION_SECTIONS,
         ...(input.refreshKey === undefined ? {} : { refreshKey: input.refreshKey }) });
     const uiProjection = input.controller ? projection.inputs?.pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION
         : accountReader?.readAccountUiProjection() ?? EMPTY_PLUGIN_UI_PROJECTION;
+    const controllerMachineId = input.controller?.machineId;
+    const clientActionSource = React.useMemo<PluginUiClientExecutableProjectionSource | null>(() =>
+        input.purpose === 'repair' && controllerMachineId && projection.phase === 'ready'
+            ? { projection: uiProjection, directMachineAuthority: { machineId: controllerMachineId, serverId: input.serverId } } : null,
+    [controllerMachineId, input.purpose, input.serverId, projection.phase, uiProjection]);
+    useMountedClientActionDemand(controllerAccountLifetime, clientActionSource);
     const accountReady = accountSelection?.kind === 'available';
     const locale = getPreferredLanguage();
     const qualifiedProviderKey = input.provider ? buildQualifiedPluginContributionKey(input.provider) : null;

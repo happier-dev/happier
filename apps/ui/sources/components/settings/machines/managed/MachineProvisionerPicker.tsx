@@ -103,7 +103,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         outcome: NonNullable<ManagedProvisionerCard['repairFailure']>;
     }> | null>(null);
     const compact = useViewportClass() === 'compact';
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope });
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope, purpose: 'repair' });
     const { localized, markFor } = presentation;
     const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: catalog.binding?.scope });
     const repairAbort = React.useRef<AbortController | null>(null);
