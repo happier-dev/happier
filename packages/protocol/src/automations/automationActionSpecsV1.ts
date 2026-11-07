@@ -281,16 +281,18 @@ export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
   typeof AutomationEventAdmitDefinitionSelectorV1Schema
 >;
 
-const AutomationEventAdmitInputFieldsV1 = {
+// Built inside the lazy schema factories: the event declaration schemas sit
+// behind an import cycle and are not initialized when this module loads.
+const automationEventAdmitInputFieldsV1 = () => ({
   eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),
   occurrenceId: AutomationEventSourceOrOccurrenceIdV1Schema,
   occurredAt: AutomationOccurredAtV1Schema,
   observationReceivedAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA,
   payload: asProtocolZod(AutomationEventPayloadV1Schema),
-} as const;
+});
 
 export const AutomationEventAdmitInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...AutomationEventAdmitInputFieldsV1,
+  ...automationEventAdmitInputFieldsV1(),
   definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema).check(z.minLength(1)),
 }));
 export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInputV1Schema>;
@@ -302,7 +304,7 @@ export type AutomationEventAdmitInputV1 = z.infer<typeof AutomationEventAdmitInp
  * bounded by the owning server transport limit, not by a Protocol count.
  */
 export const AutomationEventAdmitHttpInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...AutomationEventAdmitInputFieldsV1,
+  ...automationEventAdmitInputFieldsV1(),
   definitions: z.array(AutomationEventAdmitDefinitionSelectorV1Schema).check(z.minLength(1)),
 }));
 export type AutomationEventAdmitHttpInputV1 = z.infer<typeof AutomationEventAdmitHttpInputV1Schema>;
