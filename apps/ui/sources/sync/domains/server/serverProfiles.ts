@@ -505,6 +505,13 @@ export function resetServerProfilePersistenceSuspendForTests(): void {
 }
 
 function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
+    const organizationPolicy = readOrganizationPolicy();
+    const homePolicy = organizationPolicy.status === 'loaded' ? organizationPolicy.policy.home : undefined;
+    // Build defaults are startup hints, not saved choices against which a supplied
+    // Home should require alias consent. Seed only that entry's matching default;
+    // persisted Homes remain untouched and a locked policy still owns startup.
+    const suppliedHome = homePolicy?.locked ? null : readWebServerUrlOverrideFromLocation();
+
     const entries: PreconfiguredServer[] = [];
     const seenUrlKeys = new Set<string>();
     const setupPolicy = resolveSetupSurfacePolicy();
@@ -518,6 +525,7 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
         const url = normalizeUrl(String(urlRaw ?? ''));
         if (!url) return;
         const key = comparableUrlKey(url);
+        if (suppliedHome && key !== comparableUrlKey(suppliedHome.serverUrl)) return;
         if (seenUrlKeys.has(key)) return;
         seenUrlKeys.add(key);
         const name = String(nameRaw ?? '').trim();

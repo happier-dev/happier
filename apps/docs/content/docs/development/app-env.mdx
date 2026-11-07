@@ -20,6 +20,8 @@ Then edit `apps/ui/.env.local` and restart the dev server (Metro) so the bundle 
 
 Source builds have no hosted Happier Cloud defaults. On first run, choose a sign-in service or Home; a self-hosted web app still uses its own origin when no Home is configured. Saved selections remain authoritative over build defaults.
 
+On a fresh browser, an explicit `?server=` entry does not also save a different bundled default Home. Opening the app directly still uses its configured default. Previously saved Homes and locked organization policy retain their authority.
+
 Set `EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON` before bundling the app. CLI builds use `HAPPIER_BUILD_DEFAULT_PROFILE_JSON`; the CLI-common build embeds it in the published runtime, so people do not need the build environment when running the CLI.
 
 ```bash

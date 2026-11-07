@@ -125,7 +125,9 @@ describe('bootstrapActiveServerFromWebLocation', () => {
         const result = await bootstrapActiveServerFromWebLocation({ scope: 'device' });
 
         expect(result?.serverUrl).toBe('https://new.example.test');
-        expect(profiles.getActiveServerUrl()).toBe('https://retained.example.test');
+        expect(profiles.getActiveServerUrl()).toBe('');
+        // A competing build default is not a saved Home.
+        expect(profiles.getDeviceDefaultServerId()).toBe('');
         expect(profiles.listServerProfiles().some((profile) => profile.serverUrl === 'https://new.example.test')).toBe(false);
     });
 

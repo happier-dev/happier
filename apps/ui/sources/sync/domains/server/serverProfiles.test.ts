@@ -94,6 +94,35 @@ async function importSeparateInstance() {
 }
 
 describe('serverProfiles', () => {
+    it('does not materialize a build default before explicit Home admission', () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = 'https://baked-default.example.test';
+        const runtime = stubWebRuntime('https://ui.example.test');
+        Object.assign(window.location, { href: 'https://ui.example.test/?server=https%3A%2F%2Fnew-home.example.test' });
+
+        // Background discovery must have no unconfirmed default to identity-bind.
+        expect(profiles.listServerProfiles()).toEqual([]);
+        expect(profiles.listServerProfiles()).toEqual([]);
+        expect(runtime.store.size).toBe(0);
+        Object.assign(window.location, { href: 'https://ui.example.test/' });
+        expect(profiles.getActiveServerUrl()).toBe('https://baked-default.example.test');
+    });
+
+    it('retains a locked organization Home over a supplied browser entry', () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL = 'https://baked-default.example.test';
+        stubWebRuntime('https://ui.example.test');
+        vi.stubGlobal('isTauri', true);
+        Object.assign(window.location, { href: 'https://ui.example.test/?server=https%3A%2F%2Fnew-home.example.test' });
+        Object.assign(window, { __HAPPIER_WEB_RUNTIME_CONFIG__: {
+            organizationPolicyJson: JSON.stringify({ schemaVersion: 1, organization: 'Example',
+                home: { url: 'https://company.example.test', locked: true } }),
+        } });
+
+        expect(profiles.listServerProfiles().map((profile) => profile.serverUrl)).toEqual(['https://company.example.test']);
+        expect(profiles.getActiveServerUrl()).toBe('https://company.example.test');
+    });
+
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     const previousServerContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     const previousCanonicalServerUrl = process.env.EXPO_PUBLIC_HAPPIER_SERVER_URL;
