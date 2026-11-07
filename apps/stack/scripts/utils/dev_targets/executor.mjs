@@ -291,6 +291,7 @@ export async function runDevTargetCommand(
     flush = null,
     tty = false,
     controlStdin = false,
+    sourceAdmission = 'auto',
     dependencyAdmission = 'auto',
     admissionMode = 'wait',
     workspacePreparation = 'auto',
@@ -323,7 +324,9 @@ export async function runDevTargetCommand(
   if (commandPolicy.placement === 'primary-only') {
     throw new Error('[dev-targets] Git/index/worktree commands must execute on the authoritative primary checkout');
   }
-  const syncStatus = await prepareDevTargetSourceCommand(
+  // Runtime-state observations do not consume a fresh source snapshot. Keep
+  // their transport/cancellation without requiring mirror readiness or a flush.
+  const syncStatus = sourceAdmission === 'skip' ? { state: 'not-required' } : await prepareDevTargetSourceCommand(
     { target, stackBaseDir, syncAlreadyVerified, flush, env },
     { runCaptureResult: runCaptureResultImpl },
   );

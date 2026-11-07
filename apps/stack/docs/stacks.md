@@ -199,7 +199,13 @@ sweep reclaims marked browsers on the next contact. A reachable helper's ownersh
 failure or invalid confirmation still prevents finalization; JSON and console
 output retain its sanitized cause.
 
-Scan and transition problems block remote dispatch, including `.project/` data
+In 0.3 development, `stack info` observes remote relay runtime state through the
+existing command transport without checking source-mirror readiness or forcing
+a Mutagen flush. Browser start uses this same observation when resolving its
+Stack URL. Relay preparation and source-consuming commands retain their source
+freshness barrier.
+
+Scan and transition problems block remote source-consuming dispatch, including `.project/` data
 and captures. Refusals name the problem paths. Known transient races use the
 existing fresh-scan recovery and require a clean result before dispatch; file
 extensions and local file types cannot establish what a failed transition left
