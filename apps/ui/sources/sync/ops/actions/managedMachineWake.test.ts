@@ -37,6 +37,76 @@ installApprovalCommonModuleMocks();
 afterEach(async () => { await standardCleanup(); });
 
 describe('managed explicit execution readiness', () => {
+    it.each(['demand', 'pending', 'unavailable'] as const)('joins one cold Home census after reconnect before starting a Session (%s)', async phase => {
+        const census = createDeferred<Response>();
+        const censusStarted = createDeferred<void>();
+        const machine = createMachineFixture({ id: 'reconnected-host', active: true, managedMachineRef: null });
+        const published = createPlainMachineRowFixture({ id: machine.id, accountId: 'reconnected-owner', machine });
+        let demand = false;
+        const inventoryRequests: string[] = [];
+        const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://cold-start.test',
+            serverIdentityId: 'srv_cold_start', accountId: 'reconnected-owner' }], route: request => {
+            if (request.path === '/v1/machines') {
+                if (!demand) return Response.json([]);
+                inventoryRequests.push(request.path);
+                censusStarted.resolve();
+                return census.promise;
+            }
+            if (request.path === '/v1/machines/read-batch') {
+                inventoryRequests.push(request.path);
+                return Response.json({ results: [{ machineId: machine.id, status: 'found', machine: published }] });
+            }
+            return undefined;
+        } });
+        const disconnect = await homes.restoreActiveConnection();
+        await disconnect();
+        await homes.restoreActiveConnection();
+        const account = await captureLazyActionAccountContext(homes.homes.a!.id);
+        let spawns = 0;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            isActionApprovalRequired: () => false,
+            prepareHostReviewedChildren: request => prepareUiManagedMachineWake(request, account),
+            // The daemon spawn is the external boundary; census loading and Action admission stay real.
+            sessionSpawnNew: async () => {
+                spawns += 1;
+                return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+            },
+        }));
+        demand = true;
+        const sync = (await import('@/sync/runtime/getSyncSingleton')).getSyncSingleton();
+        const incumbent = phase === 'pending' ? sync.refreshMachines({ serverId: account.serverId }) : Promise.resolve();
+        const start = (creationKey: string) => executor.execute('session.spawn_new', {
+            creationKey, executionTarget: { serverId: account.serverId, machineId: machine.id },
+            directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: account.serverId, serverIdentityId: account.serverIdentityId, runtimeAccountId: account.accountId });
+        const launch = start('cold-home-start');
+        try {
+            expect(await Promise.race([censusStarted.promise.then(() => 'census'), launch.then(() => 'settled')])).toBe('census');
+            expect(spawns).toBe(0);
+            census.resolve(phase === 'unavailable' ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json([published]));
+            if (phase === 'unavailable') {
+                expect(await launch).toMatchObject({ ok: false, errorCode: 'machine_inventory_unavailable',
+                    failureCause: { phase: 'machines.inventory', httpStatus: 503 }, details: { remedy: 'retry' } });
+                expect(spawns).toBe(0);
+            } else {
+                expect(await launch).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+                expect(spawns).toBe(1);
+                expect(storage.getState().machineListByServerId[account.serverId]?.map(row => row.id)).toContain(machine.id);
+                expect(await start('cold-home-another')).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted' } });
+                expect(spawns).toBe(2);
+            }
+            expect(inventoryRequests).toEqual(['/v1/machines']);
+        } finally {
+            census.resolve(Response.json([published]));
+            await launch;
+            await incumbent;
+            account.dispose();
+            await homes.dispose();
+        }
+    });
+
     it.each([
         { active: true, classified: true }, { active: false, classified: true },
         { active: true, classified: false }, { active: false, classified: false },

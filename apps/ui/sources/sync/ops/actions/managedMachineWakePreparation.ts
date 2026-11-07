@@ -1,12 +1,13 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
 import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
-import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { storage } from '@/sync/domains/state/storage';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { executeUiManagedMachineRuntimeDemand } from './managedMachineWake';
@@ -28,7 +29,8 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
     return {
         readMachineTarget: async (machineId, context) => {
             try {
-                const machine = resolveServerScopedMachine(storage.getState(), account.serverId, machineId);
+                const machine = await getSyncSingleton().ensureMachineInventoryTarget({ serverId: account.serverId, machineId });
+                account.assertCurrent();
                 let managedMachineRef = machine?.managedMachineRef;
                 if (managedMachineRef === undefined) {
                     const target = await readOriginalAccountActionMachine(account, machineId, context.signal);
@@ -38,9 +40,11 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
                 account.assertCurrent();
                 return { reachable: Boolean(machine && isMachineReachable(account.accountLifetime.scope, machine)),
                     managedMachineRef };
-            } catch {
+            } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled' : 'machine_inventory_unavailable';
-                return { ok: false as const, errorCode: code, error: code };
+                return { ok: false as const, errorCode: code, error: code,
+                    failureCause: projectActionFailureCauseV1(error, 'machines.inventory'),
+                    ...(code === 'cancelled' ? {} : { details: { remedy: 'retry' as const } }) };
             }
         },
         readSelectedProvisioners: async pluginId => {
