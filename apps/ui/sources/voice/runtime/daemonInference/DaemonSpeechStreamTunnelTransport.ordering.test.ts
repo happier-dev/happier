@@ -1,21 +1,14 @@
 import {
-  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
-  createPeerApplicationEncryptionAadV1,
-  createPeerApplicationEncryptionNonceV1,
-  createSpeechTranscriptionApplicationAuthorityDigestV1,
-  decodeBase64 as decodeProtocolBase64,
-  decodePeerApplicationEncryptedFrameV1,
-  deriveBoxPublicKeyFromSeed,
-  encodeBase64 as encodeProtocolBase64,
-  encodePeerApplicationEncryptedFrameV1,
-  openEncryptedDataKeyEnvelopeV1,
+  createMachineStreamKeyAadV1,
+  createMachineStreamKeyNonceV1} from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import {
+  encodeBase64 as encodeProtocolBase64} from '@happier-dev/protocol/crypto/base64';
+import {
   type DaemonVoiceInferenceSttStreamStartRequest,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/voiceInference';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
 import { webcrypto } from 'node:crypto';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-
-import { encodeBase64 } from '@/encryption/base64';
 
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
 
@@ -44,22 +37,11 @@ const sealGate = vi.hoisted(() => {
   };
 });
 
-const binding = {
-  v: 1 as const,
-  suite: 'aes-256-gcm' as const,
-  flowKind: 'voice_media' as const,
-  routeKind: 'server_relay' as const,
-  authorityDigest: 'sha256:acdb52b3d7de70428b1c54fbb340ab675b98d6900d2b86ababad20baa7aed6ca',
-  accountId: 'account-1',
-  machineId: 'machine-1',
-  tunnelId: 'tun_voice',
-  applicationKind: 'speech_transcription' as const,
-  applicationAttemptId: 'request-ordering',
-  applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request-ordering'),
-};
+const streamKey = new Uint8Array(32).fill(9);
+const aad = createMachineStreamKeyAadV1({ streamId: 'stream-1', generation: 3 });
 
 describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
-  it('keeps the encrypted carrier in sequence order when a later chunk seals first', async () => {
+  it('keeps the keyed carrier in sequence order when a later chunk seals first', async () => {
     if (!globalThis.crypto?.subtle) vi.stubGlobal('crypto', webcrypto);
     const subtle = globalThis.crypto.subtle;
     const encrypt = subtle.encrypt.bind(subtle);
@@ -77,78 +59,25 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
     const { createDaemonSpeechStreamTunnelTransport } = await import('./DaemonSpeechStreamTunnelTransport');
     const { sealAes256GcmBytes, openAes256GcmBytes } = await import('@/encryption/aes256GcmBytes');
 
-    const recipientSecretKeySeed = new Uint8Array(32).fill(9);
-    const recipientPublicKeyBase64Url = encodeProtocolBase64(
-      deriveBoxPublicKeyFromSeed(recipientSecretKeySeed),
-      'base64url',
-    );
     const handlers = new Set<(event: Readonly<{
       substreamId: string;
       frame: PeerTcpTunnelFrame;
     }>) => void>();
-    let installedKey: Uint8Array | null = null;
     const sentCarrierSequences: number[] = [];
     let sendError: unknown = null;
 
-    const aadFor = (input: Readonly<{
-      substreamId: string;
-      sequence: number;
-      phase: 'install' | 'data' | 'finish';
-      direction: 'client_to_daemon' | 'daemon_to_client';
-    }>) => createPeerApplicationEncryptionAadV1({
-      authorityDigest: binding.authorityDigest,
-      accountId: binding.accountId,
-      machineId: binding.machineId,
-      tunnelId: binding.tunnelId,
-      applicationKind: binding.applicationKind,
-      applicationAttemptId: binding.applicationAttemptId,
-      applicationAuthorityDigest: binding.applicationAuthorityDigest,
-      direction: input.direction,
-      streamId: 'stream-1',
-      generation: 3,
-      substreamId: input.substreamId,
-      sequence: input.sequence,
-      phase: input.phase,
-    });
-
     const sendSubstreamDataFrame = vi.fn(async (substreamId: string, outbound: any) => {
       try {
-        const encrypted = decodePeerApplicationEncryptedFrameV1(outbound.payloadBytes);
-        if (!encrypted) throw new Error('expected encrypted frame');
-        if (encrypted.kind === 'install') {
-          installedKey = openEncryptedDataKeyEnvelopeV1({
-            envelope: decodeProtocolBase64(encrypted.encryptedDataKeyEnvelopeBase64Url!, 'base64url'),
-            recipientSecretKeyOrSeed: recipientSecretKeySeed,
-          });
-        } else {
-          sentCarrierSequences.push(outbound.sequence);
-        }
-        if (!installedKey) throw new Error('expected installed key');
+        sentCarrierSequences.push(outbound.sequence);
         await openAes256GcmBytes({
-          key: installedKey,
-          nonce: createPeerApplicationEncryptionNonceV1({
-            direction: 'client_to_daemon', phase: encrypted.kind, sequence: outbound.sequence,
-          }),
-          aad: aadFor({
-            substreamId, sequence: outbound.sequence, phase: encrypted.kind, direction: 'client_to_daemon',
-          }),
-          ciphertext: decodeProtocolBase64(encrypted.ciphertextBase64Url, 'base64url'),
-        });
-        const responsePlaintext = encrypted.kind === 'install'
-          ? new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1)
-          : new TextEncoder().encode(JSON.stringify({
-            ok: true, streamId: 'stream-1', generation: 3, ackSeq: outbound.sequence - 1, events: [],
-          }));
-        const responseNonce = createPeerApplicationEncryptionNonceV1({
-          direction: 'daemon_to_client', phase: encrypted.kind, sequence: outbound.sequence,
+          key: streamKey, nonce: createMachineStreamKeyNonceV1('client_to_daemon', outbound.sequence), aad,
+          ciphertext: outbound.payloadBytes,
         });
         const responseCiphertext = await sealAes256GcmBytes({
-          key: installedKey,
-          nonce: responseNonce,
-          aad: aadFor({
-            substreamId, sequence: outbound.sequence, phase: encrypted.kind, direction: 'daemon_to_client',
-          }),
-          plaintext: responsePlaintext,
+          key: streamKey, nonce: createMachineStreamKeyNonceV1('daemon_to_client', outbound.sequence), aad,
+          plaintext: new TextEncoder().encode(JSON.stringify({
+            ok: true, streamId: 'stream-1', generation: 3, ackSeq: outbound.sequence, events: [],
+          })),
         });
         const event = {
           substreamId,
@@ -158,12 +87,7 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
             tunnelId: 'tun_voice',
             direction: 'daemon_to_client' as const,
             sequence: outbound.sequence,
-            payload: encodePeerApplicationEncryptedFrameV1({
-              v: 1,
-              kind: encrypted.kind,
-              nonceBase64Url: encodeProtocolBase64(responseNonce, 'base64url'),
-              ciphertextBase64Url: encodeProtocolBase64(responseCiphertext, 'base64url'),
-            }),
+            payload: responseCiphertext,
           },
         };
         for (const handler of [...handlers]) handler(event);
@@ -175,7 +99,6 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
 
     const transport = createDaemonSpeechStreamTunnelTransport({
       tunnelId: 'tun_voice',
-      peerApplicationEncryption: binding,
       stream: {
         sendFrame: vi.fn(),
         sendSubstreamDataFrame,
@@ -187,15 +110,15 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
         },
       } as any,
       controlTransport: {
-        start: vi.fn(async (payload: DaemonVoiceInferenceSttStreamStartRequest) => ({
+        startWithContentMode: vi.fn(async (payload: DaemonVoiceInferenceSttStreamStartRequest) => ({ contentMode: 'e2ee' as const, response: {
           ok: true as const,
           requestId: payload.requestId,
           streamId: 'stream-1',
           generation: 3,
           ackSeq: -1,
           format: payload.format,
-          peerApplicationEncryption: { v: 1 as const, suite: 'aes-256-gcm' as const, recipientPublicKeyBase64Url },
-        })),
+          streamKeyBase64Url: encodeProtocolBase64(streamKey, 'base64url'),
+        } })),
         finish: vi.fn(),
         cancel: vi.fn(async (payload: { streamId: string; generation: number }) => ({
           ok: true as const,
@@ -239,7 +162,7 @@ describe('DaemonSpeechStreamTunnelTransport carrier ordering', () => {
     await expect(first).resolves.toMatchObject({ ok: true });
     await expect(second).resolves.toMatchObject({ ok: true });
     expect(sendError).toBeNull();
-    // The daemon requires lastCarrierSequence + 1 and rejects anything else.
-    expect(sentCarrierSequences).toEqual([1, 2]);
+    // The daemon requires lastSequence + 1 and rejects anything else.
+    expect(sentCarrierSequences).toEqual([0, 1]);
   });
 });

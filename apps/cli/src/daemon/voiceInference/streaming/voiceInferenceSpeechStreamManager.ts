@@ -3,11 +3,10 @@ import { appendFile, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT, DaemonVoiceInferenceSttAppendDiagnosticSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import { PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1, PEER_APPLICATION_ENCRYPTION_SUITE_V1, createPeerApplicationEncryptionAadV1, createPeerApplicationEncryptionNonceV1, createSpeechTranscriptionApplicationAuthorityDigestV1, decodePeerApplicationEncryptedFrameV1, encodePeerApplicationEncryptedFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
-import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
-import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import type { DaemonVoiceInferenceError, DaemonVoiceInferenceSttStreamCancelRequest, DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkRequest, DaemonVoiceInferenceSttStreamChunkResponse, DaemonVoiceInferenceSttStreamEvent, DaemonVoiceInferenceSttStreamFinishRequest, DaemonVoiceInferenceSttStreamFinishResponse, DaemonVoiceInferenceSttStreamStartRequest, DaemonVoiceInferenceSttStreamStartResponse, DaemonVoiceInferenceSttStreamStatusRequest, DaemonVoiceInferenceSttStreamStatusResponse, VoiceSpeechDiagnosticsCaptureContextV1, PeerApplicationEncryptionAuthorityBindingV1, PeerApplicationEncryptionPhaseV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
+import { MACHINE_STREAM_KEY_BYTES_V1, createMachineStreamKeyAadV1, createMachineStreamKeyNonceV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { createSpeechTranscriptionApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import type { DaemonVoiceInferenceError, DaemonVoiceInferenceSttStreamCancelRequest, DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkRequest, DaemonVoiceInferenceSttStreamChunkResponse, DaemonVoiceInferenceSttStreamEvent, DaemonVoiceInferenceSttStreamFinishRequest, DaemonVoiceInferenceSttStreamFinishResponse, DaemonVoiceInferenceSttStreamStartRequest, DaemonVoiceInferenceSttStreamStartResponse, VoiceSpeechDiagnosticsCaptureContextV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
@@ -17,11 +16,12 @@ import type { VoiceInferenceWorkerStreamingTranscriptionSession } from '@/daemon
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 
-type PeerApplicationEncryptionSession = {
-  binding: PeerApplicationEncryptionAuthorityBindingV1;
-  recipientSecretKeySeed: Uint8Array;
-  contentKey: Uint8Array | null;
-  lastCarrierSequence: number;
+/** Issued only inside an E2EE Machine RPC start response; plain Accounts have none. */
+type StreamKeySession = {
+  key: Uint8Array;
+  aad: Uint8Array;
+  /** Strictly contiguous per stream, so no key/nonce pair seals twice. */
+  lastSequence: number;
 };
 
 type CompatibilityChunk = Readonly<{
@@ -50,7 +50,7 @@ type BaseStreamSession = {
   diagnostics: VoiceSpeechDiagnosticsCaptureContextV1 | null;
   diagnosticWavFilePath: string | null;
   diagnosticCapturePromise: Promise<void> | null;
-  peerApplicationEncryption: PeerApplicationEncryptionSession | null;
+  streamKey: StreamKeySession | null;
 };
 
 type UploadBridgeStreamSession = BaseStreamSession & Readonly<{
@@ -97,36 +97,36 @@ export type VoiceInferenceSpeechStreamWorker = Readonly<{
 }>;
 
 export type VoiceInferenceSpeechStreamManager = Readonly<{
-  start: (input: DaemonVoiceInferenceSttStreamStartRequest, signal?: AbortSignal) => Promise<DaemonVoiceInferenceSttStreamStartResponse>;
+  start: (
+    input: DaemonVoiceInferenceSttStreamStartRequest,
+    signal?: AbortSignal,
+    options?: Readonly<{ issueStreamKey?: boolean }>,
+  ) => Promise<DaemonVoiceInferenceSttStreamStartResponse>;
   appendCompatibilityChunk: (input: DaemonVoiceInferenceSttStreamChunkRequest) => Promise<DaemonVoiceInferenceSttStreamChunkResponse>;
   appendPcm16Bytes: (input: Readonly<{
     streamId: string;
     generation: number;
     seq: number;
     pcm16Bytes: Uint8Array;
-    peerApplicationDecrypted?: true;
+    streamKeyOpened?: true;
     voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
   }>) => Promise<DaemonVoiceInferenceSttStreamChunkResponse>;
-  appendPeerApplicationFrame: (input: Readonly<{
-    binding: PeerApplicationEncryptionAuthorityBindingV1;
+  /** One tunnel data payload: sealed bytes for a keyed stream, raw PCM otherwise. */
+  appendTunnelFrame: (input: Readonly<{
     streamId: string;
     generation: number;
-    substreamId: string;
-    carrierSequence: number;
+    seq: number;
     payloadBytes: Uint8Array;
-  }>) => Promise<Uint8Array>;
-  finish: (input: DaemonVoiceInferenceSttStreamFinishRequest & Readonly<{
-    peerApplicationDecrypted?: true;
-  }>) => Promise<DaemonVoiceInferenceSttStreamFinishResponse>;
+    voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
+  }>) => Promise<DaemonVoiceInferenceSttStreamChunkResponse | Uint8Array>;
+  finish: (input: DaemonVoiceInferenceSttStreamFinishRequest) => Promise<DaemonVoiceInferenceSttStreamFinishResponse>;
   cancel: (input: DaemonVoiceInferenceSttStreamCancelRequest) => Promise<DaemonVoiceInferenceSttStreamCancelResponse>;
   cancelForTransportLoss: (input: Readonly<{
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
     voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
   }> & (
     | DaemonVoiceInferenceSttStreamCancelRequest
     | Readonly<{ streamId?: never; generation?: never }>
   )) => Promise<DaemonVoiceInferenceSttStreamCancelResponse>;
-  status: (input: DaemonVoiceInferenceSttStreamStatusRequest) => Promise<DaemonVoiceInferenceSttStreamStatusResponse>;
   dispose: () => Promise<void>;
 }>;
 
@@ -204,42 +204,11 @@ function normalizePcm16Bytes(bytes: Uint8Array): Buffer | null {
   return Buffer.from(bytes);
 }
 
-function samePeerApplicationBinding(
-  left: PeerApplicationEncryptionAuthorityBindingV1,
-  right: PeerApplicationEncryptionAuthorityBindingV1,
-): boolean {
-  return left.v === right.v
-    && left.suite === right.suite
-    && left.flowKind === right.flowKind
-    && left.routeKind === right.routeKind
-    && left.authorityDigest === right.authorityDigest
-    && left.accountId === right.accountId
-    && left.machineId === right.machineId
-    && left.tunnelId === right.tunnelId
-    && left.applicationKind === right.applicationKind
-    && left.applicationAttemptId === right.applicationAttemptId
-    && left.applicationAuthorityDigest === right.applicationAuthorityDigest;
-}
-
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false;
   let mismatch = 0;
   for (let index = 0; index < left.byteLength; index += 1) mismatch |= left[index]! ^ right[index]!;
   return mismatch === 0;
-}
-
-function parseEncryptedFinishRequest(bytes: Uint8Array): DaemonVoiceInferenceSttStreamFinishRequest | null {
-  try {
-    const raw = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown;
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-    const record = raw as Record<string, unknown>;
-    if (Object.keys(record).length !== 1 || !Number.isSafeInteger(record.finalSeq) || (record.finalSeq as number) < 0) {
-      return null;
-    }
-    return { streamId: '', generation: 0, finalSeq: record.finalSeq as number };
-  } catch {
-    return null;
-  }
 }
 
 async function finalizePcm16WavFile(filePath: string, dataBytes: number): Promise<void> {
@@ -281,7 +250,7 @@ export function createVoiceInferenceSpeechStreamManager(
   let disposePromise: Promise<void> | null = null;
   let disposed = false;
   const pendingStarts = new Map<string, Pick<BaseStreamSession,
-    'requestId' | 'streamId' | 'generation' | 'abortController' | 'peerApplicationEncryption'
+    'requestId' | 'streamId' | 'generation' | 'abortController' | 'streamKey'
   >>();
 
   function getSession(streamId: string, generation?: number): StreamSession | null {
@@ -319,9 +288,7 @@ export function createVoiceInferenceSpeechStreamManager(
     }
     session.compatibilityChunks.clear();
     await session.tail.catch(() => undefined);
-    session.peerApplicationEncryption?.recipientSecretKeySeed.fill(0);
-    session.peerApplicationEncryption?.contentKey?.fill(0);
-    if (session.peerApplicationEncryption) session.peerApplicationEncryption.contentKey = null;
+    session.streamKey?.key.fill(0);
     if (session.mode === 'runtime') {
       if (closeOptions?.cancelWorker === true) {
         await session.runtimeSession.cancel().catch(() => undefined);
@@ -394,7 +361,7 @@ export function createVoiceInferenceSpeechStreamManager(
   }
 
   const manager: VoiceInferenceSpeechStreamManager = {
-    start: async (input, signal) => {
+    start: async (input, signal, startOptions) => {
       let startAbortController: AbortController | null = null;
       let unlinkRequestAbort = () => {};
       let reservedApplicationAttempt = false;
@@ -408,20 +375,6 @@ export function createVoiceInferenceSpeechStreamManager(
         const mode = input.streamingMode;
         if (!mode) {
           throw Object.assign(new Error('voice_inference_streaming_mode_required'), { code: 'invalid_stream_state' });
-        }
-        if (
-          input.peerApplicationEncryption
-          && (
-            input.peerApplicationEncryption.applicationKind !== 'speech_transcription'
-            || input.peerApplicationEncryption.applicationAttemptId !== input.requestId
-            || input.peerApplicationEncryption.applicationAuthorityDigest
-              !== createSpeechTranscriptionApplicationAuthorityDigestV1(input.requestId)
-          )
-        ) {
-          throw Object.assign(
-            new Error('voice_inference_stream_application_authority_mismatch'),
-            { code: 'invalid_stream_state' },
-          );
         }
         if (activeApplicationAttemptIds.has(input.requestId)) {
           throw Object.assign(
@@ -439,17 +392,16 @@ export function createVoiceInferenceSpeechStreamManager(
           unlinkRequestAbort = () => signal.removeEventListener('abort', abortStart);
           if (signal.aborted) abortStart();
         }
-        const peerApplicationEncryption: PeerApplicationEncryptionSession | null = input.peerApplicationEncryption
+        const streamKey: StreamKeySession | null = startOptions?.issueStreamKey === true
           ? {
-              binding: input.peerApplicationEncryption,
-              recipientSecretKeySeed: new Uint8Array(randomBytes(PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1)),
-              contentKey: null,
-              lastCarrierSequence: -1,
+              key: new Uint8Array(randomBytes(MACHINE_STREAM_KEY_BYTES_V1)),
+              aad: createMachineStreamKeyAadV1({ streamId, generation: 0 }),
+              lastSequence: -1,
             }
           : null;
         startAbortController = abortController;
         pendingStarts.set(input.requestId, {
-          requestId: input.requestId, streamId, generation: 0, abortController, peerApplicationEncryption,
+          requestId: input.requestId, streamId, generation: 0, abortController, streamKey,
         });
         if (mode === 'runtime') {
           if (typeof options.voiceInferenceWorker.createStreamingTranscriptionSession !== 'function') {
@@ -487,7 +439,7 @@ export function createVoiceInferenceSpeechStreamManager(
             diagnostics,
             diagnosticWavFilePath,
             diagnosticCapturePromise: null,
-            peerApplicationEncryption,
+            streamKey,
           };
           if (diagnosticWavFilePath) {
             await mkdir(streamRoot, { recursive: true });
@@ -517,7 +469,7 @@ export function createVoiceInferenceSpeechStreamManager(
             diagnostics,
             diagnosticWavFilePath: null,
             diagnosticCapturePromise: null,
-            peerApplicationEncryption,
+            streamKey,
           };
           await writeFile(session.wavFilePath, encodeWavHeader(0), { flag: 'wx', mode: 0o600 });
         }
@@ -539,16 +491,7 @@ export function createVoiceInferenceSpeechStreamManager(
           generation: createdSession.generation,
           ackSeq: createdSession.ackSeq,
           format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-          ...(peerApplicationEncryption ? {
-            peerApplicationEncryption: {
-              v: 1 as const,
-              suite: PEER_APPLICATION_ENCRYPTION_SUITE_V1,
-              recipientPublicKeyBase64Url: encodeBase64(
-                deriveBoxPublicKeyFromSeed(peerApplicationEncryption.recipientSecretKeySeed),
-                'base64url',
-              ),
-            },
-          } : {}),
+          ...(streamKey ? { streamKeyBase64Url: encodeBase64(streamKey.key, 'base64url') } : {}),
         };
       } catch (error) {
         if (session && session.state !== 'closed') {
@@ -567,140 +510,62 @@ export function createVoiceInferenceSpeechStreamManager(
         }
       }
     },
-    appendPeerApplicationFrame: async (input) => {
+    appendTunnelFrame: async (input) => {
       const session = getSession(input.streamId, input.generation);
-      const encryption = session?.peerApplicationEncryption ?? null;
-      if (!session || !encryption || session.state !== 'open') {
-        throw Object.assign(new Error('daemon_voice_inference_encrypted_stream_not_found'), { code: 'stream_not_found' });
-      }
-      if (!samePeerApplicationBinding(encryption.binding, input.binding)) {
-        throw Object.assign(new Error('daemon_voice_inference_encryption_authority_mismatch'), { code: 'invalid_stream_state' });
-      }
-      const expectedSubstreamId = `daemon.voiceInference.stt.${session.streamId}.${session.generation}`;
-      if (input.substreamId !== expectedSubstreamId || input.carrierSequence !== encryption.lastCarrierSequence + 1) {
-        throw Object.assign(new Error('daemon_voice_inference_encryption_sequence_mismatch'), { code: 'invalid_stream_state' });
-      }
-      const frame = decodePeerApplicationEncryptedFrameV1(input.payloadBytes);
-      if (!frame) {
-        throw Object.assign(new Error('daemon_voice_inference_encryption_frame_invalid'), { code: 'invalid_stream_state' });
-      }
-      const phase: PeerApplicationEncryptionPhaseV1 = frame.kind;
-      const requestNonce = createPeerApplicationEncryptionNonceV1({
-        direction: 'client_to_daemon',
-        phase,
-        sequence: input.carrierSequence,
-      });
-      if (!sameBytes(decodeBase64(frame.nonceBase64Url, 'base64url'), requestNonce)) {
-        throw Object.assign(new Error('daemon_voice_inference_encryption_nonce_mismatch'), { code: 'invalid_stream_state' });
-      }
-      const aadBase = {
-        authorityDigest: input.binding.authorityDigest,
-        accountId: input.binding.accountId,
-        machineId: input.binding.machineId,
-        tunnelId: input.binding.tunnelId,
-        applicationKind: input.binding.applicationKind,
-        applicationAttemptId: input.binding.applicationAttemptId,
-        applicationAuthorityDigest: input.binding.applicationAuthorityDigest,
-        streamId: session.streamId,
-        generation: session.generation,
-        substreamId: input.substreamId,
-        sequence: input.carrierSequence,
-        phase,
-      } as const;
-      let contentKey = encryption.contentKey;
-      if (frame.kind === 'install') {
-        if (contentKey || input.carrierSequence !== 0 || !frame.encryptedDataKeyEnvelopeBase64Url) {
-          throw Object.assign(new Error('daemon_voice_inference_encryption_install_invalid'), { code: 'invalid_stream_state' });
-        }
-        contentKey = openEncryptedDataKeyEnvelopeV1({
-          envelope: decodeBase64(frame.encryptedDataKeyEnvelopeBase64Url, 'base64url'),
-          recipientSecretKeyOrSeed: encryption.recipientSecretKeySeed,
+      const streamKey = session?.streamKey ?? null;
+      if (!session || !streamKey) {
+        // Plain Account: the tunnel payload is the PCM itself, as on every route.
+        return await manager.appendPcm16Bytes({
+          streamId: input.streamId, generation: input.generation, seq: input.seq,
+          pcm16Bytes: input.payloadBytes, voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
         });
-        if (!contentKey || contentKey.byteLength !== PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1) {
-          contentKey?.fill(0);
-          throw Object.assign(new Error('daemon_voice_inference_encryption_key_invalid'), { code: 'invalid_stream_state' });
-        }
-      } else if (!contentKey) {
-        throw Object.assign(new Error('daemon_voice_inference_encryption_not_installed'), { code: 'invalid_stream_state' });
       }
-
+      if (session.state !== 'open') {
+        throw Object.assign(new Error('daemon_voice_inference_stream_not_open'), { code: 'invalid_stream_state' });
+      }
+      // Each sequence opens and seals once; a replay or gap never reaches the cipher.
+      if (input.seq !== streamKey.lastSequence + 1) {
+        throw Object.assign(new Error('daemon_voice_inference_stream_key_sequence_mismatch'), { code: 'invalid_stream_state' });
+      }
       let plaintext: Uint8Array;
       try {
         plaintext = openAes256GcmBytes({
-          key: contentKey,
-          nonce: requestNonce,
-          aad: createPeerApplicationEncryptionAadV1({ ...aadBase, direction: 'client_to_daemon' }),
-          ciphertext: decodeBase64(frame.ciphertextBase64Url, 'base64url'),
+          key: streamKey.key,
+          nonce: createMachineStreamKeyNonceV1('client_to_daemon', input.seq),
+          aad: streamKey.aad,
+          ciphertext: input.payloadBytes,
         });
       } catch {
-        if (frame.kind === 'install') contentKey.fill(0);
-        throw Object.assign(new Error('daemon_voice_inference_encryption_authentication_failed'), { code: 'invalid_stream_state' });
+        throw Object.assign(new Error('daemon_voice_inference_stream_key_authentication_failed'), { code: 'invalid_stream_state' });
       }
-
-      let response: unknown;
-      const processingStartedAt = process.env.HAPPIER_WEB_LATENCY_TRACE === '1' ? performance.now() : null;
+      streamKey.lastSequence = input.seq;
       // Native append/finalization can retire the stream and wipe its key before
       // returning a typed failure. Retain only this admitted response's key until
       // it is sealed, so cleanup cannot turn that failure into corrupt ciphertext.
-      const responseKey = frame.kind === 'install' ? contentKey : new Uint8Array(contentKey);
+      const responseKey = new Uint8Array(streamKey.key);
+      const processingStartedAt = process.env.HAPPIER_WEB_LATENCY_TRACE === '1' ? performance.now() : null;
+      let response: DaemonVoiceInferenceSttStreamChunkResponse | undefined;
       try {
-        if (frame.kind === 'install') {
-          if (new TextDecoder().decode(plaintext) !== PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1) {
-            contentKey.fill(0);
-            throw Object.assign(new Error('daemon_voice_inference_encryption_confirmation_failed'), { code: 'invalid_stream_state' });
-          }
-          encryption.contentKey = contentKey;
-          response = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1;
-        } else if (phase === 'data') {
-          response = await manager.appendPcm16Bytes({
-            streamId: session.streamId,
-            generation: session.generation,
-            seq: input.carrierSequence - 1,
-            pcm16Bytes: plaintext,
-            peerApplicationDecrypted: true,
-          });
-        } else {
-          const finish = parseEncryptedFinishRequest(plaintext);
-          if (!finish) {
-            throw Object.assign(new Error('daemon_voice_inference_encrypted_finish_invalid'), { code: 'invalid_stream_state' });
-          }
-          response = await manager.finish({
-            streamId: session.streamId,
-            generation: session.generation,
-            finalSeq: finish.finalSeq,
-            peerApplicationDecrypted: true,
-          });
-        }
-        encryption.lastCarrierSequence = input.carrierSequence;
-        const responsePlaintext = typeof response === 'string'
-          ? new TextEncoder().encode(response)
-          : new TextEncoder().encode(JSON.stringify(response));
-        const responseNonce = createPeerApplicationEncryptionNonceV1({
-          direction: 'daemon_to_client',
-          phase,
-          sequence: input.carrierSequence,
+        response = await manager.appendPcm16Bytes({
+          streamId: session.streamId,
+          generation: session.generation,
+          seq: input.seq,
+          pcm16Bytes: plaintext,
+          streamKeyOpened: true,
+          voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
         });
-        const responseCiphertext = sealAes256GcmBytes({
+        return sealAes256GcmBytes({
           key: responseKey,
-          nonce: responseNonce,
-          aad: createPeerApplicationEncryptionAadV1({ ...aadBase, direction: 'daemon_to_client' }),
-          plaintext: responsePlaintext,
-        });
-        return encodePeerApplicationEncryptedFrameV1({
-          v: 1,
-          kind: phase,
-          nonceBase64Url: encodeBase64(responseNonce, 'base64url'),
-          ciphertextBase64Url: encodeBase64(responseCiphertext, 'base64url'),
+          nonce: createMachineStreamKeyNonceV1('daemon_to_client', input.seq),
+          aad: streamKey.aad,
+          plaintext: new TextEncoder().encode(JSON.stringify(response)),
         });
       } finally {
-        if (responseKey !== contentKey) responseKey.fill(0);
+        responseKey.fill(0);
         if (processingStartedAt !== null) {
-          try { logger.debug('[VoiceInference] Relay application frame settled', {
-            tunnelId: input.binding.tunnelId, substreamId: input.substreamId,
-            sequence: input.carrierSequence, phase,
-            elapsedMs: performance.now() - processingStartedAt,
-            ok: typeof response === 'string'
-              || (response !== null && typeof response === 'object' && 'ok' in response && response.ok === true),
+          try { logger.debug('[VoiceInference] Keyed stream frame settled', {
+            streamId: session.streamId, sequence: input.seq,
+            elapsedMs: performance.now() - processingStartedAt, ok: response?.ok === true,
           }); } catch { /* Diagnostic only. */ }
         }
       }
@@ -711,7 +576,7 @@ export function createVoiceInferenceSpeechStreamManager(
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_invalid_pcm');
       }
       const session = getSession(input.streamId, input.generation);
-      if (!session || session.state !== 'open' || session.peerApplicationEncryption || input.seq <= session.admittedSeq) {
+      if (!session || session.state !== 'open' || session.streamKey || input.seq <= session.admittedSeq) {
         return await manager.appendPcm16Bytes({ ...input, pcm16Bytes: pcm });
       }
       const pending = session.compatibilityChunks.get(input.seq);
@@ -764,7 +629,7 @@ export function createVoiceInferenceSpeechStreamManager(
       ) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_application_authority_mismatch');
       }
-      if (session.peerApplicationEncryption && input.peerApplicationDecrypted !== true) {
+      if (session.streamKey && input.streamKeyOpened !== true) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_encryption_required');
       }
       if (input.seq <= session.ackSeq) {
@@ -858,9 +723,6 @@ export function createVoiceInferenceSpeechStreamManager(
       }
       if (session.state !== 'open') {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_not_open');
-      }
-      if (session.peerApplicationEncryption && input.peerApplicationDecrypted !== true) {
-        return streamError('invalid_stream_state', 'daemon_voice_inference_stream_encryption_required');
       }
       if (!(input.finalSeq === session.admittedSeq || (session.admittedSeq === -1 && input.finalSeq === 0))) {
         return streamError('invalid_stream_state', 'daemon_voice_inference_stream_final_seq_unacked');
@@ -985,16 +847,6 @@ export function createVoiceInferenceSpeechStreamManager(
         || input.voiceMediaApplicationAuthority.applicationAttemptId !== session.requestId
         || input.voiceMediaApplicationAuthority.applicationAuthorityDigest
           !== createSpeechTranscriptionApplicationAuthorityDigestV1(session.requestId)
-        || (
-          session.peerApplicationEncryption
-          && (
-            !input.peerApplicationEncryption
-            || !samePeerApplicationBinding(
-              session.peerApplicationEncryption.binding,
-              input.peerApplicationEncryption,
-            )
-          )
-        )
       ) {
         return streamError(
           'invalid_stream_state',
@@ -1013,19 +865,6 @@ export function createVoiceInferenceSpeechStreamManager(
         ok: true,
         streamId: session.streamId,
         generation: session.generation,
-      };
-    },
-    status: async (input) => {
-      const session = getSession(input.streamId, input.generation);
-      if (!session) {
-        return streamError('stream_not_found', 'daemon_voice_inference_stream_not_found');
-      }
-      return {
-        ok: true,
-        streamId: session.streamId,
-        generation: session.generation,
-        ackSeq: session.ackSeq,
-        state: session.state,
       };
     },
     dispose: async () => {

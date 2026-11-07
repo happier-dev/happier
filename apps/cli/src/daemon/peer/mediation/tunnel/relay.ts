@@ -1,11 +1,10 @@
 import { PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, PeerTcpTunnelRelayEnvelopeSchema } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
-import { DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { normalizeMachineTunnelPositiveInt } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 import { decodePeerTcpTunnelBinaryFrameHeaderV2, decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 import { verifyPeerTcpTunnelRelayAuthorizationV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorization';
-import { createPeerApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
-import type { PeerTcpTunnelSubstreamCapsV2, PeerTcpTunnelEncoding, PeerTcpTunnelFrameV1, PeerTcpTunnelOpenV1, PeerTcpTunnelRelayAuthorizationPayloadV2, PeerTcpTunnelRelayAuthorizationV2, PeerTcpTunnelRelayAuthorizationTrustRootV1, PeerTcpTunnelRelayBinaryEnvelopeV2, PeerTcpTunnelRelayEnvelope, PeerTcpTunnelRelayEnvelopeV1, PeerApplicationEncryptionAuthorityBindingV1, ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol';
+import type { PeerTcpTunnelSubstreamCapsV2, PeerTcpTunnelEncoding, PeerTcpTunnelFrameV1, PeerTcpTunnelOpenV1, PeerTcpTunnelRelayAuthorizationPayloadV2, PeerTcpTunnelRelayAuthorizationV2, PeerTcpTunnelRelayAuthorizationTrustRootV1, PeerTcpTunnelRelayBinaryEnvelopeV2, PeerTcpTunnelRelayEnvelope, PeerTcpTunnelRelayEnvelopeV1, ProviderBrokerRelayApplicationBindingV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 
 import {
     createPeerTcpTunnelApplicationSubstreamSession,
@@ -31,6 +30,7 @@ import {
 } from './voiceBinaryAppend';
 import { createAtomicRouteGrantConsumption } from './grantConsumption';
 import { isFirstBytesLocalCapability } from '../loopback/firstBytesLocalCapability';
+import type { LocalServicePreviewDirectBindingV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 type PeerTcpTunnelRelaySocket = Readonly<{
     on: (event: string, handler: (payload?: unknown) => void | Promise<void>) => unknown;
@@ -45,7 +45,7 @@ type ActiveRelayTunnel = Readonly<{
     flowKind: PeerTcpTunnelRelayAuthorizationPayloadV2['flowKind'];
     maxFrameBytes: number;
     maxTotalBytes?: number;
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
+    voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
 }>;
 
 function encodeVoiceConsumerResponse(response: unknown): Uint8Array {
@@ -59,6 +59,7 @@ export type RegisterPeerTcpTunnelRelayTerminatorOptions = Readonly<{
     nowMs: () => number;
     relayAuthorizationTrustRoots: readonly PeerTcpTunnelRelayAuthorizationTrustRootV1[];
     connectTcp: (target: Readonly<{ host: string; port: number }>) => Promise<PeerTcpTunnelTcpConnection>;
+    resolvePreviewApplication?: (binding: LocalServicePreviewDirectBindingV1) => Promise<LocalServicePreviewResourceV1>;
     resolveProviderBrokerApplicationTarget?: (input: Readonly<{
         binding: ProviderBrokerRelayApplicationBindingV1;
         relayAuthorization: PeerTcpTunnelRelayAuthorizationV2;
@@ -185,8 +186,7 @@ function resolveSubstreamCaps(input: Readonly<{
     configured: PeerTcpTunnelSubstreamCapsV2 | undefined;
     authorization: PeerTcpTunnelRelayAuthorizationPayloadV2;
 }>): PeerTcpTunnelSubstreamCapsV2 {
-    const maxConcurrentSubstreams = input.configured?.maxConcurrentSubstreams
-        ?? DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxConcurrentSubstreams;
+    const maxConcurrentSubstreams = input.configured?.maxConcurrentSubstreams;
     if (input.authorization.flowKind === 'tcp_tunnel') {
         return { maxConcurrentSubstreams };
     }
@@ -224,7 +224,7 @@ export function registerPeerTcpTunnelRelayTerminator(
     const pendingFramesByOpeningTunnel = new Map<string, PeerTcpTunnelRelayEnvelope[]>();
     const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'consume' });
     const bytesByTunnelId = new Map<string, { in: number; out: number }>();
-    const maxActiveTunnels = normalizePositiveInt(options.maxActiveTunnels, 8);
+    const maxActiveTunnels = normalizeMachineTunnelPositiveInt(options.maxActiveTunnels, undefined);
     const maxFrameBytes = normalizePositiveInt(options.maxFrameBytes, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES);
     const maxBinaryHeaderBytes = normalizePositiveInt(options.maxBinaryHeaderBytes, maxFrameBytes);
     const maxRawPayloadBytes = normalizePositiveInt(options.maxRawPayloadBytes, maxFrameBytes);
@@ -486,7 +486,7 @@ export function registerPeerTcpTunnelRelayTerminator(
             emitAbort(tunnelId, 'tunnel_id_already_open');
             return;
         }
-        if (activeTunnels.size + openingTunnels.size >= maxActiveTunnels) {
+        if (maxActiveTunnels !== undefined && activeTunnels.size + openingTunnels.size >= maxActiveTunnels) {
             emitObservability({
                 kind: 'cap.exceeded',
                 tunnelId,
@@ -579,17 +579,12 @@ export function registerPeerTcpTunnelRelayTerminator(
                 emitAbort(tunnelId, 'relay_authorization_invalid');
                 return;
             }
-            const peerApplicationEncryption =
-                verification.payload.flowKind === 'voice_media' && open.relayAuthorization
+            // The signed relay authorization names the exact Voice attempt; payload
+            // privacy is the stream owner's Account-mode key, not tunnel framing.
+            const voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1 | undefined =
+                verification.payload.flowKind === 'voice_media'
                     ? {
-                        v: 1 as const,
-                        suite: 'aes-256-gcm' as const,
-                        flowKind: 'voice_media' as const,
-                        routeKind: 'server_relay' as const,
-                        authorityDigest: createPeerApplicationAuthorityDigestV1(open.relayAuthorization),
-                        accountId: verification.payload.accountId,
-                        machineId: verification.payload.targetMachineId,
-                        tunnelId: verification.payload.tunnelId,
+                        v: 1,
                         applicationKind: verification.payload.applicationKind!,
                         applicationAttemptId: verification.payload.applicationAttemptId!,
                         applicationAuthorityDigest: verification.payload.applicationAuthorityDigest!,
@@ -678,7 +673,26 @@ export function registerPeerTcpTunnelRelayTerminator(
                     maxBinaryHeaderBytes,
                     maxRawPayloadBytes,
                     caps: resolvedSubstreamCaps,
-                    connectTcp: options.connectTcp,
+                    connectTcp: async (target) => {
+                        const binding = verification.payload.preview;
+                        if (!binding) return await options.connectTcp(target);
+                        let connected: PeerTcpTunnelTcpConnection | undefined;
+                        try {
+                            if (!options.resolvePreviewApplication) throw Object.assign(new Error('preview_target_unresolved'), { reasonCode: 'preview_target_unresolved' });
+                            await options.resolvePreviewApplication(binding);
+                            connected = await options.connectTcp(target);
+                            // No request/response bytes enter the stream until identity
+                            // is checked again after the asynchronous OS connect.
+                            await options.resolvePreviewApplication(binding);
+                            return connected;
+                        } catch (error) {
+                            await connected?.close();
+                            const code = (error as { reasonCode?: unknown } | null)?.reasonCode;
+                            emitAbort(tunnelId, code === 'preview_not_found' ? code : 'preview_target_unresolved');
+                            await closeTunnel(tunnelId);
+                            throw error;
+                        }
+                    },
                     sendBinaryFrame: (frame) => {
                         options.socket.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
                             v: 2,
@@ -723,8 +737,7 @@ export function registerPeerTcpTunnelRelayTerminator(
                                 consumer: options.voiceBinaryTerminalConsumer,
                                 substreamIds,
                                 reasonCode,
-                                peerApplicationEncryption,
-                                voiceMediaApplicationAuthority: peerApplicationEncryption,
+                                voiceMediaApplicationAuthority,
                             });
                         } finally {
                             await closeTunnel(tunnelId, { skipApplicationSubstreamClose: true });
@@ -739,7 +752,7 @@ export function registerPeerTcpTunnelRelayTerminator(
                 flowKind: verification.payload.flowKind,
                 maxFrameBytes: verification.payload.maxFrameBytes,
                 maxTotalBytes: verification.payload.maxTotalBytes,
-                ...(peerApplicationEncryption ? { peerApplicationEncryption } : {}),
+                ...(voiceMediaApplicationAuthority ? { voiceMediaApplicationAuthority } : {}),
                 ...(substreamMux ? { substreamMux } : {}),
                 ...(applicationSubstreams ? { applicationSubstreams } : {}),
             });
@@ -834,10 +847,7 @@ export function registerPeerTcpTunnelRelayTerminator(
                                 sequence,
                             },
                             payload,
-                            voiceMediaApplicationAuthority: active.peerApplicationEncryption,
-                            ...(active.peerApplicationEncryption ? {
-                                peerApplicationEncryption: active.peerApplicationEncryption,
-                            } : {}),
+                            voiceMediaApplicationAuthority: active.voiceMediaApplicationAuthority,
                             onResponse: (response) => {
                                 responsePayload = encodeVoiceConsumerResponse(response);
                             },
@@ -906,10 +916,7 @@ export function registerPeerTcpTunnelRelayTerminator(
                                     sequence,
                                 },
                                 payload,
-                                voiceMediaApplicationAuthority: active.peerApplicationEncryption,
-                                ...(active.peerApplicationEncryption ? {
-                                    peerApplicationEncryption: active.peerApplicationEncryption,
-                                } : {}),
+                                voiceMediaApplicationAuthority: active.voiceMediaApplicationAuthority,
                                 onResponse: (response) => {
                                     responsePayload = encodeVoiceConsumerResponse(response);
                                 },

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 
-import { DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES, normalizeMachineTunnelPositiveInt } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 import { decodePeerTcpTunnelBinaryFrameHeaderV2, decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 import { PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES, PEER_TCP_TUNNEL_STREAM_PATH } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
 import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
@@ -103,7 +103,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
     registeredTunnelApps.add(app);
 
     const openTunnel = options.openTunnel ?? openPeerTcpTunnel;
-    const maxActiveTunnels = Math.max(1, Math.floor(options.maxActiveTunnels ?? 8));
+    const maxActiveTunnels = normalizeMachineTunnelPositiveInt(options.maxActiveTunnels, undefined);
     const activeTunnels = new Map<string, ActivePeerTcpTunnel>();
     const releaseTunnel = (tunnelId: string, kind: 'flow.closed' | 'flow.aborted' = 'flow.closed', reasonCode?: string): void => {
         const tunnel = activeTunnels.get(tunnelId);
@@ -274,7 +274,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                                         payload,
                                         voiceMediaApplicationAuthority: entry.voiceMediaApplicationAuthority,
                                         onResponse: (response) => {
-                                            responsePayload = Buffer.from(JSON.stringify(response), 'utf8');
+                                            // A keyed (E2EE Account) stream answers with sealed bytes.
+                                            responsePayload = response instanceof Uint8Array
+                                                ? response
+                                                : Buffer.from(JSON.stringify(response), 'utf8');
                                         },
                                     });
                                     return responsePayload;
@@ -368,7 +371,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 reasonCode: 'tunnel_id_already_open',
             };
         }
-        if (tunnelId && activeTunnels.size >= maxActiveTunnels) {
+        if (tunnelId && maxActiveTunnels !== undefined && activeTunnels.size >= maxActiveTunnels) {
             reply.code(429);
             observeTunnel({ tunnelId, kind: 'cap.exceeded', reasonCode: 'direct_tunnel_cap_exceeded' });
             return {

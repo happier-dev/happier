@@ -188,6 +188,29 @@ function waitForBinaryFrameKind(
 }
 
 describe('registerPeerTcpTunnelLoopbackRoutes', () => {
+    it('admits nine valid concurrent tunnels when no operator count cap is configured', async () => {
+        const mod = await loadRegisterRoutesModule();
+        if (!mod) throw new Error('expected direct tunnel route module');
+        const app = createPeerMediationLoopbackApp(loopbackOptions);
+        const upstream = createServer(socket => socket.resume());
+        await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+        const address = upstream.address();
+        if (!address || typeof address === 'string') throw new Error('missing TCP fixture');
+        mod.registerPeerTcpTunnelLoopbackRoutes(app, { ...loopbackOptions, trustRoots: routeTrustRoots });
+        try {
+            for (let index = 0; index < 9; index += 1) {
+                const response = await app.inject({ method: 'POST', url: '/peer-mediation/v2/tunnel/open',
+                    payload: createSignedDirectOpen({ grantId: `uncapped-grant-${index}`, tunnelId: `uncapped-${index}`,
+                        destinationPort: address.port }) });
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toMatchObject({ tunnelId: `uncapped-${index}` });
+            }
+        } finally {
+            await app.close();
+            await new Promise<void>((resolve, reject) => upstream.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it('transfers pending preview custody from the POST socket to an idle signed-id WebSocket', async () => {
         const mod = await loadRegisterRoutesModule();
         if (!mod) throw new Error('expected direct tunnel route module');
@@ -1144,7 +1167,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             streamId: string;
             generation: number;
             seq: number;
-            pcm16Bytes: Uint8Array;
+            payloadBytes: Uint8Array;
         }>>();
         const connection = {
             write: vi.fn(),
@@ -1236,7 +1259,7 @@ describe('registerPeerTcpTunnelLoopbackRoutes', () => {
             generation: 3,
             seq: 0,
         });
-        expect([...(await appended.promise).pcm16Bytes]).toEqual([0, 0, 1, 0]);
+        expect([...(await appended.promise).payloadBytes]).toEqual([0, 0, 1, 0]);
         expect(voiceBinaryAppendConsumer).toHaveBeenCalledOnce();
         expect(connectTcp).not.toHaveBeenCalled();
         expect(connection.write).not.toHaveBeenCalled();

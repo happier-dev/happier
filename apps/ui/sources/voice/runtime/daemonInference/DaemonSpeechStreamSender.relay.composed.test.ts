@@ -6,12 +6,19 @@ import { describe, expect, it } from 'vitest';
 import { waitForTestEvent } from '@/dev/testkit';
 import tweetnacl from 'tweetnacl';
 import { createPeerTcpTunnelApplicationSubstreamSession } from '@happier-dev/peer-transport';
-import { decodePeerTcpTunnelBinaryFrameV2, PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-  PeerTcpTunnelRelayEnvelopeSchema, createSpeechTranscriptionApplicationAuthorityDigestV1,
-  createPeerTcpTunnelRelayAuthorizationSigningInputV2,
-  DaemonVoiceInferenceSttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema,
-  type PeerTcpTunnelRelayEnvelope, type PeerApplicationEncryptionAuthorityBindingV1,
-} from '@happier-dev/protocol';
+import { decodePeerTcpTunnelBinaryFrameV2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import {
+  PeerTcpTunnelRelayEnvelopeSchema,
+  type PeerTcpTunnelRelayEnvelope} from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import { createSpeechTranscriptionApplicationAuthorityDigestV1, type VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
+import { MACHINE_STREAM_KEY_TAG_BYTES_V1, createMachineStreamKeyAadV1, createMachineStreamKeyNonceV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { decodeBase64 } from '@/encryption/base64';
+import { sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
+import {
+  createPeerTcpTunnelRelayAuthorizationSigningInputV2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
+import {
+  DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT, DaemonVoiceInferenceSttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema} from '@happier-dev/protocol/daemon/voiceInference';
 import { openPeerTcpTunnelRelayStream } from '@/sync/domains/machines/peer/mediation/tunnel/relayStream';
 import { createVoiceInferenceSpeechStreamManager } from '../../../../../cli/src/daemon/voiceInference/streaming/voiceInferenceSpeechStreamManager';
 import { dispatchDaemonVoiceInferenceSttBinaryAppend } from '../../../../../cli/src/daemon/peer/mediation/tunnel/voiceBinaryAppend';
@@ -21,14 +28,15 @@ import { createDaemonSpeechStreamTunnelTransport } from './DaemonSpeechStreamTun
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 // Cross-app source composition stays in the documented .composed. test category.
-describe('sender → encrypted relay framing → daemon STT intake', () => {
+describe('sender → Account-mode relay framing → daemon STT intake', () => {
   it.each([
-    { holdNativeAdmission: false, nativeFailure: false, slowPhase: null },
-    { holdNativeAdmission: true, nativeFailure: false, slowPhase: null },
-    { holdNativeAdmission: false, nativeFailure: true, slowPhase: null },
-    { holdNativeAdmission: false, nativeFailure: false, slowPhase: 'append' },
-    { holdNativeAdmission: false, nativeFailure: false, slowPhase: 'finish' },
-  ])('preserves capture and authenticated native outcomes %j', async ({ holdNativeAdmission, nativeFailure, slowPhase }) => {
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: null },
+    { contentMode: 'plain', holdNativeAdmission: false, nativeFailure: false, slowPhase: null },
+    { contentMode: 'e2ee', holdNativeAdmission: true, nativeFailure: false, slowPhase: null },
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: true, slowPhase: null },
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'append' },
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'finish' },
+  ] as const)('preserves capture and native outcomes in the Account content mode %j', async ({ contentMode, holdNativeAdmission, nativeFailure, slowPhase }) => {
     const streamRoot = await mkdtemp(join(tmpdir(), 'happier-df66-intake-'));
     const events = new EventTarget();
     const notify = () => events.dispatchEvent(new Event('transport'));
@@ -39,12 +47,12 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
     const received: Uint8Array[] = [];
     const nativeAppends: Array<() => void> = [];
     const terminalReasons: string[] = [];
-    const binding: PeerApplicationEncryptionAuthorityBindingV1 = {
-      v: 1, suite: 'aes-256-gcm', flowKind: 'voice_media', routeKind: 'server_relay',
-      authorityDigest: 'sha256:' + 'a'.repeat(64), accountId: 'account', machineId: 'machine', tunnelId: 'tunnel',
-      applicationKind: 'speech_transcription', applicationAttemptId: 'request',
-      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request'),
-    };
+    const binding = { flowKind: 'voice_media' as const, routeKind: 'server_relay' as const,
+      accountId: 'account', machineId: 'machine', tunnelId: 'tunnel' };
+    const authority: VoiceMediaApplicationAuthorityV1 = { v: 1, applicationKind: 'speech_transcription',
+      applicationAttemptId: 'request', applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request') };
+    // Every Voice payload the relay (server) can observe, per direction.
+    const relayObserved = { clientToDaemon: [] as Uint8Array[], daemonToClient: [] as Uint8Array[] };
     const manager = createVoiceInferenceSpeechStreamManager({ streamRoot,
       // The native worker process is the boundary. Intake, encryption, framing,
       // sequence admission, acknowledgement and finalization stay real.
@@ -80,8 +88,8 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
     const authorizationPayload = { v: 2 as const, grantId: 'grant', accountId: binding.accountId,
       targetMachineId: binding.machineId, flowKind: binding.flowKind, routeKind: binding.routeKind,
       tunnelId: binding.tunnelId, relaySocketId: 'tab', destination, capProfileId: 'interactive', maxFrameBytes,
-      applicationKind: binding.applicationKind, applicationAttemptId: binding.applicationAttemptId,
-      applicationAuthorityDigest: binding.applicationAuthorityDigest,
+      applicationKind: authority.applicationKind, applicationAttemptId: authority.applicationAttemptId,
+      applicationAuthorityDigest: authority.applicationAuthorityDigest,
       iat: 1, exp: 60_001, aud: 'happier-tcp-tunnel-relay-authorization' as const,
     };
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5));
@@ -94,6 +102,7 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
       sendBinaryFrame: async frame => {
         const decoded = decodePeerTcpTunnelBinaryFrameV2({ frame, maxHeaderBytes: maxFrameBytes, maxPayloadBytes: maxFrameBytes });
         expect(decoded.ok).toBe(true);
+        if (decoded.ok && decoded.header.kind === 'data') relayObserved.daemonToClient.push(new Uint8Array(decoded.payload));
         if (decoded.ok && decoded.header.kind === 'data' && holdReplies) await new Promise<void>(resolve => { replies.push(resolve); notify(); });
         receive?.(PeerTcpTunnelRelayEnvelopeSchema.parse({ v: 2, scopeUserId: binding.accountId,
           sender: { kind: 'machine', machineId: binding.machineId }, recipient: { kind: 'user', socketId: 'tab' },
@@ -111,15 +120,18 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
         if (strict.v !== 2) return;
         const decoded = decodePeerTcpTunnelBinaryFrameV2({ frame: strict.frame, maxHeaderBytes: maxFrameBytes, maxPayloadBytes: maxFrameBytes });
         if (!decoded.ok || decoded.header.kind !== 'data') return;
-        if (decoded.header.sequence !== 0) sentDataFrames++;
+        sentDataFrames++;
+        relayObserved.clientToDaemon.push(new Uint8Array(decoded.payload));
         notify();
         operations.push(application.acceptBinaryFrame(strict.frame, async ({ payload }) => {
           let response: Uint8Array | null = null;
           const handled = await dispatchDaemonVoiceInferenceSttBinaryAppend({
-            header: decoded.header, payload, peerApplicationEncryption: binding, voiceMediaApplicationAuthority: binding,
-            consumer: input => manager.appendPeerApplicationFrame({ binding, streamId: input.streamId, generation: input.generation,
-              substreamId: input.substreamId!, carrierSequence: input.carrierSequence!, payloadBytes: input.pcm16Bytes }),
-            onResponse: value => { if (!(value instanceof Uint8Array)) throw new Error('encrypted response required'); response = value; },
+            header: decoded.header, payload, voiceMediaApplicationAuthority: authority,
+            consumer: input => manager.appendTunnelFrame(input),
+            onResponse: value => {
+              if (contentMode === 'e2ee' && !(value instanceof Uint8Array)) throw new Error('sealed response required');
+              response = value instanceof Uint8Array ? value : new TextEncoder().encode(JSON.stringify(value));
+            },
           });
           expect(handled).toBe(true);
           return response;
@@ -128,7 +140,12 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
     });
     const transport = createDaemonSpeechStreamTunnelTransport({ tunnelId: binding.tunnelId, stream, maxFrameBytes,
       ...(slowPhase ? {} : { responseTimeoutMs: 500 }),
-      peerApplicationEncryption: binding, controlTransport: { start: manager.start, finish: manager.finish, cancel: manager.cancel },
+      controlTransport: {
+        // The RPC owner's content mode decides key issuance (registration reads it).
+        startWithContentMode: async input => ({ contentMode,
+          response: await manager.start(input, undefined, { issueStreamKey: contentMode === 'e2ee' }) }),
+        finish: manager.finish, cancel: manager.cancel,
+      },
     });
     const sender = createDaemonSpeechStreamSender({ requestId: 'request', packId: 'pack', transport: {
       ...transport,
@@ -187,6 +204,20 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
       expect(events.some(event => event && typeof event === 'object' && 'error' in event)).toBe(false);
       expect(Buffer.concat(received)).toEqual(Buffer.concat(expected));
       expect(received.some(pcm => pcm.byteLength > 640)).toBe(true);
+      expect(relayObserved.clientToDaemon.length).toBe(sentDataFrames);
+      for (const payload of relayObserved.clientToDaemon) {
+        // Plain Accounts relay the exact admitted PCM; E2EE Accounts relay only
+        // authenticated ciphertext of it (one tag per packet, no install frame).
+        expect(contentMode === 'plain' ? received.some(pcm => Buffer.from(pcm).equals(Buffer.from(payload))) : true).toBe(true);
+        if (contentMode === 'e2ee') {
+          expect(received.some(pcm => pcm.byteLength + MACHINE_STREAM_KEY_TAG_BYTES_V1 === payload.byteLength)).toBe(true);
+          expect(received.some(pcm => Buffer.from(payload).includes(Buffer.from(pcm.subarray(0, 32))))).toBe(false);
+        }
+      }
+      for (const payload of relayObserved.daemonToClient) {
+        const json = (() => { try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(payload)); } catch { return null; } })();
+        expect(json === null).toBe(contentMode === 'e2ee');
+      }
       if (result.ok) DaemonVoiceInferenceSttStreamChunkResponseSchema.parse({ ok: true, streamId: result.streamId,
         generation: result.generation, ackSeq: result.ackSeq, events });
       await Promise.all(operations);
@@ -197,4 +228,36 @@ describe('sender → encrypted relay framing → daemon STT intake', () => {
       await rm(streamRoot, { recursive: true, force: true });
     }
   }, DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS * 2);
+  it('refuses relay-injected plain and replayed frames for an E2EE-keyed stream before native intake', async () => {
+    const streamRoot = await mkdtemp(join(tmpdir(), 'happier-stream-key-'));
+    const received: Uint8Array[] = [];
+    const authority: VoiceMediaApplicationAuthorityV1 = { v: 1, applicationKind: 'speech_transcription',
+      applicationAttemptId: 'request', applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request') };
+    const manager = createVoiceInferenceSpeechStreamManager({ streamRoot, voiceInferenceWorker: {
+      transcribeAudio: async () => { throw new Error('batch STT must not run'); }, cancelStt: async () => {},
+      createStreamingTranscriptionSession: async () => ({ modelPackId: 'pack',
+        appendPcm16: async ({ pcm16Bytes }) => { received.push(new Uint8Array(pcm16Bytes)); return { events: [] }; },
+        finish: async () => ({ text: '', language: null, events: [] }), cancel: async () => {}, close: async () => {},
+      }),
+    } });
+    try {
+      const started = await manager.start({ requestId: 'request', packId: 'pack', language: null, streamingMode: 'runtime',
+        format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT }, undefined, { issueStreamKey: true });
+      if (!started.ok || !started.streamKeyBase64Url) throw new Error('E2EE start must issue a stream key');
+      const stream = { streamId: started.streamId, generation: started.generation };
+      const pcm = new Uint8Array(640).fill(7);
+      await expect(manager.appendTunnelFrame({ ...stream, seq: 0, payloadBytes: pcm, voiceMediaApplicationAuthority: authority }))
+        .rejects.toMatchObject({ code: 'invalid_stream_state' });
+      const sealed = await sealAes256GcmBytes({ key: decodeBase64(started.streamKeyBase64Url, 'base64url'),
+        nonce: createMachineStreamKeyNonceV1('client_to_daemon', 0), aad: createMachineStreamKeyAadV1(stream), plaintext: pcm });
+      await expect(manager.appendTunnelFrame({ ...stream, seq: 0, payloadBytes: sealed, voiceMediaApplicationAuthority: authority }))
+        .resolves.toBeInstanceOf(Uint8Array);
+      await expect(manager.appendTunnelFrame({ ...stream, seq: 0, payloadBytes: sealed, voiceMediaApplicationAuthority: authority }))
+        .rejects.toMatchObject({ code: 'invalid_stream_state' });
+      expect(received.map(bytes => Buffer.from(bytes))).toEqual([Buffer.from(pcm)]);
+    } finally {
+      await manager.dispose();
+      await rm(streamRoot, { recursive: true, force: true });
+    }
+  });
 });

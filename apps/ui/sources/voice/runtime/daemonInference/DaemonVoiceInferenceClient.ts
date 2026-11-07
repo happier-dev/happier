@@ -26,6 +26,7 @@ import {
     type DaemonVoiceInferenceTtsStreamEvent,
     type DaemonVoiceInferenceSttTranscribeResponse,
     type DaemonVoiceInferenceSttStreamChunkResponse,
+    type DaemonVoiceInferenceSttStreamStartRequest,
     type DaemonVoiceInferenceNormalizationDecision,
 } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -56,6 +57,7 @@ import {
     type DaemonSpeechStreamTransportChunkRequest,
 } from './DaemonSpeechStreamSender';
 import { createProductionDaemonSpeechStreamingSttTransport } from './DaemonSpeechStreamProductionTunnelTransport';
+import type { DaemonSpeechStreamControlTransport } from './DaemonSpeechStreamTunnelTransport';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 import { resolveDaemonStreamingSttJsonRpcCompatibilityAllowed } from './daemonVoiceInferenceConfig';
 import {
@@ -139,7 +141,7 @@ export type DaemonVoiceInferenceStreamingSttTransportFactoryInput = Readonly<{
     machineTarget: DaemonVoiceInferenceMachineTarget;
     requestId: string;
     signal: AbortSignal | null;
-    compatibilityTransport: DaemonSpeechStreamTransport;
+    compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport;
 }>;
 
 export type DaemonSegmentedTtsSegment = Readonly<{
@@ -649,20 +651,28 @@ export class DaemonVoiceInferenceClient {
             })
             : undefined;
         const callChunk = createOrderedMachineRpcCaller(this.deps.machineRpcWithServerScope);
-        const compatibilityTransport: DaemonSpeechStreamTransport = {
+        // The start reply carries the stream key; its privacy is the Machine RPC
+        // owner's content decision for this exact call, reported with the reply.
+        const startWithContentMode = async (payload: DaemonVoiceInferenceSttStreamStartRequest) => {
+            let contentMode: 'plain' | 'e2ee' | null = null;
+            const response = parseSchema(
+                DaemonVoiceInferenceSttStreamStartResponseSchema,
+                await this.deps.machineRpcWithServerScope({
+                    machineId: machineTarget.machineId,
+                    method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
+                    payload,
+                    onContentMode: (mode) => { contentMode = mode; },
+                    ...(rpcSignal ? { signal: rpcSignal } : {}),
+                }),
+            );
+            return { response, contentMode };
+        };
+        const compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport = {
             // Reuse packet coalescing under the compatibility consumer's existing
             // Base64 schema bound; capture callbacks need not each occupy a packet.
             maxPcm16ChunkBytes: Math.floor(DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK_BASE64_MAX_LENGTH / 4) * 3,
-            start: async (payload) =>
-                parseSchema(
-                    DaemonVoiceInferenceSttStreamStartResponseSchema,
-                    await this.deps.machineRpcWithServerScope({
-                        machineId: machineTarget.machineId,
-                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
-                        payload,
-                        ...(rpcSignal ? { signal: rpcSignal } : {}),
-                    }),
-                ),
+            startWithContentMode,
+            start: async (payload) => (await startWithContentMode(payload)).response,
             chunk: async (payload) =>
                 this.sendCompatibilityStreamingSttChunk(machineTarget.machineId, payload, rpcSignal, callChunk),
             finish: async (payload) =>

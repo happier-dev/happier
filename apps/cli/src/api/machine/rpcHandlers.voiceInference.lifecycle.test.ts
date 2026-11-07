@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ModelPackManifestSchema } from '@happier-dev/protocol';
-import { DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema, DaemonVoiceInferenceSttStreamStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema, } from '@happier-dev/protocol/daemon/voiceInference';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -156,9 +156,6 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
     expect(retry.ok).toBe(true);
     if (!retry.ok) throw new Error('Cancelled start retained request custody');
     retryAbort.abort();
-    expect(DaemonVoiceInferenceSttStreamStatusResponseSchema.parse(await manager.invokeLocal(
-      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS, { streamId: retry.streamId, generation: retry.generation },
-    ))).toMatchObject({ ok: true, state: 'open' });
     expect(DaemonVoiceInferenceSttStreamCancelResponseSchema.parse(await manager.invokeLocal(
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL, { streamId: retry.streamId, generation: retry.generation },
     ))).toMatchObject({ ok: true });
@@ -223,8 +220,8 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
       const sttUploadFinalize = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE);
       const sttTranscribe = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE);
       const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
-      const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
-      if (!sttUploadInit || !sttUploadChunk || !sttUploadFinalize || !sttTranscribe || !sttStreamStart || !sttStreamStatus) {
+      const sttStreamCancel = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL);
+      if (!sttUploadInit || !sttUploadChunk || !sttUploadFinalize || !sttTranscribe || !sttStreamStart || !sttStreamCancel) {
         throw new Error('expected voice inference transfer handlers');
       }
 
@@ -235,10 +232,6 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
         streamingMode: 'upload_bridge',
       });
       expect(stream).toMatchObject({ ok: true, streamId: expect.any(String), generation: 0 });
-      await expect(sttStreamStatus({
-        streamId: stream.streamId,
-        generation: stream.generation,
-      })).resolves.toMatchObject({ ok: true, state: 'open' });
 
       const uploadPayload = Buffer.from('hello');
       const upload = await sttUploadInit({
@@ -289,7 +282,7 @@ describe('registerMachineVoiceInferenceRpcHandlers transfer lifecycle', () => {
         sizeBytes: 1,
         inputMimeType: 'audio/wav',
       })).rejects.toThrow('Transfer session store is disposed');
-      await expect(sttStreamStatus({
+      await expect(sttStreamCancel({
         streamId: stream.streamId,
         generation: stream.generation,
       })).resolves.toMatchObject({

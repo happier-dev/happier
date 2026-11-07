@@ -317,12 +317,14 @@ for (const routeProfile of routeProfiles) {
         lastBinaryTunnelReceipt: {
           routeKind: routeProfile === 'direct' ? 'loopback_direct' : 'server_relay',
           frameEncoding: 'binary_frame_v2',
-          relayEvidence: routeProfile === 'direct' ? 'not_applicable' : 'finish_authenticated',
+          // Account mode decides: E2EE streams authenticate their finish; plain Accounts carry no key.
+          relayEvidence: routeProfile === 'direct' ? 'not_applicable' : expect.stringMatching(/^(finish_authenticated|plain_account)$/u),
           localTransport: 'closed',
           operation: { kind: 'finish', result: 'ok' },
         },
       });
-      if (routeProfile === 'relay') {
+      const finishedReceipt = (await readTransport()).lastBinaryTunnelReceipt as Record<string, unknown> | undefined;
+      if (routeProfile === 'relay' && finishedReceipt?.relayEvidence === 'finish_authenticated') {
         await expect.poll(async () => {
           const snapshot = await readTransport();
           const receipt = snapshot.lastBinaryTunnelReceipt as Record<string, unknown> | undefined;
@@ -346,19 +348,14 @@ for (const routeProfile of routeProfiles) {
           binaryAttachmentBytes: 0,
           validTunnelFrameCount: 0,
           invalidTunnelFrameCount: 0,
-          voiceEncryptedInstallCount: 0,
-          voiceEncryptedDataCount: 0,
-          voiceEncryptedFinishCount: 0,
-          invalidVoicePayloadCount: 0,
+          voiceDataFrameCount: 0,
           voicePayloadSha256Digests: [],
           receivedBinaryAttachmentCount: 0,
           receivedBinaryAttachmentBytes: 0,
           receivedValidTunnelFrameCount: 0,
           receivedInvalidTunnelFrameCount: 0,
-          receivedVoiceEncryptedInstallCount: 0,
-          receivedVoiceEncryptedDataCount: 0,
-          receivedVoiceEncryptedFinishCount: 0,
-          receivedInvalidVoicePayloadCount: 0,
+          receivedVoiceDataFrameCount: 0,
+          receivedPlainJsonVoicePayloadCount: 0,
         });
       } else {
         expect(relayTraffic.sawRelayEventName()).toBe(true);
@@ -366,15 +363,16 @@ for (const routeProfile of routeProfiles) {
         expect(relayTraffic.binaryAttachmentBytes()).toBeGreaterThan(0);
         const relaySnapshot = relayTraffic.snapshot();
         expect(relaySnapshot.invalidTunnelFrameCount).toBe(0);
-        expect(relaySnapshot.invalidVoicePayloadCount).toBe(0);
-        expect(relaySnapshot.voiceEncryptedInstallCount).toBeGreaterThan(0);
-        expect(relaySnapshot.voiceEncryptedDataCount).toBeGreaterThan(0);
-        expect(relaySnapshot.voiceEncryptedFinishCount).toBeGreaterThan(0);
-        expect(relaySnapshot.voicePayloadSha256Digests).toHaveLength(
-          relaySnapshot.voiceEncryptedInstallCount
-            + relaySnapshot.voiceEncryptedDataCount
-            + relaySnapshot.voiceEncryptedFinishCount,
-        );
+        expect(relaySnapshot.voiceDataFrameCount).toBeGreaterThan(0);
+        expect(relaySnapshot.voicePayloadSha256Digests).toHaveLength(relaySnapshot.voiceDataFrameCount);
+        // Account mode decides: an E2EE stream's daemon replies are never readable at the relay.
+        const relayReceipt = (await readTransport()).lastBinaryTunnelReceipt as Record<string, unknown> | undefined;
+        if (relayReceipt?.relayEvidence === 'plain_account') {
+          expect(relaySnapshot.receivedPlainJsonVoicePayloadCount).toBeGreaterThan(0);
+        } else {
+          expect(relaySnapshot.receivedVoiceDataFrameCount).toBeGreaterThan(0);
+          expect(relaySnapshot.receivedPlainJsonVoicePayloadCount).toBe(0);
+        }
       }
 
       await testInfo.attach(`voice-g3.6-${routeProfile}-receipt.json`, {

@@ -1,5 +1,5 @@
-import { DaemonVoiceInferenceSttStreamCancelRequestSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema, DaemonVoiceInferenceSttStreamChunkRequestSchema, DaemonVoiceInferenceSttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishRequestSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema, DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamStartResponseSchema, DaemonVoiceInferenceSttStreamStatusRequestSchema, DaemonVoiceInferenceSttStreamStatusResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import type { DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkResponse, PeerApplicationEncryptionAuthorityBindingV1, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
+import { DaemonVoiceInferenceSttStreamCancelRequestSchema, DaemonVoiceInferenceSttStreamCancelResponseSchema, DaemonVoiceInferenceSttStreamChunkRequestSchema, DaemonVoiceInferenceSttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishRequestSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema, DaemonVoiceInferenceSttStreamStartRequestSchema, DaemonVoiceInferenceSttStreamStartResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import type { DaemonVoiceInferenceSttStreamCancelResponse, DaemonVoiceInferenceSttStreamChunkResponse, VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 import {
@@ -24,10 +24,7 @@ export type MachineVoiceInferenceSttBinaryAppendInput = Readonly<{
   streamId: string;
   generation: number;
   seq: number;
-  pcm16Bytes: Uint8Array;
-  peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
-  substreamId?: string;
-  carrierSequence?: number;
+  payloadBytes: Uint8Array;
   voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
 }>;
 
@@ -38,7 +35,6 @@ export type MachineVoiceInferenceSttBinaryAppendConsumer = (
 export type MachineVoiceInferenceStreamingRpcRegistration = Readonly<{
   appendSttStreamBinaryFrame: MachineVoiceInferenceSttBinaryAppendConsumer;
   cancelSttStreamForTransportLoss: (input: Readonly<{
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
     voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
   }> & (
     | Readonly<{ streamId: string; generation: number }>
@@ -62,9 +58,17 @@ export function registerMachineVoiceInferenceStreamingRpcHandlers(params: Readon
     if (!parsed.success) {
       return invalidParameters(DaemonVoiceInferenceSttStreamStartResponseSchema);
     }
+    // The stream key exists exactly when this call's admitted content is E2EE:
+    // it then leaves inside that sealed response. Plain Accounts stream plain
+    // frames. Unknown content is refused, never reinterpreted as plain.
+    const contentMode = context?.contentMode;
+    if (!contentMode) {
+      return parseVoiceInferenceResponse(DaemonVoiceInferenceSttStreamStartResponseSchema, toVoiceInferenceError(
+        Object.assign(new Error('daemon_voice_inference_stream_content_mode_unavailable'), { code: 'runtime_unavailable' })));
+    }
     return parseVoiceInferenceResponse(
       DaemonVoiceInferenceSttStreamStartResponseSchema,
-      await streamManager.start(parsed.data, context?.signal),
+      await streamManager.start(parsed.data, context.signal, { issueStreamKey: contentMode === 'e2ee' }),
     );
   });
 
@@ -101,36 +105,12 @@ export function registerMachineVoiceInferenceStreamingRpcHandlers(params: Readon
     );
   });
 
-  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS, async (raw: unknown) => {
-    const parsed = DaemonVoiceInferenceSttStreamStatusRequestSchema.safeParse(raw);
-    if (!parsed.success) {
-      return invalidParameters(DaemonVoiceInferenceSttStreamStatusResponseSchema);
-    }
-    return parseVoiceInferenceResponse(
-      DaemonVoiceInferenceSttStreamStatusResponseSchema,
-      await streamManager.status(parsed.data),
-    );
-  });
-
   return {
     appendSttStreamBinaryFrame: async (input) => {
-      if (input.peerApplicationEncryption) {
-        if (!input.substreamId || input.carrierSequence === undefined) {
-          throw new Error('daemon_voice_inference_encryption_binding_missing');
-        }
-        return await streamManager.appendPeerApplicationFrame({
-          binding: input.peerApplicationEncryption,
-          streamId: input.streamId,
-          generation: input.generation,
-          substreamId: input.substreamId,
-          carrierSequence: input.carrierSequence,
-          payloadBytes: input.pcm16Bytes,
-        });
-      }
-      return parseVoiceInferenceResponse(
-        DaemonVoiceInferenceSttStreamChunkResponseSchema,
-        await streamManager.appendPcm16Bytes(input),
-      );
+      const response = await streamManager.appendTunnelFrame(input);
+      return response instanceof Uint8Array
+        ? response
+        : parseVoiceInferenceResponse(DaemonVoiceInferenceSttStreamChunkResponseSchema, response);
     },
     cancelSttStreamForTransportLoss: async (input) => (
       await streamManager.cancelForTransportLoss(input)

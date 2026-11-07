@@ -1,3 +1,5 @@
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
+import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DEFAULT_MACHINE_TUNNEL_CAPABILITIES, MachineTunnelCapabilitiesSchema, type MachineTunnelCapabilities } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -10,12 +12,11 @@ import { PeerTcpTunnelRelayAuthorizationV2Schema, type PeerTcpTunnelRelayAuthori
 import { SignedDirectRouteGrantV2Schema, type SignedDirectRouteGrantV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { createEphemeralPeerRouteProofHandleV2, type PeerRouteEphemeralProofV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
 import { createVoiceMediaRelayTunnelId, resolveMachineRpcRelayFallbackDecision, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
-import { createPeerApplicationAuthorityDigestV1, createSpeechTranscriptionApplicationAuthorityDigestV1, type PeerApplicationEncryptionAuthorityBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
 import { readMachineLiveStreamRelayCaps } from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
 import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import type { PeerLoopbackEndpointCandidateV1 } from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
-import type { VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
+import { createSpeechTranscriptionApplicationAuthorityDigestV1, type VoiceMediaApplicationAuthorityV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
 import { resolveEffectivePeerDirectRoutePolicy } from '@happier-dev/peer-mediation';
 
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -30,6 +31,10 @@ import {
   resolveTargetServer,
   type TargetServer,
 } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
+import { requestPeerMediationServerJsonForCredential } from '@/sync/domains/machines/peer/mediation/peerMediationServerRequest';
+
+/** Grants travel through the shared credential-scoped Home request owner (including its carrier). */
+const PEER_ROUTE_GRANTS_PATH = '/v1/machines/peer/mediation/route-grants';
 import { storage } from '@/sync/domains/state/storage';
 import { readPeerEndpointForServerScope } from '@/sync/domains/machines/peer/mediation/readPeerEndpointForServerScope';
 import { resolvePeerMediationDirectPreferencesForScope } from '@/sync/domains/settings/peerMediationPreferences';
@@ -37,7 +42,7 @@ import { parseToken } from '@/utils/auth/parseToken';
 import { createServerScopedRelaySocket } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRelaySocket';
 
 import { createDaemonSpeechStreamCarrierAdapter } from './DaemonSpeechStreamCarrier';
-import { createDaemonSpeechStreamTunnelTransport } from './DaemonSpeechStreamTunnelTransport';
+import { createDaemonSpeechStreamTunnelTransport, type DaemonSpeechStreamControlTransport } from './DaemonSpeechStreamTunnelTransport';
 import { daemonSpeechStreamDiagnostics } from './daemonSpeechStreamDiagnostics';
 import { readDaemonSpeechStreamQaRouteRequirement } from './daemonSpeechStreamQaRouteRequirement';
 import type {
@@ -95,17 +100,8 @@ export type OpenedProductionVoiceMediaTunnel = Readonly<{
   routeKind: 'loopback_direct' | 'server_relay';
   tunnelId: string;
   machineId: string;
-  peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
   close(): Promise<void>;
 }>;
-
-function normalizeBaseUrl(url: string): string {
-  return String(url ?? '').trim().replace(/\/+$/, '');
-}
-
-function joinBaseAndPath(serverUrl: string, path: string): string {
-  return `${normalizeBaseUrl(serverUrl)}${path.startsWith('/') ? path : `/${path}`}`;
-}
 
 function resolveEndpointPath(endpointUrl: string, path: string): string {
   const parsed = new URL(endpointUrl);
@@ -172,10 +168,10 @@ async function fetchJson(params: Readonly<{
   }
   try {
     const signal = controller?.signal ?? externalSignal;
-    const response = await fetch(params.url, {
+    const response = await fetchWithCredentialRedirectRefusal(params.url, {
       ...params.init,
       ...(signal ? { signal } : {}),
-    });
+    }, runtimeFetch);
     return {
       ok: response.ok,
       status: response.status,
@@ -201,12 +197,14 @@ async function requestTcpTunnelRouteGrantV2(input: Readonly<{
   signal?: AbortSignal | null;
 }>): Promise<OperationResult<SignedDirectRouteGrantV2>> {
   try {
-    const response = await fetchJson({
-      url: joinBaseAndPath(input.server.serverUrl, '/v1/machines/peer/mediation/route-grants'),
-      signal: input.signal,
+    const response = await requestPeerMediationServerJsonForCredential({
+      serverId: input.server.serverId,
+      token: input.credentials.token,
+      path: PEER_ROUTE_GRANTS_PATH,
       init: {
         method: 'POST',
-        headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
+        ...(input.signal ? { signal: input.signal } : {}),
         body: JSON.stringify({
           v: 2,
           kind: 'ephemeral_ed25519',
@@ -230,7 +228,8 @@ async function requestTcpTunnelRouteGrantV2(input: Readonly<{
     if (body?.ok !== true) return { ok: false, reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : 'grant_missing' };
     const parsed = SignedDirectRouteGrantV2Schema.safeParse(body.grant);
     return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return { ok: false, reasonCode: 'grant_missing' };
   }
 }
@@ -248,15 +247,14 @@ async function requestTcpTunnelRelayAuthorization(input: Readonly<{
   signal?: AbortSignal | null;
 }>): Promise<OperationResult<PeerTcpTunnelRelayAuthorizationV2>> {
   try {
-    const response = await fetchJson({
-      url: joinBaseAndPath(input.server.serverUrl, '/v1/machines/peer/mediation/route-grants'),
-      signal: input.signal,
+    const response = await requestPeerMediationServerJsonForCredential({
+      serverId: input.server.serverId,
+      token: input.credentials.token,
+      path: PEER_ROUTE_GRANTS_PATH,
       init: {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${input.credentials.token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
+        ...(input.signal ? { signal: input.signal } : {}),
         body: JSON.stringify({
           v: 2,
           machineId: input.machineId,
@@ -287,7 +285,8 @@ async function requestTcpTunnelRelayAuthorization(input: Readonly<{
     }
     const parsed = PeerTcpTunnelRelayAuthorizationV2Schema.safeParse(body.relayAuthorization);
     return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reasonCode: 'grant_invalid' };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return { ok: false, reasonCode: 'grant_missing' };
   }
 }
@@ -347,7 +346,8 @@ async function prepareDirectTunnelRouteV2(params: TunnelAttemptParams & Readonly
         endpointFingerprint: params.endpoint.endpointFingerprint,
       },
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialRequestRedirectError) throw error;
     return null;
   } finally {
     proofHandle.dispose();
@@ -378,9 +378,8 @@ function createSelection(input: Readonly<{
   routeKind: 'loopback_direct' | 'server_relay';
   tunnelId: string;
   machineId: string;
-  compatibilityTransport: DaemonSpeechStreamTransport;
+  compatibilityTransport: DaemonSpeechStreamTransport & DaemonSpeechStreamControlTransport;
   cleanup?: () => Promise<void> | void;
-  peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
 }>): DaemonVoiceInferenceStreamingSttTransportSelection {
   const receipt = daemonSpeechStreamDiagnostics.beginBinaryTunnelReceipt({
     routeKind: input.routeKind,
@@ -392,12 +391,8 @@ function createSelection(input: Readonly<{
     maxFrameBytes: input.maxFrameBytes,
     stream: input.stream,
     controlTransport: input.compatibilityTransport,
-    fallbackTransport: input.compatibilityTransport,
-    ...(input.peerApplicationEncryption ? {
-      peerApplicationEncryption: input.peerApplicationEncryption,
-      onRelayAuthenticatedEvidence: receipt.recordRelayEvidence,
-      onRelayEncryptionFailure: receipt.recordRelayEncryptionFailure,
-    } : {}),
+    onRelayAuthenticatedEvidence: receipt.recordRelayEvidence,
+    onRelayEncryptionFailure: receipt.recordRelayEncryptionFailure,
   });
   let localTransportClosePromise: Promise<void> | null = null;
   const recordLocalTransportClose = (): Promise<void> => {
@@ -514,7 +509,10 @@ async function tryOpenDirectTunnel(
     }),
     loopbackEndpointUrl: params.direct.endpoint.url,
     signal: params.input.signal,
-  }).catch(() => null);
+  }).catch((error: unknown) => {
+    if (error instanceof CredentialRequestRedirectError) throw error;
+    return null;
+  });
   if (!result?.ok) return null;
   if (result.response.encoding !== PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) {
     await Promise.resolve(result.stream.close()).catch(() => {});
@@ -607,6 +605,9 @@ async function tryOpenServerRelayTunnel(
     // Grant preparation belongs to the captured Voice attempt. A separate
     // phase timer can discard valid admission before that attempt ends.
     signal: params.input.signal,
+  }).catch((error: unknown) => {
+    relaySocket.disconnect();
+    throw error;
   });
   if (!relayAuthorization.ok) {
     relaySocket.disconnect();
@@ -671,19 +672,6 @@ async function tryOpenServerRelayTunnel(
     maxFrameBytes: Math.min(result.response.maxFrameBytes, relayAuthority.maxFrameBytes),
     tunnelId: params.tunnelId,
     machineId: params.input.machineTarget.machineId,
-    peerApplicationEncryption: {
-      v: 1,
-      suite: 'aes-256-gcm',
-      flowKind: 'voice_media',
-      routeKind: 'server_relay',
-      authorityDigest: createPeerApplicationAuthorityDigestV1(relayAuthorization.value),
-      accountId: relayAuthorization.value.payload.accountId,
-      machineId: relayAuthorization.value.payload.targetMachineId,
-      tunnelId: relayAuthorization.value.payload.tunnelId,
-      applicationKind: relayAuthority.applicationKind,
-      applicationAttemptId: relayAuthority.applicationAttemptId,
-      applicationAuthorityDigest: relayAuthority.applicationAuthorityDigest,
-    },
     async close() {
       await Promise.resolve(result.stream.close()).finally(() => {
         relaySocket.disconnect();
@@ -814,9 +802,6 @@ export async function createProductionDaemonSpeechStreamingSttTransport(
     tunnelId: opened.tunnelId,
     machineId: opened.machineId,
     compatibilityTransport: input.compatibilityTransport,
-    ...(opened.peerApplicationEncryption
-      ? { peerApplicationEncryption: opened.peerApplicationEncryption }
-      : {}),
     cleanup: opened.close,
   });
 }

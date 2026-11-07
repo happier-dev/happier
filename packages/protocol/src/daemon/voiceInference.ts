@@ -11,10 +11,7 @@ import { VoiceModelPackIdentityV1Schema } from '../voice/modelPacks/identityV1.j
 import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '../voice/runtimeConfig.js';
 import { VoiceSpeechDiagnosticsCaptureContextV1Schema } from '../voice/diagnostics.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
-import {
-  PeerApplicationEncryptionAuthorityBindingV1Schema,
-  PeerApplicationEncryptionStartResponseV1Schema,
-} from '../machines/peer/mediation/peerApplicationEncryptionV1.js';
+import { MachineStreamKeyBase64UrlV1Schema } from '../machines/peer/mediation/stream/payloadV1.js';
 import { DevelopmentPluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 
 export const LocalNeuralExecutionSchema = lazyZodSchema(() => z.enum(['auto', 'device', 'daemon']));
@@ -561,7 +558,6 @@ export const DaemonVoiceInferenceSttStreamStartRequestSchema = lazyZodSchema(() 
   streamingMode: z.optional(z.enum(['runtime', 'upload_bridge'])),
   format: z._default(DaemonVoiceInferenceSttStreamPcmFormatSchema, DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT),
   diagnostics: z.optional(VoiceSpeechDiagnosticsCaptureContextV1Schema),
-  peerApplicationEncryption: z.optional(PeerApplicationEncryptionAuthorityBindingV1Schema),
 }));
 export type DaemonVoiceInferenceSttStreamStartRequest = z.infer<typeof DaemonVoiceInferenceSttStreamStartRequestSchema>;
 
@@ -573,7 +569,8 @@ export const DaemonVoiceInferenceSttStreamStartResponseSchema = lazyZodSchema(()
     generation: DaemonVoiceInferenceStreamGenerationSchema,
     ackSeq: DaemonVoiceInferenceStreamAckSeqSchema,
     format: DaemonVoiceInferenceSttStreamPcmFormatSchema,
-    peerApplicationEncryption: z.optional(PeerApplicationEncryptionStartResponseV1Schema),
+    /** Issued only inside an E2EE Machine RPC response; absent for plain Accounts. */
+    streamKeyBase64Url: z.optional(MachineStreamKeyBase64UrlV1Schema),
   }),
   DaemonVoiceInferenceErrorSchema,
 ]));
@@ -664,20 +661,3 @@ export type DaemonVoiceInferenceSttStreamCancelResponse = z.infer<typeof DaemonV
 export const DaemonVoiceInferenceSttStreamStateSchema = lazyZodSchema(() => z.enum(['open', 'finishing', 'closed']));
 export type DaemonVoiceInferenceSttStreamState = z.infer<typeof DaemonVoiceInferenceSttStreamStateSchema>;
 
-export const DaemonVoiceInferenceSttStreamStatusRequestSchema = lazyZodSchema(() => z.strictObject({
-  streamId: DaemonVoiceInferenceStreamIdSchema,
-  generation: z.optional(DaemonVoiceInferenceStreamGenerationSchema),
-}));
-export type DaemonVoiceInferenceSttStreamStatusRequest = z.infer<typeof DaemonVoiceInferenceSttStreamStatusRequestSchema>;
-
-export const DaemonVoiceInferenceSttStreamStatusResponseSchema = lazyZodSchema(() => z.union([
-  z.looseObject({
-    ok: z.literal(true),
-    streamId: DaemonVoiceInferenceStreamIdSchema,
-    generation: DaemonVoiceInferenceStreamGenerationSchema,
-    ackSeq: DaemonVoiceInferenceStreamAckSeqSchema,
-    state: DaemonVoiceInferenceSttStreamStateSchema,
-  }),
-  DaemonVoiceInferenceErrorSchema,
-]));
-export type DaemonVoiceInferenceSttStreamStatusResponse = z.infer<typeof DaemonVoiceInferenceSttStreamStatusResponseSchema>;

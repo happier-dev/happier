@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Page } from '@playwright/test';
-import {
-  encodeBase64,
-  encodePeerApplicationEncryptedFrameV1,
-  encodePeerTcpTunnelBinaryFrameV2,
-  type PeerApplicationEncryptionPhaseV1,
-} from '@happier-dev/protocol';
+import { encodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol';
 
 import { observeVoiceRelaySocketTraffic } from './voiceRelaySocketTrafficObservation';
 
@@ -29,20 +24,11 @@ function createEventTargetHarness() {
   };
 }
 
-function encryptedVoiceTunnelFrame(
-  kind: PeerApplicationEncryptionPhaseV1,
+function voiceTunnelFrame(
+  payload: Uint8Array,
   sequence: number,
   direction: 'client_to_daemon' | 'daemon_to_client' = 'client_to_daemon',
 ): Uint8Array {
-  const encryptedPayload = encodePeerApplicationEncryptedFrameV1({
-    v: 1,
-    kind,
-    nonceBase64Url: encodeBase64(new Uint8Array(12).fill(sequence + 1), 'base64url'),
-    ciphertextBase64Url: encodeBase64(new Uint8Array(16).fill(sequence + 11), 'base64url'),
-    ...(kind === 'install'
-      ? { encryptedDataKeyEnvelopeBase64Url: encodeBase64(new Uint8Array([1, 2, 3]), 'base64url') }
-      : null),
-  });
   return encodePeerTcpTunnelBinaryFrameV2({
     header: {
       version: 2,
@@ -51,92 +37,51 @@ function encryptedVoiceTunnelFrame(
       substreamId: 'daemon.voiceInference.stt.stream-1.1',
       direction,
       sequence,
-      payloadLength: encryptedPayload.byteLength,
+      payloadLength: payload.byteLength,
     },
-    payload: encryptedPayload,
+    payload,
   });
 }
 
 describe('observeVoiceRelaySocketTraffic', () => {
-  it('classifies encrypted Voice relay phases and retains only counts and attachment digests', () => {
+  it('counts Voice relay payloads, separates plain JSON responses and retains only counts and digests', () => {
     const page = createEventTargetHarness();
     const websocket = createEventTargetHarness();
     // This fixture implements only the Playwright event boundary consumed by the observer.
     const observation = observeVoiceRelaySocketTraffic(page.target as unknown as Page);
     page.emit('websocket', websocket.target);
+    const header = '451-["peer:tunnel:v1",{"v":2,"encoding":"binary_frame_v2","frame":{"_placeholder":true,"num":0}}]';
 
     websocket.emit('framesent', { payload: '451-["unrelated",{"_placeholder":true,"num":0}]' });
     websocket.emit('framesent', { payload: Buffer.from('unrelated bytes') });
-    for (const [sequence, kind] of ['install', 'data', 'finish'].entries()) {
-      websocket.emit('framesent', {
-        payload: '451-["peer:tunnel:v1",{"v":2,"encoding":"binary_frame_v2","frame":{"_placeholder":true,"num":0}}]',
-      });
-      websocket.emit('framesent', {
-        payload: Buffer.from(encryptedVoiceTunnelFrame(kind as PeerApplicationEncryptionPhaseV1, sequence)),
-      });
+    for (const sequence of [0, 1]) {
+      websocket.emit('framesent', { payload: header });
+      websocket.emit('framesent', { payload: Buffer.from(voiceTunnelFrame(new Uint8Array(20).fill(sequence + 7), sequence)) });
     }
-    websocket.emit('framereceived', {
-      payload: '451-["peer:tunnel:v1",{"v":2,"encoding":"binary_frame_v2","frame":{"_placeholder":true,"num":0}}]',
-    });
-    websocket.emit('framereceived', {
-      payload: Buffer.from(encryptedVoiceTunnelFrame('install', 0, 'daemon_to_client')),
-    });
+    websocket.emit('framesent', { payload: header });
+    websocket.emit('framesent', { payload: Buffer.from([1, 2, 3, 4]) });
+    websocket.emit('framereceived', { payload: header });
+    websocket.emit('framereceived', { payload: Buffer.from(voiceTunnelFrame(new Uint8Array(20).fill(9), 0, 'daemon_to_client')) });
+    websocket.emit('framereceived', { payload: header });
+    websocket.emit('framereceived', { payload: Buffer.from(voiceTunnelFrame(
+      new TextEncoder().encode(JSON.stringify({ ok: true, ackSeq: 1, events: [] })), 1, 'daemon_to_client')) });
 
     expect(observation.snapshot()).toMatchObject({
       sawRelayEventName: true,
       sawBinaryFrameV2Header: true,
       binaryAttachmentCount: 3,
-      validTunnelFrameCount: 3,
-      invalidTunnelFrameCount: 0,
-      voiceEncryptedInstallCount: 1,
-      voiceEncryptedDataCount: 1,
-      voiceEncryptedFinishCount: 1,
-      invalidVoicePayloadCount: 0,
-      receivedBinaryAttachmentCount: 1,
-      receivedValidTunnelFrameCount: 1,
-      receivedVoiceEncryptedInstallCount: 1,
+      validTunnelFrameCount: 2,
+      invalidTunnelFrameCount: 1,
+      voiceDataFrameCount: 2,
+      receivedBinaryAttachmentCount: 2,
+      receivedValidTunnelFrameCount: 2,
+      receivedVoiceDataFrameCount: 2,
+      receivedPlainJsonVoicePayloadCount: 1,
     });
-    expect(observation.snapshot().voicePayloadSha256Digests).toHaveLength(3);
+    expect(observation.snapshot().voicePayloadSha256Digests).toHaveLength(2);
     expect(observation.snapshot().voicePayloadSha256Digests).toEqual(
       expect.arrayContaining([expect.stringMatching(/^sha256:[0-9a-f]{64}$/u)]),
     );
-  });
-
-  it('rejects raw or undecodable payload on the Voice STT substream', () => {
-    const page = createEventTargetHarness();
-    const websocket = createEventTargetHarness();
-    const observation = observeVoiceRelaySocketTraffic(page.target as unknown as Page);
-    page.emit('websocket', websocket.target);
-
-    const rawVoiceFrame = encodePeerTcpTunnelBinaryFrameV2({
-      header: {
-        version: 2,
-        kind: 'data',
-        tunnelId: 'tunnel-1',
-        substreamId: 'daemon.voiceInference.stt.stream-1.1',
-        direction: 'client_to_daemon',
-        sequence: 1,
-        payloadLength: 4,
-      },
-      payload: new Uint8Array([1, 2, 3, 4]),
-    });
-    websocket.emit('framesent', {
-      payload: '451-["peer:tunnel:v1",{"v":2,"encoding":"binary_frame_v2","frame":{"_placeholder":true,"num":0}}]',
-    });
-    websocket.emit('framesent', { payload: Buffer.from(rawVoiceFrame) });
-    websocket.emit('framesent', {
-      payload: '451-["peer:tunnel:v1",{"v":2,"encoding":"binary_frame_v2","frame":{"_placeholder":true,"num":0}}]',
-    });
-    websocket.emit('framesent', { payload: Buffer.from([1, 2, 3, 4]) });
-
-    expect(observation.snapshot()).toMatchObject({
-      validTunnelFrameCount: 1,
-      invalidTunnelFrameCount: 1,
-      invalidVoicePayloadCount: 1,
-      voiceEncryptedInstallCount: 0,
-      voiceEncryptedDataCount: 0,
-      voiceEncryptedFinishCount: 0,
-    });
   });
 
   it('keeps the direct-route observation empty when no relay event is sent', () => {
@@ -154,19 +99,14 @@ describe('observeVoiceRelaySocketTraffic', () => {
       binaryAttachmentBytes: 0,
       validTunnelFrameCount: 0,
       invalidTunnelFrameCount: 0,
-      voiceEncryptedInstallCount: 0,
-      voiceEncryptedDataCount: 0,
-      voiceEncryptedFinishCount: 0,
-      invalidVoicePayloadCount: 0,
+      voiceDataFrameCount: 0,
       voicePayloadSha256Digests: [],
       receivedBinaryAttachmentCount: 0,
       receivedBinaryAttachmentBytes: 0,
       receivedValidTunnelFrameCount: 0,
       receivedInvalidTunnelFrameCount: 0,
-      receivedVoiceEncryptedInstallCount: 0,
-      receivedVoiceEncryptedDataCount: 0,
-      receivedVoiceEncryptedFinishCount: 0,
-      receivedInvalidVoicePayloadCount: 0,
+      receivedVoiceDataFrameCount: 0,
+      receivedPlainJsonVoicePayloadCount: 0,
     });
   });
 });

@@ -207,11 +207,6 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         ownerPacket: 'A.12-voice-cleanup',
     },
     {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
         method: RPC_METHODS.DAEMON_EXTENSIONS_RELOAD_STATUS,
         rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
         ownerPacket: 'PMS-5',

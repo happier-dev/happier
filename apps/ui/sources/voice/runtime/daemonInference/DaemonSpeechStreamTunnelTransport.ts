@@ -4,17 +4,18 @@ import type {
   DaemonVoiceInferenceSttStreamFinishResponse,
   DaemonVoiceInferenceSttStreamStartRequest,
   DaemonVoiceInferenceSttStreamStartResponse,
-  PeerApplicationEncryptionAuthorityBindingV1,
 } from '@happier-dev/protocol';
 import type { PeerTcpTunnelFrame } from '@happier-dev/peer-transport/duplexFrames';
-import { DaemonVoiceInferenceSttStreamChunkResponseSchema as SttStreamChunkResponseSchema, DaemonVoiceInferenceSttStreamFinishResponseSchema as SttStreamFinishResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
-import { PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1, PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1, createPeerApplicationEncryptionAadV1, createPeerApplicationEncryptionNonceV1, decodePeerApplicationEncryptedFrameV1, encodePeerApplicationEncryptedFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
-import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { PEER_APPLICATION_ENCRYPTION_AUTH_TAG_BYTES_V1, PEER_APPLICATION_ENCRYPTION_CIPHERTEXT_MAX_BYTES_V1, PEER_APPLICATION_ENCRYPTION_NONCE_BYTES_V1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
+import { DaemonVoiceInferenceSttStreamChunkResponseSchema as SttStreamChunkResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import {
+  MACHINE_STREAM_KEY_BYTES_V1,
+  MACHINE_STREAM_KEY_TAG_BYTES_V1,
+  createMachineStreamKeyAadV1,
+  createMachineStreamKeyNonceV1,
+} from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
 
-import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { decodeBase64 } from '@/encryption/base64';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
-import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { PeerTcpTunnelClientStream } from '@/sync/domains/machines/peer/mediation/tunnel';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type { DaemonSpeechStreamRelayEncryptionFailure } from './daemonSpeechStreamDiagnostics';
@@ -24,23 +25,31 @@ import type {
   DaemonSpeechStreamTransportChunkRequest,
 } from './DaemonSpeechStreamSender';
 
+/** The Machine RPC owner's control calls; start reports the content mode it sealed the call with. */
+export type DaemonSpeechStreamControlTransport = Pick<DaemonSpeechStreamTransport, 'finish' | 'cancel'> & Readonly<{
+  startWithContentMode: (input: DaemonVoiceInferenceSttStreamStartRequest) => Promise<Readonly<{
+    response: DaemonVoiceInferenceSttStreamStartResponse;
+    /** null when the call reported no Machine content (fails closed). */
+    contentMode: 'plain' | 'e2ee' | null;
+  }>>;
+}>;
+
 export type DaemonSpeechStreamTunnelTransportOptions = Readonly<{
   tunnelId: string;
   maxFrameBytes?: number;
   stream: Pick<PeerTcpTunnelClientStream, 'sendFrame' | 'sendSubstreamDataFrame' | 'sendSubstreamFrame' | 'onSubstreamFrame'>
     & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame'>>;
-  controlTransport: Pick<DaemonSpeechStreamTransport, 'start' | 'finish' | 'cancel'>;
-  fallbackTransport?: Pick<DaemonSpeechStreamTransport, 'chunk'> | null;
+  /** The Machine RPC owner: its E2EE content carries the stream key and the transcript-bearing finish. */
+  controlTransport: DaemonSpeechStreamControlTransport;
   direction?: Extract<PeerTcpTunnelFrame, { kind: 'data' }>['direction'];
   responseTimeoutMs?: number;
   resolveSubstreamId?: (input: Readonly<{
     streamId: string;
     generation: number;
   }>) => string;
-  peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
   onRelayEncryptionFailure?: (failure: DaemonSpeechStreamRelayEncryptionFailure) => void;
   onRelayAuthenticatedEvidence?: (evidence: Readonly<{
-    phase: 'install' | 'data' | 'finish';
+    phase: 'plain' | 'data' | 'finish';
     ackSeq?: number;
   }>) => void;
 }>;
@@ -54,21 +63,9 @@ function relayFailure(step: string, cause: unknown) {
   }, 'cause', { value: failure, enumerable: false });
 }
 
-function resolveEncryptedPcmPacketOverheadBytes(): number {
-  // Only ciphertext grows with the PCM. Derive the data-envelope overhead from
-  // its real encoder, including the GCM tag and unpadded base64url expansion.
-  const ciphertext = encodeBase64(new Uint8Array(PEER_APPLICATION_ENCRYPTION_AUTH_TAG_BYTES_V1), 'base64url');
-  return encodePeerApplicationEncryptedFrameV1({
-    v: 1, kind: 'data',
-    nonceBase64Url: encodeBase64(new Uint8Array(PEER_APPLICATION_ENCRYPTION_NONCE_BYTES_V1), 'base64url'),
-    ciphertextBase64Url: ciphertext,
-  }).byteLength - ciphertext.length;
-}
-
-function resolvePcmPacketBudget(maxFrameBytes: number, encrypted: boolean, overhead: number): number {
-  if (!encrypted) return Math.floor(maxFrameBytes / 2) * 2;
-  const ciphertextBytes = Math.min(PEER_APPLICATION_ENCRYPTION_CIPHERTEXT_MAX_BYTES_V1, Math.floor((maxFrameBytes - overhead) * 3 / 4));
-  return Math.max(0, Math.floor((ciphertextBytes - PEER_APPLICATION_ENCRYPTION_AUTH_TAG_BYTES_V1) / 2) * 2);
+/** Sealed frames add one GCM tag; the budget fits either Account mode's payload in a tunnel frame. */
+function resolvePcmPacketBudget(maxFrameBytes: number): number {
+  return Math.max(0, Math.floor((maxFrameBytes - MACHINE_STREAM_KEY_TAG_BYTES_V1) / 2) * 2);
 }
 
 export function createDaemonSpeechStreamTunnelSubstreamId(input: Readonly<{
@@ -174,23 +171,31 @@ export function createDaemonSpeechStreamTunnelTransport(
   options: DaemonSpeechStreamTunnelTransportOptions,
 ): DaemonSpeechStreamTransport {
   const direction = options.direction ?? 'client_to_daemon';
-  const encryptedPacketOverheadBytes = options.peerApplicationEncryption ? resolveEncryptedPcmPacketOverheadBytes() : 0;
-  const maxPcm16ChunkBytes = options.maxFrameBytes === undefined
-    ? undefined : resolvePcmPacketBudget(options.maxFrameBytes, Boolean(options.peerApplicationEncryption), encryptedPacketOverheadBytes);
+  const maxPcm16ChunkBytes = options.maxFrameBytes === undefined ? undefined : resolvePcmPacketBudget(options.maxFrameBytes);
   const resolveSubstreamId = options.resolveSubstreamId ?? createDaemonSpeechStreamTunnelSubstreamId;
-  let encryptionSession: Readonly<{
+  /**
+   * The started stream's mode, fixed by the content mode the Machine RPC owner
+   * sealed the start call with (never by key presence). E2EE requires the key the
+   * daemon issued inside that sealed reply. A chunk for any other stream fails
+   * closed, so an E2EE stream can never fall back to plain frames.
+   */
+  let started: Readonly<{
     streamId: string;
     generation: number;
-    substreamId: string;
-    contentKey: Uint8Array;
+    key: Readonly<{ bytes: Uint8Array; aad: Uint8Array }> | null;
   }> | null = null;
+  let lastSealedSequence = -1;
   let sendTail: Promise<void> = Promise.resolve();
-  let lastDataCarrierSequence = 0;
+
+  const retire = () => {
+    started?.key?.bytes.fill(0);
+    started = null;
+  };
 
   /**
-   * Preparing a carrier payload is asynchronous (AES-GCM sealing), and WebCrypto
+   * Preparing a carrier payload can be asynchronous (AES-GCM sealing), and WebCrypto
    * makes no promise about the completion order of concurrent operations. The
-   * daemon accepts only `lastCarrierSequence + 1`, so admission to the substream
+   * daemon accepts only the next contiguous sequence, so admission to the substream
    * must cover preparation *and* the send: the tail is claimed synchronously by
    * whichever caller arrives first, and a later sequence cannot overtake an
    * earlier one that is still sealing. Waiting for the daemon's response stays
@@ -200,7 +205,6 @@ export function createDaemonSpeechStreamTunnelTransport(
     substreamId: string,
     sequence: number,
     preparePayloadBytes: () => Uint8Array | Promise<Uint8Array>,
-    onSent?: () => void,
   ): Promise<Uint8Array | null> => {
     const send = async (payloadBytes: Uint8Array) => {
       if (options.stream.sendSubstreamDataFrame) {
@@ -236,7 +240,6 @@ export function createDaemonSpeechStreamTunnelTransport(
         await previous;
         try {
           await send(await preparePayloadBytes());
-          onSent?.();
         } finally {
           release();
         }
@@ -244,156 +247,46 @@ export function createDaemonSpeechStreamTunnelTransport(
     });
   };
 
-  const openEncryptedResponse = async (input: Readonly<{
-    phase: 'install' | 'data' | 'finish';
-    sequence: number;
-    responseBytes: Uint8Array;
-    session: NonNullable<typeof encryptionSession>;
-  }>): Promise<Uint8Array> => {
-    const frame = decodePeerApplicationEncryptedFrameV1(input.responseBytes);
-    if (!frame || frame.kind !== input.phase) throw new Error('daemon_voice_inference_encrypted_response_invalid');
-    const nonce = createPeerApplicationEncryptionNonceV1({
-      direction: 'daemon_to_client', phase: input.phase, sequence: input.sequence,
-    });
-    const encodedNonce = decodeBase64(frame.nonceBase64Url, 'base64url');
-    if (encodedNonce.byteLength !== nonce.byteLength || encodedNonce.some((byte, index) => byte !== nonce[index])) {
-      throw new Error('daemon_voice_inference_encrypted_response_nonce_invalid');
-    }
-    return await openAes256GcmBytes({
-      key: input.session.contentKey,
-      nonce,
-      aad: createPeerApplicationEncryptionAadV1({
-        authorityDigest: options.peerApplicationEncryption!.authorityDigest,
-        accountId: options.peerApplicationEncryption!.accountId,
-        machineId: options.peerApplicationEncryption!.machineId,
-        tunnelId: options.peerApplicationEncryption!.tunnelId,
-        applicationKind: options.peerApplicationEncryption!.applicationKind,
-        applicationAttemptId: options.peerApplicationEncryption!.applicationAttemptId,
-        applicationAuthorityDigest: options.peerApplicationEncryption!.applicationAuthorityDigest,
-        direction: 'daemon_to_client',
-        streamId: input.session.streamId,
-        generation: input.session.generation,
-        substreamId: input.session.substreamId,
-        sequence: input.sequence,
-        phase: input.phase,
-      }),
-      ciphertext: decodeBase64(frame.ciphertextBase64Url, 'base64url'),
-    });
-  };
-
-  const sealRequest = async (input: Readonly<{
-    phase: 'install' | 'data' | 'finish';
-    sequence: number;
-    plaintext: Uint8Array;
-    session: NonNullable<typeof encryptionSession>;
-    encryptedDataKeyEnvelopeBase64Url?: string;
-  }>): Promise<Uint8Array> => {
-    const nonce = createPeerApplicationEncryptionNonceV1({
-      direction: 'client_to_daemon', phase: input.phase, sequence: input.sequence,
-    });
-    const ciphertext = await sealAes256GcmBytes({
-      key: input.session.contentKey,
-      nonce,
-      aad: createPeerApplicationEncryptionAadV1({
-        authorityDigest: options.peerApplicationEncryption!.authorityDigest,
-        accountId: options.peerApplicationEncryption!.accountId,
-        machineId: options.peerApplicationEncryption!.machineId,
-        tunnelId: options.peerApplicationEncryption!.tunnelId,
-        applicationKind: options.peerApplicationEncryption!.applicationKind,
-        applicationAttemptId: options.peerApplicationEncryption!.applicationAttemptId,
-        applicationAuthorityDigest: options.peerApplicationEncryption!.applicationAuthorityDigest,
-        direction: 'client_to_daemon',
-        streamId: input.session.streamId,
-        generation: input.session.generation,
-        substreamId: input.session.substreamId,
-        sequence: input.sequence,
-        phase: input.phase,
-      }),
-      plaintext: input.plaintext,
-    });
-    return encodePeerApplicationEncryptedFrameV1({
-      v: 1,
-      kind: input.phase,
-      nonceBase64Url: encodeBase64(nonce, 'base64url'),
-      ciphertextBase64Url: encodeBase64(ciphertext, 'base64url'),
-      ...(input.encryptedDataKeyEnvelopeBase64Url ? {
-        encryptedDataKeyEnvelopeBase64Url: input.encryptedDataKeyEnvelopeBase64Url,
-      } : {}),
-    });
-  };
-
   return {
     ...(maxPcm16ChunkBytes === undefined ? {} : { maxPcm16ChunkBytes }),
-    // Application admission retains the encrypted envelope until recognition
-    // consumes it. Charge its actual unpadded Base64 size against that credit.
-    measureInFlightChunkBytes: pcm16ByteLength => options.peerApplicationEncryption
-      ? encryptedPacketOverheadBytes + Math.ceil((pcm16ByteLength + PEER_APPLICATION_ENCRYPTION_AUTH_TAG_BYTES_V1) * 4 / 3)
-      : pcm16ByteLength,
+    // The application substream retains each payload until its response; a
+    // sealed payload is the PCM plus one tag.
+    measureInFlightChunkBytes: pcm16ByteLength => pcm16ByteLength + MACHINE_STREAM_KEY_TAG_BYTES_V1,
     start: async (input: DaemonVoiceInferenceSttStreamStartRequest): Promise<DaemonVoiceInferenceSttStreamStartResponse> => {
-      const response = await options.controlTransport.start({
-        ...input,
-        ...(options.peerApplicationEncryption ? { peerApplicationEncryption: options.peerApplicationEncryption } : {}),
-      });
-      if (!options.peerApplicationEncryption || !response.ok) return response;
-      if (!response.peerApplicationEncryption) {
-        options.onRelayEncryptionFailure?.({ step: 'start_metadata', reason: 'unavailable' });
-        return { ok: false, error: 'daemon_voice_inference_relay_encryption_required', errorCode: 'internal_error' };
+      retire();
+      const { response, contentMode } = await options.controlTransport.startWithContentMode(input);
+      if (!response.ok) return response;
+      lastSealedSequence = -1;
+      if (contentMode === 'plain') {
+        started = { streamId: response.streamId, generation: response.generation, key: null };
+        options.onRelayAuthenticatedEvidence?.({ phase: 'plain' });
+        return response;
       }
-      let step: DaemonSpeechStreamRelayEncryptionFailure['step'] = 'key_prepare';
-      let contentKey: Uint8Array | null = null;
+      const streamKeyBase64Url = contentMode === 'e2ee' ? response.streamKeyBase64Url : undefined;
+      if (!streamKeyBase64Url) {
+        options.onRelayEncryptionFailure?.({ step: 'key_prepare', reason: 'unavailable' });
+        await options.controlTransport.cancel({ streamId: response.streamId, generation: response.generation }).catch(() => undefined);
+        return relayFailure('key_prepare', new Error('daemon_voice_inference_stream_key_unavailable'));
+      }
       try {
-        const recipientPublicKey = decodeBase64(response.peerApplicationEncryption.recipientPublicKeyBase64Url, 'base64url');
-        contentKey = getRandomBytes(PEER_APPLICATION_ENCRYPTION_DATA_KEY_BYTES_V1);
-        const substreamId = resolveSubstreamId({ streamId: response.streamId, generation: response.generation });
-        const session = { streamId: response.streamId, generation: response.generation, substreamId, contentKey };
-        step = 'key_envelope';
-        const encryptedDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
-          dataKey: contentKey,
-          recipientPublicKey,
-          randomBytes: getRandomBytes,
-        });
-        step = 'confirmation_wait';
-        const responseBytes = await sendSubstreamPayload(substreamId, 0, async () => {
-          step = 'install_seal';
-          const payload = await sealRequest({
-            phase: 'install', sequence: 0,
-            plaintext: new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1),
-            session,
-            encryptedDataKeyEnvelopeBase64Url: encodeBase64(encryptedDataKeyEnvelope, 'base64url'),
-          });
-          step = 'install_send';
-          return payload;
-        }, () => { step = 'confirmation_wait'; });
-        if (!responseBytes) throw new Error('daemon_voice_inference_encryption_confirmation_unavailable');
-        step = 'confirmation_open';
-        const confirmation = await openEncryptedResponse({ phase: 'install', sequence: 0, responseBytes, session });
-        step = 'confirmation_validate';
-        if (new TextDecoder().decode(confirmation) !== PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1) {
-          throw new Error('daemon_voice_inference_encryption_confirmation_invalid');
-        }
-        encryptionSession = session;
-        lastDataCarrierSequence = 0;
-        options.onRelayAuthenticatedEvidence?.({ phase: 'install' });
+        const bytes = decodeBase64(streamKeyBase64Url, 'base64url');
+        if (bytes.byteLength !== MACHINE_STREAM_KEY_BYTES_V1) throw new Error('daemon_voice_inference_stream_key_invalid');
+        started = {
+          streamId: response.streamId,
+          generation: response.generation,
+          key: { bytes, aad: createMachineStreamKeyAadV1({ streamId: response.streamId, generation: response.generation }) },
+        };
         return response;
       } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        const reason: DaemonSpeechStreamRelayEncryptionFailure['reason'] =
-          error && typeof error === 'object' && 'code' in error && error.code === 'peer_tunnel_stream_closed' ? 'closed'
-            : message === 'daemon_voice_inference_substream_response_timeout' ? 'timeout'
-              : message.startsWith('daemon_voice_inference_substream_aborted:') ? 'aborted'
-                : message.startsWith('daemon_voice_inference_substream_closed:') ? 'closed'
-                  : message === 'daemon_voice_inference_encryption_confirmation_unavailable' ? 'unavailable' : 'failed';
-        options.onRelayEncryptionFailure?.({ step, reason });
-        contentKey?.fill(0);
+        options.onRelayEncryptionFailure?.({ step: 'key_prepare', reason: 'failed' });
         await options.controlTransport.cancel({ streamId: response.streamId, generation: response.generation }).catch(() => undefined);
-        return relayFailure(step, error);
+        return relayFailure('key_prepare', error);
       }
     },
     chunk: async (input: DaemonSpeechStreamTransportChunkRequest): Promise<DaemonVoiceInferenceSttStreamChunkResponse> => {
       if (input.carrierFrame.kind !== 'binary_tunnel_frame_v2') {
-        if (options.fallbackTransport) {
-          return options.fallbackTransport.chunk(input);
-        }
+        // A tunnel selection always encodes bytes; no-tunnel recovery is the
+        // client's RPC selection, never a per-chunk switch inside this tunnel.
         return {
           ok: false,
           error: 'daemon_voice_inference_binary_tunnel_required',
@@ -401,82 +294,70 @@ export function createDaemonSpeechStreamTunnelTransport(
         };
       }
       const carrierFrame = input.carrierFrame;
-      const substreamId = resolveSubstreamId({
-        streamId: input.streamId,
-        generation: input.generation,
-      });
       if (!options.stream.sendSubstreamDataFrame && !options.stream.sendSubstreamFrame) {
         return { ok: false, error: 'daemon_voice_inference_tunnel_substream_unavailable', errorCode: 'internal_error' };
       }
-      if (options.peerApplicationEncryption) {
-        const session = encryptionSession;
-        if (!session || session.streamId !== input.streamId || session.generation !== input.generation) {
-          return { ok: false, error: 'daemon_voice_inference_relay_encryption_not_ready', errorCode: 'internal_error' };
+      const stream = started;
+      if (!stream || stream.streamId !== input.streamId || stream.generation !== input.generation) {
+        return { ok: false, error: 'daemon_voice_inference_stream_not_started', errorCode: 'internal_error' };
+      }
+      const substreamId = resolveSubstreamId({ streamId: input.streamId, generation: input.generation });
+      const key = stream.key;
+      if (!key) {
+        const responseBytes = await sendSubstreamPayload(substreamId, input.seq, () => carrierFrame.payloadBytes);
+        if (!responseBytes) {
+          return { ok: false, error: 'daemon_voice_inference_substream_response_unavailable', errorCode: 'internal_error' };
         }
-        const sequence = input.seq + 1;
-        let step = 'send';
         try {
-          const responseBytes = await sendSubstreamPayload(substreamId, sequence, async () => await sealRequest({
-            phase: 'data', sequence, plaintext: carrierFrame.payloadBytes, session,
-          }));
-          if (!responseBytes) throw new Error('daemon_voice_inference_substream_response_unavailable');
-          step = 'open';
-          const plaintext = await openEncryptedResponse({ phase: 'data', sequence, responseBytes, session });
-          lastDataCarrierSequence = Math.max(lastDataCarrierSequence, sequence);
-          step = 'parse';
-          const response = SttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
-          if (response.ok) {
-            options.onRelayAuthenticatedEvidence?.({ phase: 'data', ackSeq: response.ackSeq });
-          }
-          return response;
-        } catch (error) {
-          return relayFailure(step, error);
+          return SttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(responseBytes)));
+        } catch {
+          return { ok: false, error: 'daemon_voice_inference_invalid_substream_response', errorCode: 'internal_error' };
         }
       }
-      const responseBytes = await sendSubstreamPayload(substreamId, input.seq, () => carrierFrame.payloadBytes);
-      if (!responseBytes) {
-        return { ok: false, error: 'daemon_voice_inference_substream_response_unavailable', errorCode: 'internal_error' };
+      // One seal per sequence: a key and nonce never protect two plaintexts.
+      if (input.seq <= lastSealedSequence) {
+        return relayFailure('seal', new Error('daemon_voice_inference_stream_key_sequence_reused'));
       }
-      try {
-        return SttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(responseBytes)));
-      } catch {
-        return { ok: false, error: 'daemon_voice_inference_invalid_substream_response', errorCode: 'internal_error' };
-      }
-    },
-    finish: async (input): Promise<DaemonVoiceInferenceSttStreamFinishResponse> => {
-      const session = encryptionSession;
-      if (!options.peerApplicationEncryption || !session) return await options.controlTransport.finish(input);
-      const sequence = lastDataCarrierSequence + 1;
+      lastSealedSequence = input.seq;
       let step = 'send';
       try {
-        const responseBytes = await sendSubstreamPayload(session.substreamId, sequence, async () => await sealRequest({
-          phase: 'finish',
-          sequence,
-          plaintext: new TextEncoder().encode(JSON.stringify({ finalSeq: input.finalSeq })),
-          session,
+        const responseBytes = await sendSubstreamPayload(substreamId, input.seq, async () => await sealAes256GcmBytes({
+          key: key.bytes,
+          nonce: createMachineStreamKeyNonceV1('client_to_daemon', input.seq),
+          aad: key.aad,
+          plaintext: carrierFrame.payloadBytes,
         }));
         if (!responseBytes) throw new Error('daemon_voice_inference_substream_response_unavailable');
         step = 'open';
-        const plaintext = await openEncryptedResponse({ phase: 'finish', sequence, responseBytes, session });
+        const plaintext = await openAes256GcmBytes({
+          key: key.bytes,
+          nonce: createMachineStreamKeyNonceV1('daemon_to_client', input.seq),
+          aad: key.aad,
+          ciphertext: responseBytes,
+        });
         step = 'parse';
-        const response = SttStreamFinishResponseSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
-        if (response.ok) {
-          options.onRelayAuthenticatedEvidence?.({ phase: 'finish', ackSeq: response.ackSeq });
-        }
+        const response = SttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(plaintext)));
+        if (response.ok) options.onRelayAuthenticatedEvidence?.({ phase: 'data', ackSeq: response.ackSeq });
         return response;
       } catch (error) {
         return relayFailure(step, error);
+      }
+    },
+    finish: async (input): Promise<DaemonVoiceInferenceSttStreamFinishResponse> => {
+      const keyed = started?.key != null;
+      try {
+        const response = await options.controlTransport.finish(input);
+        if (keyed && response.ok) options.onRelayAuthenticatedEvidence?.({ phase: 'finish', ackSeq: response.ackSeq });
+        return response;
       } finally {
-        session.contentKey.fill(0);
-        encryptionSession = null;
+        retire();
       }
     },
     cancel: async (input): Promise<DaemonVoiceInferenceSttStreamCancelResponse> => {
       try {
         return await options.controlTransport.cancel(input);
       } finally {
-        encryptionSession?.contentKey.fill(0);
-        encryptionSession = null;
+        retire();
       }
     },
   };

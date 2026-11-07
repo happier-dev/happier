@@ -670,7 +670,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
                 voiceMediaApplicationAuthority: expect.objectContaining({
                     applicationKind: 'speech_transcription',
                     applicationAttemptId: 'request-before-frame',
-                    tunnelId: beforeFrameTunnelId,
                 }),
             }));
             expect(speechTerminal.mock.calls[0]?.[0]).not.toHaveProperty('streamId');
@@ -727,7 +726,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
                 voiceMediaApplicationAuthority: expect.objectContaining({
                     applicationKind: 'speech_transcription',
                     applicationAttemptId: 'request-socket-loss',
-                    tunnelId: speechTunnelId,
                 }),
             }));
             expect(userDeliveries.length).toBeGreaterThan(0);
@@ -1255,7 +1253,7 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
             streamId: string;
             generation: number;
             seq: number;
-            pcm16Bytes: Uint8Array;
+            payloadBytes: Uint8Array;
         }>>();
         const writesByConnection: string[][] = [];
         const connectTcp = vi.fn(async () => {
@@ -1320,21 +1318,16 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
             generation: 3,
             seq: 0,
         });
-        expect([...(await appended.promise).pcm16Bytes]).toEqual([0, 0, 1, 0]);
+        expect([...(await appended.promise).payloadBytes]).toEqual([0, 0, 1, 0]);
         expect(voiceBinaryAppendConsumer).toHaveBeenCalledOnce();
+        // The signed relay authority names the attempt; payload privacy is the stream key's job.
         expect(voiceBinaryAppendConsumer).toHaveBeenCalledWith(expect.objectContaining({
-            peerApplicationEncryption: expect.objectContaining({
+            voiceMediaApplicationAuthority: {
                 v: 1,
-                suite: 'aes-256-gcm',
-                flowKind: 'voice_media',
-                routeKind: 'server_relay',
-                accountId: 'user_1',
-                machineId: 'machine_1',
-                tunnelId,
-                authorityDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
-            }),
-            substreamId: 'daemon.voiceInference.stt.stream-1.3',
-            carrierSequence: 0,
+                applicationKind: 'speech_transcription',
+                applicationAttemptId: 'request_1',
+                applicationAuthorityDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+            },
         }));
         expect(connectTcp).not.toHaveBeenCalled();
         expect(writesByConnection).toEqual([]);
@@ -1381,15 +1374,9 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
         const terminalInput = voiceBinaryTerminalConsumer.mock.calls[0]?.[0];
         expect(terminalInput).toEqual(expect.objectContaining({
             reasonCode: 'tunnel_closed',
-            peerApplicationEncryption: expect.objectContaining({
-                applicationKind: 'speech_transcription',
-                applicationAttemptId: 'request_1',
-                tunnelId,
-            }),
             voiceMediaApplicationAuthority: expect.objectContaining({
                 applicationKind: 'speech_transcription',
                 applicationAttemptId: 'request_1',
-                tunnelId,
             }),
         }));
         expect(terminalInput).not.toHaveProperty('streamId');
@@ -1461,7 +1448,6 @@ describe('registerPeerTcpTunnelRelayTerminator', () => {
             voiceMediaApplicationAuthority: expect.objectContaining({
                 applicationKind: 'speech_transcription',
                 applicationAttemptId: 'request_1',
-                tunnelId,
             }),
         }));
 

@@ -5,16 +5,7 @@ import { join } from 'node:path';
 
 import {
   DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1,
-  createPeerApplicationEncryptionAadV1,
-  createPeerApplicationEncryptionNonceV1,
-  createSpeechTranscriptionApplicationAuthorityDigestV1,
   decodeBase64,
-  decodePeerApplicationEncryptedFrameV1,
-  encodeBase64,
-  encodePeerApplicationEncryptedFrameV1,
-  sealEncryptedDataKeyEnvelopeV1,
   type DaemonVoiceInferenceSttStreamEvent,
   ModelPackManifestSchema,
   VoiceSpeechDiagnosticsSettingsV1Schema,
@@ -35,6 +26,8 @@ import { createVoiceInferenceSpeechStreamManager } from './voiceInferenceSpeechS
 import { createVoiceDiagnosticsController } from '../../voiceDiagnostics/controller';
 import { createDiagnosticsControllerWithRemovalFailure } from '../../voiceDiagnostics/controller.testkit';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
+import { createMachineStreamKeyAadV1, createMachineStreamKeyNonceV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { createSpeechTranscriptionApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -72,50 +65,32 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
     worker = await startVoiceInferenceWorker({ runtimeLoader: async () => nativeRuntime });
   });
 
-  it('rejects Agent realtime and wrong-attempt carrier authority before creating an STT session', async () => {
-    const createStreamingTranscriptionSession = vi.fn();
-    nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession };
+  it('rejects Agent realtime and wrong-attempt carrier authority before native intake', async () => {
+    const appendPcm16 = vi.fn<RuntimeStreamSession['appendPcm16']>(async () => ({ events: [] }));
+    nativeRuntime = { ...nativeRuntime, createStreamingTranscriptionSession: vi.fn(async () => ({
+      appendPcm16, finish: vi.fn(async () => ({ text: '', language: null, events: [] })),
+      cancel: vi.fn(async () => {}), close: vi.fn(async () => {}),
+    })) };
     const manager = createVoiceInferenceSpeechStreamManager({
       streamRoot: await createTempStreamRoot(),
       voiceInferenceWorker: worker,
     });
     managers.push(manager);
-    const baseBinding = {
-      v: 1 as const,
-      suite: 'aes-256-gcm' as const,
-      flowKind: 'voice_media' as const,
-      routeKind: 'server_relay' as const,
-      authorityDigest: `sha256:${'ab'.repeat(32)}`,
-      accountId: 'account-1',
-      machineId: 'machine-1',
-      tunnelId: 'tunnel-1',
-      applicationAttemptId: 'attempt-1',
-      applicationAuthorityDigest:
-        createSpeechTranscriptionApplicationAuthorityDigestV1('attempt-1'),
-    };
-    await expect(manager.start({
-      requestId: 'attempt-1',
-      packId: packId,
-      language: 'en',
-      streamingMode: 'runtime',
+    const started = await manager.start({
+      requestId: 'attempt-1', packId: packId, language: 'en', streamingMode: 'runtime',
       format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-      peerApplicationEncryption: {
-        ...baseBinding,
-        applicationKind: 'agent_realtime' as never,
-      },
-    })).resolves.toMatchObject({ ok: false, error: 'voice_inference_invalid_stream_state' });
-    await expect(manager.start({
-      requestId: 'attempt-2',
-      packId: packId,
-      language: 'en',
-      streamingMode: 'runtime',
-      format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-      peerApplicationEncryption: {
-        ...baseBinding,
-        applicationKind: 'speech_transcription',
-      },
-    })).resolves.toMatchObject({ ok: false, error: 'voice_inference_invalid_stream_state' });
-    expect(createStreamingTranscriptionSession).not.toHaveBeenCalled();
+    });
+    if (!started.ok) throw new Error('expected stream start');
+    const frame = { streamId: started.streamId, generation: started.generation, seq: 0, payloadBytes: new Uint8Array([0, 0, 1, 0]) };
+    await expect(manager.appendTunnelFrame({ ...frame, voiceMediaApplicationAuthority: {
+      v: 1, applicationKind: 'agent_realtime' as never, applicationAttemptId: 'attempt-1',
+      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('attempt-1'),
+    } })).resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_application_authority_mismatch' });
+    await expect(manager.appendTunnelFrame({ ...frame, voiceMediaApplicationAuthority: {
+      v: 1, applicationKind: 'speech_transcription', applicationAttemptId: 'attempt-2',
+      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('attempt-2'),
+    } })).resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_application_authority_mismatch' });
+    expect(appendPcm16).not.toHaveBeenCalled();
   });
 
   it('admits only one live STT stream for a signed application attempt', async () => {
@@ -437,14 +412,13 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       });
     }
     expect(received).toEqual(frames.map(pcm => [...pcm]));
-    await expect(manager.status(started)).resolves.toMatchObject({ ok: true, state: 'open', ackSeq: 3 });
     expect(await readdir(streamRoot)).toEqual([]);
     expect(DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(await manager.finish({
       streamId: started.streamId, generation: started.generation, finalSeq: 3,
     }))).toMatchObject({ ok: true, ackSeq: 3, finalText: 'speech after silence' });
   });
 
-  it.each([false, true])('authenticates START-bound PCM and its terminal native failure=%s response', async nativeFailure => {
+  it.each([false, true])('opens stream-key PCM and seals its terminal native failure=%s response', async nativeFailure => {
     process.env.HAPPIER_WEB_LATENCY_TRACE = '1';
     const trace = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
     const appendPcm16 = vi.fn<RuntimeStreamSession['appendPcm16']>(async () => {
@@ -464,129 +438,35 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       voiceInferenceWorker: worker,
     });
     managers.push(manager);
-    const binding = {
-      v: 1 as const,
-      suite: 'aes-256-gcm' as const,
-      flowKind: 'voice_media' as const,
-      routeKind: 'server_relay' as const,
-      authorityDigest: 'sha256:acdb52b3d7de70428b1c54fbb340ab675b98d6900d2b86ababad20baa7aed6ca',
-      accountId: 'account-1',
-      machineId: 'machine-1',
-      tunnelId: 'tunnel-1',
-      applicationKind: 'speech_transcription' as const,
-      applicationAttemptId: 'runtime-encrypted-relay',
-      applicationAuthorityDigest:
-        createSpeechTranscriptionApplicationAuthorityDigestV1('runtime-encrypted-relay'),
+    const authority = {
+      v: 1 as const, applicationKind: 'speech_transcription' as const, applicationAttemptId: 'runtime-keyed',
+      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('runtime-keyed'),
     };
-    const started = await manager.start({
-      requestId: 'runtime-encrypted-relay',
-      packId: packId,
-      language: 'en',
-      streamingMode: 'runtime',
+    const plainStart = await manager.start({
+      requestId: 'runtime-plain', packId: packId, language: 'en', streamingMode: 'runtime',
       format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
-      peerApplicationEncryption: binding,
     });
-    if (!started.ok || !started.peerApplicationEncryption) throw new Error('expected encrypted stream start');
-    const substreamId = `daemon.voiceInference.stt.${started.streamId}.${started.generation}`;
-    const contentKey = Uint8Array.from({ length: 32 }, (_, index) => index);
-    const envelope = sealEncryptedDataKeyEnvelopeV1({
-      dataKey: contentKey,
-      recipientPublicKey: decodeBase64(started.peerApplicationEncryption.recipientPublicKeyBase64Url, 'base64url'),
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-    });
-    const sealFrame = (phase: 'install' | 'data' | 'finish', sequence: number, plaintext: Uint8Array, envelopeBytes?: Uint8Array) => {
-      const nonce = createPeerApplicationEncryptionNonceV1({ direction: 'client_to_daemon', phase, sequence });
-      const ciphertext = sealAes256GcmBytes({
-        key: contentKey,
-        nonce,
-        aad: createPeerApplicationEncryptionAadV1({
-          authorityDigest: binding.authorityDigest,
-          accountId: binding.accountId,
-          machineId: binding.machineId,
-          tunnelId: binding.tunnelId,
-          applicationKind: binding.applicationKind,
-          applicationAttemptId: binding.applicationAttemptId,
-          applicationAuthorityDigest: binding.applicationAuthorityDigest,
-          direction: 'client_to_daemon',
-          streamId: started.streamId,
-          generation: started.generation,
-          substreamId,
-          sequence,
-          phase,
-        }),
-        plaintext,
-      });
-      return encodePeerApplicationEncryptedFrameV1({
-        v: 1,
-        kind: phase,
-        nonceBase64Url: encodeBase64(nonce, 'base64url'),
-        ciphertextBase64Url: encodeBase64(ciphertext, 'base64url'),
-        ...(envelopeBytes ? { encryptedDataKeyEnvelopeBase64Url: encodeBase64(envelopeBytes, 'base64url') } : {}),
-      });
-    };
-    const openResponse = (phase: 'install' | 'data' | 'finish', sequence: number, payload: Uint8Array) => {
-      const frame = decodePeerApplicationEncryptedFrameV1(payload);
-      if (!frame) throw new Error('expected encrypted response');
-      const nonce = createPeerApplicationEncryptionNonceV1({ direction: 'daemon_to_client', phase, sequence });
-      return openAes256GcmBytes({
-        key: contentKey,
-        nonce,
-        aad: createPeerApplicationEncryptionAadV1({
-          authorityDigest: binding.authorityDigest,
-          accountId: binding.accountId,
-          machineId: binding.machineId,
-          tunnelId: binding.tunnelId,
-          applicationKind: binding.applicationKind,
-          applicationAttemptId: binding.applicationAttemptId,
-          applicationAuthorityDigest: binding.applicationAuthorityDigest,
-          direction: 'daemon_to_client',
-          streamId: started.streamId,
-          generation: started.generation,
-          substreamId,
-          sequence,
-          phase,
-        }),
-        ciphertext: decodeBase64(frame.ciphertextBase64Url, 'base64url'),
-      });
-    };
+    // Without an E2EE RPC owner decision the daemon issues no key.
+    expect(plainStart).not.toHaveProperty('streamKeyBase64Url');
+    const started = await manager.start({
+      requestId: 'runtime-keyed', packId: packId, language: 'en', streamingMode: 'runtime',
+      format: DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
+    }, undefined, { issueStreamKey: true });
+    if (!started.ok || !started.streamKeyBase64Url) throw new Error('expected keyed stream start');
+    const key = decodeBase64(started.streamKeyBase64Url, 'base64url');
+    const aad = createMachineStreamKeyAadV1({ streamId: started.streamId, generation: started.generation });
+    const stream = { streamId: started.streamId, generation: started.generation };
 
-    const installResponse = await manager.appendPeerApplicationFrame({
-      binding,
-      streamId: started.streamId,
-      generation: started.generation,
-      substreamId,
-      carrierSequence: 0,
-      payloadBytes: sealFrame('install', 0, new TextEncoder().encode(PEER_APPLICATION_ENCRYPTION_INSTALL_PROOF_V1), envelope),
+    const dataResponse = await manager.appendTunnelFrame({ ...stream, seq: 0, voiceMediaApplicationAuthority: authority,
+      payloadBytes: sealAes256GcmBytes({ key, aad, nonce: createMachineStreamKeyNonceV1('client_to_daemon', 0), plaintext: new Uint8Array([0, 0, 1, 0]) }),
     });
-    expect(new TextDecoder().decode(openResponse('install', 0, installResponse))).toBe(PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1);
-
-    await expect(manager.appendPeerApplicationFrame({
-      binding: { ...binding, tunnelId: 'wrong-tunnel' },
-      streamId: started.streamId,
-      generation: started.generation,
-      substreamId,
-      carrierSequence: 1,
-      payloadBytes: sealFrame('data', 1, new Uint8Array([0, 0, 1, 0])),
-    })).rejects.toThrow('daemon_voice_inference_encryption_authority_mismatch');
-    expect(appendPcm16).not.toHaveBeenCalled();
-
-    const dataResponse = await manager.appendPeerApplicationFrame({
-      binding,
-      streamId: started.streamId,
-      generation: started.generation,
-      substreamId,
-      carrierSequence: 1,
-      payloadBytes: sealFrame('data', 1, new Uint8Array([0, 0, 1, 0])),
-    });
-    const parsedResponse = DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(openResponse('data', 1, dataResponse))));
+    if (!(dataResponse instanceof Uint8Array)) throw new Error('expected sealed response');
+    // Native failure retires the stream and wipes its key; the response stays sealed and openable.
+    const parsedResponse = DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(
+      openAes256GcmBytes({ key, aad, nonce: createMachineStreamKeyNonceV1('daemon_to_client', 0), ciphertext: dataResponse }))));
     expect(appendPcm16).toHaveBeenCalledOnce();
-    expect(trace.mock.calls).toContainEqual([
-      '[VoiceInference] Relay application frame settled',
-      expect.objectContaining({ tunnelId: binding.tunnelId, substreamId, sequence: 1,
-        phase: 'data', ok: !nativeFailure, elapsedMs: expect.any(Number) }),
-    ]);
-    const dataTrace = trace.mock.calls.find(([message, fields]) => message === '[VoiceInference] Relay application frame settled'
-      && fields && typeof fields === 'object' && 'sequence' in fields && fields.sequence === 1)?.[1];
+    const dataTrace = trace.mock.calls.find(([message]) => message === '[VoiceInference] Keyed stream frame settled')?.[1];
+    expect(dataTrace).toMatchObject({ streamId: started.streamId, sequence: 0, ok: !nativeFailure });
     expect(dataTrace && typeof dataTrace === 'object' && 'elapsedMs' in dataTrace ? dataTrace.elapsedMs : undefined)
       .toBeGreaterThanOrEqual(20);
     if (nativeFailure) {
@@ -595,20 +475,12 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       return;
     }
     expect(parsedResponse).toMatchObject({ ok: true, ackSeq: 0 });
-
-    const finishResponse = await manager.appendPeerApplicationFrame({
-      binding,
-      streamId: started.streamId,
-      generation: started.generation,
-      substreamId,
-      carrierSequence: 2,
-      payloadBytes: sealFrame('finish', 2, new TextEncoder().encode(JSON.stringify({ finalSeq: 0 }))),
-    });
-    expect(DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(JSON.parse(new TextDecoder().decode(openResponse('finish', 2, finishResponse))))).toMatchObject({
-      ok: true,
-      ackSeq: 0,
-      finalText: '',
-    });
+    // Plain PCM for a keyed stream is refused before native intake.
+    await expect(manager.appendPcm16Bytes({ ...stream, seq: 1, pcm16Bytes: new Uint8Array([0, 0, 1, 0]) }))
+      .resolves.toMatchObject({ ok: false, error: 'daemon_voice_inference_stream_encryption_required' });
+    expect(appendPcm16).toHaveBeenCalledOnce();
+    // The transcript-bearing finish arrives through the E2EE Machine RPC.
+    await expect(manager.finish({ ...stream, finalSeq: 0 })).resolves.toMatchObject({ ok: true, ackSeq: 0, finalText: '' });
     expect(runtimeSession.finish).toHaveBeenCalledOnce();
   });
 
@@ -930,7 +802,7 @@ describe('createVoiceInferenceSpeechStreamManager', () => {
       const log = await readFile(logPath, 'utf8');
       expect(log).toContain(JSON.stringify(diagnostic));
       expect(log).not.toMatch(/private audio|secret|model\.wav|pcm16Bytes/);
-      await expect(manager.status({
+      await expect(manager.cancel({
         streamId: started.streamId,
         generation: started.generation,
       })).resolves.toMatchObject({

@@ -25,6 +25,5 @@ describe('RPC_METHODS (daemon voice inference)', () => {
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK).toBe('daemon.voiceInference.stt.stream.chunk');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH).toBe('daemon.voiceInference.stt.stream.finish');
     expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL).toBe('daemon.voiceInference.stt.stream.cancel');
-    expect((RPC_METHODS as any).DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS).toBe('daemon.voiceInference.stt.stream.status');
   });
 });

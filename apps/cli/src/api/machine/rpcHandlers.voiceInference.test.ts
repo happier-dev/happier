@@ -103,9 +103,9 @@ async function createLicensedPublicPack() {
   const publicModelPacks = createDaemonPublicVoiceModelPackRuntime({
     accountId: 'voice-rpc-account', machineId: 'voice-rpc-machine',
     happyHomeDir: configuration.happyHomeDir, paths: resolveVoiceInferencePaths(),
-    createInstallerHost: ({ packsRootDir, urlPolicy }) => createNodeModelPackInstallerHost({
-      packsRootDir, urlPolicy, resolveAddresses: async () => ['93.184.216.34'],
-      pinnedTransport: async ({ url }) => {
+    createInstallerHost: ({ packsRootDir }) => createNodeModelPackInstallerHost({
+      packsRootDir,
+      transport: async ({ url }) => {
         const bytes = assets.get(url);
         if (!bytes) throw new Error('unknown fixture model URL');
         let delivered = false;
@@ -276,7 +276,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     const sttStreamChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK);
     const sttStreamFinish = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH);
     const sttStreamCancel = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL);
-    const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
 
     expect(status).toBeDefined();
     expect(modelsList).toBeDefined();
@@ -293,7 +292,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
     expect(sttStreamChunk).toBeDefined();
     expect(sttStreamFinish).toBeDefined();
     expect(sttStreamCancel).toBeDefined();
-    expect(sttStreamStatus).toBeDefined();
 
     await expect(status?.({})).resolves.toEqual(expect.objectContaining({
       ok: true,
@@ -426,16 +424,6 @@ describe('registerMachineVoiceInferenceRpcHandlers', () => {
       generation: streamStartResp.generation,
       ackSeq: 0,
       events: [],
-    });
-    await expect(sttStreamStatus?.({
-      streamId: streamStartResp.streamId,
-      generation: streamStartResp.generation,
-    })).resolves.toEqual({
-      ok: true,
-      streamId: streamStartResp.streamId,
-      generation: streamStartResp.generation,
-      ackSeq: 0,
-      state: 'open',
     });
     await expect(sttStreamCancel?.({
       streamId: streamStartResp.streamId,

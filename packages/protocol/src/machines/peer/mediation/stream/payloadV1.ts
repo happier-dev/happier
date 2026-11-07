@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { createCanonicalJsonSigningInput } from '../../../../crypto/canonicalJson.js';
+import { decodeBase64, encodeBase64 } from '../../../../crypto/base64.js';
 import {
   MachineLiveStreamDecodedEnvelopeV1Schema,
   MachineLiveStreamRelayEnvelopeV1Schema,
@@ -107,4 +108,42 @@ export async function openMachineLiveStreamEnvelopeV1(
     }
     return { ok: true, value: authenticated.data.envelope };
   } catch { return { ok: false, code: 'stream_payload_authentication_failed' }; }
+}
+
+/**
+ * Per-stream key for high-rate binary Machine streams (daemon Voice STT).
+ *
+ * The daemon issues it only when its Machine RPC content mode is E2EE, inside
+ * that RPC's sealed response; plain Accounts carry no key and send plain frames.
+ * Each tunnel data payload is AES-256-GCM(key) with a nonce derived from the
+ * direction and the stream's strictly contiguous carrier sequence, so a key and
+ * nonce never seal two plaintexts. The AAD binds the exact stream once.
+ * Platform AES-GCM adapters own the cipher; this owner holds no keys.
+ */
+export const MACHINE_STREAM_KEY_BYTES_V1 = 32;
+export const MACHINE_STREAM_KEY_NONCE_BYTES_V1 = 12;
+export const MACHINE_STREAM_KEY_TAG_BYTES_V1 = 16;
+export type MachineStreamKeyDirectionV1 = 'client_to_daemon' | 'daemon_to_client';
+
+export const MachineStreamKeyBase64UrlV1Schema = lazyZodSchema(() => z.string().check(
+  z.regex(/^[A-Za-z0-9_-]{43}$/u),
+  z.refine((value) => {
+    const decoded = decodeBase64(value, 'base64url');
+    return decoded.byteLength === MACHINE_STREAM_KEY_BYTES_V1 && encodeBase64(decoded, 'base64url') === value;
+  }),
+));
+
+export function createMachineStreamKeyNonceV1(direction: MachineStreamKeyDirectionV1, sequence: number): Uint8Array {
+  if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error('machine_stream_key_sequence_invalid');
+  const nonce = new Uint8Array(MACHINE_STREAM_KEY_NONCE_BYTES_V1);
+  nonce[0] = 1;
+  nonce[1] = direction === 'client_to_daemon' ? 1 : 2;
+  new DataView(nonce.buffer).setBigUint64(4, BigInt(sequence));
+  return nonce;
+}
+
+export function createMachineStreamKeyAadV1(stream: Readonly<{ streamId: string; generation: number }>): Uint8Array {
+  return new TextEncoder().encode(createCanonicalJsonSigningInput({
+    v: 1, domain: 'happier.machine-stream-key', streamId: stream.streamId, generation: stream.generation,
+  }));
 }

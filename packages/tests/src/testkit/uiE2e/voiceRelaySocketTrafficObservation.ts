@@ -1,8 +1,5 @@
 import type { Page } from '@playwright/test';
-import {
-  decodePeerApplicationEncryptedFrameV1,
-  decodePeerTcpTunnelBinaryFrameV2,
-} from '@happier-dev/protocol';
+import { decodePeerTcpTunnelBinaryFrameV2 } from '@happier-dev/protocol';
 import { createHash } from 'node:crypto';
 
 const VOICE_STT_SUBSTREAM_PREFIX = 'daemon.voiceInference.stt.';
@@ -21,21 +18,27 @@ export type VoiceRelaySocketTrafficObservation = Readonly<{
     binaryAttachmentBytes: number;
     validTunnelFrameCount: number;
     invalidTunnelFrameCount: number;
-    voiceEncryptedInstallCount: number;
-    voiceEncryptedDataCount: number;
-    voiceEncryptedFinishCount: number;
-    invalidVoicePayloadCount: number;
+    /** Client→daemon Voice STT data payloads: stream-key ciphertext (E2EE) or PCM (plain). */
+    voiceDataFrameCount: number;
     voicePayloadSha256Digests: readonly string[];
     receivedBinaryAttachmentCount: number;
     receivedBinaryAttachmentBytes: number;
     receivedValidTunnelFrameCount: number;
     receivedInvalidTunnelFrameCount: number;
-    receivedVoiceEncryptedInstallCount: number;
-    receivedVoiceEncryptedDataCount: number;
-    receivedVoiceEncryptedFinishCount: number;
-    receivedInvalidVoicePayloadCount: number;
+    receivedVoiceDataFrameCount: number;
+    /** Daemon→client Voice payloads readable as JSON; an E2EE Account stream must have none. */
+    receivedPlainJsonVoicePayloadCount: number;
   }>;
 }>;
+
+function isPlainJsonPayload(bytes: Uint8Array): boolean {
+  try {
+    const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    return value !== null && typeof value === 'object';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Observes only the browser's raw Socket.IO transport frames that are sent to
@@ -49,19 +52,14 @@ export function observeVoiceRelaySocketTraffic(page: Page): VoiceRelaySocketTraf
   let binaryAttachmentBytes = 0;
   let validTunnelFrameCount = 0;
   let invalidTunnelFrameCount = 0;
-  let voiceEncryptedInstallCount = 0;
-  let voiceEncryptedDataCount = 0;
-  let voiceEncryptedFinishCount = 0;
-  let invalidVoicePayloadCount = 0;
+  let voiceDataFrameCount = 0;
   let pendingReceivedBinaryAttachments = 0;
   let receivedBinaryAttachmentCount = 0;
   let receivedBinaryAttachmentBytes = 0;
   let receivedValidTunnelFrameCount = 0;
   let receivedInvalidTunnelFrameCount = 0;
-  let receivedVoiceEncryptedInstallCount = 0;
-  let receivedVoiceEncryptedDataCount = 0;
-  let receivedVoiceEncryptedFinishCount = 0;
-  let receivedInvalidVoicePayloadCount = 0;
+  let receivedVoiceDataFrameCount = 0;
+  let receivedPlainJsonVoicePayloadCount = 0;
   const voicePayloadSha256Digests: string[] = [];
 
   page.on('websocket', (websocket) => {
@@ -110,18 +108,7 @@ export function observeVoiceRelaySocketTraffic(page: Page): VoiceRelaySocketTraf
       if (voicePayloadSha256Digests.length < MAX_RETAINED_DIGESTS) {
         voicePayloadSha256Digests.push(digest);
       }
-      const encryptedFrame = decodePeerApplicationEncryptedFrameV1(decodedTunnelFrame.payload);
-      if (!encryptedFrame) {
-        invalidVoicePayloadCount += 1;
-        return;
-      }
-      if (encryptedFrame.kind === 'install') {
-        voiceEncryptedInstallCount += 1;
-      } else if (encryptedFrame.kind === 'data') {
-        voiceEncryptedDataCount += 1;
-      } else {
-        voiceEncryptedFinishCount += 1;
-      }
+      voiceDataFrameCount += 1;
     });
     websocket.on('framereceived', ({ payload }) => {
       if (typeof payload === 'string') {
@@ -153,16 +140,8 @@ export function observeVoiceRelaySocketTraffic(page: Page): VoiceRelaySocketTraf
       ) {
         return;
       }
-      const encryptedFrame = decodePeerApplicationEncryptedFrameV1(decodedTunnelFrame.payload);
-      if (!encryptedFrame) {
-        receivedInvalidVoicePayloadCount += 1;
-      } else if (encryptedFrame.kind === 'install') {
-        receivedVoiceEncryptedInstallCount += 1;
-      } else if (encryptedFrame.kind === 'data') {
-        receivedVoiceEncryptedDataCount += 1;
-      } else {
-        receivedVoiceEncryptedFinishCount += 1;
-      }
+      receivedVoiceDataFrameCount += 1;
+      if (isPlainJsonPayload(decodedTunnelFrame.payload)) receivedPlainJsonVoicePayloadCount += 1;
     });
   });
 
@@ -178,19 +157,14 @@ export function observeVoiceRelaySocketTraffic(page: Page): VoiceRelaySocketTraf
       binaryAttachmentBytes,
       validTunnelFrameCount,
       invalidTunnelFrameCount,
-      voiceEncryptedInstallCount,
-      voiceEncryptedDataCount,
-      voiceEncryptedFinishCount,
-      invalidVoicePayloadCount,
+      voiceDataFrameCount,
       voicePayloadSha256Digests: [...voicePayloadSha256Digests],
       receivedBinaryAttachmentCount,
       receivedBinaryAttachmentBytes,
       receivedValidTunnelFrameCount,
       receivedInvalidTunnelFrameCount,
-      receivedVoiceEncryptedInstallCount,
-      receivedVoiceEncryptedDataCount,
-      receivedVoiceEncryptedFinishCount,
-      receivedInvalidVoicePayloadCount,
+      receivedVoiceDataFrameCount,
+      receivedPlainJsonVoicePayloadCount,
     }),
   };
 }

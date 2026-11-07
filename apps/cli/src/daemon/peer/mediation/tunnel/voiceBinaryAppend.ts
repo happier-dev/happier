@@ -1,5 +1,4 @@
 import type {
-    PeerApplicationEncryptionAuthorityBindingV1,
     PeerTcpTunnelBinaryFrameHeaderV2,
     VoiceMediaApplicationAuthorityV1,
 } from '@happier-dev/protocol';
@@ -10,11 +9,9 @@ export type PeerTcpTunnelVoiceBinaryAppendInput = Readonly<{
     streamId: string;
     generation: number;
     seq: number;
-    pcm16Bytes: Uint8Array;
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
+    /** Stream-key ciphertext for an E2EE Account, raw PCM for a plain one; the stream owner decides. */
+    payloadBytes: Uint8Array;
     voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
-    substreamId?: string;
-    carrierSequence?: number;
 }>;
 
 export type PeerTcpTunnelVoiceBinaryAppendConsumer = (
@@ -23,7 +20,6 @@ export type PeerTcpTunnelVoiceBinaryAppendConsumer = (
 
 type PeerTcpTunnelVoiceBinaryTerminalCommonInput = Readonly<{
     reasonCode: string;
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
     voiceMediaApplicationAuthority: VoiceMediaApplicationAuthorityV1;
 }>;
 
@@ -73,7 +69,6 @@ export async function dispatchDaemonVoiceInferenceSttBinaryAppend(input: Readonl
     consumer: PeerTcpTunnelVoiceBinaryAppendConsumer | undefined;
     header: PeerTcpTunnelBinaryFrameHeaderV2;
     payload: Uint8Array;
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
     voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
     onResponse?: (response: unknown, header: PeerTcpTunnelBinaryFrameHeaderV2) => Promise<void> | void;
 }>): Promise<boolean> {
@@ -99,13 +94,8 @@ export async function dispatchDaemonVoiceInferenceSttBinaryAppend(input: Readonl
         streamId: binding.streamId,
         generation: binding.generation,
         seq: input.header.sequence,
-        pcm16Bytes: input.payload,
+        payloadBytes: input.payload,
         voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
-        ...(input.peerApplicationEncryption ? {
-            peerApplicationEncryption: input.peerApplicationEncryption,
-            substreamId: input.header.substreamId,
-            carrierSequence: input.header.sequence,
-        } : {}),
     });
     await input.onResponse?.(response, input.header);
     return true;
@@ -115,7 +105,6 @@ export async function dispatchDaemonVoiceInferenceSttTerminal(input: Readonly<{
     consumer: PeerTcpTunnelVoiceBinaryTerminalConsumer | undefined;
     substreamIds: readonly string[];
     reasonCode: string;
-    peerApplicationEncryption?: PeerApplicationEncryptionAuthorityBindingV1;
     voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
 }>): Promise<boolean> {
     if (
@@ -135,9 +124,6 @@ export async function dispatchDaemonVoiceInferenceSttTerminal(input: Readonly<{
             substreamId,
             reasonCode: input.reasonCode,
             voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
-            ...(input.peerApplicationEncryption ? {
-                peerApplicationEncryption: input.peerApplicationEncryption,
-            } : {}),
         });
     }
     if (!handled) {
@@ -145,9 +131,6 @@ export async function dispatchDaemonVoiceInferenceSttTerminal(input: Readonly<{
         await input.consumer({
             reasonCode: input.reasonCode,
             voiceMediaApplicationAuthority: input.voiceMediaApplicationAuthority,
-            ...(input.peerApplicationEncryption ? {
-                peerApplicationEncryption: input.peerApplicationEncryption,
-            } : {}),
         });
     }
     return handled;

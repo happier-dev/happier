@@ -40,7 +40,6 @@ import {
     DaemonVoiceInferenceSttStreamPcmFormatSchema,
     DaemonVoiceInferenceSttStreamStartRequestSchema,
     DaemonVoiceInferenceSttStreamStartResponseSchema,
-    DaemonVoiceInferenceSttStreamStatusResponseSchema,
     DaemonVoiceModelPackLicenseReviewV1Schema,
 } from './voiceInference.js';
 
@@ -641,13 +640,6 @@ describe('daemonVoiceInference schemas', () => {
             streamId: 'stream-1',
             generation: 0,
         });
-        const status = DaemonVoiceInferenceSttStreamStatusResponseSchema.parse({
-            ok: true,
-            streamId: 'stream-1',
-            generation: 0,
-            ackSeq: 0,
-            state: 'open',
-        });
 
         expect(start).toEqual({
             requestId: 'stt-stream-start-1',
@@ -753,37 +745,24 @@ describe('daemonVoiceInference schemas', () => {
         }).success).toBe(false);
     });
 
-    it('binds relay-required peer application encryption into the strict START contract', () => {
-        const binding = {
-            v: 1 as const,
-            suite: 'aes-256-gcm' as const,
-            flowKind: 'voice_media' as const,
-            routeKind: 'server_relay' as const,
-            authorityDigest: 'sha256:acdb52b3d7de70428b1c54fbb340ab675b98d6900d2b86ababad20baa7aed6ca',
-            accountId: 'account-1',
-            machineId: 'machine-1',
-            tunnelId: 'tunnel-1',
-            applicationKind: 'speech_transcription' as const,
-            applicationAttemptId: 'stt-stream-encrypted-1',
-            applicationAuthorityDigest: `sha256:${'ab'.repeat(32)}`,
-        };
-        expect(DaemonVoiceInferenceSttStreamStartRequestSchema.parse({
-            requestId: 'stt-stream-encrypted-1',
-            peerApplicationEncryption: binding,
-        }).peerApplicationEncryption).toEqual(binding);
-        expect(DaemonVoiceInferenceSttStreamStartResponseSchema.parse({
+    it('carries a daemon-issued stream key only as a canonical 32-byte value in the START response', () => {
+        const response = {
             ok: true,
-            requestId: 'stt-stream-encrypted-1',
+            requestId: 'stt-stream-keyed-1',
             streamId: 'stream-1',
             generation: 0,
             ackSeq: -1,
             format: { sampleRateHz: 16_000, channelCount: 1, bitsPerSample: 16, ffmpegCodec: 'pcm_s16le' },
-            peerApplicationEncryption: {
-                v: 1,
-                suite: 'aes-256-gcm',
-                recipientPublicKeyBase64Url: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-            },
-        }).peerApplicationEncryption?.suite).toBe('aes-256-gcm');
+        };
+        const key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        expect(DaemonVoiceInferenceSttStreamStartResponseSchema.parse({ ...response, streamKeyBase64Url: key }))
+            .toMatchObject({ streamKeyBase64Url: key });
+        expect(DaemonVoiceInferenceSttStreamStartResponseSchema.safeParse({ ...response, streamKeyBase64Url: 'AAAA' }).success).toBe(false);
+        expect(DaemonVoiceInferenceSttStreamStartResponseSchema.safeParse({ ...response, streamKeyBase64Url: key.slice(0, -1) + 'B' }).success).toBe(false);
+        // The request never carries key or relay-binding material.
+        expect(DaemonVoiceInferenceSttStreamStartRequestSchema.safeParse({
+            requestId: 'stt-stream-keyed-1', peerApplicationEncryption: { v: 1 },
+        }).success).toBe(false);
     });
 
     it('keeps daemon streaming STT errors retryable when callers need reconnect decisions', () => {

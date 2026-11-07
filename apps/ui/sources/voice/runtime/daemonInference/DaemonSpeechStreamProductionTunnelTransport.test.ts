@@ -1,17 +1,19 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
-  DirectRouteGrantRequestV2Schema, MACHINE_PLAIN_DATA_KEY_MARKER,
-  MachineLiveStreamRelayCapsV1Schema, PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
-  PEER_TCP_TUNNEL_STREAM_PATH, PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
-  PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1, PeerTcpTunnelRelayEnvelopeSchema,
-  createPeerApplicationAuthorityDigestV1, createSpeechTranscriptionApplicationAuthorityDigestV1,
-  deriveBoxPublicKeyFromSeed, encodeBase64, decodeBase64, openEncryptedDataKeyEnvelopeV1,
-  decodePeerApplicationEncryptedFrameV1, encodePeerApplicationEncryptedFrameV1,
-  createPeerApplicationEncryptionAadV1, createPeerApplicationEncryptionNonceV1,
-  PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1,
+  DirectRouteGrantRequestV2Schema} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
+  MachineLiveStreamRelayCapsV1Schema} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2} from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
+import {
+  PEER_TCP_TUNNEL_STREAM_PATH} from '@happier-dev/protocol/machines/peer/mediation/tunnel/v1';
+import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, PeerTcpTunnelRelayEnvelopeSchema} from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
+import {
+  PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1,
   type PeerTcpTunnelRelayAuthorizationV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
+import { createSpeechTranscriptionApplicationAuthorityDigestV1 } from '@happier-dev/protocol/machines/peer/mediation/voiceMediaV1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
   decodePeerTcpTunnelBinarySubstreamFrame, decodePeerTcpTunnelBinaryFrameForSession,
@@ -42,7 +44,6 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { storage } = await import('@/sync/domains/state/storage');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
-const { openAes256GcmBytes, sealAes256GcmBytes } = await import('@/encryption/aes256GcmBytes');
 const { DaemonVoiceInferenceClient } = await import('./DaemonVoiceInferenceClient');
 const { openProductionVoiceMediaTunnel, createProductionDaemonSpeechStreamingSttTransport } = await import('./DaemonSpeechStreamProductionTunnelTransport');
 const { daemonSpeechStreamDiagnostics } = await import('./daemonSpeechStreamDiagnostics');
@@ -63,14 +64,15 @@ let startFailure: 'response' | 'throw' | null = null;
 let finishFailure = false;
 let cancelFailure: 'runtime_unavailable' | 'stream_not_found' | null = null;
 let closeFailure = false;
-let confirmation: string = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1;
 let relayDenial = false;
 let grantFailure = false;
 let holdGrantResponse: ((signal: AbortSignal | null) => Promise<void>) | null = null;
 let authorization: PeerTcpTunnelRelayAuthorizationV2 | null = null;
-const recipientSeed = new Uint8Array(32).fill(11);
-const recipientKey = encodeBase64(deriveBoxPublicKeyFromSeed(recipientSeed), 'base64url');
-let installedKey: Uint8Array | null = null;
+/**
+ * Plain Accounts only: this harness has no E2EE Machine-row fixture, so keyed
+ * streams are pinned by the composed relay and tunnel unit tests (review F2).
+ */
+let accountE2ee = false;
 let highestAcknowledgedInput = -1;
 let holdPcmResponse: ((encodedBytes: number) => Promise<void>) | null = null;
 const grants: unknown[] = [];
@@ -98,7 +100,10 @@ function publishFeatures() {
     snapshot: { status: 'ready', features: features() } });
 }
 function selectMachine(hasEndpoint = true, httpPort: number | null = PORT) {
-  const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(), daemonState: {
+  const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
+    // A Sync-projected Machine always carries its storage mode; Plain Accounts publish the plain marker.
+    ...(accountE2ee ? {} : { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, storageMode: 'plain' as const }),
+    daemonState: {
     httpPort,
     ...(hasEndpoint ? { peerMediation: { loopback: { endpoint: {
       v: 1, routeKind: 'loopback_direct', url: LOOPBACK_ORIGIN,
@@ -117,45 +122,11 @@ function finishResult(ackSeq: number) {
     finalText: 'hello', language: 'en', modelPackId: 'stt-pack-1', events: [] };
 }
 async function daemonResponse(substreamId: string, frame: Extract<PeerTcpTunnelFrame, { kind: 'data' }>) {
-  let responseBytes: Uint8Array;
-  if (!authorization) {
-    receivedPcm.push(frame.payload);
-    highestAcknowledgedInput = frame.sequence;
-    responseBytes = new TextEncoder().encode(JSON.stringify(chunkResult(frame.sequence)));
-  } else {
-    const encrypted = decodePeerApplicationEncryptedFrameV1(frame.payload);
-    if (!encrypted) throw new Error('Expected encrypted daemon carrier bytes');
-    if (encrypted.kind === 'install') installedKey = openEncryptedDataKeyEnvelopeV1({
-      envelope: decodeBase64(encrypted.encryptedDataKeyEnvelopeBase64Url!, 'base64url'),
-      recipientSecretKeyOrSeed: recipientSeed,
-    });
-    if (!installedKey) throw new Error('Missing installed daemon key');
-    const binding = authorization.payload;
-    const authorityDigest = createPeerApplicationAuthorityDigestV1(authorization);
-    const aad = (direction: 'client_to_daemon' | 'daemon_to_client') => createPeerApplicationEncryptionAadV1({
-      authorityDigest, accountId: binding.accountId, machineId: binding.targetMachineId, tunnelId: binding.tunnelId,
-      applicationKind: 'speech_transcription', applicationAttemptId: 'request-1',
-      applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request-1'),
-      direction, streamId: 'stream-1', generation: 7, substreamId, sequence: frame.sequence, phase: encrypted.kind,
-    });
-    const plaintext = await openAes256GcmBytes({ key: installedKey,
-      nonce: createPeerApplicationEncryptionNonceV1({ direction: 'client_to_daemon', phase: encrypted.kind, sequence: frame.sequence }),
-      aad: aad('client_to_daemon'), ciphertext: decodeBase64(encrypted.ciphertextBase64Url, 'base64url') });
-    if (encrypted.kind === 'data') {
-      receivedPcm.push(plaintext);
-      highestAcknowledgedInput = frame.sequence - 1;
-      await holdPcmResponse?.(frame.payload.byteLength);
-    }
-    const reply = encrypted.kind === 'install' ? confirmation
-      : JSON.stringify(encrypted.kind === 'finish' ? finishResult(highestAcknowledgedInput) : chunkResult(frame.sequence - 1));
-    const nonce = createPeerApplicationEncryptionNonceV1({ direction: 'daemon_to_client', phase: encrypted.kind, sequence: frame.sequence });
-    const ciphertext = await sealAes256GcmBytes({ key: installedKey, nonce, aad: aad('daemon_to_client'),
-      plaintext: new TextEncoder().encode(reply) });
-    responseBytes = encodePeerApplicationEncryptedFrameV1({ v: 1, kind: encrypted.kind,
-      nonceBase64Url: encodeBase64(nonce, 'base64url'), ciphertextBase64Url: encodeBase64(ciphertext, 'base64url') });
-  }
+  receivedPcm.push(frame.payload);
+  highestAcknowledgedInput = frame.sequence;
+  await holdPcmResponse?.(frame.payload.byteLength);
   return encodePeerTcpTunnelBinaryFrameForSubstream({ substreamId, frame: {
-    ...frame, direction: 'daemon_to_client', payload: responseBytes,
+    ...frame, direction: 'daemon_to_client', payload: new TextEncoder().encode(JSON.stringify(chunkResult(frame.sequence))),
   } });
 }
 
@@ -249,9 +220,9 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     }) : null;
     direct = true; relay = true; mintVersions = [2]; applicationCaps = {};
     startFailure = null; finishFailure = false; cancelFailure = null; closeFailure = false;
-    confirmation = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1; grantFailure = false;
+    grantFailure = false; accountE2ee = e2eeKind !== null;
     holdGrantResponse = null;
-    authorization = null; installedKey = null; highestAcknowledgedInput = -1;
+    authorization = null; highestAcknowledgedInput = -1;
     grants.length = 0; opens.length = 0; receivedPcm.length = 0;
     NativeWebSocket.instances.length = 0;
     vi.stubGlobal('WebSocket', NativeWebSocket);
@@ -294,8 +265,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
         if (startFailure === 'throw') throw new Error('daemon_start_failed');
         if (startFailure === 'response') return { ok: false, errorCode: 'runtime_unavailable', error: 'daemon_start_failed' };
         highestAcknowledgedInput = -1;
-        return { ok: true, requestId: input.requestId, streamId: 'stream-1', generation: 7, ackSeq: -1, format: FORMAT,
-          ...(authorization ? { peerApplicationEncryption: { v: 1, suite: 'aes-256-gcm', recipientPublicKeyBase64Url: recipientKey } } : {}) };
+        return { ok: true, requestId: input.requestId, streamId: 'stream-1', generation: 7, ackSeq: -1, format: FORMAT };
       }
       if (method.endsWith('.finish')) {
         if (finishFailure) return { ok: false, errorCode: 'runtime_unavailable', error: 'daemon_finish_failed' };
@@ -472,7 +442,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
   it.each(['secret', 'data-key'] as const)('uses current ephemeral V2 direct proofs independently of %s credentials', async credentialKind => {
     expect(credentialKind === 'secret' ? 'secret' in account.credentials : 'encryption' in account.credentials).toBe(true);
     expect(await TokenStorage.getCredentialsForServerUrl(HOME, { serverId: account.home.id })).toEqual(account.credentials);
-    const accountStorage = await resolveAccountStorageContext(account.credentials);
+    const accountStorage = await resolveAccountStorageContext(account.credentials, { usage: 'identity' });
     expect(accountStorage.mode).toBe('e2ee');
     expect(accountStorage.encryption).not.toBeNull();
     const tunnel = await openProductionVoiceMediaTunnel({ machineTarget: { machineId: 'machine-1' },
@@ -519,7 +489,7 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
         applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1('request-1') } })).resolves.toBeNull();
     expect(grants).toEqual([]); expect(NativeWebSocket.instances).toEqual([]);
   });
-  it.each([{}, { maxDurationMs: 60_000, maxTotalBytes: 960_000 }])('authenticates relay PCM/final and closes failed installation before retry with caps %j', async caps => {
+  it.each([{}, { maxDurationMs: 60_000, maxTotalBytes: 960_000 }])('relays plain-Account PCM/final in its Account mode with caps %j', async caps => {
     direct = false; applicationCaps = caps; publishFeatures(); selectMachine(false);
     const stream = await sender(); expect(stream.transportKind).toBe('binary_tunnel'); await stream.start();
     const capture = Array.from({ length: 120 }, (_, frame) => new Uint8Array(640).fill(frame));
@@ -527,19 +497,12 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     await expect(stream.finish()).resolves.toMatchObject({ finalText: 'hello' });
     expect(Buffer.concat(receivedPcm)).toEqual(Buffer.concat(capture));
     expect(receivedPcm.some(pcm => pcm.byteLength > 640)).toBe(true);
-    expect(receipt()).toMatchObject({ relayEvidence: 'finish_authenticated', localTransport: 'closed' });
+    // The Machine RPC owner sealed the start plain, so the stream is plain (never inferred from a key).
+    expect(receipt()).toMatchObject({ relayEvidence: 'plain_account', localTransport: 'closed' });
     expect(grants[0]).toMatchObject({ scope: caps });
     expect((grants[0] as { scope: unknown }).scope).not.toHaveProperty('maxIdleMs');
-    confirmation = 'invalid-confirmation'; installedKey = null;
-    const failed = await sender(); await expect(failed.start()).rejects.toMatchObject({ code: 'internal_error' });
-    expect(receipt()).toMatchObject({ relayEvidence: 'pending', localTransport: 'closed',
-      relayEncryptionFailure: { step: 'confirmation_validate', reason: 'failed' } });
-    expect(network.requests.some(request => request.method.endsWith('.cancel'))).toBe(true);
-    confirmation = PEER_APPLICATION_ENCRYPTION_INSTALL_CONFIRMATION_V1; installedKey = null;
-    const retry = await sender(); await retry.start(); await retry.finish();
-    expect(receipt()).toMatchObject({ localTransport: 'closed' });
   });
-  it('forwards encrypted byte charges through production selection while relay responses are held', async () => {
+  it('forwards byte charges through production selection while relay responses are held', async () => {
     direct = false; publishFeatures(); selectMachine(false);
     const replies: Array<() => void> = [];
     let offeredChunks = 0;
@@ -601,12 +564,14 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     }
   });
 
-  it('retains a safe install send failure when the real relay reader receives an OPEN denial before STT starts', async () => {
+  it('fails the first packet without daemon intake when the real relay reader receives an OPEN denial', async () => {
     direct = false; relayDenial = true; publishFeatures(); selectMachine(false);
     const stream = await sender();
-    await expect(stream.start()).rejects.toMatchObject({ code: 'internal_error' });
-    expect(receipt()).toMatchObject({ relayEvidence: 'pending', localTransport: 'closed',
-      relayEncryptionFailure: { step: 'install_send', reason: 'closed' } });
+    await stream.start();
+    await expect(stream.pushChunk(new Uint8Array(640).fill(1))).rejects.toThrow();
+    expect(receivedPcm).toEqual([]);
+    // The sender's own failure path retires the daemon stream and closes the tunnel.
+    await vi.waitFor(() => expect(receipt()).toMatchObject({ relayEvidence: 'pending', localTransport: 'closed' }));
     expect(network.requests.some(request => request.method.endsWith('.cancel'))).toBe(true);
   });
   it('fails closed before Socket/grant admission when relay mint V2 is not advertised', async () => {

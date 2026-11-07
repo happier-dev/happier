@@ -14,8 +14,7 @@ export type DaemonSpeechStreamTransportSelection = Readonly<{
 }>;
 
 export type DaemonSpeechStreamRelayEncryptionFailure = Readonly<{
-    step: 'start_metadata' | 'key_prepare' | 'key_envelope' | 'install_seal' | 'install_send'
-        | 'confirmation_wait' | 'confirmation_open' | 'confirmation_validate';
+    step: 'key_prepare';
     reason: 'failed' | 'closed' | 'aborted' | 'timeout' | 'unavailable';
 }>;
 
@@ -27,7 +26,8 @@ export type DaemonSpeechStreamBinaryTunnelReceipt = Readonly<{
     relayEvidence:
         | 'not_applicable'
         | 'pending'
-        | 'key_install_authenticated'
+        /** Plain Account: frames follow the Account mode and carry no stream key. */
+        | 'plain_account'
         | 'chunk_ack_authenticated'
         | 'finish_authenticated';
     streamIdentity: Readonly<{
@@ -53,7 +53,7 @@ export type DaemonSpeechStreamBinaryTunnelReceiptRecorder = Readonly<{
         generation: number;
     }>) => void;
     recordRelayEvidence: (evidence: Readonly<{
-        phase: 'install' | 'data' | 'finish';
+        phase: 'plain' | 'data' | 'finish';
         ackSeq?: number;
     }>) => void;
     recordOperationResult: (
@@ -196,24 +196,18 @@ export function createDaemonSpeechStreamDiagnostics(options?: Readonly<{
                 recordRelayEvidence: (evidence): void => {
                     updateCurrentReceipt((current) => {
                         if (current.routeKind !== 'server_relay') return current;
+                        if (evidence.phase === 'plain') return { ...current, relayEvidence: 'plain_account' };
                         const rank = {
                             pending: 0,
-                            key_install_authenticated: 1,
-                            chunk_ack_authenticated: 2,
-                            finish_authenticated: 3,
+                            chunk_ack_authenticated: 1,
+                            finish_authenticated: 2,
                         } as const;
-                        const nextEvidence = evidence.phase === 'install'
-                            ? 'key_install_authenticated'
-                            : evidence.phase === 'data'
-                                ? 'chunk_ack_authenticated'
-                                : 'finish_authenticated';
-                        const currentRank = current.relayEvidence === 'key_install_authenticated'
+                        const nextEvidence = evidence.phase === 'data' ? 'chunk_ack_authenticated' : 'finish_authenticated';
+                        const currentRank = current.relayEvidence === 'chunk_ack_authenticated'
                             ? 1
-                            : current.relayEvidence === 'chunk_ack_authenticated'
+                            : current.relayEvidence === 'finish_authenticated'
                                 ? 2
-                                : current.relayEvidence === 'finish_authenticated'
-                                    ? 3
-                                    : 0;
+                                : 0;
                         const relayEvidence = rank[nextEvidence] > currentRank
                             ? nextEvidence
                             : current.relayEvidence;

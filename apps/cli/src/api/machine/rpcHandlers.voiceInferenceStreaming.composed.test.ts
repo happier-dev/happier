@@ -18,9 +18,7 @@ import {
   VoiceMediaApplicationAuthorityV1Schema,
   DaemonVoiceInferenceSttStreamFinishResponseSchema,
   DaemonVoiceInferenceSttStreamCancelResponseSchema,
-  DaemonVoiceInferenceSttStreamStatusResponseSchema,
   createPeerTcpTunnelRelayAuthorizationSigningInputV2,
-  createPeerApplicationAuthorityDigestV1,
   PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
   type PeerTcpTunnelRelayEnvelope,
   type PeerTcpTunnelRelayAuthorizationV2,
@@ -45,6 +43,7 @@ import { createVoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/cont
 import { VoiceSpeechDiagnosticsSettingsV1Schema } from '@happier-dev/protocol/voice/diagnostics';
 
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
+import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
 import type { RpcHandler as Handler } from '../rpc/types';
 import { registerMachinePeerTcpTunnelRelayRuntime } from '@/daemon/machine/registerMachinePeerTcpTunnelRelayRuntime';
 import { openPeerTcpTunnelRelayStream } from '../../../../ui/sources/sync/domains/machines/peer/mediation/tunnel/relayStream';
@@ -134,6 +133,62 @@ afterEach(async () => {
 });
 
 describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
+  it('keys the stream from the content admitted for this exact call even when material retires before the handler', async () => {
+    const worker = await createWorker({
+      createStreamingTranscriptionSession: async () => ({
+        appendPcm16: async () => ({ events: [] }),
+        finish: async () => ({ text: '', language: null, events: [] }),
+        cancel: async () => {}, close: async () => {},
+      }),
+    });
+    const key = new Uint8Array(32).fill(7);
+    let manager!: RpcHandlerManager;
+    manager = new RpcHandlerManager({
+      scopePrefix: 'voice-inference-retire', encryptionKey: key, encryptionVariant: 'legacy', logger: () => {},
+      // Retirement lands while this admitted call awaits its admission.
+      authorizeRequest: async () => { manager.retireEncryptionContext(); return { ok: true }; },
+    });
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'voice-inference-retire', manager, encryptionKey: key,
+      registerHandlers: (target) => {
+        registrations.push(registerMachineVoiceInferenceStreamingRpcHandlers({ rpcHandlerManager: target, voiceInferenceWorker: worker }));
+      },
+    });
+    const started = DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await client.call(
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
+      { requestId: 'retired-mid-admission', packId, language: 'en', streamingMode: 'runtime' },
+    ));
+    // The reply is sealed by the admitted E2EE codec, so a keyless ok would make the UI stream plain audio.
+    expect(started).toMatchObject({ ok: true, streamKeyBase64Url: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('issues a stream key only inside %s Machine RPC content when that content is E2EE', async (encryptionMode) => {
+    const worker = await createWorker({
+      createStreamingTranscriptionSession: async () => ({
+        appendPcm16: async () => ({ events: [] }),
+        finish: async () => ({ text: '', language: null, events: [] }),
+        cancel: async () => {}, close: async () => {},
+      }),
+    });
+    const manager = new RpcHandlerManager({
+      scopePrefix: 'voice-inference-test', logger: () => {},
+      ...(encryptionMode === 'e2ee'
+        ? { encryptionMode, encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'dataKey' as const }
+        : { encryptionMode }),
+    });
+    registrations.push(registerMachineVoiceInferenceStreamingRpcHandlers({ rpcHandlerManager: manager, voiceInferenceWorker: worker }));
+    const started = DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await manager.invokeLocal(
+      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
+      { requestId: `keyed-${encryptionMode}`, packId, language: 'en', streamingMode: 'runtime' },
+    ));
+    if (!started.ok) throw new Error('Stream did not start');
+    if (encryptionMode === 'plain') {
+      expect(started).not.toHaveProperty('streamKeyBase64Url');
+    } else {
+      expect(started.streamKeyBase64Url).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    }
+  });
+
   it('drains compatibility PCM in sequence when RPC authorization settles out of order', async () => {
     const received: number[] = [];
     const worker = await createWorker({
@@ -290,12 +345,9 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       });
       const transport = createDaemonSpeechStreamTunnelTransport({
         tunnelId: payload.tunnelId, stream,
-        peerApplicationEncryption: { v: 1, suite: 'aes-256-gcm', flowKind: 'voice_media', routeKind: 'server_relay',
-          authorityDigest: createPeerApplicationAuthorityDigestV1(authorization), accountId: payload.accountId,
-          machineId: payload.targetMachineId, tunnelId: payload.tunnelId, applicationKind: 'speech_transcription',
-          applicationAttemptId: requestId, applicationAuthorityDigest: createSpeechTranscriptionApplicationAuthorityDigestV1(requestId) },
         controlTransport: {
-          start: async request => DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await invokeDirect(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START, request)),
+          startWithContentMode: async request => ({ contentMode: 'plain' as const,
+            response: DaemonVoiceInferenceSttStreamStartResponseSchema.parse(await invokeDirect(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START, request)) }),
           finish: async request => DaemonVoiceInferenceSttStreamFinishResponseSchema.parse(await invokeDirect(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH, request)),
           cancel: async request => DaemonVoiceInferenceSttStreamCancelResponseSchema.parse(await invokeDirect(RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL, request)),
         },
@@ -335,7 +387,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     });
     registrations.push(registration);
     const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
-    const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
     const requestId = 'transport-loss-request';
     const authority = {
       v: 1 as const,
@@ -361,11 +412,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
           createSpeechTranscriptionApplicationAuthorityDigestV1('another-request'),
       },
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
-    await expect(sttStreamStatus?.({
-      streamId: started.streamId,
-      generation: started.generation,
-    })).resolves.toMatchObject({ ok: true, state: 'open' });
-
     await expect(registration.cancelSttStreamForTransportLoss({
       streamId: started.streamId,
       generation: started.generation,
@@ -376,7 +422,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       generation: started.generation,
       voiceMediaApplicationAuthority: authority,
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
-    await expect(sttStreamStatus?.({
+    await expect(getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL)?.({
       streamId: started.streamId,
       generation: started.generation,
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
@@ -404,7 +450,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     });
     registrations.push(registration);
     const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
-    const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
     const requestId = 'transport-loss-before-first-frame';
     const authority = {
       v: 1 as const,
@@ -435,7 +480,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
     });
-    await expect(sttStreamStatus?.({
+    await expect(getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL)?.({
       streamId: started.streamId,
       generation: started.generation,
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
@@ -463,7 +508,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     });
     registrations.push(registration);
     const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
-    const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
     const requestId = 'transport-loss-forged-carrier';
     const authority = {
       v: 1 as const,
@@ -488,7 +532,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
     });
-    await expect(sttStreamStatus?.({
+    await expect(getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL)?.({
       streamId: started.streamId,
       generation: started.generation,
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
@@ -534,7 +578,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
     const sttStreamStart = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START);
     const sttStreamChunk = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK);
     const sttStreamFinish = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH);
-    const sttStreamStatus = getHandler(mgr, RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS);
 
     const started = await sttStreamStart?.({
       requestId: 'stream-request-1',
@@ -562,16 +605,6 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       generation: started.generation,
       ackSeq: 0,
       events: [],
-    });
-    await expect(sttStreamStatus?.({
-      streamId: started.streamId,
-      generation: started.generation,
-    })).resolves.toEqual({
-      ok: true,
-      streamId: started.streamId,
-      generation: started.generation,
-      ackSeq: 0,
-      state: 'open',
     });
     await expect(sttStreamFinish?.({
       streamId: started.streamId,
@@ -647,7 +680,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0, 1, 0]),
+      payloadBytes: new Uint8Array([0, 0, 1, 0]),
     })).resolves.toEqual({
       ok: true,
       streamId: started.streamId,
@@ -662,7 +695,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([9, 9, 9, 9]),
+      payloadBytes: new Uint8Array([9, 9, 9, 9]),
     })).resolves.toMatchObject({
       ok: true,
       ackSeq: 0,
@@ -730,7 +763,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0, 1, 0]),
+      payloadBytes: new Uint8Array([0, 0, 1, 0]),
     })).resolves.toEqual({
       ok: true,
       streamId: started.streamId,
@@ -747,7 +780,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([9, 9, 9, 9]),
+      payloadBytes: new Uint8Array([9, 9, 9, 9]),
     })).resolves.toEqual({
       ok: true,
       streamId: started.streamId,
@@ -866,7 +899,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation + 1,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0]),
+      payloadBytes: new Uint8Array([0, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
 
     await expect(sttStreamCancel?.({
@@ -918,43 +951,42 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: 'missing-stream',
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0]),
+      payloadBytes: new Uint8Array([0, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     await expect(registration.appendSttStreamBinaryFrame({
       voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
       streamId: started.streamId,
       generation: started.generation + 1,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0]),
+      payloadBytes: new Uint8Array([0, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     await expect(registration.appendSttStreamBinaryFrame({
       voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
       streamId: started.streamId,
       generation: started.generation,
       seq: 1,
-      pcm16Bytes: new Uint8Array([0, 0]),
+      payloadBytes: new Uint8Array([0, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
     await expect(registration.appendSttStreamBinaryFrame({
       voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([]),
+      payloadBytes: new Uint8Array([]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
     await expect(registration.appendSttStreamBinaryFrame({
       voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0]),
+      payloadBytes: new Uint8Array([0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
-
     await expect(registration.appendSttStreamBinaryFrame({
       voiceMediaApplicationAuthority: speechApplicationAuthority('stream-request-binary-negative'),
       streamId: started.streamId,
       generation: started.generation,
       seq: 0,
-      pcm16Bytes: new Uint8Array([0, 0]),
+      payloadBytes: new Uint8Array([0, 0]),
     })).resolves.toMatchObject({ ok: true, ackSeq: 0 });
     const finishing = sttStreamFinish?.({
       streamId: started.streamId,
@@ -966,7 +998,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 1,
-      pcm16Bytes: new Uint8Array([1, 0]),
+      payloadBytes: new Uint8Array([1, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_stream_state' });
     finishRelease.resolve();
     await expect(finishing).resolves.toMatchObject({ ok: true });
@@ -975,7 +1007,7 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       streamId: started.streamId,
       generation: started.generation,
       seq: 1,
-      pcm16Bytes: new Uint8Array([1, 0]),
+      payloadBytes: new Uint8Array([1, 0]),
     })).resolves.toMatchObject({ ok: false, errorCode: 'stream_not_found' });
   });
 
@@ -1009,16 +1041,10 @@ describe('registerMachineVoiceInferenceStreamingRpcHandlers', () => {
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK, chunk,
     ))).toMatchObject({ ok: true, ackSeq: 0 });
 
-    expect(DaemonVoiceInferenceSttStreamStatusResponseSchema.parse(await mgr.invokeLocal(
-      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS, address,
-    ))).toMatchObject({ ok: true, state: 'open', ackSeq: 0 });
     expect(nativeState).toEqual({ cancelled: false, closed: false });
 
     await vi.advanceTimersByTimeAsync(configuration.filesTransferSessionTtlMs + 1);
 
-    expect(DaemonVoiceInferenceSttStreamStatusResponseSchema.parse(await mgr.invokeLocal(
-      RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS, address,
-    ))).toMatchObject({ ok: false, errorCode: 'stream_not_found' });
     expect(DaemonVoiceInferenceSttStreamChunkResponseSchema.parse(await mgr.invokeLocal(
       RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK, { ...chunk, seq: 1 },
     ))).toMatchObject({ ok: false, errorCode: 'stream_not_found' });
