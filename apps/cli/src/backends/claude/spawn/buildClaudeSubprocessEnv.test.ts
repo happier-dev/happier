@@ -19,6 +19,8 @@ describe('buildClaudeSubprocessEnv', () => {
       ALLUSERSPROFILE: 'C:\\ProgramData',
       PUBLIC: 'C:\\Users\\Public',
       COMPUTERNAME: 'WINDOWS-HOST',
+      OS: 'Windows_NT',
+      pRoCeSsOr_ArChItEcTuRe: 'AMD64',
     };
     const baseEnv = { ...windowsEnv, Path: 'C:\\Tools', HOME: 'C:\\Users\\alice', UNRELATED_SECRET: 'private' };
     const child = buildClaudeSubprocessEnv({ baseEnv });

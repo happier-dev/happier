@@ -21,6 +21,8 @@ const WINDOWS_SYSTEM_ENV_KEYS: ReadonlySet<string> = new Set([
   'ALLUSERSPROFILE',
   'PUBLIC',
   'COMPUTERNAME',
+  'OS',
+  'PROCESSOR_ARCHITECTURE',
 ]);
 
 export function isWindowsSystemEnvKey(key: string, platform: NodeJS.Platform = process.platform): boolean {
