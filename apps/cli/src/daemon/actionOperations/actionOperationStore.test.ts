@@ -1,12 +1,125 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createActionOperationStore } from './actionOperationStore';
 import { ActionOperationGetV1ResponseSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { ActionOperationSnapshotV1Schema as PredecessorActionOperationSnapshotV1Schema } from './testFixtures/predecessorActionOperationV1';
+import { buildDeploymentBackupActionInputV1, DeploymentBackupRunResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { ActionOperationScope } from './actionOperationTypes';
 
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('settles and reads failed worker operations even when their optional cause is unknown', () => {
+    const store = createActionOperationStore();
+    store.create({ operationId: 'worker-failed', actionId: 'projects.script.run', title: 'Script',
+      scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
+    store.updateProgress('worker-failed', { kind: 'phase', phase: 'copying', label: 'Copying current files' });
+    const failure = { errorCode: 'project_script_effect_changed', error: 'Project inputs changed',
+      cause: { kind: 'future_worker_cause', privateValue: 'must-not-cross-the-reader' } };
+    store.fail('worker-failed', failure);
+    const response = ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: store.get(ACCOUNT_SCOPE, 'worker-failed') });
+    expect(response).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+      errorCode: failure.errorCode, error: failure.error,
+      failureCause: { kind: 'unknown', errorCode: 'unknown_failure_cause' },
+    } } });
+    expect(JSON.stringify(response)).not.toContain('must-not-cross-the-reader');
+    expect(store.get({ ...ACCOUNT_SCOPE, accountId: 'other' }, 'worker-failed')).toBeNull();
+  });
+
+  it('projects future cause diagnostics without accepting invalid operation lifecycle facts', () => {
+    const store = createActionOperationStore();
+    store.create({ operationId: 'worker-future', actionId: 'projects.script.run', title: 'Script',
+      scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
+    const failure = { errorCode: 'project_script_effect_changed', error: 'Project inputs changed',
+      failureCause: { phase: 'project.worker.prepare', errorClass: 'Error' as const,
+        errorCode: null, httpStatus: null, futureDiagnostic: 'must-not-cross-the-reader' } };
+    store.fail('worker-future', failure);
+    const operation = store.get(ACCOUNT_SCOPE, 'worker-future');
+    expect(ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation })).toMatchObject({ operation: {
+      state: 'failed', error: { failureCause: { kind: 'unknown', errorCode: 'unknown_failure_cause' } },
+    } });
+    expect(JSON.stringify(operation)).not.toContain('must-not-cross-the-reader');
+    expect(ActionOperationSnapshotV1Schema.safeParse({ ...operation, state: 'accepted' }).success).toBe(false);
+  });
+
+  it('reads exact backup target receipts without enumerating the operation inventory and retires their authored input with custody', () => {
+    let now = 1_000;
+    const store = createActionOperationStore({ now: () => now, settledRetentionLimit: 2, settledRetentionMs: 100 });
+    const target = { serverId: 'server-1', environmentId: 'environment-1', machineId: 'machine-1',
+      installationId: 'installation-1', targetLinkId: 'target-1', deploymentId: 'deployment-1' };
+    const input = buildDeploymentBackupActionInputV1('deployments.backups.run', {
+      ...target, expectedRevision: 1, configRevision: 1,
+    });
+    const create = (operationId: string, scope: ActionOperationScope = ACCOUNT_SCOPE, authored = input) => store.create({
+      operationId, scope, actionId: 'deployments.backups.run', title: 'Backup', cancellation: 'unsupported',
+      inputIdentity: JSON.stringify(authored),
+    });
+    create('capture');
+    const result = DeploymentBackupRunResultV1Schema.parse({ kind: 'verified', operationId: 'capture', manifests: [{
+      schemaVersion: 1, environmentId: target.environmentId, sourceId: 'database', kind: 'dump', configRevision: 1,
+      repositoryId: 'a'.repeat(64), producerChecksumSha256: 'b'.repeat(64),
+      snapshot: { snapshotId: 'c'.repeat(64), treeId: 'd'.repeat(64), hostname: 'host',
+        time: '2026-11-04T10:00:00Z', paths: ['database.dump'], tags: [] },
+      totalBytesProcessed: 10, totalFilesProcessed: 1,
+    }] });
+    store.succeed('capture', result);
+    for (const [key, value] of Object.entries(target)) {
+      create(`another-${key}`, ACCOUNT_SCOPE, { ...input, [key]: `${value}-other` });
+    }
+    create('another-account', { ...ACCOUNT_SCOPE, accountId: 'account-2' });
+    create('another-machine', { ...ACCOUNT_SCOPE, machineId: 'machine-2' });
+    create('session-capture', { ...ACCOUNT_SCOPE, sessionId: 'session-1' });
+    const restoreInput = { ...target, expectedRevision: 1, restoreBackupId: 'capture', mode: 'prepare' as const };
+    store.create({ operationId: 'restore', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.restore',
+      title: 'Restore', cancellation: 'supported', inputIdentity: JSON.stringify(restoreInput) });
+    store.project(ActionOperationSnapshotV1Schema.parse({ ...store.get(ACCOUNT_SCOPE, 'capture'),
+      operationId: 'imported-capture' }));
+    // Observe the actual inventory traversal; no mock replaces the store's logic.
+    const read = (() => {
+      const enumeration = vi.spyOn(Map.prototype, 'values');
+      try {
+        const all = store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target);
+        const session = store.readDeploymentBackupOperations({ ...ACCOUNT_SCOPE, sessionId: 'session-1' }, target);
+        const missing = store.readDeploymentBackupOperations({ ...ACCOUNT_SCOPE, accountId: 'missing' }, target);
+        return { all, session, missing, enumerations: enumeration.mock.calls.length };
+      } finally { enumeration.mockRestore(); }
+    })();
+    expect(read.enumerations).toBe(0);
+    expect(read.all).toEqual([
+      { snapshot: expect.objectContaining({ operationId: 'capture', state: 'succeeded', result }), input },
+      { snapshot: expect.objectContaining({ operationId: 'session-capture' }), input },
+      { snapshot: expect.objectContaining({ operationId: 'restore' }), input: restoreInput },
+    ]);
+    expect(read.session).toEqual([{ snapshot: expect.objectContaining({ operationId: 'session-capture' }), input }]);
+    expect(read.missing).toEqual([]);
+    store.removeOwnerProjections(DEPLOYMENT_BACKUP_ACTION_IDS_V1, { ...ACCOUNT_SCOPE, sessionId: 'session-1' });
+    store.removeOwnerProjections(['deployments.backups.restore'], ACCOUNT_SCOPE);
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId)).toEqual(['capture']);
+    now = 1_101;
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target)).toEqual([]);
+    create('reconciled');
+    store.reconcileOwner(ACCOUNT_SCOPE, DEPLOYMENT_BACKUP_ACTION_IDS_V1, []);
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target)).toEqual([]);
+    create('retargeted');
+    const changedTarget = { ...target, environmentId: 'replacement-environment' };
+    store.replaceInputIdentity('retargeted', JSON.stringify({ ...input, ...changedTarget }));
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target)).toEqual([]);
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, changedTarget).map(item => item.snapshot.operationId))
+      .toEqual(['retargeted']);
+    store.reconcileOwner(ACCOUNT_SCOPE, DEPLOYMENT_BACKUP_ACTION_IDS_V1, []);
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, changedTarget)).toEqual([]);
+    create('old');
+    store.succeed('old', result);
+    now++;
+    create('new');
+    store.succeed('new', result);
+    now++;
+    create('newest');
+    store.succeed('newest', result);
+    expect(store.readDeploymentBackupOperations(ACCOUNT_SCOPE, target).map(item => item.snapshot.operationId))
+      .toEqual(['new', 'newest']);
+  });
   it('retains an exact typed refusal receipt without treating its successful transport envelope as operation success', () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'reboot-blocked', actionId: 'machines.reboot', title: 'Reboot',
@@ -25,6 +138,30 @@ describe('action operation store', () => {
     expect(store.get({ ...ACCOUNT_SCOPE, accountId: 'other' }, 'reboot-blocked')).toBeNull();
     store.succeed('reboot-blocked', { kind: 'accepted' });
     expect(store.get(ACCOUNT_SCOPE, 'reboot-blocked')).toMatchObject({ state: 'failed', result: receipt });
+  });
+  it('publishes only changed running and observation facts, preserving revisions on equal updates', () => {
+    const pushed: unknown[] = [];
+    const store = createActionOperationStore({ onSnapshot: snapshot => pushed.push(snapshot) });
+    store.create({ operationId: 'quiet', actionId: 'projects.script.run', title: 'Script',
+      scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
+    store.markRunning('quiet');
+    const running = store.get(ACCOUNT_SCOPE, 'quiet');
+    pushed.length = 0;
+    for (let i = 0; i < 100; i++) {
+      store.markRunning('quiet');
+      store.updateObservation('quiet', null);
+    }
+    expect(pushed).toHaveLength(0);
+    expect(store.get(ACCOUNT_SCOPE, 'quiet')).toBe(running);
+    store.updateObservation('quiet', { kind: 'outcome_uncertain', code: 'native_outcome_uncertain' });
+    expect(pushed).toHaveLength(1);
+    const uncertain = store.get(ACCOUNT_SCOPE, 'quiet');
+    for (let i = 0; i < 100; i++) store.updateObservation('quiet', { kind: 'outcome_uncertain', code: 'native_outcome_uncertain' });
+    expect(pushed).toHaveLength(1);
+    expect(store.get(ACCOUNT_SCOPE, 'quiet')).toBe(uncertain);
+    store.updateObservation('quiet', null);
+    expect(pushed).toHaveLength(2);
+    expect(store.get(ACCOUNT_SCOPE, 'quiet')?.observation).toBeUndefined();
   });
   it('does not publish another retention wake for an unchanged retained resource reference', () => {
     const store = createActionOperationStore();
@@ -144,16 +281,27 @@ describe('action operation store', () => {
     expect(observations).toHaveLength(1);
     expect(store.readLiveWork().items[0]).toMatchObject({ state: 'active' });
   });
-  it('retains unconfirmed live evidence without allowing it to outlive observed process settlement', () => {
-    const store = createActionOperationStore();
+  it.each(['succeeded', 'cancelled'] as const)('clears unconfirmed failure evidence on observed %s settlement', state => {
+    const published: unknown[] = [];
+    const store = createActionOperationStore({ onSnapshot: snapshot => published.push(snapshot) });
     store.create({ operationId: 'finite', actionId: 'projects.prepare', title: 'Prepare',
       scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
-    store.updateObservation('finite', { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' });
+    store.updateObservation('finite', { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' }, undefined,
+      { errorCode: 'stop_unconfirmed', error: 'Inspect the owning process.' });
+    const uncertain = store.get(ACCOUNT_SCOPE, 'finite');
+    published.length = 0;
+    for (let i = 0; i < 100; i++) store.updateObservation('finite',
+      { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' }, undefined,
+      { errorCode: 'stop_unconfirmed', error: 'Inspect the owning process.' });
+    expect(published).toEqual([]);
+    expect(store.get(ACCOUNT_SCOPE, 'finite')).toBe(uncertain);
     expect(store.get(ACCOUNT_SCOPE, 'finite')).toMatchObject({ state: 'accepted',
       observation: { kind: 'stop_unconfirmed', code: 'stop_unconfirmed' } });
-    store.cancel('finite');
-    expect(store.get(ACCOUNT_SCOPE, 'finite')).toMatchObject({ state: 'cancelled' });
+    if (state === 'succeeded') store.succeed('finite', {});
+    else store.cancel('finite');
+    expect(store.get(ACCOUNT_SCOPE, 'finite')).toMatchObject({ state });
     expect(store.get(ACCOUNT_SCOPE, 'finite')).not.toHaveProperty('observation');
+    expect(store.get(ACCOUNT_SCOPE, 'finite')).not.toHaveProperty('error');
   });
   it('keeps revisions monotonic, terminalizes once, and scopes get/list', () => {
     let now = 1_000;

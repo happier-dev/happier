@@ -1,5 +1,4 @@
-import type { DeploymentTokenOperationOrigin } from './actionOperationTypes';
-import { canAdvanceActionOperationSnapshotV1, ActionOperationFailureV1Schema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { canAdvanceActionOperationSnapshotV1, ActionOperationFailureV1ReadSchema, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import type {
   ActionOperationDomainRefV1,
   ActionOperationFailureV1,
@@ -7,12 +6,39 @@ import type {
   ActionOperationSnapshotV1,
   ActionOperationStateV1,
 } from '@happier-dev/protocol/actions';
+import type { ActionOperationListV2Request } from '@happier-dev/protocol/actions/operations/v1';
 
-import type { ActionOperationQueryScope, ActionOperationScope } from './actionOperationTypes';
+import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOperationOrigin } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
-import type { LiveWorkCategoryV1, LiveWorkItemV1, LiveWorkInventoryV1 } from '@/daemon/lifecycle/managedActivity';
+import type { LiveWorkCategoryV1, LiveWorkItemV1, LiveWorkInventoryV1, LiveWorkListenerV1 } from '@/daemon/lifecycle/managedActivity';
 import { isDeepStrictEqual } from 'node:util';
 import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+
+export type DeploymentBackupOperationTarget = DeploymentBackupTargetV1;
+export type DeploymentBackupOperation = Readonly<{
+  snapshot: ActionOperationSnapshotV1;
+  input: DeploymentBackupActionInputV1 | DeploymentBackupRestoreInputV1;
+}>;
+
+function backupTargetKey(scope: ActionOperationQueryScope, target: DeploymentBackupOperationTarget): string {
+  return JSON.stringify([scope.accountId, scope.machineId, target.serverId, target.environmentId,
+    target.machineId, target.installationId, target.targetLinkId, target.deploymentId]);
+}
+
+function readBackupInput(actionId: string, inputIdentity: string): DeploymentBackupOperation['input'] | undefined {
+  if (!isDeploymentBackupActionIdV1(actionId) && actionId !== 'deployments.backups.restore') return undefined;
+  let input: unknown;
+  try { input = JSON.parse(inputIdentity); } catch { return undefined; }
+  const parsed = actionId === 'deployments.backups.restore'
+    ? DeploymentBackupRestoreInputV1Schema.safeParse(input)
+    : DeploymentBackupActionInputSchemasV1[actionId].safeParse(input);
+  if (!parsed.success) return undefined;
+  if ('retention' in parsed.data) Object.freeze(parsed.data.retention);
+  return Object.freeze(parsed.data);
+}
 
 const SETTLED_RETENTION_LIMIT = 50;
 const SETTLED_RETENTION_MS = 24 * 60 * 60 * 1_000;
@@ -36,6 +62,7 @@ type CreateActionOperationInput = Readonly<{
 type ListActionOperationsInput = ActionOperationQueryScope & Readonly<{
   states?: readonly ActionOperationStateV1[];
   cursor?: string;
+  requestIdentity?: ActionOperationListV2Request['requestIdentity'];
 }>;
 
 function isTerminal(snapshot: ActionOperationSnapshotV1): boolean {
@@ -89,22 +116,73 @@ export function createActionOperationStore(options?: Readonly<{
   const settledRetentionMs = options?.settledRetentionMs ?? SETTLED_RETENTION_MS;
   const snapshots = new Map<string, ActionOperationSnapshotV1>();
   const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
-    deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1 }>>();
-  const subscribers = new Set<() => void>();
-  const notifySubscribers = (): void => {
+    deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+    backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string }>>();
+  // Derived from this owner's authored invocation input; imported history cannot
+  // manufacture backup or restore evidence. No separate persisted receipt ledger.
+  const backupOperationIds = new Map<string, Set<string>>();
+  const unindexBackup = (operationId: string): void => {
+    const key = invocationMetadata.get(operationId)?.backupTargetKey;
+    if (key === undefined) return;
+    const ids = backupOperationIds.get(key);
+    ids?.delete(operationId);
+    if (ids?.size === 0) backupOperationIds.delete(key);
+  };
+  const removeSnapshot = (operationId: string): void => {
+    unindexBackup(operationId);
+    snapshots.delete(operationId);
+    invocationMetadata.delete(operationId);
+  };
+  const retainInvocation = (snapshot: ActionOperationSnapshotV1,
+    metadata: NonNullable<ReturnType<typeof invocationMetadata.get>>): void => {
+    unindexBackup(snapshot.operationId);
+    const backupInput = readBackupInput(snapshot.actionId, metadata.inputIdentity);
+    const key = backupInput ? backupTargetKey(snapshot.scope, backupInput) : undefined;
+    invocationMetadata.set(snapshot.operationId, { ...metadata, backupInput, backupTargetKey: key });
+    if (key !== undefined) {
+      const ids = backupOperationIds.get(key) ?? new Set<string>();
+      ids.add(snapshot.operationId);
+      backupOperationIds.set(key, ids);
+    }
+  };
+  const subscribers = new Set<LiveWorkListenerV1>();
+  const projectLiveWork = (snapshot: ActionOperationSnapshotV1): LiveWorkItemV1 | null => {
+    // Passive intent waits have no native custody until their owner advances phase.
+    if ((snapshot.actionId === 'machines.managed.power.set' || snapshot.actionId === 'machines.managed.delete')
+      && !isTerminal(snapshot) && !snapshot.observation && snapshot.progress?.kind === 'phase'
+      && (snapshot.progress.phase === 'managed.intent.waiting-idle'
+        || snapshot.progress.phase === 'managed.intent.waiting-deadline')) return null;
+    const category = materialCategory(snapshot);
+    return {
+      category: category ?? 'setup',
+      ownerRef: snapshot.operationId,
+      actionOperationId: snapshot.operationId,
+      attribution: invocationMetadata.get(snapshot.operationId)?.requesterWorkAttributionV1 ?? { kind: 'unknown' },
+      state: isTerminal(snapshot) ? 'settled' : snapshot.observation || category === null ? 'unknown' : 'active',
+      ...(snapshot.domainRef?.kind === 'projectCommand' && snapshot.domainRef.terminalId
+        ? { associatedTerminal: snapshot.domainRef.terminalId } : {}),
+    };
+  };
+  const notifySubscribers = (change?: 'observation'): void => {
     for (const subscriber of subscribers) {
-      try { subscriber(); } catch { /* Observation cannot change execution custody. */ }
+      try { subscriber(change); } catch { /* Observation cannot change execution custody. */ }
     }
   };
 
-  const notify = (snapshot: ActionOperationSnapshotV1): void => {
+  const notify = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+    const before = previous ? projectLiveWork(previous) : null;
+    const after = projectLiveWork(snapshot);
+    const settled = (item: LiveWorkItemV1 | null) => item === null || item.state === 'settled';
+    // Snapshot revisions and progress are not work edges. Still notify ordinary
+    // observers, and let facts readers observe a changed settled receipt.
+    const change = isDeepStrictEqual(before, after) || (settled(before) && settled(after)) ? 'observation' : undefined;
     try {
-      options?.onSnapshot?.(snapshot);
+      if (!invocationMetadata.get(snapshot.operationId)?.deploymentChildIdentity) options?.onSnapshot?.(snapshot);
     } catch {
       // Push is a recoverable projection. It must never change the historical
       // Action result; connection-time list reconciliation repairs a miss.
     }
-    notifySubscribers();
+    notifySubscribers(change);
   };
 
   const prune = (): void => {
@@ -121,12 +199,25 @@ export function createActionOperationStore(options?: Readonly<{
     let removed = false;
     for (const snapshot of retainedSettled) {
       if (!retainedIds.has(snapshot.operationId)) {
-        snapshots.delete(snapshot.operationId);
-        invocationMetadata.delete(snapshot.operationId);
+        removeSnapshot(snapshot.operationId);
         removed = true;
       }
     }
-    if (removed) notifySubscribers();
+    if (removed) notifySubscribers('observation');
+  };
+
+  const findByRequestIdentity = (
+    scope: ActionOperationQueryScope,
+    actionId: string,
+    requestId: string,
+  ): ActionOperationSnapshotV1 | null => {
+    // Explicit retryable creation attempts retain earlier terminal receipts.
+    // Join or replay the newest receipt for that unchanged logical request.
+    return [...snapshots.values()].reverse().find((snapshot) => (
+      inScope(snapshot, scope)
+      && snapshot.actionId === actionId
+      && snapshot.requestId === requestId
+    )) ?? null;
   };
 
   const mutate = (
@@ -140,7 +231,7 @@ export function createActionOperationStore(options?: Readonly<{
     if (updated === current) return current;
     const next = freezeSnapshot(updated);
     snapshots.set(operationId, next);
-    notify(next);
+    notify(next, current);
     if (isTerminal(next)) prune();
     return next;
   };
@@ -148,31 +239,14 @@ export function createActionOperationStore(options?: Readonly<{
   return Object.freeze({
     /** Private daemon read of this owner's real custody, independent of the public Account projection. */
     readLiveWork(): Omit<LiveWorkInventoryV1, 'idleSince'> {
-      const items: LiveWorkItemV1[] = [...snapshots.values()].filter(snapshot => {
-        // The native intent owner reports these passive phases before an
-        // idle/deadline Stop/Delete is submitted. Waiting itself must not hold
-        // the guest busy; the owner changes phase before native custody starts.
-        return !((snapshot.actionId === 'machines.managed.power.set' || snapshot.actionId === 'machines.managed.delete')
-          && !isTerminal(snapshot) && !snapshot.observation
-          && snapshot.progress?.kind === 'phase'
-          && (snapshot.progress.phase === 'managed.intent.waiting-idle'
-            || snapshot.progress.phase === 'managed.intent.waiting-deadline'));
-      }).map(snapshot => {
-        const category = materialCategory(snapshot);
-        return {
-          category: category ?? 'setup',
-          ownerRef: snapshot.operationId,
-          actionOperationId: snapshot.operationId,
-          attribution: invocationMetadata.get(snapshot.operationId)?.requesterWorkAttributionV1 ?? { kind: 'unknown' },
-          state: isTerminal(snapshot) ? 'settled' : snapshot.observation || category === null ? 'unknown' : 'active',
-          ...(snapshot.domainRef?.kind === 'projectCommand' && snapshot.domainRef.terminalId
-            ? { associatedTerminal: snapshot.domainRef.terminalId } : {}),
-        };
+      const items = [...snapshots.values()].flatMap(snapshot => {
+        const item = projectLiveWork(snapshot);
+        return item ? [item] : [];
       });
       return { items, coverage: 'complete' };
     },
     /** Host observers re-read through get(scope, id), preserving the canonical scope decision. */
-    subscribe(listener: () => void): () => void {
+    subscribe(listener: LiveWorkListenerV1): () => void {
       subscribers.add(listener);
       return () => { subscribers.delete(listener); };
     },
@@ -182,33 +256,40 @@ export function createActionOperationStore(options?: Readonly<{
       if (current && !canAdvanceActionOperationSnapshotV1(current, incoming)) return;
       const snapshot = freezeSnapshot(incoming);
       snapshots.set(snapshot.operationId, snapshot);
-      notify(snapshot);
       prune();
+      // Domain reads can include durable history beyond host retention. Do not
+      // publish a receipt that was discarded here and will be read again next time.
+      if (snapshots.get(snapshot.operationId) === snapshot) notify(snapshot, current);
     },
 
     removeOwnerProjections(actionIds: readonly string[], scope?: ActionOperationQueryScope, operationId?: string): void {
       let removed = false;
+      let removedWork = false;
       for (const snapshot of snapshots.values()) {
         if (actionIds.includes(snapshot.actionId) && (!scope || inScope(snapshot, scope))
           && (operationId === undefined || snapshot.operationId === operationId)) {
-          snapshots.delete(snapshot.operationId);
-          invocationMetadata.delete(snapshot.operationId);
+          const work = projectLiveWork(snapshot);
+          removedWork ||= work !== null && work.state !== 'settled';
+          removeSnapshot(snapshot.operationId);
           removed = true;
         }
       }
-      if (removed) notifySubscribers();
+      if (removed) notifySubscribers(removedWork ? undefined : 'observation');
     },
 
     reconcileOwner(scope: ActionOperationQueryScope, actionIds: readonly string[], incoming: readonly ActionOperationSnapshotV1[]): void {
       let removed = false;
+      let removedWork = false;
       const retainedIds = new Set(incoming.map((snapshot) => snapshot.operationId));
       for (const snapshot of snapshots.values()) {
         if (inScope(snapshot, scope) && actionIds.includes(snapshot.actionId) && !retainedIds.has(snapshot.operationId)) {
-          snapshots.delete(snapshot.operationId);
+          const work = projectLiveWork(snapshot);
+          removedWork ||= work !== null && work.state !== 'settled';
+          removeSnapshot(snapshot.operationId);
           removed = true;
         }
       }
-      if (removed) notifySubscribers();
+      if (removed) notifySubscribers(removedWork ? undefined : 'observation');
     },
 
     create(input: CreateActionOperationInput): ActionOperationSnapshotV1 {
@@ -234,7 +315,7 @@ export function createActionOperationStore(options?: Readonly<{
         ...(input.domainRef ? { domainRef: input.domainRef } : {}),
       });
       snapshots.set(input.operationId, snapshot);
-      invocationMetadata.set(input.operationId, { inputIdentity: input.inputIdentity,
+      retainInvocation(snapshot, { inputIdentity: input.inputIdentity,
         ...(input.deploymentChildIdentity ? { deploymentChildIdentity: input.deploymentChildIdentity } : {}),
         ...(input.deploymentTokenOrigin ? { deploymentTokenOrigin: Object.freeze({ ...input.deploymentTokenOrigin }) } : {}),
         ...(attribution ? { requesterWorkAttributionV1: attribution } : {}) });
@@ -244,12 +325,27 @@ export function createActionOperationStore(options?: Readonly<{
     },
 
     markRunning(operationId: string): ActionOperationSnapshotV1 | null {
-      return mutate(operationId, (current) => ({
+      return mutate(operationId, (current) => current.state === 'running' ? current : ({
         ...current,
         revision: current.revision + 1,
         state: 'running',
         startedAt: current.startedAt ?? lifecycleTime(current),
       }));
+    },
+
+    hasMatchingDeploymentChildIdentity(operationId: string, identity: string | undefined): boolean {
+      return invocationMetadata.get(operationId)?.deploymentChildIdentity === identity;
+    },
+
+    hasMatchingDeploymentTokenOrigin(operationId: string, origin: DeploymentTokenOperationOrigin | undefined): boolean {
+      return isDeepStrictEqual(invocationMetadata.get(operationId)?.deploymentTokenOrigin, origin);
+    },
+
+    /** Used only after the Action declaration admits a newly reviewed re-entry. */
+    replaceInputIdentity(operationId: string, inputIdentity: string): void {
+      const current = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
+      if (!current || isTerminal(current) || !metadata) throw new Error('action_operation_unavailable');
+      retainInvocation(current, { ...metadata, inputIdentity });
     },
 
     updateProgress(operationId: string, progress: ActionOperationProgressV1): ActionOperationSnapshotV1 | null {
@@ -274,16 +370,19 @@ export function createActionOperationStore(options?: Readonly<{
     },
 
     updateObservation(operationId: string, observation: NonNullable<ActionOperationSnapshotV1['observation']> | null,
-      result?: unknown): ActionOperationSnapshotV1 | null {
+      result?: unknown, error?: ActionOperationFailureV1): ActionOperationSnapshotV1 | null {
       // Omission retains evidence; explicit undefined clears it on admitted resume.
       const replaceResult = arguments.length > 2;
+      const replaceError = arguments.length > 3;
       return mutate(operationId, (current) => {
+        const nextError = observation ? replaceError ? error : current.error : undefined;
         if (isDeepStrictEqual(current.observation, observation ?? undefined)
-          && (!replaceResult || isDeepStrictEqual(current.result, result))) return current;
-        const { observation: _observation, result: previousResult, ...retained } = current;
+          && (!replaceResult || isDeepStrictEqual(current.result, result))
+          && isDeepStrictEqual(current.error, nextError)) return current;
+        const { observation: _observation, result: previousResult, error: _error, ...retained } = current;
         const nextResult = replaceResult ? result : previousResult;
         return { ...retained, revision: current.revision + 1, ...(observation ? { observation } : {}),
-          ...(nextResult === undefined ? {} : { result: nextResult }) };
+          ...(nextResult === undefined ? {} : { result: nextResult }), ...(nextError ? { error: nextError } : {}) };
       });
     },
 
@@ -308,7 +407,7 @@ export function createActionOperationStore(options?: Readonly<{
     succeed(operationId: string, result: unknown): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => {
         const settledAt = lifecycleTime(current);
-        const { observation: _observation, setupReview: _review, ...settled } = current;
+        const { observation: _observation, setupReview: _review, error: _error, ...settled } = current;
         return {
           ...settled,
           revision: current.revision + 1,
@@ -322,7 +421,7 @@ export function createActionOperationStore(options?: Readonly<{
 
     fail(operationId: string, error: ActionOperationFailureV1, result?: unknown): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => {
-        const failure = ActionOperationFailureV1Schema.parse(error);
+        const failure = ActionOperationFailureV1ReadSchema.parse(error);
         const settledAt = lifecycleTime(current);
         const { observation: _observation, setupReview: _review, ...settled } = current;
         return {
@@ -340,7 +439,7 @@ export function createActionOperationStore(options?: Readonly<{
     cancel(operationId: string): ActionOperationSnapshotV1 | null {
       return mutate(operationId, (current) => {
         const settledAt = lifecycleTime(current);
-        const { observation: _observation, setupReview: _review, ...settled } = current;
+        const { observation: _observation, setupReview: _review, error: _error, ...settled } = current;
         return {
           ...settled,
           revision: current.revision + 1,
@@ -363,13 +462,7 @@ export function createActionOperationStore(options?: Readonly<{
       requestId: string,
     ): ActionOperationSnapshotV1 | null {
       prune();
-      // Explicit retryable creation attempts retain earlier terminal receipts.
-      // Join or replay the newest receipt for that unchanged logical request.
-      return [...snapshots.values()].reverse().find((snapshot) => (
-        inScope(snapshot, scope)
-        && snapshot.actionId === actionId
-        && snapshot.requestId === requestId
-      )) ?? null;
+      return findByRequestIdentity(scope, actionId, requestId);
     },
 
     hasMatchingInputIdentity(operationId: string, inputIdentity: string): boolean {
@@ -388,6 +481,37 @@ export function createActionOperationStore(options?: Readonly<{
       }
       return false;
     },
+    /** Host-only reconstruction of the exact input already held by this owner.
+     * Never included in operation snapshots or RPC responses. */
+    readDeploymentInvocationInput(scope: ActionOperationQueryScope, operationId: string): unknown {
+      const snapshot = snapshots.get(operationId);
+      const metadata = invocationMetadata.get(operationId);
+      if (!snapshot || !inScope(snapshot, scope) || snapshot.actionId !== 'deployments.deploy' || !metadata) return undefined;
+      return JSON.parse(metadata.inputIdentity);
+    },
+    /** Exact host-only receipt read. Work is proportional to this target's
+     * retained invocations, never the Machine's whole operation inventory. */
+    readDeploymentBackupOperations(scope: ActionOperationQueryScope,
+      target: DeploymentBackupOperationTarget): readonly DeploymentBackupOperation[] {
+      const ids = backupOperationIds.get(backupTargetKey(scope, target));
+      if (!ids) return [];
+      const cutoff = now() - settledRetentionMs;
+      const operations: DeploymentBackupOperation[] = [];
+      let removed = false;
+      for (const operationId of ids) {
+        const snapshot = snapshots.get(operationId);
+        if (!snapshot) continue;
+        if (isTerminal(snapshot) && (snapshot.settledAt ?? 0) < cutoff) {
+          removeSnapshot(operationId);
+          removed = true;
+          continue;
+        }
+        const input = invocationMetadata.get(operationId)?.backupInput;
+        if (input && inScope(snapshot, scope)) operations.push({ snapshot, input });
+      }
+      if (removed) notifySubscribers('observation');
+      return operations;
+    },
     readRequesterWorkAttribution(operationId: string): RequesterWorkAttributionV1 | null {
       return invocationMetadata.get(operationId)?.requesterWorkAttributionV1 ?? null;
     },
@@ -398,8 +522,12 @@ export function createActionOperationStore(options?: Readonly<{
     }> {
       prune();
       const states = input.states ? new Set(input.states) : null;
-      const ordered = [...snapshots.values()]
+      const requested = input.requestIdentity
+        ? findByRequestIdentity(input, input.requestIdentity.actionId, input.requestIdentity.requestId) : null;
+      const candidates = input.requestIdentity ? (requested ? [requested] : []) : [...snapshots.values()];
+      const ordered = candidates
         .filter((snapshot) => inScope(snapshot, input))
+        .filter((snapshot) => !invocationMetadata.get(snapshot.operationId)?.deploymentChildIdentity)
         .filter((snapshot) => !states || states.has(snapshot.state))
         .sort((left, right) => {
           const terminalDifference = Number(isTerminal(left)) - Number(isTerminal(right));
@@ -421,21 +549,8 @@ export function createActionOperationStore(options?: Readonly<{
         nextCursor: null,
       };
     },
-readDeploymentInvocationInput(scope: ActionOperationQueryScope, operationId: string): unknown {
-      const snapshot = snapshots.get(operationId);
-      const metadata = invocationMetadata.get(operationId);
-      if (!snapshot || !inScope(snapshot, scope) || snapshot.actionId !== 'deployments.deploy' || !metadata) return undefined;
-      return JSON.parse(metadata.inputIdentity);
-    }
-,
-hasMatchingDeploymentTokenOrigin(operationId: string, origin: DeploymentTokenOperationOrigin | undefined): boolean {
-      return isDeepStrictEqual(invocationMetadata.get(operationId)?.deploymentTokenOrigin, origin);
-    }
-,
-hasMatchingDeploymentChildIdentity(operationId: string, identity: string | undefined): boolean {
-      return invocationMetadata.get(operationId)?.deploymentChildIdentity === identity;
-    }
-});
+
+  });
 }
 
 export type ActionOperationStore = ReturnType<typeof createActionOperationStore>;
