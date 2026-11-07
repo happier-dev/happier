@@ -6,6 +6,51 @@ import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('workspace client actions', () => {
+  it('opens typed SCM resources through one closed resource arm and rejects ambiguous addresses', () => {
+    const open = WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'];
+    const resource = { kind: 'pullRequest', url: 'https://github.com/acme/repo/pull/42' };
+    expect(open.parse({ resource })).toEqual({ resource });
+    expect(open.safeParse({ resource, href: '/plugins/triage' }).success).toBe(false);
+    expect(open.safeParse({ resource, file: { target: { kind: 'session', sessionId: 's' }, path: 'a.ts' } }).success).toBe(false);
+    expect(open.safeParse({ resource: { ...resource, kind: 'unknown' } }).success).toBe(false);
+    expect(open.safeParse({ resource: { ...resource, url: 'file:///etc/passwd' } }).success).toBe(false);
+    expect(open.safeParse({ resource: { ...resource, accountId: 'foreign' } }).success).toBe(false);
+    expect(open.safeParse({ resource, mode: 'splitRight' }).success).toBe(false);
+    expect(open.safeParse({ resource, tabId: 'replace' }).success).toBe(false);
+  });
+
+  it('activates an empty full window without pretending it is a tab or permitting window close through tab close', () => {
+    const activate = WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.activate'];
+    expect(activate.safeParse({ windowId: 'full-b' }).success).toBe(true);
+    expect(activate.safeParse({ windowId: 'full-b', tabId: 'tab' }).success).toBe(false);
+    expect(activate.safeParse({ windowId: 'full-b', address: {
+      kind: 'workspaceTab', serverId: 'home', accountId: 'account', layoutId: 'full-b', tabId: 'tab',
+    } }).success).toBe(false);
+    expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.close'].safeParse({ windowId: 'full-b' }).success).toBe(false);
+  });
+  it('addresses workspace and pane tabs by their owning layout while preserving legacy tab ids', () => {
+    const pane = { kind: 'paneTab', serverId: 'home-a', accountId: 'account-a', layoutId: 'main', scopeId: 'session:s', tabKey: 'file:a' };
+    const workspace = { kind: 'workspaceTab', serverId: 'home-a', accountId: 'account-a', layoutId: 'main', tabId: 'tab-a' };
+    for (const action of ['workspace.tabs.activate', 'workspace.tabs.close', 'workspace.tabs.move'] as const) {
+      const extra = action === 'workspace.tabs.move' ? { targetGroupId: 'details' } : {};
+      const schema = WORKSPACE_ACTION_INPUT_SCHEMAS[action];
+      expect(schema.safeParse({ address: pane, ...extra }).success).toBe(true);
+      expect(schema.safeParse({ address: workspace, ...extra }).success).toBe(true);
+      expect(schema.safeParse({ tabId: 'legacy', ...extra }).success).toBe(true);
+      expect(schema.safeParse({ address: pane, tabId: 'ambiguous', ...extra }).success).toBe(false);
+      expect(schema.safeParse({ address: { ...pane, layoutId: undefined }, ...extra }).success).toBe(false);
+    }
+  });
+  it('routes qualified tab mutations through the Home named by the address', () => {
+    for (const action of ['workspace.tabs.activate', 'workspace.tabs.close', 'workspace.tabs.move'] as const) {
+      const spec = getActionSpec(action);
+      const extra = action === 'workspace.tabs.move' ? { targetGroupId: 'details' } : {};
+      expect(spec.invocationServerIdForInput?.({ address: {
+        kind: 'paneTab', serverId: 'home-b', accountId: 'account-b', layoutId: 'main', scopeId: 'session:s', tabKey: 'file:a',
+      }, ...extra })).toBe('home-b');
+      expect(spec.invocationServerIdForInput?.({ tabId: 'legacy', ...extra })).toBeUndefined();
+    }
+  });
   it('admits literal leading-colon filenames through file Actions and Find without admitting absolute paths', () => {
     const file = { target: { kind: 'session', sessionId: 'session-a', serverId: 'home-a' }, path: 'a:b.ts' };
     expect(WORKSPACE_ACTION_INPUT_SCHEMAS['workspace.tabs.open'].safeParse({ file }).success).toBe(true);

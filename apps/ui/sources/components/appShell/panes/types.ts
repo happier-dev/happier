@@ -5,8 +5,11 @@ import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePlugi
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/workspaceActionFamily';
+import type { PluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { PluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SelectedPaneDestinationV1 } from './model/selectedPaneDestination';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 
 export type PaneId = 'right' | 'details' | 'bottom';
 
@@ -34,7 +37,10 @@ export type PaneSurfaceScope =
     }>
     | Readonly<{
         targetKind: 'project';
-        projectId: string;
+        /** Exact accepted checkout address for checkout-scoped resources, when selected. */
+        projectId?: string | null;
+        projectContext?: ProjectWidgetAreaContextV1 | null;
+        policyContext?: PluginUiPolicyEvaluationContext;
         pluginUiProjection?: PluginUiProjectionModel | null;
         accountLifetime?: ServerAccountScopeLifetime | null;
         projectionPhase: PluginUiProjectionPhase;
@@ -84,6 +90,8 @@ export type PaneDriver = Readonly<{
     onTerminalWorkspaceReveal?: (selection: Readonly<{ tabId: string; terminalId: string }>) => void;
     /** The registered scope owns exact target/projection facts for plugin panes. */
     surfaceScope?: PaneSurfaceScope;
+    /** Borrowed current host binding; the pane host remains its sole producer. */
+    resourceNavigation?: PluginSurfaceDestinationNavigationBinding | null;
     rightPaneBuiltinAdapter?: PaneBuiltinAdapter;
     rightSidebarAdapter?: PaneRightSidebarAdapter;
     detailsPaneBuiltinAdapter?: PaneBuiltinAdapter;

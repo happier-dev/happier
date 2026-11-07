@@ -108,7 +108,8 @@ describe('workspace Action intent adapter', () => {
         const project = state.tabs[state.groups[state.focusedGroupId].activeTabId];
         expect(project.target.kind).toBe('project');
         expect(project.target.params).toMatchObject({ workspaceRefId: 'workspace-a', initialFile: 'src/a.ts', fileView: 'view', anchor: 'range', startLine: '3', endLine: '8' });
-        expect(project.preview).toBe(true);
+        // An ordinary file open replaces this already-kept tab in place.
+        expect(project.preview).toBe(false);
     });
     it.each([
         ['workspace.tabs.close_others', { tabId: 'b' }, ['pin', 'b']],

@@ -43,6 +43,7 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { BROWSER_HISTORY_NAVIGATION_CHANGED } from '@/utils/navigation/browserHistoryNavigation';
+import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { WorkspaceWindowTitle } from './WorkspaceWindowTitle';
 import { clearRouteAnchorSessionId, getSessionSurfaceVisibilityResetVersion, setRouteAnchorSessionId, subscribeSessionSurfaceVisibilityReset } from '@/sync/domains/session/sessionSurfaceVisibility';
 
@@ -118,6 +119,9 @@ export function WorkspaceProvider(props: Readonly<{
     const findSeedContext = useOptionalAppPaneFindSeedContext();
     const readPaneDriver = useOptionalPaneDriverReader();
     const paneSubscription = React.useContext(AppPaneContext);
+    const appResourceNavigation = usePluginSurfaceDestinationNavigationBinding();
+    const appResourceNavigationRef = React.useRef(appResourceNavigation);
+    appResourceNavigationRef.current = appResourceNavigation;
     const findHandoff = findSeedContext?.fileFindSeedHandoff;
     const scopeKey = scope ? JSON.stringify([scope.serverId, scope.accountId]) : null;
     // Browser history is authoritative even when readiness changes before Expo updates its mirror.
@@ -376,6 +380,12 @@ export function WorkspaceProvider(props: Readonly<{
         const execute = createWorkspaceActionAdapter({
             getState: () => latest.current.owner.getState(), navigation: runtime.adapter,
             readCanvas: () => canvasControlsRef.current, createId: randomUUID,
+            readResourceContext: () => {
+                const panes = latest.current.paneSubscription?.getSnapshot();
+                const scopeId = panes?.getReadState().activeScopeId;
+                const navigation = scopeId ? panes?.getDriver(scopeId)?.resourceNavigation : null;
+                return { navigation: navigation ?? appResourceNavigationRef.current };
+            },
             ...(latest.current.scope ? { owner: { ...latest.current.scope,
                 layoutId: props.appWindow?.record.layoutId ?? localOwner.windowId ?? 'main' } } : {}),
             ...(paneSubscription && latest.current.scope ? { panes: {

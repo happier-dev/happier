@@ -85,6 +85,20 @@ cancel/retirement owners. A selector returns a value; it does not start work.
 Library, editor and replay Workflow starts use this chrome around their existing
 composer rather than the contextual Start pane.
 
+Unreleased 0.3 `workspace.tabs.open` also accepts `{ resource: { kind, url } }`,
+using the existing closed `PluginUiResourceIntentV1` SCM intent. It is exclusive
+with `href`, `file`, and tab placement controls. Agents call the same
+`requestOpenResource` resolver as card/glance Open: the focused pane driver's
+current navigation binding selects its Session handler, then the registered app
+destination, according to the person's SCM resource preference. With no focused
+pane binding, the app binding is used. Resource placement and any dirty-departure
+decision remain with the selected destination owner; a resource opening beside
+an editor does not ask to discard that editor. External preference or an
+unavailable in-app handler retains the resolver's existing external-URL recovery.
+The Action and nested resource remain closed. New readers accept old href/file
+inputs; older strict development readers reject `resource`, so Protocol and UI
+reload together. No route, persisted shape, wire epoch or capability gate changes.
+
 ## Destination windows (0.3 development)
 
 Native `app_window.rs` owns Session window creation, readiness, reuse, teardown

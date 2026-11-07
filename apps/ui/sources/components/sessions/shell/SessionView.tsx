@@ -1134,11 +1134,15 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             ? JSON.stringify(ownerMetadata.sessionModelsV1.activeSelectionV1.runner)
             : null,
     });
+    const resourceNavigationRef = React.useRef<PluginSurfaceDestinationNavigationBinding | undefined>(undefined);
+    const paneDriverOptions = React.useMemo(() => embedded ? EMBEDDED_PANE_DRIVER_OPTIONS : {
+        readResourceNavigation: () => resourceNavigationRef.current,
+    }, [embedded]);
     const paneScopeId = useRegisterSessionPaneDriver(
         sessionId,
         props.routeServerId,
         props.sessionPluginRuntime,
-        embedded ? EMBEDDED_PANE_DRIVER_OPTIONS : undefined,
+        paneDriverOptions,
     );
     // ⌘J / ⌥J: Jump to a terminal of this session. An embedded presentation is not the focused session.
     useTerminalJumpShortcut(embedded ? '' : paneScopeId);
@@ -1277,6 +1281,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const handleAppPanePluginSurfaceNavigationBindingChange = React.useCallback((
         binding: PluginSurfaceDestinationNavigationBinding | undefined,
     ) => {
+        resourceNavigationRef.current = binding;
         setAppPaneNavigationBinding(binding);
     }, []);
     const attachedSessionTerminal = useOpenAttachedSessionTerminal(

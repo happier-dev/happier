@@ -1,9 +1,18 @@
+import type { AppPaneContextValue } from '../panes/AppPaneContext';
+import { setActiveUnsavedChangesGuard, clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { AppPaneProvider, useAppPaneContext } from '../panes/AppPaneProvider';
+import { invokeWorkspaceAction } from './workspaceActionRuntime';
+import { createPluginUiResourceProjection } from '@/dev/testkit/fixtures/pluginUiResourceProjection';
+import { createPluginSurfaceDestinationNavigationBinding, PluginSurfaceDestinationNavigationBindingProvider } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { requestOpenResource } from '@/utils/url/openResource';
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { View } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -82,6 +91,62 @@ afterEach(async () => {
 });
 
 describe('workspace open-in-place through real entries', () => {
+    it('agent resource open uses the focused Session binding and releases it before app fallback', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const opened: string[] = [];
+        const makeNavigation = (targetKind: 'session' | 'app') => {
+            const catalog = createPluginUiResourceProjection(true, targetKind);
+            // Daemon projection boundary: a resource launch carries its producer's materialization.
+            const projection = { ...catalog, surfacePlacementsById: Object.fromEntries(
+                Object.entries(catalog.surfacePlacementsById).map(([id, entry]) => [id, { ...entry,
+                    executionOrigin: { serverIdentityId: 'srv_resource', materializationRef: {
+                        pluginId: entry.pluginId, machineId: 'machine', materializationId: 'forge-occurrence',
+                    } },
+                }])) };
+            const binding = createPluginSurfaceDestinationNavigationBinding({ targetKind, projection,
+                placements: selectPluginDestinationSurfacePlacements(projection), accountLifetime: lifetime,
+                scopedLaunchFacts: { serverId: lifetime.scope.serverId, machineId: 'machine', interactionEnabled: true } });
+            binding.registerOwner({ container: targetKind === 'session' ? 'detailsTab' : 'appPage',
+                handler: () => { opened.push(targetKind); return { ok: true }; } });
+            return binding;
+        };
+        const appNavigation = makeNavigation('app');
+        const sessionNavigation = makeNavigation('session');
+        let pane: AppPaneContextValue | undefined;
+        function FocusedSession() {
+            const current = useAppPaneContext();
+            pane = current;
+            React.useEffect(() => current.registerDriver({ scopeId: 'focused-resource-session',
+                get resourceNavigation() { return sessionNavigation; } }), [current.registerDriver]);
+            React.useEffect(() => {
+                current.dispatch({ type: 'activateScope', scopeId: 'focused-resource-session' });
+                return () => current.dispatch({ type: 'releaseScope', scopeId: 'focused-resource-session' });
+            }, [current.dispatch]);
+            return null;
+        }
+        storage.setState({ settings: { ...storage.getState().settings, scmResourceOpenLocation: 'happier' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
+        const screen = await renderScreen(<AppPaneProvider><PluginSurfaceDestinationNavigationBindingProvider binding={appNavigation}>
+            <WorkspaceProvider enabled catalog={catalog}><FocusedSession /></WorkspaceProvider>
+        </PluginSurfaceDestinationNavigationBindingProvider></AppPaneProvider>, { wrapper: TestAuth });
+        const resource = { kind: 'pullRequest' as const, url: 'https://forge.example/acme/repo/pull/42' };
+        expect(await requestOpenResource(resource, { navigation: sessionNavigation })).toBe(true);
+        expect(opened).toEqual(['session']); opened.length = 0;
+        const dirty = { current: true };
+        const requestDecision = vi.fn(async () => 'keepEditing' as const);
+        setActiveUnsavedChangesGuard({ isDirtyRef: dirty, tag: 'file-editor', requestDecision });
+        onTestFinished(() => clearActiveUnsavedChangesGuard());
+        expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.open', input: { resource } })).toEqual({ ok: true });
+        expect(opened).toEqual(['session']); opened.length = 0;
+        expect(requestDecision).not.toHaveBeenCalled();
+        expect(dirty.current).toBe(true);
+        clearActiveUnsavedChangesGuard();
+        await act(async () => pane!.dispatch({ type: 'releaseScope', scopeId: 'focused-resource-session' }));
+        expect(await invokeWorkspaceAction({ actionId: 'workspace.tabs.open', input: { resource } })).toEqual({ ok: true });
+        expect(opened).toEqual(['app']);
+        await screen.unmount();
+    });
+
     it('selects Workflows explicitly from the run settings control (FIN-COMPOSE F17)', async () => {
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: false, workflows: true, friends: false } });
         function SettingsJourney({ navigation }: Readonly<{ navigation: import('./WorkspaceNavigationContext').WorkspaceNavigationContextValue }>) {

@@ -20,6 +20,8 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import { PluginReactNativeUnavailable } from '@/components/plugins/reactNative/PluginReactNativeUnavailable';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
+import { ModalPaneBoundaryView } from '@/components/ui/panels/ModalPaneBoundary';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useDestinationFocus } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -27,13 +29,10 @@ import { useAppPaneContext } from './AppPaneProvider';
 import { AppPaneContext } from './AppPaneContext';
 import { PaneColumnsHost } from './PaneColumnsHost';
 import { usePaneArrangement } from './arrangement/usePaneArrangement';
-import { useOptionalAppPaneScopeLayout } from './hooks/useAppPaneScopeLayout';
-import { usePresentedDetailNavigationChrome, type DetailNavigationMainColumnControls } from '@/components/appShell/rightSidebar/usePresentedDetailNavigation';
-import { PaneMainColumnContext, type PaneMainColumnDescriptor, type PaneMainColumnState } from './mainColumn/usePaneMainColumn';
+import type { PaneMainColumnDescriptor, PaneMainColumnState } from './mainColumn/usePaneMainColumn';
+import { AppPaneScopeControls } from './AppPaneScopeControls';
 import { RightSidebarActionsContext, type RightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import { RightPanePlacementReporterContext, type RightPanePresentation } from './rightPanePlacement';
-import { registerShellColumnActionOwner, notifyShellColumnActionOwnersChanged, type ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
-import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import type { ResolvedPaneLayout } from '@/components/ui/panels/paneBreakpoints';
 import { resolvePluginUiRuntimeFormFactor } from './layout/resolveMultiPaneDeviceType';
 import {
@@ -57,7 +56,8 @@ import type {
     PaneRightSidebarAdapter,
     PaneSurfaceScope,
 } from './types';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiProjectionModel, PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
@@ -79,6 +79,7 @@ export type AppPaneDestinationDetails = Readonly<{
 
 export type AppPaneScopeHostProps = Readonly<{
     scopeId: string;
+    /** A destination window mounts the addressed body without its parent or sibling bodies. */
     selectedPaneTabKey?: string;
     /** A creation default, never an instruction to reopen an existing scope. */
     main: React.ReactNode;
@@ -114,108 +115,20 @@ export type AppPaneScopeHostProps = Readonly<{
     ) => void;
     /** Direct scope adapters are published by this host as its PaneDriver. */
     surfaceScope?: PaneSurfaceScope;
+    /** Primary pages are Account-described; companion panes keep their scoped projection. */
+    pageDestinationPlacements?: readonly PluginUiSurfacePlacementProjection[];
+    destinationPolicyContext?: PluginUiPolicyEvaluationContext;
     rightPaneBuiltinAdapter?: PaneBuiltinAdapter;
     rightSidebarAdapter?: PaneRightSidebarAdapter;
     bottomPaneBuiltinAdapter?: PaneBuiltinAdapter;
-}> & (
-    | Readonly<{
-        detailsPaneBuiltinAdapter?: PaneBuiltinAdapter;
-        detailsPaneEnabled?: boolean;
-        destinationDetails?: undefined;
-    }>
-    | Readonly<{
-        /** Present (even `null`, closed): the destination owns the details pane. */
-        destinationDetails: AppPaneDestinationDetails | null;
-        detailsPaneBuiltinAdapter?: never;
-        detailsPaneEnabled?: never;
-    }>
-);
-
-/** Measured host controls: no second pane state or layout resolver. */
-function AppPaneScopeControls(props: Readonly<{
-    scopeId: string;
-    focused: boolean;
-    descriptor?: PaneMainColumnDescriptor;
-    rightOpen: boolean;
-    detailsOpen: boolean;
-    sideAvailable: boolean;
-    arrangementHonoured: boolean;
-    onControlsChange?: (controls: PaneMainColumnState | null) => void;
-    setHidden: (hidden: boolean) => void;
-    setSideVisible: (visible: boolean) => void;
-    sideActions: React.MutableRefObject<RightSidebarActions | null>;
-    children: React.ReactNode;
-}>) {
-    const layout = useOptionalAppPaneScopeLayout();
-    const detailNavigation = usePresentedDetailNavigationChrome();
-    const folded = layout?.layout.main === 'overlay';
-    const hidden = layout?.mainHidden === true || (folded && !layout?.mainDrawerOpen);
-    const canHide = props.descriptor !== undefined && layout != null
-        && layout.layout.kind !== 'single' && (props.rightOpen || layout.effectiveDetailsOpen || props.detailsOpen);
-    const labels = React.useMemo(() => ({
-        hideLabel: props.descriptor?.hideLabel ?? '',
-        showLabel: props.descriptor?.showLabel ?? '',
-    }), [props.descriptor?.hideLabel, props.descriptor?.showLabel]);
-    // An intent can open Details and hide main in one batch, before canHide has rendered again.
-    // Availability controls entry points; the measured host alone resolves effective visibility.
-    const setHidden = props.setHidden;
-    const toggle = React.useCallback(() => setHidden(!hidden), [hidden, setHidden]);
-    const value = React.useMemo<PaneMainColumnState | null>(() => props.descriptor === undefined ? null : ({
-        hidden, canHide, folded, labels, identity: props.descriptor.identity, setHidden, toggle,
-    }), [canHide, folded, hidden, labels, props.descriptor?.identity, setHidden, toggle]);
-    const current = React.useRef({ props, layout, hidden, canHide, labels, detailNavigation });
-    current.current = { props, layout, hidden, canHide, labels, detailNavigation };
-    const readPhysicalMain = React.useCallback((): DetailNavigationMainColumnControls => {
-        const { props, layout, hidden, canHide, labels } = current.current;
-        return {
-            present: true, visible: props.descriptor === undefined || !hidden,
-            available: canHide || props.sideActions.current?.main !== undefined,
-            label: props.descriptor === undefined ? undefined : hidden ? labels.showLabel : labels.hideLabel,
-            arrangementAvailable: props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
-            setVisible: visible => props.setHidden(!visible),
-        };
-    }, []);
-    const readMain = React.useCallback((): ShellColumnActionOwner => {
-        const { props, detailNavigation } = current.current;
-        return detailNavigation ? detailNavigation.readColumn('main')
-            : { ...(props.sideActions.current?.main ?? {}), ...readPhysicalMain() };
-    }, [readPhysicalMain]);
-    const readSide = React.useCallback((): ShellColumnActionOwner => {
-        const { props, layout, detailNavigation } = current.current;
-        if (detailNavigation && detailNavigation.registerSide !== false) return detailNavigation.readColumn('side');
-        return {
-            present: true, visible: props.rightOpen,
-            available: props.sideAvailable && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone',
-            ...(props.sideActions.current ?? {}), setVisible: props.setSideVisible,
-        };
-    }, []);
-    React.useLayoutEffect(() => {
-        props.onControlsChange?.(value);
-        return () => props.onControlsChange?.(null);
-    }, [props.onControlsChange, value]);
-    const arrangementAvailable = props.arrangementHonoured && layout?.multiPaneEnabled === true && layout.deviceType !== 'phone';
-    React.useEffect(() => {
-        if (props.focused) notifyShellColumnActionOwnersChanged();
-    }, [arrangementAvailable, props.focused]);
-    React.useEffect(() => {
-        if (!props.focused || layout?.deviceType === 'phone') return;
-        const unregisterMain = detailNavigation ? detailNavigation.bindMainColumn(readPhysicalMain)
-            : registerShellColumnActionOwner('main', readMain);
-        const unregisterSide = !detailNavigation || detailNavigation.registerSide === false
-            ? registerShellColumnActionOwner('side', readSide) : () => {};
-        return () => { unregisterMain(); unregisterSide(); };
-    }, [layout?.deviceType, props.focused, props.scopeId, readMain, readPhysicalMain, readSide,
-        detailNavigation?.bindMainColumn, detailNavigation?.registerSide]);
-    useKeyboardShortcutHandlers(React.useMemo(() => !props.focused ? {} : ({
-        'panes.main.toggle': () => { if (!canHide) return false; toggle(); return true; },
-        'panes.side.toggle': () => {
-            if (!props.sideAvailable || !layout?.multiPaneEnabled || layout.deviceType === 'phone') return false;
-            props.setSideVisible(!props.rightOpen);
-            return true;
-        },
-    }), [canHide, layout?.deviceType, layout?.multiPaneEnabled, props.focused, props.rightOpen, props.setSideVisible, props.sideAvailable, toggle]));
-    return <PaneMainColumnContext.Provider value={value}>{props.children}</PaneMainColumnContext.Provider>;
-}
+    detailsPaneBuiltinAdapter?: PaneBuiltinAdapter;
+    detailsPaneEnabled?: boolean;
+    /**
+     * Present (even `null`, closed): the destination owns the physical details column.
+     * Undefined resumes the retained builtin workspace without clearing its selection.
+     */
+    destinationDetails?: AppPaneDestinationDetails | null;
+}>;
 
 type PaneSelectionResolution = ReturnType<typeof resolveSelectedPaneDestination>;
 type AvailablePaneSelection = Extract<PaneSelectionResolution, Readonly<{ kind: 'available' }>>;
@@ -322,6 +235,8 @@ function PluginAppPaneSurface(props: Readonly<{
                 sessionId={props.paneSurfaceScope.targetKind === 'session' ? props.paneSurfaceScope.sessionId : undefined}
                 agentId={props.paneSurfaceScope.targetKind === 'session' ? props.paneSurfaceScope.agentId : undefined}
                 projectId={props.paneSurfaceScope.targetKind === 'project' ? props.paneSurfaceScope.projectId : undefined}
+                projectContext={props.paneSurfaceScope.targetKind === 'project' ? props.paneSurfaceScope.projectContext : undefined}
+                policyContext={props.paneSurfaceScope.targetKind === 'project' ? props.paneSurfaceScope.policyContext : undefined}
                 platform={props.paneSurfaceScope.platform}
                 formFactor={props.runtimeAdmission.formFactor}
                 projectionInteractionEnabled={props.paneSurfaceScope.projectionPhase === 'current'
@@ -337,13 +252,16 @@ function PluginAppPaneSurface(props: Readonly<{
 
 const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Readonly<{ paneAdapter: ResolvedPaneAdapter | null }>) => {
     const enclosingNavigationBinding = usePluginSurfaceDestinationNavigationBinding();
-    const { dispatch, getReadState, right, bottom, detailsOverlay, detailsOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
+    const { dispatch, getReadState, right, bottom, detailsOverlay, detailsOpen, detailsOverlayOpen, detailsOpenedFrom, mainHidden, overlayFocusReturnOwner } = useAppPaneContext(value => ({
         dispatch: value.dispatch,
         getReadState: value.getReadState,
         right: value.state.scopes[props.scopeId]?.right,
         bottom: value.state.scopes[props.scopeId]?.bottom,
         detailsOverlay: value.state.scopes[props.scopeId]?.details.overlay,
         detailsOpen: value.detailsStartScopeId !== props.scopeId && value.state.scopes[props.scopeId]?.details.isOpen === true,
+        detailsOverlayOpen: value.detailsStartScopeId !== props.scopeId && value.state.scopes[props.scopeId]?.details.isOpen === true
+            && value.state.scopes[props.scopeId]?.details.overlay != null
+            && !value.state.scopes[props.scopeId]?.details.overlay?.presentation,
         detailsOpenedFrom: value.state.scopes[props.scopeId]?.details.openedFrom ?? null,
         mainHidden: value.state.scopes[props.scopeId]?.mainHidden === true,
         overlayFocusReturnOwner: value.overlayFocusReturnOwner,
@@ -374,7 +292,8 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
     const arrangement = props.arrangement === 'honour' && deviceType !== 'phone' ? preference.arrangement : 'session';
     const destinationDetails = props.destinationDetails;
     const destinationOwnsDetails = destinationDetails !== undefined;
-    const effectiveDetailsOpen = props.selectedPaneTabKey === undefined && (arrangement === 'editor' || (destinationOwnsDetails
+    const presentDetailsOverlay = detailsPaneEnabled && detailsOverlayOpen;
+    const effectiveDetailsOpen = props.selectedPaneTabKey === undefined && (arrangement === 'editor' || presentDetailsOverlay || (destinationOwnsDetails
         ? destinationDetails !== null
         : detailsPaneEnabled ? detailsOpen : false));
     const mainHiddenPreference = mainHidden;
@@ -457,7 +376,6 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         return pane.openDetailsOverlay?.(request) === true;
     }, [detailsPaneBuiltinAdapter, detailsPaneEnabled, pane.openDetailsOverlay]);
 
-
     // The shared Account lifetime is the only retirement source for the
     // AppPane-private handoff. It carries no pane state and is never persisted.
     const accountLifetime = paneSurfaceScope
@@ -533,6 +451,8 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         if (paneSurfaceScope?.targetKind === 'project') {
             return {
                 projectId: paneSurfaceScope.projectId,
+                projectContext: paneSurfaceScope.projectContext,
+                policyContext: paneSurfaceScope.policyContext,
                 machineId: paneSurfaceScope.machineId,
                 serverId: paneSurfaceScope.serverId,
                 platform: paneSurfaceScope.platform,
@@ -572,12 +492,19 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
         openTabWindow: openDetailsTabWindow,
         openOverlayWindow: openDetailsOverlayWindow,
     });
+    const destinationPlacements = React.useMemo(() => {
+        const placements = paneProjection ? selectPluginDestinationSurfacePlacements(paneProjection) : [];
+        return props.pageDestinationPlacements === undefined ? placements
+            : [...placements.filter(placement => placement.binding.container !== 'appPage'), ...props.pageDestinationPlacements];
+    }, [paneProjection, props.pageDestinationPlacements]);
     const targetNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
-        placements: paneProjection ? selectPluginDestinationSurfacePlacements(paneProjection) : [],
+        projection: paneProjection,
+        placements: destinationPlacements,
         targetKind: paneSurfaceScope?.targetKind ?? 'session',
         accountLifetime,
         scopedLaunchFacts,
         runtimeAdmission,
+        policyContext: props.destinationPolicyContext ?? (paneSurfaceScope?.targetKind === 'project' ? paneSurfaceScope.policyContext : undefined),
         enclosingOpenSurface: enclosingNavigationBinding?.openSurface,
     });
     const paneNavigationBinding = paneSurfaceScope ? targetNavigationBinding : null;
@@ -717,13 +644,28 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
                 ? <PaneLoadingFallback />
                     : rightSelection.kind === 'unavailable'
                     ? <PluginReactNativeUnavailable diagnostics={[rightSelection.reason]} />
+                    // Open with nothing chosen and no typed default: the scope's sidebar draws its own
+                    // chooser, so an open side is never an invisible column (a Hide beside it went blank).
                     : renderBuiltinPane({
                         adapter: rightPaneBuiltinAdapter,
                         selectedDestination: right?.selectedDestination,
                         scopeId: props.scopeId,
-                    });
+                    }) ?? (right?.selectedDestination == null && rightPaneBuiltinAdapter === null
+                        ? rightSidebarAdapter?.render({ scopeId: props.scopeId }) ?? null
+                        : null);
     const detailsPane = props.selectedPaneTabKey !== undefined ? null : destinationOwnsDetails
-        ? destinationDetails?.pane ?? null
+        ? destinationDetails === null && !presentDetailsOverlay ? null : (
+            <>
+                <RetainedPanelSurface isActive={!presentDetailsOverlay}>
+                    <ModalPaneBoundaryView suppressDescendantPaneBoundaries={presentDetailsOverlay} style={{ flex: 1 }}>
+                        {destinationDetails?.pane}
+                    </ModalPaneBoundaryView>
+                </RetainedPanelSurface>
+                <RetainedPanelSurface isActive={presentDetailsOverlay}>
+                    {renderBuiltinPane({ adapter: detailsPaneBuiltinAdapter, selectedDestination: null, scopeId: props.scopeId })}
+                </RetainedPanelSurface>
+            </>
+        )
         : effectiveDetailsOpen
             ? renderBuiltinPane({
                 adapter: detailsPaneBuiltinAdapter,
@@ -751,12 +693,16 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
 
     const closeDestinationDetails = destinationDetails?.onClose;
     const onCloseDetails = React.useCallback(() => {
+        if (destinationOwnsDetails && presentDetailsOverlay) {
+            pane.closeDetailsOverlay?.();
+            return;
+        }
         if (destinationOwnsDetails) {
             closeDestinationDetails?.();
             return;
         }
         dispatch({ type: 'closeDetails', scopeId: props.scopeId });
-    }, [closeDestinationDetails, destinationOwnsDetails, dispatch, props.scopeId]);
+    }, [closeDestinationDetails, destinationOwnsDetails, dispatch, pane.closeDetailsOverlay, presentDetailsOverlay, props.scopeId]);
 
     const onCloseBottom = React.useCallback(() => {
         dispatch({ type: 'closeBottom', scopeId: props.scopeId });
@@ -771,6 +717,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
                 <AppPaneScopeControls
                     scopeId={props.scopeId}
                     focused={screenFocused}
+                    surfaceScope={paneSurfaceScope}
                     descriptor={props.mainColumn}
                     rightOpen={presentedRightOpen}
                     detailsOpen={effectiveDetailsOpen}
@@ -786,7 +733,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
             </RightPanePlacementReporterContext.Provider>
             </RightSidebarActionsContext.Provider>
         </PluginSurfaceDestinationNavigationBindingProvider>
-    ), [effectiveDetailsOpen, enclosingNavigationBinding, paneNavigationBinding, props.arrangement, props.mainColumn, props.onMainColumnControlsChange, props.scopeId,
+    ), [effectiveDetailsOpen, enclosingNavigationBinding, paneNavigationBinding, paneSurfaceScope, props.arrangement, props.mainColumn, props.onMainColumnControlsChange, props.scopeId,
         presentedRightOpen, rightPaneBuiltinAdapter, rightSidebarAdapter, screenFocused, setMainHidden, setSideVisible, wrapScopeContent]);
 
     if (props.selectedPaneTabKey !== undefined) {
@@ -798,7 +745,6 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
                 : <PaneLoadingFallback />;
         return wrapContent(<>{selected}</>);
     }
-
 
     return (
         <PaneColumnsHost
@@ -845,6 +791,7 @@ const AppPaneScopeHostContent = React.memo((props: AppPaneScopeHostProps & Reado
  * remains the sole selection/layout owner.
  */
 export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
+    const resourceNavigationRef = React.useRef<PluginSurfaceDestinationNavigationBinding | undefined>(undefined);
     const directProps = React.useRef(props);
     directProps.current = props;
     const registeredDirectDriver = React.useRef<PaneDriver | null>(null);
@@ -860,6 +807,7 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     const directDriver = React.useMemo<PaneDriver | null>(() => hasDirectAdapter ? {
         scopeId: props.scopeId,
         get surfaceScope() { return directProps.current.surfaceScope; },
+        get resourceNavigation() { return resourceNavigationRef.current; },
         get rightPaneBuiltinAdapter() { return directProps.current.rightPaneBuiltinAdapter; },
         get rightSidebarAdapter() { return directProps.current.rightSidebarAdapter; },
         get detailsPaneBuiltinAdapter() { return directProps.current.detailsPaneBuiltinAdapter; },
@@ -890,9 +838,14 @@ export const AppPaneScopeHost = React.memo((props: AppPaneScopeHostProps) => {
     // collision; the host never picks one of two competing producers.
     const paneAdapter: ResolvedPaneAdapter | null = externalDriver && directDriver ? null : externalDriver ?? directDriver;
     const surfaceScope = paneAdapter?.surfaceScope;
+    const publishResourceNavigation = React.useCallback((binding: PluginSurfaceDestinationNavigationBinding | undefined) => {
+        resourceNavigationRef.current = binding;
+        props.onPluginSurfaceNavigationBindingChange?.(binding);
+    }, [props.onPluginSurfaceNavigationBindingChange]);
     return <PluginDetailsDestinationLaunchScope accountLifetime={surfaceScope !== undefined
         ? surfaceScope.accountLifetime ?? null
         : undefined}>
-        <AppPaneScopeHostContent {...props} paneAdapter={paneAdapter} />
+        <AppPaneScopeHostContent {...props} paneAdapter={paneAdapter}
+            onPluginSurfaceNavigationBindingChange={publishResourceNavigation} />
     </PluginDetailsDestinationLaunchScope>;
 });

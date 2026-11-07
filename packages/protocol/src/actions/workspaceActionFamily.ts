@@ -8,6 +8,8 @@ import { actionInputServerId } from './specs/definition.js';
 import { FindOptionsSchema } from './findActionSpecs.js';
 import { WorkspaceAnchorV1Schema } from '../workspace/anchors/v1.js';
 import { FileChangesScopeSchema } from '../scm/fileChangesScope.js';
+import { PluginUiResourceIntentV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 export type WorkspaceActionId = typeof WORKSPACE_ACTION_IDS[number];
 
 const id = z.string().check(z.trim(), z.minLength(1));
@@ -86,13 +88,18 @@ export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
   'workspace.tabs.list': z.strictObject({}),
   'workspace.tabs.open': z.strictObject({ href: z.optional(id), tabId: z.optional(id), groupId: z.optional(id),
     file: z.optional(WorkspaceFileOpenInputSchema),
+    resource: z.optional(asProtocolZod(PluginUiResourceIntentV1Schema)),
     present: z.optional(z.boolean()),
     find: z.optional(WorkspaceFindSeedSchema),
     beforeTabId: z.optional(z.nullable(id)), reuseExisting: z.optional(z.boolean()),
     replace: z.optional(z.boolean()),
     mode: z.optional(z.enum(['preview', 'newTab', 'splitLeft', 'splitRight', 'splitUp', 'splitDown'])),
-  }).check(z.refine(data => !(data.href !== undefined && data.file !== undefined), {
-    message: 'Address a destination with either href or file',
+  }).check(z.refine(data => [data.href, data.file, data.resource].filter(value => value !== undefined).length <= 1, {
+    message: 'Address a destination with href, file or resource',
+  }), z.refine(data => data.resource === undefined || (data.tabId === undefined && data.groupId === undefined
+    && data.present === undefined && data.find === undefined && data.beforeTabId === undefined
+    && data.reuseExisting === undefined && data.replace === undefined && data.mode === undefined), {
+    message: 'Resource placement belongs to its registered destination',
   }), z.refine(data => !data.mode?.startsWith('split') || ((data.href !== undefined || data.file !== undefined) && data.tabId === undefined), {
     message: 'A destination split requires href or file and cannot replace an existing tab',
   }), z.refine(data => !data.find || data.href !== undefined || data.file !== undefined, {
@@ -193,7 +200,8 @@ const inputFields = {
   'workspace.tabs.list': [],
   'workspace.tabs.open': [
     { path: 'href', title: 'Destination', widget: 'text' }, { ...tabIdHint, required: false },
-    { path: 'file', title: 'Workspace file', widget: 'json', description: 'Session or Project target, workspace-relative path, optional anchor, view, blame and Changes scope. Exclusive with href.' },
+    { path: 'file', title: 'Workspace file', widget: 'json', description: 'Session or Project target, workspace-relative path, optional anchor, view, blame and Changes scope. Exclusive with href and resource.' },
+    { path: 'resource', title: 'SCM resource', widget: 'json', description: 'Typed kind and HTTP(S) URL. Uses the same resource preference and registered destination as Open in the UI; exclusive with href, file and tab placement controls.' },
     { path: 'present', title: 'Present file', widget: 'boolean', description: 'False positions a preview in the foreground Session without navigating or presenting its pane.' },
     { path: 'find', title: 'Find target', widget: 'json', description: 'Query/options and an exact Session message, Session file or Project file target. Private launch input; not persisted in the URL or tab.' },
     { ...groupIdHint, required: false }, beforeTabHint,

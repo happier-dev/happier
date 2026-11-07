@@ -10,7 +10,6 @@ import { SessionRightPanel, SessionActionRail } from './SessionRightPanel';
 import { SessionBottomPanel } from './bottom/SessionBottomPanel';
 import { SessionDetailsPanel } from './SessionDetailsPanelHost';
 import { createSessionPaneScopeId } from './sessionPaneScopeId';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useSessionCockpitChromeRegistration } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -19,8 +18,7 @@ import { resolveSessionTerminalDockLocation } from '@/components/sessions/termin
 import { useDeviceType } from '@/utils/platform/responsive';
 import { usePanePresentation } from '@/components/appShell/panes/panePresentation';
 import { useOptionalDetailsTabOpener } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { createSessionPaneDetailsTab } from './url/sessionPaneUrlState';
-import { fileChangesComparisonOfScope } from '@/components/workspaces/files/file/changes/fileChangesScope';
+import { createSessionFileDetailsTab } from './url/sessionPaneUrlState';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { selectPluginSurfacePlacementsByDestination } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { resolveRightSidebarPluginTabs } from '@/components/appShell/rightSidebar/rightSidebarPluginTabs';
@@ -60,7 +58,6 @@ export async function prefetchSessionPaneModules(): Promise<void> {
 export function useRegisterSessionPaneDriver(
     sessionId: string,
     explicitServerId?: string | null,
-    resolveBoardPrimaryHost?: SessionBoardPrimaryMountResolver,
     suppliedPluginRuntime?: SessionPluginRuntimeState,
     options?: Readonly<{
         /**
@@ -70,8 +67,11 @@ export function useRegisterSessionPaneDriver(
         registerDriver?: boolean;
         /** A selected pane recipient retains the source layout's exact scope identity. */
         scopeId?: string;
+        readResourceNavigation?: () => PaneDriver['resourceNavigation'];
     }>,
 ): string {
+    const optionsRef = React.useRef(options);
+    optionsRef.current = options;
     const instanceKey = useDestinationInstanceKey();
     const paneCtx = useOptionalAppPaneContext(value => ({ registerDriver: value.registerDriver }));
     const cockpitChrome = useSessionCockpitChromeRegistration();
@@ -105,12 +105,9 @@ export function useRegisterSessionPaneDriver(
     const openDetailsTab = useOptionalDetailsTabOpener(scopeId);
     const openResource = React.useCallback<NonNullable<PaneDriver['openResource']>>((resource, openOptions) => {
         if (resource.kind !== 'file' || !openDetailsTab) return false;
-        const { kind, changesScope, ...file } = resource;
-        const constructed = createSessionPaneDetailsTab({ kind, ...file,
-            ...(changesScope ? { changes: fileChangesComparisonOfScope(changesScope) } : {}),
-        });
-        if (!constructed) return false;
-        const { isPinned: _pinned, isPreview: _preview, ...tab } = constructed;
+        const { kind: _kind, ...file } = resource;
+        const tab = createSessionFileDetailsTab(file);
+        if (!tab) return false;
         openDetailsTab(tab, { intent: openOptions?.intent ?? 'preview', present: openOptions?.present });
         return true;
     }, [openDetailsTab]);
@@ -144,6 +141,7 @@ export function useRegisterSessionPaneDriver(
         const driver: PaneDriver = {
             scopeId,
             surfaceScope,
+            get resourceNavigation() { return optionsRef.current?.readResourceNavigation?.() ?? null; },
             openResource,
             onTerminalWorkspaceReveal: () => {
                 const matchingHome = serverId
@@ -160,7 +158,6 @@ export function useRegisterSessionPaneDriver(
                     sessionId,
                     scopeId,
                     paneSurfaceScope: surfaceScope,
-                    resolveBoardPrimaryHost,
                 }) : null,
             },
             rightSidebarAdapter: {
@@ -192,7 +189,6 @@ export function useRegisterSessionPaneDriver(
                     sessionId,
                     scopeId,
                     paneSurfaceScope: surfaceScope,
-                    resolveBoardPrimaryHost,
                 }) : null,
             },
             detailsPaneBuiltinAdapter: {
@@ -202,7 +198,6 @@ export function useRegisterSessionPaneDriver(
                     sessionId,
                     scopeId,
                     paneSurfaceScope: surfaceScope,
-                    resolveBoardPrimaryHost,
                 }),
             },
             detailsPaneEnabled,
@@ -231,7 +226,6 @@ export function useRegisterSessionPaneDriver(
         pluginRuntime.serverId,
         registerDriver,
         openResource,
-        resolveBoardPrimaryHost,
         scopeId,
         sessionId,
         serverId,
