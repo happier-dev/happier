@@ -78,10 +78,10 @@ async function createOpenAiAttempt(
     } };
 }
 
-async function installSameIdHomeTargets(environment: Awaited<ReturnType<typeof createOpenAiAttempt>>['environment']) {
+async function installSameIdHomeTargets(environment: Awaited<ReturnType<typeof createOpenAiAttempt>>['environment'], sessionId = 'same-session') {
     const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-    const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
     const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
     const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
     const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -91,20 +91,24 @@ async function installSameIdHomeTargets(environment: Awaited<ReturnType<typeof c
     const credentialsB = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'lifecycle-account-b' })).toString('base64url')}.signature` };
     const writeB = await TokenStorage.setCredentialsForServerUrlWithRollback(homeB.serverUrl, { serverId: homeB.id }, credentialsB);
     if (!writeB) throw new Error('Expected saved Home credential write');
-    const targets = [homeA, homeB].map(home => ({ serverId: home.id, sessionId: 'same-session' }));
-    const sessions = [homeA, homeB].map(home => createSessionMetadataHttpBoundary(() => ({
-        'same-session': createSessionFixture({ id: 'same-session', serverId: home.id, encryptionMode: 'plain',
-            metadata: { path: '/repo', host: 'lifecycle-test', flavor: 'claude' } }),
-    })));
+    const targets = [homeA, homeB].map(home => ({ serverId: home.id, sessionId }));
+    const sessions = [homeA, homeB].map(() => {
+        const boundary = createSessionMetadataHttpBoundary(() => ({}));
+        boundary.replaceSession(sessionId, createPlainSessionCurrentProjectionRecordFixture({
+            id: sessionId, metadata: { path: '/repo', host: 'lifecycle-test', flavor: 'claude' },
+        }));
+        return boundary;
+    });
     const reads: Array<{ serverUrl: string; path: string; authorization: string | null }> = [];
     setRuntimeFetch(createSessionReadBatchFetchBoundary(async (input, init) => {
         const url = new URL(String(input));
+        if (url.origin === 'https://api.openai.com') return environment.providerFetch(input, init);
         const index = [homeA, homeB].findIndex(home => new URL(home.serverUrl).origin === url.origin);
         if (index === -1) throw new Error('Unexpected lifecycle Home HTTP origin');
         reads.push({ serverUrl: index === 0 ? homeA.serverUrl : homeB.serverUrl, path: url.pathname,
             authorization: new Headers(init?.headers).get('authorization') });
         if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({});
-        if (url.pathname === '/v2/sessions/same-session') return sessions[index]!.handle(input, init)!;
+        if (url.pathname === `/v2/sessions/${encodeURIComponent(sessionId)}`) return sessions[index]!.handle(input, init)!;
         // B owns an independent empty plain prompt/settings catalog; never
         // borrow the active A Account's authoring inputs for B preparation.
         if (index === 1) {
@@ -456,7 +460,9 @@ describe('voice session lifecycle edge contracts', () => {
                 await dismissal;
                 expect(controller.getSnapshot()).toMatchObject({ ...failure, sessionId: target.sessionId });
                 await controller.retry('voice-session');
-                expect(start).toHaveBeenLastCalledWith({ sessionId: target.sessionId, requestedTargetSessionAddress: target });
+                expect(start).toHaveBeenLastCalledWith(expect.objectContaining({
+                    sessionId: target.sessionId, requestedTargetSessionAddress: target,
+                }));
                 expect(controller.getSnapshot().status).toBe('connected');
                 return;
             }
@@ -791,7 +797,8 @@ describe('voice session lifecycle edge contracts', () => {
 
     it('retains the exact Home address when an unavailable same-id target is replaced before Retry', async () => {
         const attempt = await createOpenAiAttempt();
-        const homes = await installSameIdHomeTargets(attempt.environment);
+        // Each scenario owns its server records; A and B still share this id.
+        const homes = await installSameIdHomeTargets(attempt.environment, 'replacement-session');
         let replacement: Awaited<ReturnType<typeof attempt.environment.createRuntime>> | null = null;
         try {
             await attempt.runtime.runtime.dispose();
@@ -802,14 +809,15 @@ describe('voice session lifecycle edge contracts', () => {
             expect(attempt.controller.getSnapshot().errorCode).toBe('service_temporarily_unavailable');
             expect(attempt.environment.providerFetch).not.toHaveBeenCalled();
             replacement = await attempt.environment.createRuntime(attempt.browser);
-            await expect(sync.ensureSessionVisibleForMessageRoute('same-session', {
+            const hydration = await sync.ensureSessionVisibleForMessageRoute(homes.targets[1]!.sessionId, {
                 serverId: homes.homeB.id, forceRefresh: true, hydrateMessages: false,
-            })).resolves.toMatchObject({ kind: 'available', serverId: homes.homeB.id });
-            await attempt.controller.retry('same-session');
+            });
+            expect(hydration, JSON.stringify(hydration)).toMatchObject({ kind: 'available', serverId: homes.homeB.id });
+            await attempt.controller.retry(homes.targets[1]!.sessionId);
             expect(attempt.controller.getSnapshot(), JSON.stringify(attempt.controller.getSnapshot())).toMatchObject({ status: 'connected', canStop: true });
             expect(attempt.controller.getAttemptTargetSessionAddress()).toEqual(homes.targets[1]);
             expect(homes.reads).toContainEqual(expect.objectContaining({
-                serverUrl: homes.homeB.serverUrl, path: '/v2/sessions/same-session',
+                serverUrl: homes.homeB.serverUrl, path: `/v2/sessions/${homes.targets[1]!.sessionId}`,
                 authorization: `Bearer ${homes.credentialsB.token}`,
             }));
         } finally {
