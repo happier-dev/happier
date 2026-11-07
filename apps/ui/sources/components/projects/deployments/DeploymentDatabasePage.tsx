@@ -7,7 +7,6 @@ import type {
   DeploymentReadControllerV1,
   DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
-import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
@@ -37,7 +36,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { DeploymentBackupControls } from './DeploymentBackupControls';
+import { DeploymentBackupControls, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
 import { engineNames } from './DeploymentDataCard';
 import {
   DeployOutcomeBanner,
@@ -76,11 +75,6 @@ type TemplateData = NonNullable<
   NonNullable<Detail['content']['template']>['data']
 >;
 type DataLink = Detail['targetLinks'][number];
-type Missed = Readonly<{
-  triggerId: string;
-  dueAt: number;
-  lastRunAt: number | null;
-}>;
 
 /** The database a page address names: the template's data service, or one linked data target. */
 type Database =
@@ -94,64 +88,6 @@ function resolveDatabase(detail: Detail, key: string): Database | null {
     (entry) => entry.targetLink.role === 'data' && entry.targetLink.id === key,
   );
   return link ? { kind: 'managed', key, link } : null;
-}
-
-/** Facts the page reads once per opening; the Action owners derive them, the page only shows them. */
-type BackupFacts =
-  | Readonly<{ status: 'loading' }>
-  | Readonly<{
-      status: 'ready';
-      history: DeploymentBackupHistoryResultV1 | null;
-      missed: readonly Missed[];
-    }>
-  | Readonly<{ status: 'unavailable' }>;
-
-const LOADING: BackupFacts = Object.freeze({ status: 'loading' });
-const NO_MISSED: readonly Missed[] = Object.freeze([]);
-
-/**
- * Backup history (`deployments.backups.history`) and missed schedules (`workflow.trigger.list` for this capture
- * target), read when the page is presented and again after its own Back up now. No timer, no poll.
- */
-function useDatabaseBackupFacts(
-  actions: ReturnType<typeof createDeploymentActions> | null,
-  input:
-    | Parameters<ReturnType<typeof createDeploymentActions>['backupHistory']>[0]
-    | null,
-  presented: boolean,
-) {
-  const [facts, setFacts] = React.useState<BackupFacts>(LOADING);
-  const [generation, setGeneration] = React.useState(0);
-  const key = input ? JSON.stringify(input) : null;
-  React.useEffect(() => {
-    if (!actions || !input || !presented) return;
-    let live = true;
-    const { expectedRevision: _expectedRevision, ...target } = input;
-    void Promise.allSettled([
-      actions.backupHistory(input),
-      actions.missedBackupSchedules(target),
-    ]).then(([history, missed]) => {
-      if (!live) return;
-      if (history.status === 'rejected' && missed.status === 'rejected') {
-        setFacts({ status: 'unavailable' });
-        return;
-      }
-      setFacts({
-        status: 'ready',
-        history: history.status === 'fulfilled' ? history.value : null,
-        missed: missed.status === 'fulfilled' ? missed.value : NO_MISSED,
-      });
-    });
-    return () => {
-      live = false;
-    };
-    // The serialized operands are the read's identity; the parsed object is rebuilt on every render.
-  }, [actions, key, presented, generation]);
-  const reload = React.useCallback(
-    () => setGeneration((value) => value + 1),
-    [],
-  );
-  return { facts: input ? facts : null, reload };
 }
 
 const HISTORY_ACTION = {
@@ -222,7 +158,7 @@ export function DeploymentDatabasePage(
       : null;
   const presented =
     props.demand.mounted && props.demand.visible && props.demand.focused;
-  const backup = useDatabaseBackupFacts(actions, factsInput, presented);
+  const backup = useDeploymentBackupFacts(actions, factsInput, presented);
   const backupNow = useDeploymentChangePress(props.review, backup.reload);
   const machineIds = React.useMemo(
     () => (target ? [target.machineId] : []),
@@ -287,11 +223,8 @@ export function DeploymentDatabasePage(
 
   const facts = backup.facts;
   const ready = facts?.status === 'ready' ? facts : null;
-  const missed = ready?.missed[0] ?? null;
-  const entries = ready?.history?.history.entries ?? [];
-  const latestBackup =
-    entries.find((entry) => entry.action === 'backup') ?? null;
-  const failed = latestBackup?.state === 'failed';
+  const { missed, entries, failed: failedBackup } = deploymentBackupAttention(facts);
+  const failed = failedBackup !== null;
   const status = missed
     ? {
         variant: 'warning' as const,

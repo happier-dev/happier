@@ -45,7 +45,10 @@ import {
   DeploymentBackupSetup,
   DeploymentBackupCredentialRows,
   DeploymentBackupScheduleRow,
+  deploymentBackupAttention,
+  useDeploymentBackupFacts,
 } from './DeploymentBackupControls';
+import { deploymentDataTargetOperands } from './deploymentRestore';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
@@ -523,6 +526,7 @@ function ChecksRows(props: SectionProps) {
  * not inferred from configuration or from a successful integrity check.
  */
 function BackupRows(props: SectionProps) {
+  const { theme } = useUnistyles();
   const backups = useDeploymentEnvironmentBackups(props.controller, props.detail.environment.id, props.demand);
   const backup = backups.result.items[0];
   const manager = props.detail.environment.capabilities.role === 'manager';
@@ -532,6 +536,12 @@ function BackupRows(props: SectionProps) {
   const actions = React.useMemo(() => manager && lifetime && props.review
     ? createDeploymentActions(lifetime, projectSourceId) : null, [manager, lifetime, props.review, projectSourceId]);
   const editing = manager ? props.editing ?? null : null;
+  const target = deploymentDataTargetOperands(props.detail);
+  const deploymentId = props.detail.runtimeTargetLink?.activeDeploymentId;
+  const configured = backup && !('notNeeded' in backup) ? backup : null;
+  const factsInput = target && deploymentId && configured ? { ...target, deploymentId, configRevision: configured.configRevision } : null;
+  const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);
+  const attention = deploymentBackupAttention(backupFacts.facts);
   const retentionChange = useDeploymentChangePress(editing?.review ?? null, editing?.onChanged ?? noop);
   const saveRetention = React.useMemo(() => editing && backup && !('notNeeded' in backup)
     ? (retention: DeploymentBackupConfigurationV1['retention']) => retentionChange.press(() =>
@@ -611,12 +621,21 @@ function BackupRows(props: SectionProps) {
           copy="setting"
         />
       ) : null}
+      {/* The owner-approved missed/failed notice: an overdue unstarted run first, then a latest backup that failed. */}
       <Item
         testID={`${props.testID}.status`}
-        title={t('projects.deployments.backupStatusTitle')}
-        subtitle={backups.statusRead.status === 'unavailable'
-          ? t('projects.deployments.backupStatusUnavailable')
+        title={t('projects.deployments.databaseLastBackup')}
+        detail={backupFacts.facts?.status === 'ready'
+          ? attention.lastGood ? formatAsOfTime(attention.lastGood.completedAt) : t('projects.deployments.databaseNoBackupYet')
           : undefined}
+        subtitle={attention.missed
+          ? `${t('projects.deployments.databaseStatusMissed')} · ${t('projects.deployments.databaseMissedBody', { time: formatAsOfTime(attention.missed.dueAt) })}`
+          : attention.failed
+            ? `${t('projects.deployments.databaseStatusFailed')} · ${formatAsOfTime(attention.failed.completedAt)}`
+            : backupFacts.facts === null ? t('projects.deployments.backupStatusUnavailable') : undefined}
+        subtitleLeading={attention.missed || attention.failed ? (
+          <StatusDot size={6} color={attention.missed ? theme.colors.state.warning.foreground : theme.colors.state.danger.foreground} />
+        ) : undefined}
         mode="info"
       />
       {props.lifetime && props.review && props.detail.environment.capabilities.role === 'manager' ? (

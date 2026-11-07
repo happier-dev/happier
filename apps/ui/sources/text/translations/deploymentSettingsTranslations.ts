@@ -72,8 +72,9 @@ type DeploymentSettingsTranslations = Readonly<{
   scheduleOn: string;
   scheduleTurnOn: string;
   setupNoDestination: string;
-  setupRoleBody: string;
   setupOpenStore: string;
+  setupRoleRequired: string;
+  setupRoleOptional: string;
   addCheck: string;
   addCheckUnavailable: string;
 }>;
@@ -155,8 +156,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'On · every night at 02:00',
     scheduleTurnOn: 'Turn on',
     setupNoDestination: 'Backups need somewhere to keep the copies. Add backup storage from the Store first.',
-    setupRoleBody: "Your storage uses this credential; turn off any it doesn't",
     setupOpenStore: 'Open Store',
+    setupRoleRequired: 'Needed · choose its Saved Secret after saving',
+    setupRoleOptional: 'Optional · only if your storage uses it',
     addCheck: 'Add check',
     addCheckUnavailable:
       "Checks can't be set up from here · open the Machine's Services page",
@@ -236,8 +238,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Включено · каждую ночь в 02:00',
     scheduleTurnOn: 'Включить',
     setupNoDestination: 'Копиям нужно место для хранения. Сначала добавьте хранилище в Магазине.',
-    setupRoleBody: 'Ваше хранилище использует этот ключ; выключите лишние',
     setupOpenStore: 'Открыть Магазин',
+    setupRoleRequired: 'Обязательно · выберите сохранённый секрет после сохранения',
+    setupRoleOptional: 'Необязательно · только если хранилище его использует',
     addCheck: 'Добавить проверку',
     addCheckUnavailable:
       'Проверки нельзя настроить отсюда · откройте страницу служб машины',
@@ -316,8 +319,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Włączone · co noc o 02:00',
     scheduleTurnOn: 'Włącz',
     setupNoDestination: 'Kopie potrzebują miejsca. Najpierw dodaj magazyn kopii ze Sklepu.',
-    setupRoleBody: 'Twój magazyn używa tego poświadczenia; wyłącz zbędne',
     setupOpenStore: 'Otwórz Sklep',
+    setupRoleRequired: 'Wymagane · wybierz zapisany sekret po zapisaniu',
+    setupRoleOptional: 'Opcjonalne · tylko jeśli magazyn go używa',
     addCheck: 'Dodaj sprawdzenie',
     addCheckUnavailable:
       'Sprawdzeń nie można tu skonfigurować · otwórz stronę usług maszyny',
@@ -399,8 +403,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Activadas · cada noche a las 02:00',
     scheduleTurnOn: 'Activar',
     setupNoDestination: 'Las copias necesitan un lugar donde guardarse. Añade primero un almacenamiento desde la Tienda.',
-    setupRoleBody: 'Tu almacenamiento usa esta credencial; desactiva las que no use',
     setupOpenStore: 'Abrir Tienda',
+    setupRoleRequired: 'Necesario · elige su secreto guardado después de guardar',
+    setupRoleOptional: 'Opcional · solo si tu almacenamiento lo usa',
     addCheck: 'Añadir comprobación',
     addCheckUnavailable:
       'Las comprobaciones no se configuran aquí · abre la página de servicios de la máquina',
@@ -484,8 +489,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Activées · chaque nuit à 02:00',
     scheduleTurnOn: 'Activer',
     setupNoDestination: 'Les sauvegardes ont besoin d’un endroit où être gardées. Ajoutez d’abord un stockage depuis la Boutique.',
-    setupRoleBody: 'Votre stockage utilise cet identifiant ; désactivez ceux qu’il n’utilise pas',
     setupOpenStore: 'Ouvrir la Boutique',
+    setupRoleRequired: 'Nécessaire · choisissez son secret enregistré après l’enregistrement',
+    setupRoleOptional: 'Facultatif · seulement si votre stockage l’utilise',
     addCheck: 'Ajouter une vérification',
     addCheckUnavailable:
       'Les vérifications ne se configurent pas ici · ouvrez la page Services de la machine',
@@ -568,8 +574,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Attivi · ogni notte alle 02:00',
     scheduleTurnOn: 'Attiva',
     setupNoDestination: 'I backup hanno bisogno di un posto dove stare. Aggiungi prima uno storage dallo Store.',
-    setupRoleBody: 'Il tuo storage usa questa credenziale; disattiva quelle che non usa',
     setupOpenStore: 'Apri lo Store',
+    setupRoleRequired: 'Necessario · scegli il segreto salvato dopo aver salvato',
+    setupRoleOptional: 'Facoltativo · solo se il tuo storage lo usa',
     addCheck: 'Aggiungi controllo',
     addCheckUnavailable:
       'I controlli non si configurano qui · apri la pagina Servizi della macchina',
@@ -653,8 +660,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Ativados · todas as noites às 02:00',
     scheduleTurnOn: 'Ativar',
     setupNoDestination: 'Os backups precisam de um sítio onde ficar. Adicione primeiro armazenamento na Loja.',
-    setupRoleBody: 'O seu armazenamento usa esta credencial; desative as que não usa',
     setupOpenStore: 'Abrir Loja',
+    setupRoleRequired: 'Necessário · escolha o segredo guardado depois de guardar',
+    setupRoleOptional: 'Opcional · só se o seu armazenamento o usar',
     addCheck: 'Adicionar verificação',
     addCheckUnavailable:
       'As verificações não se configuram aqui · abra a página Serviços da máquina',
@@ -737,8 +745,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'Activades · cada nit a les 02:00',
     scheduleTurnOn: 'Activa',
     setupNoDestination: 'Les còpies necessiten un lloc on guardar-se. Afegeix primer un emmagatzematge des de la Botiga.',
-    setupRoleBody: 'El teu emmagatzematge fa servir aquesta credencial; desactiva les que no faci servir',
     setupOpenStore: 'Obre la Botiga',
+    setupRoleRequired: 'Necessari · tria el secret desat després de desar',
+    setupRoleOptional: 'Opcional · només si el teu emmagatzematge el fa servir',
     addCheck: 'Afegeix una comprovació',
     addCheckUnavailable:
       'Les comprovacions no es configuren aquí · obre la pàgina Serveis de la màquina',
@@ -821,8 +830,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'An · jede Nacht um 02:00',
     scheduleTurnOn: 'Einschalten',
     setupNoDestination: 'Backups brauchen einen Ort für die Kopien. Fügen Sie zuerst Backup-Speicher aus dem Store hinzu.',
-    setupRoleBody: 'Ihr Speicher nutzt diese Zugangsdaten; schalten Sie nicht genutzte aus',
     setupOpenStore: 'Store öffnen',
+    setupRoleRequired: 'Nötig · nach dem Speichern ein gespeichertes Secret wählen',
+    setupRoleOptional: 'Optional · nur wenn Ihr Speicher es nutzt',
     addCheck: 'Prüfung hinzufügen',
     addCheckUnavailable:
       'Prüfungen lassen sich hier nicht einrichten · Dienste-Seite der Maschine öffnen',
@@ -899,8 +909,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: '开启 · 每晚 02:00',
     scheduleTurnOn: '开启',
     setupNoDestination: '备份需要一个存放副本的地方。请先从商店添加备份存储。',
-    setupRoleBody: '你的存储使用此凭据；关闭不用的凭据',
     setupOpenStore: '打开商店',
+    setupRoleRequired: '必需 · 保存后选择已保存的密钥',
+    setupRoleOptional: '可选 · 仅当你的存储需要时',
     addCheck: '添加检查',
     addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
   },
@@ -976,8 +987,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: '開啟 · 每晚 02:00',
     scheduleTurnOn: '開啟',
     setupNoDestination: '備份需要一個存放副本的地方。請先從商店新增備份儲存。',
-    setupRoleBody: '你的儲存使用此憑證；關閉不使用的憑證',
     setupOpenStore: '開啟商店',
+    setupRoleRequired: '必要 · 儲存後選擇已儲存的密鑰',
+    setupRoleOptional: '選用 · 僅當你的儲存需要時',
     addCheck: '新增檢查',
     addCheckUnavailable: '無法在此設定檢查 · 請開啟機器的服務頁面',
   },
@@ -1055,8 +1067,9 @@ export const deploymentSettingsTranslations = {
     scheduleOn: 'オン · 毎晩 02:00',
     scheduleTurnOn: 'オンにする',
     setupNoDestination: 'バックアップにはコピーの保存先が必要です。まずストアからバックアップストレージを追加してください。',
-    setupRoleBody: 'ストレージがこの認証情報を使います。使わないものはオフにしてください',
     setupOpenStore: 'ストアを開く',
+    setupRoleRequired: '必須 · 保存後に保存済みシークレットを選択',
+    setupRoleOptional: '任意 · ストレージが使う場合のみ',
     addCheck: 'チェックを追加',
     addCheckUnavailable:
       'ここではチェックを設定できません · マシンのサービスページを開いてください',

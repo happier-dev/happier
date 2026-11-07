@@ -331,7 +331,7 @@ describe('Environment → Domains', () => {
       expect(inspectPlatformTarget).toHaveBeenNthCalledWith(1,
         'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
         { credentialRef, accountId: 'cf-account', hostname: 'docs.happier.dev',
-          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } });
+          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } }, { signal: expect.any(AbortSignal) });
       expect(screen.findByTestId(`${id}.ingress.zoneId`)).not.toBeNull();
       await act(async () => screen.changeTextByTestId(`${id}.ingress.zoneId`, 'cf-zone'));
       expect(screen.findByTestId(`${id}.ingress.read`)).not.toBeNull();
@@ -339,7 +339,7 @@ describe('Environment → Domains', () => {
       expect(inspectPlatformTarget).toHaveBeenNthCalledWith(2,
         'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
         { credentialRef, accountId: 'cf-account', zoneId: 'cf-zone', hostname: 'docs.happier.dev',
-          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } });
+          connector: { imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' } }, { signal: expect.any(AbortSignal) });
       if (count === 2) {
         await screen.pressByTestIdAsync(`${id}.save`);
         expect(addDomain).not.toHaveBeenCalled();
@@ -404,7 +404,7 @@ describe('Environment → Domains', () => {
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
       expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith(
         'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
-        { credentialRef, hostname: 'docs.happier.dev' });
+        { credentialRef, hostname: 'docs.happier.dev' }, { signal: expect.any(AbortSignal) });
       expect(screen.findByTestId(`${id}.ingress.zoneId`)).toBeNull();
       if (count === 1) {
         await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
@@ -426,7 +426,7 @@ describe('Environment → Domains', () => {
       }
       await screen.pressByTestIdAsync(`${id}.ingress.read`);
       expect(inspectPlatformTarget).toHaveBeenLastCalledWith(
-        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read', expect.objectContaining({ zoneId: `zone-${count === 2 ? 1 : 0}` }));
+        'happier.deploy.cloudflare/actions/cloudflare-named/selections-read', expect.objectContaining({ zoneId: `zone-${count === 2 ? 1 : 0}` }), { signal: expect.any(AbortSignal) });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: expect.objectContaining({ ingress }) }));
     } finally { await screen.unmount(); controller.retire(); }
@@ -914,6 +914,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
         const result = actionId === 'deployments.backups.run' ? { kind: 'verified', operationId: 'backup-operation', manifests: [manifest] }
           : actionId === 'deployments.backups.test' ? { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect',
             nativeExitCode: 12, remedy: 'review_credentials' }
+          : actionId === 'deployments.backups.history' ? { kind: 'history', environmentId: detail.environment.id, configRevision: 1,
+            history: { entries: [{ operationId: 'nightly-failed', action: 'backup', state: 'failed', configRevision: 1,
+              startedAt: Date.parse('2026-11-06T02:00:00Z'), completedAt: Date.parse('2026-11-06T02:01:00Z'), snapshotIds: [],
+              code: 'backup_failed', step: 'backup' }] } }
           : actionId === 'deployments.backups.prune' ? { kind: 'pruned', environmentId: detail.environment.id, configRevision: 1,
             forgottenSnapshotIds: ['f'.repeat(64), 'e'.repeat(64)] }
           : actionId === 'deployments.backups.inventory' ? { kind: 'inventory', environmentId: detail.environment.id,
@@ -936,11 +940,13 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle(`${id}.run`)).not.toBeNull();
       expect(screen.getTextContent()).toContain('team-recovery');
       expect(screen.getTextContent()).toContain('staging/');
-      expect(effects).toEqual([]); // Opening Settings performs no native backup read or write.
+      // Opening Settings reads only the recorded history (the owner's facts); it runs and verifies nothing.
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain('Backup failed'));
+      expect(effects.map((effect) => effect.actionId)).toEqual(['deployments.backups.history']);
       await screen.pressByTestIdAsync(`${id}.verify`);
       expect(await settle(`${id}.snapshot.${'e'.repeat(64)}`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.snapshot.${'e'.repeat(64)}.manifestReadBack`)).toBeNull();
-      expect(effects[0]).toMatchObject({ actionId: 'deployments.backups.inventory' });
+      expect(effects[1]).toMatchObject({ actionId: 'deployments.backups.inventory' });
       await screen.pressByTestIdAsync(`${id}.verify`);
       await screen.pressByTestIdAsync(`${id}.run`);
       expect(await settle(`${id}.result`)).not.toBeNull();
@@ -1130,7 +1136,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     // The descriptor the backup-destinations family publishes; its identity and roles must reach the patch unchanged.
     const destination = { id: 'example.storage/bucket-store', pluginId: 'example.storage', pluginVersion: '1.0.0',
       definition: { id: 'bucket-store', title: 'Bucket store', resticTransport: 's3', locality: 'unknown',
-        credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' }],
+        credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' },
+          { role: 'sessionToken', optional: true }],
         configSchema: { type: 'object', additionalProperties: false, required: ['endpoint', 'bucket', 'prefix'],
           properties: { endpoint: { type: 'string', minLength: 1 }, bucket: { type: 'string', minLength: 1 },
             prefix: { type: 'string' }, region: { type: 'string', minLength: 1 } } },
@@ -1153,6 +1160,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
         field('region').props.onDraftChange('eu-central-1');
         field('service').props.onDraftChange('postgres');
       });
+      // The descriptor marks the session token optional: it is labeled so and left out of the required bindings.
+      expect(screen.findByTestId(`${id}.role.sessionToken`)).not.toBeNull();
+      expect(screen.getTextContent()).toContain('Optional');
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { backup: expect.objectContaining({
         destinationRef: { pluginId: 'example.storage', localId: 'bucket-store' },

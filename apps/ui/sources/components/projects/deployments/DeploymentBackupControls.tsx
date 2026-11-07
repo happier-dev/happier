@@ -16,9 +16,9 @@ import { deploymentDataTargetOperands } from './deploymentRestore';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
-import { Switch } from '@/components/ui/forms/Switch';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -116,6 +116,59 @@ export function DeploymentBackupControls(props: Readonly<{
 }
 
 type Retention = DeploymentBackupConfigurationV1['retention'];
+
+type MissedSchedule = Readonly<{ triggerId: string; dueAt: number; lastRunAt: number | null }>;
+/** Facts read once per presentation; the Action owners derive them (history receipts, scheduler cursor), we only show them. */
+export type DeploymentBackupFacts =
+  | Readonly<{ status: 'loading' }>
+  | Readonly<{ status: 'ready'; history: DeploymentBackupHistoryResultV1 | null; missed: readonly MissedSchedule[] }>
+  | Readonly<{ status: 'unavailable' }>;
+const LOADING_FACTS: DeploymentBackupFacts = Object.freeze({ status: 'loading' });
+const NO_MISSED: readonly MissedSchedule[] = Object.freeze([]);
+
+/**
+ * Backup history (`deployments.backups.history`) and missed schedules (`workflow.trigger.list` deploymentBackup) for one
+ * capture target, read when the surface is presented and again on `reload` (after its own Back up now). No timer, no poll.
+ * Shared by Settings › Backups and the Database page.
+ */
+export function useDeploymentBackupFacts(
+  actions: ReturnType<typeof createDeploymentActions> | null,
+  input: Parameters<ReturnType<typeof createDeploymentActions>['backupHistory']>[0] | null,
+  presented: boolean,
+) {
+  const [facts, setFacts] = React.useState<DeploymentBackupFacts>(LOADING_FACTS);
+  const [generation, setGeneration] = React.useState(0);
+  const key = input ? JSON.stringify(input) : null;
+  React.useEffect(() => {
+    if (!actions || !input || !presented) return;
+    let live = true;
+    const { expectedRevision: _expectedRevision, ...target } = input;
+    void Promise.allSettled([actions.backupHistory(input), actions.missedBackupSchedules(target)]).then(([history, missed]) => {
+      if (!live) return;
+      if (history.status === 'rejected' && missed.status === 'rejected') { setFacts({ status: 'unavailable' }); return; }
+      setFacts({ status: 'ready', history: history.status === 'fulfilled' ? history.value : null,
+        missed: missed.status === 'fulfilled' ? missed.value : NO_MISSED });
+    });
+    return () => { live = false; };
+    // The serialized operands are the read's identity; the parsed object is rebuilt on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actions, key, presented, generation]);
+  const reload = React.useCallback(() => setGeneration((value) => value + 1), []);
+  return { facts: input ? facts : null, reload };
+}
+
+/** What the facts say needs the person: an overdue unstarted run first, then a latest backup that failed. */
+export function deploymentBackupAttention(facts: DeploymentBackupFacts | null) {
+  const ready = facts?.status === 'ready' ? facts : null;
+  const missed = ready?.missed[0] ?? null;
+  const latestBackup = ready?.history?.history.entries.find((entry) => entry.action === 'backup') ?? null;
+  return {
+    missed,
+    failed: latestBackup?.state === 'failed' ? latestBackup : null,
+    lastGood: ready?.history?.lastSuccessfulBackup ?? null,
+    entries: ready?.history?.history.entries ?? [],
+  };
+}
 type ActionsFactory = ReturnType<typeof createDeploymentActions>;
 
 /** The exact capture target the finite backup Actions address, or null before anything runs on a Machine. */
@@ -361,7 +414,6 @@ export function DeploymentBackupSetup(props: Readonly<{
     .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
   const configFields = React.useMemo(() => destination ? destinationConfigFields(destination) : [], [destination]);
   const [fields, setFields] = React.useState<Record<string, string> | null>(null);
-  const [roles, setRoles] = React.useState<ReadonlySet<CredentialRole>>(new Set());
   const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
   const [saving, setSaving] = React.useState(false);
   const id = `${props.testID}.setup`;
@@ -374,7 +426,6 @@ export function DeploymentBackupSetup(props: Readonly<{
     if (!destination) return;
     setFields({ ...Object.fromEntries(configFields.map((field) => [field.key, ''])),
       service: props.detail.content.template?.data?.service ?? '' });
-    setRoles(new Set(destination.definition.credentialRoles.map(entry => entry.role)));
   };
   const save = async () => {
     if (!fields || !destination || !retention || !complete || saving) return;
@@ -387,7 +438,8 @@ export function DeploymentBackupSetup(props: Readonly<{
       // The host captures the destination's current occurrence when it prepares the setup.
       occurrenceId: destination.definition.id,
       config,
-      credentialBindings: destination.definition.credentialRoles.map(entry => entry.role).filter((role) => roles.has(role))
+      // Required roles must be bound before backups run; optional roles stay out until the storage needs them.
+      credentialBindings: destination.definition.credentialRoles.filter((entry) => entry.optional !== true).map((entry) => entry.role)
         .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
       sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
       ownership: { environmentId: props.detail.environment.id, prefix: value('prefix') },
@@ -451,19 +503,15 @@ export function DeploymentBackupSetup(props: Readonly<{
           onCommit={(text) => { setField(key)(text); return text; }}
         />
       )) : null}
-      {fields && destination ? destination.definition.credentialRoles.map(({ role }) => (
+      {fields && destination ? destination.definition.credentialRoles.map(({ role, optional }) => (
         <Item
           key={role}
           testID={`${id}.role.${role}`}
           title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
-          subtitle={t('projects.deployments.settingsSections.setupRoleBody')}
-          rightElement={
-            <Switch value={roles.has(role)} disabled={saving} onValueChange={(on) => setRoles((current) => {
-              const next = new Set(current);
-              if (on) next.add(role); else next.delete(role);
-              return next;
-            })} />
-          }
+          subtitle={optional
+            ? t('projects.deployments.settingsSections.setupRoleOptional')
+            : t('projects.deployments.settingsSections.setupRoleRequired')}
+          mode="info"
         />
       )) : null}
       {fields ? (['daily', 'weekly'] as const).map((field) => (
