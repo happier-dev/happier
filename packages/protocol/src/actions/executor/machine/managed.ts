@@ -7,7 +7,7 @@ import { normalizeId } from '../inputReading.js';
 import { ManagedBootstrapFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from '../../operations/v1.js';
 import { normalizeActionExecutorThrownError } from '../resultProjection.js';
 import { ManagedRefusalCodeV1Schema } from '../../../machines/managed/providerFactsV1.js';
-import { MachinePresetActionIdV1Schema, MachinePresetActionInputSchemasV1 } from '../../../machines/managed/machinePresetActionsV1.js';
+import { MachinePresetActionIdV1Schema, type MachinePresetActionInputSchemasV1 } from '../../../machines/managed/machinePresetActionsV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
@@ -25,13 +25,13 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
       if (managedMachineActionId !== null) {
         if (managedMachineActionId === 'machines.setup.plan') {
           if (!deps.machineSetupPlan) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const result = await deps.machineSetupPlan({ input: ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse(admittedInput),
+          const result = await deps.machineSetupPlan({ input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.plan']>,
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedMachineActionOutputSchemasV1['machines.setup.plan'].parse(result) };
         }
         if (managedMachineActionId === 'machines.setup.apply') {
           if (!deps.machineSetupApply) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-          const result = await deps.machineSetupApply({ input: ManagedMachineActionInputSchemasV1['machines.setup.apply'].parse(admittedInput),
+          const result = await deps.machineSetupApply({ input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.apply']>,
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return readActionFailureEnvelope(result) ?? { ok: true, result };
         }
@@ -41,7 +41,7 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
             input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.updates.apply']>,
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
-          return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedMachineActionOutputSchemasV1['machines.setup.updates.apply'].parse(result) };
+          return readActionFailureEnvelope(result) ?? { ok: true, result };
         }
         if (managedMachineActionId === 'machines.setup.remove') {
           if (!deps.machineSetupRemove) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -49,10 +49,10 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
             input: admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.setup.remove']>,
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
-          return readActionFailureEnvelope(result) ?? { ok: true, result: ManagedMachineActionOutputSchemasV1['machines.setup.remove'].parse(result) };
+          return readActionFailureEnvelope(result) ?? { ok: true, result };
         }
         if (managedMachineActionId === 'machines.managed.references.get') {
-          const input = ManagedMachineActionInputSchemasV1['machines.managed.references.get'].parse(admittedInput);
+          const input = admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.managed.references.get']>;
           const result = MachineReferenceCensusV1Schema.parse(deps.managedMachineReferences
             ? await deps.managedMachineReferences({ input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) })
             : { homeId: input.homeId, machineId: null, coverage: 'partial', references: [], unavailable: ['requester_authority'] });
@@ -62,11 +62,14 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         try {
-          const nativeInput = ManagedMachineActionInputSchemasV1[managedMachineActionId].parse(admittedInput);
+          // Acquire can stamp an Agent start after core schema admission.
+          const nativeInput = managedMachineActionId === 'machines.managed.acquire'
+            ? ManagedMachineActionInputSchemasV1[managedMachineActionId].parse(admittedInput)
+            : admittedInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)[typeof managedMachineActionId]>;
           let machineReferences: MachineReferenceCensusV1 | undefined;
           let nativeContext = ctx;
           if (managedMachineActionId === 'machines.managed.delete') {
-            const deleteInput = ManagedMachineActionInputSchemasV1['machines.managed.delete'].parse(nativeInput);
+            const deleteInput = nativeInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.managed.delete']>;
             const reviewedMachineReferences = ctx.reviewedMachineReferences?.homeId === deleteInput.homeId
               ? MachineReferenceCensusV1Schema.parse(ctx.reviewedMachineReferences)
               : undefined;
@@ -93,7 +96,7 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
             if (isDeferredApprovalResult(deferred)) return deferred;
             const deleteResult = ManagedDeleteOutputV1Schema.parse(projectedResult);
             if (deleteResult.kind === 'accepted') {
-              const deleteInput = ManagedMachineActionInputSchemasV1['machines.managed.delete'].parse(nativeInput);
+              const deleteInput = nativeInput as z.infer<(typeof ManagedMachineActionInputSchemasV1)['machines.managed.delete']>;
               try {
                 await retireOpenManagedDeleteApprovals(deleteInput, ctx);
               } catch (error) {
@@ -134,7 +137,7 @@ export async function dispatchMachineManaged(inv: Pick<CoreInvocation, 'actionId
         }
         const result = await deps.machinePresetAction({
           actionId: machinePresetActionId,
-          input: MachinePresetActionInputSchemasV1[machinePresetActionId].parse(admittedInput),
+          input: admittedInput as z.infer<(typeof MachinePresetActionInputSchemasV1)[typeof machinePresetActionId]>,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
