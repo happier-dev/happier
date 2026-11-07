@@ -1786,11 +1786,13 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         }
     }, [activeAccountScope, contentIdentity, isContentIdentityCurrent, openProject]);
 
-    const saveAsWorkflow = useSaveRunAsWorkflow({
-        run: summary, definition: visibleDefinition, acceptedContext: visibleAcceptedContext,
+    const openSavedRunDraft = useSaveRunAsWorkflow({
         accountLifetime, serverId: exactServerId,
         isCurrent: React.useCallback(() => isContentIdentityCurrent(contentIdentity), [contentIdentity, isContentIdentityCurrent]),
     });
+    const saveAsWorkflow = React.useCallback(() => openSavedRunDraft({
+        run: summary, definition: visibleDefinition, acceptedContext: visibleAcceptedContext,
+    }), [openSavedRunDraft, summary, visibleDefinition, visibleAcceptedContext]);
 
     /**
      * A mutating control only exists while the private evidence it acts on is
