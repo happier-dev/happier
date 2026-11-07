@@ -1,22 +1,27 @@
 import type * as React from 'react';
-import type { IconName } from '@/components/ui/icons/Icon';
+import { normalizePluginUiSubPathV1, PluginUiDestinationReferenceV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { HappierStorageCategoryIdV1Schema } from '@happier-dev/protocol/storage/storageV1';
 
 import { GuardBarAccessory } from '@/components/machines/guard/GuardBarAccessory';
 import { GuardTab } from '@/components/machines/guard/GuardTab';
 import { MachineProcessesTab, parseMachineProcessesParams } from '@/components/machines/processes/MachineProcessesTab';
 import { MachineStorageTab, StorageTabBarAccessory } from '@/components/machines/storage/MachineStorageTab';
+import { MachineSecurityTab } from '@/components/machines/security/MachineSecurityTab';
+import { MachineSetupTab, parseMachineSetupParams } from '@/components/machines/setup/MachineSetupTab';
 import type { TranslationKeyNoParams } from '@/text';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 import { MachineVitalsBarAccessory } from '@/components/machines/vitals/MachineVitalsRangeBar';
 
 import { MachineServicesTab } from '@/components/machines/services/MachineServicesTab';
 
 import { MachineOverview } from './MachineOverview';
-import type { MachinePageTabId, MachinePageTabParams, MachinePageTabBodyProps, MachinePageTabBarAccessoryProps } from './machinePageTabQuery';
+import { MachinePluginPageTab } from './MachinePluginPageTab';
+import { machinePageTabEntryKey, machinePageTabKey, type MachinePageTabId, type MachinePageTabParams, type MachinePageTabBodyProps, type MachinePageTabBarAccessoryProps } from './machinePageTabQuery';
+export { machinePageTabEntryKey } from './machinePageTabQuery';
 
 /**
- * The machine page's tabs (R2: Overview · Processes · Storage · Guard). One typed static table, edited
+ * The machine page's tabs (R2: Overview · Services · Processes · Storage · Guard; MACH-COMPOSE D1 adds Setup and Security). One typed static table, edited
  * by the plan that lands a tab body: no registry, no contribution family. A tab is listed only once its
  * body exists; with Overview alone the page draws no tab bar.
  */
@@ -35,6 +40,11 @@ export type MachinePageTabEntry = (Readonly<{ titleKey: TranslationKeyNoParams; 
     suspendWhenHidden?: boolean;
     /** Reads this tab's params from the route query; unknown values fall back to the tab's defaults. */
     parseParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams;
+    /**
+     * A page this tab pushes whose list is too long to mount whole draws its own virtualized scroller (the
+     * `MachinePageListHost` carries it the header and tabs), instead of scrolling inside the page's one `ItemList`.
+     */
+    ownsScroll?(params: MachinePageTabParams): boolean;
 }>;
 
 const OVERVIEW_PARAMS: MachinePageTabParams = Object.freeze({ id: 'overview' });
@@ -42,12 +52,18 @@ const STORAGE_PARAMS: MachinePageTabParams = Object.freeze({ id: 'storage' });
 
 const GUARD_PARAMS: MachinePageTabParams = Object.freeze({ id: 'guard' });
 const SERVICES_PARAMS: MachinePageTabParams = Object.freeze({ id: 'services' });
+const SECURITY_PARAMS: MachinePageTabParams = Object.freeze({ id: 'security' });
 
 /** Services' own params: one service's page or the deployment roles page when the route names it, else the list. */
 function parseServicesParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
     const service = raw.service?.trim();
     if (raw.page === 'roles') return { id: 'services', page: 'roles' };
     return raw.page === 'service' && service ? { id: 'services', page: 'service', service } : SERVICES_PARAMS;
+}
+
+/** Security's own params: the tab, or the Network or Sharing page it pushes; anything else reads as the tab. */
+function parseSecurityParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
+    return raw.page === 'network' || raw.page === 'sharing' ? { id: 'security', page: raw.page } : SECURITY_PARAMS;
 }
 
 function parseGuardParams(raw: Readonly<Record<string, string | undefined>>): MachinePageTabParams {
@@ -71,21 +87,57 @@ export function parseStorageParams(raw: Readonly<Record<string, string | undefin
 }
 
 export const MACHINE_PAGE_TABS: readonly MachinePageTabEntry[] = [
-    { id: 'overview', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, BarAccessory: MachineVitalsBarAccessory, parseParams: () => OVERVIEW_PARAMS },
-    { id: 'services', titleKey: 'machineServices.tab', Body: MachineServicesTab, suspendWhenHidden: true, parseParams: parseServicesParams },
-    { id: 'processes', titleKey: 'machineProcesses.tab', Body: MachineProcessesTab, suspendWhenHidden: true, parseParams: parseMachineProcessesParams },
-    { id: 'storage', titleKey: 'machineStorage.tab', Body: MachineStorageTab, suspendWhenHidden: true, BarAccessory: StorageTabBarAccessory, parseParams: parseStorageParams },
-    { id: 'guard', titleKey: 'machineGuard.tab', Body: GuardTab, suspendWhenHidden: true, BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
+    { id: 'overview', icon: 'desktop', titleKey: 'machineDetailPage.tabs.overview', Body: MachineOverview, BarAccessory: MachineVitalsBarAccessory, parseParams: () => OVERVIEW_PARAMS },
+    { id: 'services', icon: 'stack', titleKey: 'machineServices.tab', Body: MachineServicesTab, suspendWhenHidden: true, parseParams: parseServicesParams },
+    { id: 'processes', icon: 'cpu', titleKey: 'machineProcesses.tab', Body: MachineProcessesTab, suspendWhenHidden: true, parseParams: parseMachineProcessesParams },
+    { id: 'storage', icon: 'hard-drives', titleKey: 'machineStorage.tab', Body: MachineStorageTab, suspendWhenHidden: true, BarAccessory: StorageTabBarAccessory, parseParams: parseStorageParams,
+        ownsScroll: params => params.id === 'storage' && params.page === 'suggestions' },
+    { id: 'guard', icon: 'shield', titleKey: 'machineGuard.tab', Body: GuardTab, suspendWhenHidden: true, BarAccessory: GuardBarAccessory, parseParams: parseGuardParams },
+    { id: 'setup', icon: 'file-text', titleKey: 'machineDetailPage.tabs.setup', Body: MachineSetupTab, suspendWhenHidden: true, parseParams: parseMachineSetupParams },
+    { id: 'security', icon: 'shield-check', titleKey: 'machineDetailPage.subPages.security', Body: MachineSecurityTab, suspendWhenHidden: true, parseParams: parseSecurityParams },
 ];
+
+export type MachinePagePluginTabEntry = MachinePageTabEntry & Readonly<{ id: 'plugin'; key: string; pluginId: string; localId: string; label: string }>;
+
+/** A plugin page's params from the route: its exact qualified destination, and its canonical local location. */
+function parseMachinePagePluginParams(raw: Readonly<Record<string, string | undefined>>): Extract<MachinePageTabParams, { id: 'plugin' }> | null {
+    if ([raw.pluginId, raw.localId].some(value => !value || /[/\\\u0000-\u001f\u007f]/u.test(value) || value === '.' || value === '..')) return null;
+    const reference = PluginUiDestinationReferenceV1Schema.safeParse({ pluginId: raw.pluginId, localId: raw.localId });
+    const pluginPath = normalizePluginUiSubPathV1(raw.pluginPath ?? '');
+    if (!reference.success || pluginPath === null || reference.data.pluginId !== raw.pluginId || reference.data.localId !== raw.localId) return null;
+    return { id: 'plugin', pluginId: reference.data.pluginId, localId: reference.data.localId, ...(pluginPath ? { pluginPath } : {}) };
+}
+
+/** One admitted plugin Machine page as a tab after the core tabs (plan 30 §3.7); its body mounts the page itself. */
+export function machinePagePluginTabEntry(page: Readonly<{ pluginId: string; localId: string; label: string; icon?: IconName; disabledReason?: string | null }>): MachinePagePluginTabEntry {
+    const root = { id: 'plugin' as const, pluginId: page.pluginId, localId: page.localId };
+    return {
+        id: 'plugin', key: machinePageTabKey(root), pluginId: page.pluginId, localId: page.localId, label: page.label,
+        icon: page.icon ?? 'puzzle-piece', disabledReason: page.disabledReason,
+        Body: MachinePluginPageTab,
+        // A plugin page runs arbitrary plugin regions: it keeps its effects while another tab shows.
+        parseParams: raw => parseMachinePagePluginParams(raw) ?? root,
+    };
+}
 
 /**
  * The tab the route names (`tab` + that tab's own params). A missing or unknown tab is Overview, so an
- * older or mistyped link still opens the page (tolerant reader).
+ * older or mistyped link still opens the page (tolerant reader). A well-formed plugin page link opens that page
+ * even before the catalog lists it: its body says loading or unavailable rather than silently showing Overview.
  */
-export function resolveMachinePageTab(raw: Readonly<Record<string, string | undefined>>): Readonly<{
+export function resolveMachinePageTab(raw: Readonly<Record<string, string | undefined>>, tabs: readonly MachinePageTabEntry[] = MACHINE_PAGE_TABS): Readonly<{
     entry: MachinePageTabEntry;
     params: MachinePageTabParams;
 }> {
-    const entry = MACHINE_PAGE_TABS.find(candidate => candidate.id === raw.tab) ?? MACHINE_PAGE_TABS[0]!;
+    if (raw.tab === 'plugin') {
+        const params = parseMachinePagePluginParams(raw);
+        if (params) {
+            const key = machinePageTabKey(params);
+            const entry = tabs.find(candidate => machinePageTabEntryKey(candidate) === key)
+                ?? machinePagePluginTabEntry({ pluginId: params.pluginId, localId: params.localId, label: params.localId });
+            return { entry, params };
+        }
+    }
+    const entry = tabs.find(candidate => candidate.id !== 'plugin' && candidate.id === raw.tab) ?? tabs[0]!;
     return { entry, params: entry.parseParams(raw) };
 }

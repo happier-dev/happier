@@ -7,24 +7,16 @@ import { AgentSignInPaneHost } from '@/components/machines/agents/AgentSignInPan
 import { MachineAgentsSection } from '@/components/machines/agents/MachineAgentsSection';
 import { MachineDetailsSection } from '@/components/machines/details/MachineDetailsSection';
 import { MachineDoctorPageBody } from '@/components/machines/doctorSnapshot/MachineDoctorPageBody';
-import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
-import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
-import { useMachineNetworkLead } from '@/components/machines/security/network/useMachineNetworkLead';
-import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineTerminalPageBody } from '@/components/machines/terminal/MachineTerminalPageBody';
 import { MachineComputerUseSection } from '@/components/machines/computer/MachineComputerUseSection';
 import { MachineComputerScreen } from '@/components/computer/MachineComputerScreen';
 import { MachineAlertsPage } from '@/components/machines/vitals/MachineAlertsPage';
 import { MachineDirectConnectionSection } from '@/components/settings/connections/DirectConnectionSettings';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
-import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
-import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -35,7 +27,7 @@ import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagno
 import { MachineTabSubHead } from './MachineTabSubHead';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
 import { useMachinesDoor } from './machinesDoor';
-import { isMachineSubPageId, MACHINE_SUB_PAGE_TITLE_KEYS, type MachineSubPageId } from './machineSubPages';
+import { isMachineSubPageId, MACHINE_SUB_PAGE_TITLE_KEYS, machineSubPageMovedToTab, type MachineSubPageId } from './machineSubPages';
 import { useMachinePageTarget, useMachinePagePresenceTarget, type MachinePageTarget } from './useMachinePageTarget';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
@@ -79,20 +71,20 @@ export function MachineSubPageScreen() {
         headerBackTitle: backLabel,
     } as const), [language, hostedInCollection, backLabel]);
 
-    // Network leads with what its facts say (lab reachability: "shop-prod is open to the internet on 22, 80 and 443.").
-    const networkLead = useMachineNetworkLead({
-        serverId: target.serverId, machineId: target.machine?.id ?? '', machineName: target.machineSentenceName,
-        enabled: page === 'network' && Boolean(target.machine),
-        needsManage: target.machine?.isShared === true && target.machine.access?.role !== 'manage',
-    });
-
     const pageHref = target.machineId ? machinePageHref({ door, target: { machineId: target.machineId, serverId: target.serverId || undefined } }) : null;
     const goBack = React.useCallback(() => {
         if (!pageHref) return;
         const result = runGuardedNavigation(() => router.dismissTo(pageHref as never));
         if (result !== true) fireAndForget(result, { tag: 'MachineSubPage.back' });
     }, [pageHref, router]);
-    if (!isMachineSubPageId(page)) return pageHref ? <Redirect href={pageHref as never} /> : null;
+    if (!isMachineSubPageId(page)) {
+        // A page that moved into a tab (Security, Network, Sharing, Tools) opens its place there; anything else opens the machine.
+        const movedTo = machineSubPageMovedToTab(page);
+        const href = movedTo && target.machineId
+            ? machinePageHref({ door, target: { machineId: target.machineId, serverId: target.serverId || undefined }, tab: movedTo })
+            : pageHref;
+        return href ? <Redirect href={href as never} /> : null;
+    }
 
     const content = (
         <ItemList pageColumn="wide" refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />} keyboardShouldPersistTaps="handled">
@@ -102,15 +94,7 @@ export function MachineSubPageScreen() {
                 underNativeChrome={underChrome}
                 title={t(MACHINE_SUB_PAGE_TITLE_KEYS[page])}
                 back={!pageHref ? null : { label: backLabel, onPress: goBack, testID: `machine-sub-page-back-${page}` }}
-                // Sharing's page is its one section (lab m-share A): the head says what it does, the section repeats nothing.
-                // Someone the machine is shared with reads what they can do here, not what adding people does.
-                description={target.machine && page === 'sharing'
-                    ? t(target.machine.isShared ? 'machines.sharing.recipientDescription' : 'machines.sharing.description', { machine: target.machineSentenceName })
-                    : target.machine && page === 'computer' ? t('computerUse.providers.pageDescription', { machine: target.machineSentenceName })
-                    : target.machine && page === 'network' && !networkLead ? t('machineDetailPage.network.description', { machine: target.machineSentenceName })
-                    : target.machine && page === 'security' ? t('machineDetailPage.security.description', { machine: target.machineSentenceName })
-                    : null}
-                lead={page === 'network' ? networkLead : null}
+                description={target.machine && page === 'computer' ? t('computerUse.providers.pageDescription', { machine: target.machineSentenceName }) : null}
             />
             {target.machine ? (
                 <MachineSubPageBody page={page} target={target} machine={target.machine} refreshKey={refreshKey} />
@@ -144,20 +128,7 @@ function MachineSubPageBody(props: Readonly<{
     const { machine } = props;
     const target = useMachinePagePresenceTarget(props.target);
     const serverId = target.serverId;
-    const activeAccountScope = useActiveServerAccountScope();
     switch (props.page) {
-        case 'sharing':
-            return activeAccountScope && areServerProfileIdentifiersEquivalent(activeAccountScope.serverId, serverId) ? (
-                <>
-                    <MachineSharingSection machineId={machine.id} machineName={target.machineSentenceName} scope={activeAccountScope} online={target.online}
-                        shared={machine.isShared === true} />
-                    {/* Who else works here is read by the machine for its owner and managers only (D8). */}
-                    {!machine.isShared || machine.access?.role === 'manage' ? (
-                        <MachineWorkSummaryReader machineId={machine.id} machineName={target.machineSentenceName} scope={activeAccountScope}
-                            online={target.online} refreshKey={props.refreshKey} />
-                    ) : null}
-                </>
-            ) : null;
         case 'agents':
             // The page's header is already "Agents": the section does not repeat it.
             return <MachineAgentsSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} titled={false} />;
@@ -170,18 +141,6 @@ function MachineSubPageBody(props: Readonly<{
             </>;
         case 'connection':
             return <MachineDirectConnectionSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName} />;
-        case 'network':
-            return <MachineNetworkSection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
-                online={target.online} refreshKey={props.refreshKey}
-                needsManage={machine.isShared === true && machine.access?.role !== 'manage'}
-                ownerName={machine.isShared === true ? machine.access?.custodian.displayName?.trim() || null : null} />;
-        case 'security':
-            return <MachineSecuritySection serverId={serverId} machineId={machine.id} machineName={target.machineSentenceName}
-                installationId={machine.installationId ?? null} online={target.online} refreshKey={props.refreshKey}
-                metadataVersion={machine.metadataVersion} metadataReadable={machine.metadata != null}
-                canManage={machine.isShared !== true || machine.access?.role === 'manage'} shared={machine.isShared === true} />;
-        case 'installables':
-            return <MachineInstallablesSection machineId={machine.id} serverId={serverId} machineSentenceName={target.machineSentenceName} />;
         case 'doctor':
             return <MachineDoctorPageBody machine={machine} serverId={serverId} switchReady={target.switchReady} refreshKey={props.refreshKey} />;
         case 'details':

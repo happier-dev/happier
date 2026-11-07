@@ -2,5 +2,5 @@
 import { MachineLegacyRouteRedirect } from '@/components/machines/page/MachineLegacyRouteRedirect';
 
 export default function MachineInstallablesLegacyRoute() {
-    return <MachineLegacyRouteRedirect page="installables" />;
+    return <MachineLegacyRouteRedirect tab={{ id: 'setup', page: 'tools' }} />;
 }

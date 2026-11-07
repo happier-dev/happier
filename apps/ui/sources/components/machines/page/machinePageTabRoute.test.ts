@@ -90,6 +90,17 @@ describe('machine page tabs in the workspace router', () => {
         }
     });
 
+    it.each(['rail', 'settings'] as const)('keeps the Security tab and the Network and Sharing pages it pushes on the %s door’s machine route', (door) => {
+        const page = workspace(machinePageHref({ door, target }));
+        for (const tab of [{ id: 'security' }, { id: 'security', page: 'network' }, { id: 'security', page: 'sharing' }] as const) {
+            page.selectTab(tab);
+            expect(page.href()).toBe(machinePageHref({ door, target, tab }));
+            // A link to it opens the tab too, never an older pushed page of the same name.
+            const linked = workspace(machinePageHref({ door, target, tab }));
+            expect(linked.href()).toBe(machinePageHref({ door, target, tab }));
+        }
+    });
+
     it('keeps a phone-opened machine an entity leaf after a tab change', () => {
         const page = workspace(machinePageHref({ door: 'rail', target }));
         page.selectTab({ id: 'processes' });

@@ -558,7 +558,7 @@ export function useFilePageCodeIntelligence(
       machinePageHref({
         door: 'rail',
         target: { machineId, ...(serverId ? { serverId } : {}) },
-        page: 'installables',
+        tab: { id: 'setup', page: 'tools' },
       }) as never,
     );
   }, [machineId, router, serverId]);

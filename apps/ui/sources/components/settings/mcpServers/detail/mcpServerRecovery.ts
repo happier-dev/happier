@@ -58,6 +58,6 @@ export function createMcpServerRecovery(input: Readonly<{
       const key = Object.keys(headers).find(key => key.toLowerCase() === 'authorization') ?? 'Authorization';
       edit('header', key, headers[key] ?? { t: 'literal', v: '' }, true);
     },
-    howToFix: machineId => input.openRoute(machinePageHref({ door: 'rail', target: { machineId, serverId: input.scopeServerId }, page: 'installables' })),
+    howToFix: machineId => input.openRoute(machinePageHref({ door: 'rail', target: { machineId, serverId: input.scopeServerId }, tab: { id: 'setup', page: 'tools' } })),
   };
 }

@@ -392,7 +392,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         router.push({ pathname: '/(app)/settings/connected-services/[serviceId]', params: { serviceId: 'github' } });
     }, []);
     const openMachineInstallables = React.useCallback(() => {
-        router.push(machinePageHref({ door: 'rail', target: { machineId: scope.machineId, serverId: scope.serverId }, page: 'installables' }) as never);
+        router.push(machinePageHref({ door: 'rail', target: { machineId: scope.machineId, serverId: scope.serverId }, tab: { id: 'setup', page: 'tools' } }) as never);
     }, [scope.machineId, scope.serverId]);
 
     if (error && !snapshot) {

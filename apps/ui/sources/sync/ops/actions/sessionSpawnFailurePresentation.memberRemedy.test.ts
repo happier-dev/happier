@@ -28,7 +28,7 @@ describe('member setup refusal remedies', () => {
       expect(navigate).not.toHaveBeenCalled();
     } else {
       buttons.find((button: { onPress?: () => void }) => button.onPress)?.onPress();
-      expect(navigate).toHaveBeenCalledWith('/machines/member%2Fmachine/security?serverId=saved-home');
+      expect(navigate).toHaveBeenCalledWith('/machines/member%2Fmachine?serverId=saved-home&tab=security');
     }
   });
 });

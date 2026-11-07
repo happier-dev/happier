@@ -1,7 +1,7 @@
 import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/storageV1';
 
 /** Pure route types: core callers do not depend on the visual tab table and its component graph. */
-export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard';
+export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard' | 'setup' | 'security' | 'plugin';
 
 export function machinePageTabEntryKey(entry: Readonly<{ id: MachinePageTabId; key?: string }>): string {
     return entry.key ?? entry.id;
@@ -10,7 +10,10 @@ export function machinePageTabEntryKey(entry: Readonly<{ id: MachinePageTabId; k
 /** A tab and the params it owns (one arm per tab; each tab's plan adds its params with its row). */
 export type MachinePageTabParams =
     | Readonly<{ id: 'overview' }>
-    /** Plan 30 S30-6e: the services list, or one service's page with its logs (`page=service&service=<serviceId>`). */
+    /**
+     * Plan 30 S30-6e: the services list, one service's page with its logs (`page=service&service=<serviceId>`), or
+     * every Environment the Machine has a deployment role for (`page=roles`).
+     */
     | Readonly<{ id: 'services'; page?: 'service' | 'roles'; service?: string }>
     /**
      * Plan 30 §10: sorted by a column; on a phone an owner (`page=owner&owner=<row>`), one external app
@@ -27,7 +30,16 @@ export type MachinePageTabParams =
     | Readonly<{ id: 'storage'; view?: 'happier' | 'disk'; page?: 'category' | 'worktrees' | 'suggestions' | 'protected';
         categoryId?: HappierStorageCategoryIdV1; nodeId?: string; files?: 'large' | 'old'; prepare?: 'lowDisk'; volumeId?: string }>
     /** Plan 50 §5.4: the rules, or the full Activity page (`page=activity`). */
-    | Readonly<{ id: 'guard'; page?: 'activity' }>;
+    | Readonly<{ id: 'guard'; page?: 'activity' }>
+    /** MACH-COMPOSE D1: what the Machine is set up with, or the Tools page it pushes (`page=tools`). */
+    | Readonly<{ id: 'setup'; page?: 'tools' }>
+    /** MACH-COMPOSE D1: who can do what on the Machine, or a page it pushes: its Network (`page=network`) or Sharing (`page=sharing`). */
+    | Readonly<{ id: 'security'; page?: 'network' | 'sharing' }>
+    /**
+     * Plan 30 §3.7: one admitted plugin Machine page (`appPage × machine`), named by its qualified destination, at its
+     * plugin-local location (`pluginPath`, absent at the page root).
+     */
+    | Readonly<{ id: 'plugin'; pluginId: string; localId: string; pluginPath?: string }>;
 
 export type MachinePageTabBodyProps = Readonly<{
     serverId: string;
@@ -67,8 +79,10 @@ export function machinePageTabQuery(params: MachinePageTabParams): Readonly<Reco
 /** Every key across the tabs' param arms. The record must name each one exactly, so a tab's new param is cleared too. */
 type MachinePageTabParamKey = MachinePageTabParams extends infer Arm ? Arm extends unknown ? Exclude<keyof Arm, 'id'> : never : never;
 const MACHINE_PAGE_TAB_PARAM_KEYS = Object.keys({
-    service: true, sort: true, page: true, owner: true, process: true, app: true, scope: true, filter: true,
+    sort: true, page: true, owner: true, process: true, app: true, scope: true, filter: true,
     view: true, categoryId: true, nodeId: true, files: true, prepare: true, volumeId: true,
+    pluginId: true, localId: true, pluginPath: true,
+    service: true,
 } satisfies Record<MachinePageTabParamKey, true>);
 
 /**
@@ -93,10 +107,20 @@ export function machinePageTabRouteParams(next: MachinePageTabParams): Record<st
  * (Storage's Whole disk) is not pushed.
  */
 export function isMachinePageTabPushed(params: MachinePageTabParams): boolean {
+    if (params.id === 'plugin') return params.pluginPath !== undefined;
     return 'page' in params && params.page !== undefined;
 }
 
 export function isMachinePageTabRoot(params: MachinePageTabParams): boolean {
+    if (params.id === 'plugin') return params.pluginPath === undefined;
     if ('page' in params && params.page !== undefined) return false;
     return !(params.id === 'storage' && params.view === 'disk');
+}
+
+/**
+ * A tab's identity in the strip and among the retained bodies: a core tab's id, or one plugin page's qualified
+ * destination (two pages of one plugin, or one page id in two plugins, are different tabs).
+ */
+export function machinePageTabKey(params: MachinePageTabParams): string {
+    return params.id === 'plugin' ? `plugin:${JSON.stringify([params.pluginId, params.localId])}` : params.id;
 }

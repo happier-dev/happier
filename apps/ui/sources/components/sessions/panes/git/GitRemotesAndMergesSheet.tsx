@@ -42,7 +42,7 @@ function GitRemotesAndMergesSheetBody(props: Props) {
     const openMachineInstallables = React.useCallback(() => {
         if (!machineId) return;
         props.onClose();
-        router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: serverId || undefined }, page: 'installables' }) as never);
+        router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: serverId || undefined }, tab: { id: 'setup', page: 'tools' } }) as never);
     }, [machineId, props, router, serverId]);
     const openGitHub = React.useCallback(() => {
         props.onClose();

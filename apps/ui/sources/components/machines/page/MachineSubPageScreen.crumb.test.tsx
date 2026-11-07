@@ -23,7 +23,7 @@ vi.mock(
       params: {
         id: 'crumb-machine',
         serverId: 'srv_machine_crumb',
-        page: 'network',
+        page: 'doctor',
       },
     }).module,
 );
@@ -107,7 +107,7 @@ async function crumbFor(hydrating: boolean) {
   );
   onTestFinished(() => screen.unmount());
   return findTestInstanceByTypeWithProps(screen, MachineTabSubHead, {
-    testID: 'machine-sub-page-header-network',
+    testID: 'machine-sub-page-header-doctor',
   })?.props.back?.label;
 }
 

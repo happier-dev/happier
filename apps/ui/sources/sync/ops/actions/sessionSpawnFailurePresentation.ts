@@ -189,7 +189,7 @@ export function presentSessionSpawnNewAgentIsolationFailure(
     if (remedy.kind === 'ask_machine_manager') alert(t('common.error'), message);
     else alert(t('common.error'), message, [
         { text: t('machineDetailPage.subPages.security'), onPress: () => navigate(machinePageHref({
-            door: 'rail', target: remedy.target, page: 'security',
+            door: 'rail', target: remedy.target, tab: { id: 'security' },
         })) },
         { text: t('common.cancel'), style: 'cancel' },
     ]);

@@ -2140,7 +2140,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 runAgainAnchorRef={runAgainAnchorRef}
                 // A failure only a Machine setting can fix leads to that Machine's admin access (its Security page).
                 onOpenMachineAdminAccess={activeAccountScope === null ? undefined : () => router.push(machinePageHref({
-                    door: 'rail', target: { machineId: summary.machineId, serverId: activeAccountScope.serverId }, page: 'security',
+                    door: 'rail', target: { machineId: summary.machineId, serverId: activeAccountScope.serverId }, tab: { id: 'security' },
                 }) as never)}
                 // Offered where the definition takes the previous round as context (Debate, Panel, Fresh opinions).
                 onAnotherRound={canStartWorkflowAnotherRound({ run: summary, canEdit, cancelRequested,

@@ -22,20 +22,15 @@ import {
     describeMachineAgentsReady,
     describeMachineComputerUse,
     describeMachineDoctorSummary,
-    describeMachineSharingSummary,
     describeMachineTerminalHost,
 } from './machineThisMachineSummaries';
 import { MACHINE_THIS_MACHINE_PAGES, MACHINE_SUB_PAGE_TITLE_KEYS, type MachineThisMachinePageId } from './machineSubPages';
 
 const ROW_ICONS: Readonly<Record<MachineThisMachinePageId, IconName>> = {
-    sharing: 'users',
     agents: 'sparkle',
     terminal: 'terminal',
     computer: 'cursor',
     connection: 'arrows-left-right',
-    network: 'tree-structure',
-    security: 'shield',
-    installables: 'cube',
     doctor: 'first-aid-kit',
     details: 'info',
 };
@@ -74,16 +69,10 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
     // Plan 10 MPG-10: a summary is a fact already held (cached or in settings), never a description. A row with no
     // fact yet is its title alone, and the line appears when the cache has state; nothing here fetches.
     const summaries: Readonly<Record<MachineThisMachinePageId, string | undefined>> = {
-        sharing: describeMachineSharingSummary(props.machine),
         agents: agentsReady ?? undefined,
         terminal: describeMachineTerminalHost(terminalHost),
         computer: describeMachineComputerUse(readComputerUseSettingsForMachine({ computerUseByMachineId }, machineId)),
         connection,
-        // Network facts are read only while its page is open (Plan 21 R12); the row holds none.
-        network: undefined,
-        // Updates are read only while Security is open (Plan 10: no detail subscription while closed).
-        security: undefined,
-        installables: undefined,
         doctor: describeMachineDoctorSummary(doctor),
         details: [host, platform].filter(Boolean).join(' · ') || undefined,
     };

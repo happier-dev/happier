@@ -15,7 +15,6 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { MachineReplacementPickerModal, type MachineReplacementPickerCandidate } from '@/components/machines/MachineReplacementPickerModal';
 import { useAccountEncryptionMode } from '@/components/settings/account/useAccountEncryptionMode';
 import type { ManagedMachineHeaderIdentity } from '@/components/settings/machines/managed/ManagedMachineSections';
-import { showMachineSetupApplySheet } from '@/components/settings/machines/managed/MachineSetupApplySheet';
 import { showMachineShareSheet } from '@/components/sharing/machines/MachineSharingSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -250,13 +249,13 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         const rename: PageHeaderMenuAction = {
             id: 'rename', testID: 'machine-detail-menu-rename', title: t('machine.renameTitle'), loading: renaming, onSelect: onRename,
         };
-        // D53: apply a preset's tools and setup script to this machine; the Action itself asks first.
-        const environmentApply: PageHeaderMenuAction[] = target.online && target.serverId ? [{
+        // MACH-COMPOSE MR2: "Set up…" opens the Machine's Setup tab, where a preset, recipes and Tools are reviewed in place.
+        const environmentApply: PageHeaderMenuAction[] = [{
             id: 'environment-apply',
             testID: 'machine-detail-menu-environment-apply',
-            title: t('machinePresets.setup.apply'),
-            onSelect: () => showMachineSetupApplySheet({ serverId: target.serverId, machineId: machine.id, machineName }),
-        }] : [];
+            title: t('machineDetailPage.tabs.setupMenu'),
+            onSelect: () => router.setParams(machinePageTabRouteParams({ id: 'setup' })),
+        }];
         // "Share…" opens the machine's one share sheet, full, with search and Done (lab m-share S); the
         // sheet's title names the machine, so the menu item doesn't repeat (and truncate) it.
         const share: PageHeaderMenuAction[] = activeAccountScope && target.serverId
@@ -273,7 +272,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         const terminal: PageHeaderMenuAction[] = terminalInMenu ? [{ id: 'open-terminal', testID: 'machine-detail-menu-open-terminal',
             title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
         return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
-    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, machineName, target.online, target.serverId]);
+    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, meta, onRename, renaming, replacement.menuActions, router, target.online, target.serverId]);
 
     const fallbackDescription = props.managedIdentity?.description ?? t('machineDetailPage.description');
     return (
@@ -287,7 +286,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             description={machine && (published || !target.online) ? (
                 <MachineWorkingCountsProvider>
                     <MachineSentence serverId={target.serverId} machineId={machine.id} attention={published?.attention ?? null}
-                        online={target.online} offlineLine={describeMachinePresenceLine(machine, undefined, undefined, machineAccountScope).label}
+                        online={target.online} offlineLine={describeMachinePresenceLine(machine, undefined, props.managedIdentity?.presence, machineAccountScope).label}
                         fallback={fallbackDescription} />
                 </MachineWorkingCountsProvider>
             ) : fallbackDescription}

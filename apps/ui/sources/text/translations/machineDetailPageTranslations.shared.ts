@@ -37,10 +37,14 @@ export const english = {
         detailsTitle: 'Machine details',
         tabs: {
             overview: "Overview",
+            setup: "Setup",
+            setupMenu: "Set up…",
         },
         thisMachineTitle: "This machine",
         connectionFollowsAccount: "Follows your account",
         security: {
+            accessTitle: "Who can reach it",
+            accessDescription: ({ machine }: { machine: string }) => `How the internet and your other machines reach ${machine}, and who it's shared with.`,
             description: ({ machine }: { machine: string }) => `Who can do what on ${machine}, what's waiting to update, and whether it needs a restart.`,
             updatesTitle: `Updates`,
             updatesDescription: `Install now if you'd rather not wait. A restart is always its own step.`,

@@ -167,7 +167,7 @@ export function useMcpServerDetail(
       reconnect: () => void startSignIn(),
       grantAccess: () => void startSignIn({ stepUp: true }),
       addKey: recovery?.addKey,
-      howToFix: recovery?.howToFix ?? ((machineId: string) => router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: scope?.serverId }, page: 'installables' }) as never)),
+      howToFix: recovery?.howToFix ?? ((machineId: string) => router.push(machinePageHref({ door: 'rail', target: { machineId, serverId: scope?.serverId }, tab: { id: 'setup', page: 'tools' } }) as never)),
       tryAgain: (machineId: string) => runTest([machineId]),
     }),
     [recovery, router, runTest, scope?.serverId, startSignIn],
