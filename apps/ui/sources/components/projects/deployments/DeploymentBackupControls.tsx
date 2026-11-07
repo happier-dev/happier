@@ -18,6 +18,9 @@ import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEn
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
+import { Switch } from '@/components/ui/forms/Switch';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import type { PluginUiBackupDestinationProjection } from '@/sync/domains/plugins/ui/projection';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -313,54 +316,74 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
   );
 }
 
-/**
- * The S3 destination the backup-destinations plugin contributes (`packages/plugins/backup-destinations/src/manifest.ts`:
- * id `happier.backup.destinations`, destination `s3`, roles repositoryPassword/accessKeyId/secretAccessKey, sessionToken
- * optional). The host resolves the installed descriptor and refuses a mismatch with `destination_changed`.
- */
-const S3_DESTINATION = { pluginId: 'happier.backup.destinations', localId: 's3' } as const;
-const S3_REQUIRED_ROLES = ['accessKeyId', 'secretAccessKey', 'repositoryPassword'] as const;
 type CredentialRole = DeploymentBackupConfigurationV1['credentialBindings'][number]['role'];
 const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'credentialSecretAccessKey'
   | 'credentialRepositoryPassword' | 'credentialSessionToken'>> = {
   accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
   repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken',
 };
-const SETUP_FIELDS = ['endpoint', 'bucket', 'prefix', 'region', 'service'] as const;
-type SetupField = typeof SETUP_FIELDS[number];
-const SETUP_LABEL: Readonly<Record<SetupField, 'setupEndpoint' | 'setupBucket' | 'setupPrefix' | 'setupRegion' | 'setupService'>> = {
-  endpoint: 'setupEndpoint', bucket: 'setupBucket', prefix: 'setupPrefix', region: 'setupRegion', service: 'setupService',
+/** Friendlier names for common destination fields; any other field the descriptor declares shows its own key. */
+const CONFIG_LABEL: Readonly<Record<string, 'setupEndpoint' | 'setupBucket' | 'setupPrefix' | 'setupRegion'>> = {
+  endpoint: 'setupEndpoint', bucket: 'setupBucket', prefix: 'setupPrefix', region: 'setupRegion',
 };
+type DestinationEntry = PluginUiBackupDestinationProjection;
+type ConfigField = Readonly<{ key: string; required: boolean; minLength: number }>;
+
+/** The text fields a destination's own configuration schema declares, in its order. */
+function destinationConfigFields(entry: DestinationEntry): readonly ConfigField[] {
+  const schema = entry.definition.configSchema as Readonly<{ properties?: Record<string, unknown>; required?: unknown }>;
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  return Object.entries(schema.properties ?? {}).flatMap(([key, property]) => {
+    const declared = property as Readonly<{ type?: unknown; minLength?: unknown }> | null;
+    return declared?.type === 'string' ? [{ key, required: required.includes(key),
+      minLength: typeof declared.minLength === 'number' ? declared.minLength : 0 }] : [];
+  });
+}
 
 /**
- * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): the S3 destination, the database service to dump
- * and the keep counts, saved once as `environments.update` patch.backup (T2-DATA's configuration owner). Credentials
- * and the nightly schedule follow on the saved setup, through their own Actions.
+ * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): an S3-transport destination the backup-destinations
+ * family publishes (its identity, configuration fields and credential roles come from that descriptor), the database
+ * service to dump and the keep counts, saved once as `environments.update` patch.backup (T2-DATA's configuration owner).
+ * Credentials and the nightly schedule follow on the saved setup, through their own Actions.
  */
 export function DeploymentBackupSetup(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   onSave: (configuration: DeploymentBackupConfigurationV1) => Promise<boolean>;
   testID: string;
 }>) {
-  const [fields, setFields] = React.useState<Record<SetupField, string> | null>(null);
+  const destinations = useAppShellPluginUiProjection((value) => value.pluginUiProjection?.backupDestinationsById);
+  const destination = React.useMemo(() => Object.values(destinations ?? {})
+    .find((entry) => entry.definition.resticTransport === 's3') ?? null, [destinations]);
+  const configFields = React.useMemo(() => destination ? destinationConfigFields(destination) : [], [destination]);
+  const [fields, setFields] = React.useState<Record<string, string> | null>(null);
+  const [roles, setRoles] = React.useState<ReadonlySet<CredentialRole>>(new Set());
   const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
   const [saving, setSaving] = React.useState(false);
   const id = `${props.testID}.setup`;
   const retention = retentionFromDraft(keep);
-  const complete = fields !== null && retention !== null
-    && fields.endpoint.trim() !== '' && fields.bucket.trim() !== '' && fields.service.trim() !== '';
-  const start = () => setFields({ endpoint: '', bucket: '', prefix: '', region: '',
-    service: props.detail.content.template?.data?.service ?? '' });
+  const value = (key: string) => (fields?.[key] ?? '').trim();
+  const complete = fields !== null && destination !== null && retention !== null && value('service') !== ''
+    && configFields.every((field) => !field.required || value(field.key).length >= field.minLength)
+    && configFields.every((field) => value(field.key) === '' || value(field.key).length >= field.minLength);
+  const start = () => {
+    if (!destination) return;
+    setFields({ ...Object.fromEntries(configFields.map((field) => [field.key, ''])),
+      service: props.detail.content.template?.data?.service ?? '' });
+    setRoles(new Set(destination.definition.credentialRoles));
+  };
   const save = async () => {
-    if (!fields || !retention || !complete || saving) return;
-    const value = (field: SetupField) => fields[field].trim();
+    if (!fields || !destination || !retention || !complete || saving) return;
     const service = value('service');
+    const config = Object.fromEntries(configFields.flatMap((field) =>
+      value(field.key) !== '' || field.required ? [[field.key, value(field.key)]] : []));
     setSaving(true);
     const saved = await props.onSave({
-      configRevision: 1, destinationRef: S3_DESTINATION, occurrenceId: S3_DESTINATION.localId,
-      config: { endpoint: value('endpoint'), bucket: value('bucket'), prefix: value('prefix'),
-        ...(value('region') ? { region: value('region') } : {}) },
-      credentialBindings: S3_REQUIRED_ROLES.map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
+      configRevision: 1, destinationRef: { pluginId: destination.pluginId, localId: destination.definition.id },
+      // The host captures the destination's current occurrence when it prepares the setup.
+      occurrenceId: destination.definition.id,
+      config,
+      credentialBindings: destination.definition.credentialRoles.filter((role) => roles.has(role))
+        .map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
       sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
       ownership: { environmentId: props.detail.environment.id, prefix: value('prefix') },
       retention,
@@ -368,18 +391,18 @@ export function DeploymentBackupSetup(props: Readonly<{
     setSaving(false);
     if (saved) setFields(null);
   };
-  const setField = (field: SetupField) => (text: string) => setFields((current) => current ? { ...current, [field]: text } : current);
+  const setField = (key: string) => (text: string) => setFields((current) => current ? { ...current, [key]: text } : current);
   const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
   return (
     <>
       <Item
         testID={id}
         title={t('projects.deployments.settingsSections.setupTitle')}
-        subtitle={fields && !complete
-          ? t('projects.deployments.settingsSections.setupIncomplete')
-          : t('projects.deployments.settingsSections.setupBody')}
+        subtitle={!destination ? t('projects.deployments.settingsSections.setupNoDestination')
+          : fields && !complete ? t('projects.deployments.settingsSections.setupIncomplete')
+            : t('projects.deployments.settingsSections.setupBody')}
         mode="info"
-        rightElement={fields ? (
+        rightElement={!destination ? undefined : fields ? (
           <View style={styles.checks}>
             <SectionActionButton testID={`${id}.cancel`} title={t('projects.deployments.settingsSections.setupCancel')}
               disabled={saving} onPress={() => setFields(null)} />
@@ -391,20 +414,36 @@ export function DeploymentBackupSetup(props: Readonly<{
             icon="plus" onPress={start} />
         )}
       />
-      {fields ? SETUP_FIELDS.map((field) => (
+      {fields ? [...configFields.map((field) => field.key), 'service'].map((key) => (
         <FieldValueItem
-          key={field}
-          testID={`${id}.${field}`}
-          fieldTestID={`${id}.${field}.input`}
-          title={t(`projects.deployments.settingsSections.${SETUP_LABEL[field]}`)}
+          key={key}
+          testID={`${id}.${key}`}
+          fieldTestID={`${id}.${key}.input`}
+          title={key === 'service' ? t('projects.deployments.settingsSections.setupService')
+            : CONFIG_LABEL[key] ? t(`projects.deployments.settingsSections.${CONFIG_LABEL[key]}`) : key}
           accessoryLayout="stacked"
           autoCapitalize="none"
-          monospace={field !== 'service'}
-          value={fields[field]}
+          monospace={key !== 'service'}
+          value={fields[key] ?? ''}
           allowEmpty
           disabled={saving}
-          onDraftChange={setField(field)}
-          onCommit={(text) => { setField(field)(text); return text; }}
+          onDraftChange={setField(key)}
+          onCommit={(text) => { setField(key)(text); return text; }}
+        />
+      )) : null}
+      {fields && destination ? destination.definition.credentialRoles.map((role) => (
+        <Item
+          key={role}
+          testID={`${id}.role.${role}`}
+          title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+          subtitle={t('projects.deployments.settingsSections.setupRoleBody')}
+          rightElement={
+            <Switch value={roles.has(role)} disabled={saving} onValueChange={(on) => setRoles((current) => {
+              const next = new Set(current);
+              if (on) next.add(role); else next.delete(role);
+              return next;
+            })} />
+          }
         />
       )) : null}
       {fields ? (['daily', 'weekly'] as const).map((field) => (

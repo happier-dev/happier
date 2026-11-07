@@ -154,7 +154,12 @@ async function renderTab(
       ...transport,
     },
   });
-  const screen = await renderScreen(
+  // A test that needs contributed plugin families (backup destinations) supplies the projection it would read.
+  const { pluginUiProjection, ...detailProps } = extra as Record<string, unknown> & Readonly<{
+    pluginUiProjection?: Readonly<{ value: object; serverId: string; accountLifetime: unknown }>;
+  }>;
+  const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+  const page = (
     <PresentedDetailNavigationProvider>
       <DeploymentEnvironmentDetail
         controller={controller}
@@ -167,10 +172,19 @@ async function renderTab(
         review={noReview}
         onOpenReceipt={() => {}}
         destination={{ tab: tab as never, section: null }}
-        {...extra}
+        {...detailProps}
       />
-    </PresentedDetailNavigationProvider>,
+    </PresentedDetailNavigationProvider>
   );
+  const screen = await renderScreen(pluginUiProjection ? (
+    <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: pluginUiProjection.value as never,
+      pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null,
+      serverId: pluginUiProjection.serverId, platform: 'web', accountLifetime: pluginUiProjection.accountLifetime as never,
+      clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+      reloadConnectedAccountProjection: () => {} }}>
+      {page}
+    </AppShellPluginUiProjectionValueProvider>
+  ) : page);
   // Bounded, so a row that never renders fails its assertion instead of hanging the file.
   const settle = async (testID: string) => {
     await act(async () => {
@@ -1108,8 +1122,20 @@ describe('Environment → Settings: checks, backups, previews', () => {
     const detail = createDeploymentEnvironmentDetailV1();
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
     const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    // The descriptor the backup-destinations family publishes; its identity and roles must reach the patch unchanged.
+    const destination = { id: 'example.storage/bucket-store', pluginId: 'example.storage', pluginVersion: '1.0.0',
+      definition: { id: 'bucket-store', title: 'Bucket store', resticTransport: 's3', locality: 'unknown',
+        credentialRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'],
+        configSchema: { type: 'object', additionalProperties: false, required: ['endpoint', 'bucket', 'prefix'],
+          properties: { endpoint: { type: 'string', minLength: 1 }, bucket: { type: 'string', minLength: 1 },
+            prefix: { type: 'string' }, region: { type: 'string', minLength: 1 } } },
+        actions: { test: { kind: 'hostAction', actionId: 'deployments.backups.test' },
+          open: { pluginId: 'example.storage', localId: 'bucket-store/open' } } } };
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      environmentActions: { setController: vi.fn(), updateEnvironment } });
+      environmentActions: { setController: vi.fn(), updateEnvironment },
+      pluginUiProjection: { value: { ...EMPTY_PLUGIN_UI_PROJECTION, backupDestinationsById: { [destination.id]: destination } },
+        serverId, accountLifetime: account.accountLifetime } });
     const id = 'project-deployments.environment.settings.backups.setup';
     try {
       expect(await settle(id)).not.toBeNull();
@@ -1125,12 +1151,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
       });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { backup: expect.objectContaining({
-        destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
+        destinationRef: { pluginId: 'example.storage', localId: 'bucket-store' },
         config: { endpoint: 'https://s3.eu-central-1.amazonaws.com', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1' },
-        credentialBindings: expect.arrayContaining([
+        credentialBindings: [
+          { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' },
           { purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
-          { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' },
-          { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }]),
+          { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' }],
         sources: [{ kind: 'dump', sourceId: 'postgres', service: 'postgres', consistency: 'logical' }],
         ownership: { environmentId: detail.environment.id, prefix: 'shop/' },
         retention: { kind: 'keep', daily: 7, weekly: 4 } }) });
