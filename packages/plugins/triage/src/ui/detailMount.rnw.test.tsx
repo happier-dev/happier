@@ -86,6 +86,7 @@ import { TRIAGE_DETAIL_TASK_EDITOR_TEST_ID_V1 } from './detail/region.js';
 import { readTriageListWindowSnapshot, refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
+import { TRIAGE_TASK_PROPERTIES_TEST_ID_V1 } from './detail/taskFields.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS } from '../refresh/refreshEligibility.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
@@ -163,7 +164,7 @@ const DESCRIPTOR = Object.freeze({
     }],
 });
 const TASK_DESCRIPTOR = { ...DESCRIPTOR, kinds: DESCRIPTOR.kinds.map(kind => ({ ...kind, task: true,
-    taskCapabilities: { editFields: ['title', 'body'] } })) };
+    taskCapabilities: { editFields: ['title', 'body', 'dueDate'] } })) };
 
 /** The contributor's real public manifest, as the host reads it at admission. */
 const CONTRIBUTOR_MANIFEST = definePlugin({
@@ -894,7 +895,7 @@ async function mountShell(
                     if (options.taskEdit && typeof action !== 'string' && action.localId === 'get') {
                         return { kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
                             locator: testkitLocator(), snapshot: testkitSnapshot({ projectionTruncated: true }), viewer: testkitViewer(),
-                            taskFields: { title: 'Replace the duplicated normalizer', body: 'Complete source notes\n\nPreserve Markdown.  \n' } };
+                            taskFields: { title: 'Replace the duplicated normalizer', body: 'Complete source notes\n\nPreserve Markdown.  \n', dueDate: '2026-11-20' } };
                     }
                     if (options.taskEdit && action === 'tasks/edit-v1') {
                         options.onTaskEdit?.(input);
@@ -1664,6 +1665,17 @@ describe('opening a row into the source detail', () => {
         expect(document.querySelector('[role="radio"][aria-label="List"][aria-checked="true"]')).not.toBeNull();
         await act(async () => { await shell.dispose(); });
         await expect(invoke()).resolves.toEqual({ status: 'unavailable' });
+    });
+
+    it('gives the Session tab the pushed page: the task properties step aside while it is open', async () => {
+        const shell = await mountShell({ linkedSessionCount: 1, activeSurface: true, taskEdit: true });
+        await openTheRow(shell);
+        const properties = () => document.querySelector(`[data-testid="${TRIAGE_TASK_PROPERTIES_TEST_ID_V1}"]`);
+        await vi.waitFor(() => expect(properties()).not.toBeNull());
+        await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Session' })); });
+        expect(properties()).toBeNull();
+        await act(async () => { await shell.press(await shell.getByRole('tab', { name: 'Overview' })); });
+        await vi.waitFor(() => expect(properties()).not.toBeNull());
     });
 
     it('rereads the relationship after unlink and stops presenting the removed Session', async () => {

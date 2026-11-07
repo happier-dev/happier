@@ -864,6 +864,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // Pushed (the detail is the page), the actions pin to the foot; why the entry is here is a fact, so it stays with
   // the title and facts above the story rather than riding in the thumb bar.
   const pinned = props.pushed === true && actionRegionAvailable;
+  // A pushed phone detail on its Session tab gives the chat the page: the entry's facts step aside (the host band's
+  // identity and the pinned actions stay), and return with any other tab.
+  const sessionFocus = props.pushed === true && tabSelection.value === 'session';
   const attention = header.attention === null || pinned ? undefined : (
     <TriageAttentionBadge attention={header.attention} />
   );
@@ -1050,8 +1053,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       />
 
       {pinned ? null : actionRegion}
-      {task.controls}
-      {actionRegionShown ? null : sourceActions}
+      {sessionFocus ? null : task.controls}
+      {sessionFocus || actionRegionShown ? null : sourceActions}
       </Stack>
       </ScrollArea>
       {/* An open task editor takes the story's place (the header keeps at most part of the pane), and Cancel or
