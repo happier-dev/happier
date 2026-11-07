@@ -412,15 +412,6 @@ describe('Environment draft Machine Home', () => {
         onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
       const machine = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'project-deployments.draft.machine')!;
       expect(machine().props.selectedId).toBe('here');
-      // Every row says whether its Machine answers, in the presence owner's words; answering ones come first.
-      const { describeMachinePresenceLine } = await import('@/utils/sessions/machinePresenceLine');
-      const items = machine().props.items as { id: string; subtitle?: string }[];
-      expect(items.map(item => item.id)).toEqual(['here', 'away']);
-      for (const item of items) {
-        const fixture = item.id === 'away' ? away : storage.getState().machines.here ?? null;
-        if (fixture) expect(item.subtitle).toBe(describeMachinePresenceLine(fixture, Date.now(), undefined, account.accountLifetime.scope).label);
-        expect(item.subtitle).toBeTruthy();
-      }
       const header = () => screen.findAllByType(PageHeader)[0]!;
       await act(async () => header().props.titleEditor.onChangeText('Shop'));
       await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);

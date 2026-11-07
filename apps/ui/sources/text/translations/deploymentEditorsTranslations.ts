@@ -41,6 +41,8 @@ type DeploymentEditorsTranslations = Readonly<{
   approveVariables: string;
   approveVariablesHint: string;
   reachCaddy: (params: { machine: string }) => string;
+  zonesFinding: string;
+  readStopped: string;
   addReference: string;
   addReferenceHint: string;
   addReferenceTitle: string;
@@ -110,6 +112,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Change variables',
     approveVariablesHint: 'Change its variables and secrets',
     reachCaddy: ({ machine }) => `Caddy on ${machine} · public`,
+    zonesFinding: 'Finding zones…',
+    readStopped: 'Stopped. Nothing was read.',
   },
   ru: {
     approvalsTitle: 'Подтверждения',
@@ -166,6 +170,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Изменить переменные',
     approveVariablesHint: 'Изменить переменные и секреты',
     reachCaddy: ({ machine }) => `Caddy на ${machine} · публично`,
+    zonesFinding: 'Ищем зоны…',
+    readStopped: 'Остановлено. Ничего не прочитано.',
   },
   pl: {
     approvalsTitle: 'Zatwierdzenia',
@@ -221,6 +227,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Zmień zmienne',
     approveVariablesHint: 'Zmień zmienne i sekrety',
     reachCaddy: ({ machine }) => `Caddy na ${machine} · publicznie`,
+    zonesFinding: 'Szukam stref…',
+    readStopped: 'Zatrzymano. Nic nie odczytano.',
   },
   es: {
     approvalsTitle: 'Aprobaciones',
@@ -277,6 +285,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Cambiar variables',
     approveVariablesHint: 'Cambiar sus variables y secretos',
     reachCaddy: ({ machine }) => `Caddy en ${machine} · público`,
+    zonesFinding: 'Buscando zonas…',
+    readStopped: 'Detenido. No se leyó nada.',
   },
   fr: {
     approvalsTitle: 'Approbations',
@@ -333,6 +343,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Modifier les variables',
     approveVariablesHint: 'Modifier ses variables et secrets',
     reachCaddy: ({ machine }) => `Caddy sur ${machine} · public`,
+    zonesFinding: 'Recherche des zones…',
+    readStopped: 'Arrêté. Rien n’a été lu.',
   },
   it: {
     approvalsTitle: 'Approvazioni',
@@ -389,6 +401,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Modifica variabili',
     approveVariablesHint: 'Modifica variabili e segreti',
     reachCaddy: ({ machine }) => `Caddy su ${machine} · pubblico`,
+    zonesFinding: 'Ricerca delle zone…',
+    readStopped: 'Interrotto. Non è stato letto nulla.',
   },
   pt: {
     approvalsTitle: 'Aprovações',
@@ -444,6 +458,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Mudar variáveis',
     approveVariablesHint: 'Mudar variáveis e segredos',
     reachCaddy: ({ machine }) => `Caddy em ${machine} · público`,
+    zonesFinding: 'A procurar zonas…',
+    readStopped: 'Parado. Nada foi lido.',
   },
   ca: {
     approvalsTitle: 'Aprovacions',
@@ -500,6 +516,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Canvia les variables',
     approveVariablesHint: 'Canvia les variables i els secrets',
     reachCaddy: ({ machine }) => `Caddy a ${machine} · públic`,
+    zonesFinding: 'Cercant zones…',
+    readStopped: 'Aturat. No s’ha llegit res.',
   },
   de: {
     approvalsTitle: 'Freigaben',
@@ -555,6 +573,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: 'Variablen ändern',
     approveVariablesHint: 'Variablen und Secrets ändern',
     reachCaddy: ({ machine }) => `Caddy auf ${machine} · öffentlich`,
+    zonesFinding: 'Zonen werden gesucht…',
+    readStopped: 'Gestoppt. Nichts wurde gelesen.',
   },
   'zh-Hans': {
     approvalsTitle: '审批',
@@ -610,6 +630,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: '更改变量',
     approveVariablesHint: '更改其变量和密钥',
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy · 公开`,
+    zonesFinding: '正在查找区域…',
+    readStopped: '已停止，未读取任何内容。',
   },
   'zh-Hant': {
     approvalsTitle: '審核',
@@ -665,6 +687,8 @@ export const deploymentEditorsTranslations = {
     approveVariables: '變更變數',
     approveVariablesHint: '變更其變數和密鑰',
     reachCaddy: ({ machine }) => `${machine} 上的 Caddy · 公開`,
+    zonesFinding: '正在尋找區域…',
+    readStopped: '已停止，未讀取任何內容。',
   },
   ja: {
     approvalsTitle: '承認',
@@ -720,5 +744,7 @@ export const deploymentEditorsTranslations = {
     approveVariables: '変数を変更',
     approveVariablesHint: '変数とシークレットを変更',
     reachCaddy: ({ machine }) => `${machine} の Caddy · 公開`,
+    zonesFinding: 'ゾーンを検索中…',
+    readStopped: '停止しました。何も読み取っていません。',
   },
 } satisfies Record<SupportedLanguage, DeploymentEditorsTranslations>;

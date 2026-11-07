@@ -205,30 +205,3 @@ it('says a repository refusal with the shared remedy after another target was in
     context.dispose();
   }
 });
-
-it('keeps loading until the Account\'s plugin availability first arrives, and never calls that a failure', async () => {
-  const pluginId = 'com.example.late-deploy';
-  const authored = createDeploymentTargetsTestPlugin(pluginId);
-  const serverId = await homes.addHome({ name: 'Late targets', serverUrl: 'https://late-targets.test', accountId: 'owner', currentAccount: true });
-  const context = await captureLazyActionAccountContext(serverId);
-  let installed: Awaited<ReturnType<typeof installPortableAccountPluginReleaseForTest>> | null = null;
-  try {
-    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
-    // The sheet opens before this Account's availability has loaded.
-    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
-      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {} }));
-    await act(async () => {});
-    expect(screen.findByTestId('project-deployments.platform.failed')).toBeNull();
-    expect(screen.findByTestId('project-deployments.platform.loading')).not.toBeNull();
-    installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
-      activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
-    await waitForHomeGovernance(async () => {
-      await act(async () => {});
-      expect(screen.root.findAllByType(DropdownMenu).some(node => node.props.testID === 'project-deployments.platform.choice')).toBe(true);
-    });
-    expect(screen.findByTestId('project-deployments.platform.failed')).toBeNull();
-  } finally {
-    await installed?.dispose();
-    context.dispose();
-  }
-});

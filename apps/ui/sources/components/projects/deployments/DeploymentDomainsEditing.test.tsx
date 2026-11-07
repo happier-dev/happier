@@ -451,3 +451,58 @@ describe('Environment → Domains: add form reads as a place, once (PAGE-ACCEPT-
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
+
+describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () => {
+  function pendingInspect() {
+    const signals: AbortSignal[] = [];
+    // The provider read never answers by itself; only its caller's cancellation settles it.
+    const inspectPlatformTarget = vi.fn((_action: string, _input: Record<string, unknown>, operation?: { signal?: AbortSignal }) => {
+      const signal = operation?.signal;
+      if (signal) signals.push(signal);
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      });
+    });
+    return { signals, inspectPlatformTarget };
+  }
+  async function openAndFind(detail: Detail, inspectPlatformTarget: unknown) {
+    const rendered = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
+    expect(await rendered.settle(id)).not.toBeNull();
+    await rendered.screen.pressByTestIdAsync(id);
+    const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+    await act(async () => {
+      rendered.screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+      rendered.screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
+        account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' } }, null);
+    });
+    await rendered.screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+    return rendered;
+  }
+  const tunnelDetail = () => {
+    const base = createDeploymentEnvironmentDetailV1();
+    return { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+  };
+
+  it('Cancel stops the read through its signal and offers Retry', async () => {
+    const { signals, inspectPlatformTarget } = pendingInspect();
+    const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
+    try {
+      expect(signals).toHaveLength(1);
+      expect(screen.findByTestId(`${id}.ingress.zones.cancel`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.cancel`);
+      expect(signals[0]!.aborted).toBe(true);
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull());
+      await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);
+      expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('closing the form cancels a read still in flight', async () => {
+    const { signals, inspectPlatformTarget } = pendingInspect();
+    const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
+    try {
+      await screen.pressByTestIdAsync(`${id}.cancel`);
+      expect(signals[0]!.aborted).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});

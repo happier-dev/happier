@@ -57,6 +57,10 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const [tunnelChoice, setTunnelChoice] = React.useState<string | null>(null);
   const [reading, setReading] = React.useState<'zones' | 'tunnels' | null>(null);
   const [advanced, setAdvanced] = React.useState(false);
+  // One provider read at a time, owned by this form: Cancel, closing the form, or changing the account or tunnel
+  // choice aborts it through the Action's own signal (O-DEPLOY F2). There is no timeout.
+  const flight = React.useRef<AbortController | null>(null);
+  const [stopped, setStopped] = React.useState<Readonly<{ kind: 'zones' | 'tunnels'; key: string }> | null>(null);
   const credentialKey = JSON.stringify(credentialRef);
   const defaults = zones?.credentialKey === credentialKey ? zones.defaults : undefined;
   const connectorOverride = imageRef.trim() || version.trim() ? {
@@ -75,13 +79,21 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const currentTunnels = tunnels?.key === tunnelKey ? tunnels : null;
   const selected = currentTunnels?.kind === 'ready' && tunnelChoice !== null
     ? currentTunnels.options[Number(tunnelChoice)]?.selection : undefined;
+  const stopRead = React.useCallback(() => { flight.current?.abort(); flight.current = null; }, []);
+  React.useEffect(() => stopRead, [stopRead, credentialKey, tunnelChoice, props.enabled]);
   const canRead = !!props.inspect && !!credentialRef && !!props.hostname
     && (!connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
   const inspect = async (kind: 'zones' | 'tunnels') => {
     if (!canRead || !props.inspect || kind === 'tunnels' && !zoneId) return;
+    stopRead();
+    const controller = new AbortController();
+    flight.current = controller;
+    setStopped(null);
     setReading(kind);
     try {
-      const result = await props.inspect(selectionAction, { ...input, ...(kind === 'tunnels' ? { zoneId } : {}) });
+      const result = await props.inspect(selectionAction, { ...input, ...(kind === 'tunnels' ? { zoneId } : {}) },
+        { signal: controller.signal });
+      if (controller.signal.aborted) return;
       const value: unknown = result.ok ? result.value : null;
       const supplied = isRecord(value) && isRecord(value.defaults) ? value.defaults : null;
       const resolvedDefaults: Defaults | undefined = supplied && isRecord(supplied.connector)
@@ -123,6 +135,8 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         setTunnelChoice(valid && options.length === 1 ? '0' : null);
       }
     } catch (error) {
+      // A read this form stopped settles as stopped (Retry is offered), never as a provider refusal.
+      if (controller.signal.aborted) return;
       const failure = readDeploymentActionError(error);
       const reason = failure.kind === 'refused' ? failure.code : 'unknown_error';
       const unavailable = { kind: 'unavailable' as const, reason,
@@ -134,8 +148,26 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         setTunnels({ key: tunnelKey, ...unavailable });
         setTunnelChoice(null);
       }
-    } finally { setReading(null); }
+    } finally {
+      if (flight.current === controller) flight.current = null;
+      setReading(current => (flight.current === null ? null : current));
+    }
   };
+  const cancelRead = (kind: 'zones' | 'tunnels') => {
+    stopRead();
+    setReading(null);
+    setStopped({ kind, key: kind === 'zones' ? zoneKey : tunnelKey });
+  };
+  /** The loading row with a visible Cancel, then a stopped row with Retry: the shared state-line pattern. */
+  const readState = (kind: 'zones' | 'tunnels') => reading === kind ? (
+    <SurfaceStateCard testID={`${id}.${kind}.loading`} size="line" kind="loading"
+      title={kind === 'zones' ? t('projects.deployments.editors.zonesFinding') : t('projects.deployments.domainIngressRead')}
+      action={{ label: t('common.cancel'), testID: `${id}.${kind}.cancel`, onPress: () => cancelRead(kind) }} />
+  ) : stopped?.kind === kind && stopped.key === (kind === 'zones' ? zoneKey : tunnelKey) ? (
+    <SurfaceStateCard testID={`${id}.${kind}.stopped`} size="line" kind="warning"
+      title={t('projects.deployments.editors.readStopped')}
+      action={{ label: t('common.retry'), testID: `${id}.${kind}.retry`, onPress: () => { void inspect(kind); } }} />
+  ) : null;
   return { selection: props.enabled ? selected : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
       <ConnectedAccountPurposeTargetChooser
@@ -166,6 +198,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       </ExpandableItem>
       <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
         icon="arrow-clockwise" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
+      {readState('zones')}
       {currentZones?.kind === 'ready' ? (
         <FieldItem label={t('projects.deployments.domainIngressZone')}>
           <ValueFieldSelect testID={`${id}.zone`} label={t('projects.deployments.domainIngressZone')}
@@ -185,6 +218,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         <SectionActionButton testID={`${id}.read`} title={t('projects.deployments.domainIngressRead')}
           icon="arrow-clockwise" onPress={() => { void inspect('tunnels'); }} disabled={!canRead} loading={reading === 'tunnels'} />
       ) : null}
+      {zoneId ? readState('tunnels') : null}
       {currentTunnels?.kind === 'ready' ? (
         <FieldItem label={t('projects.deployments.domainIngressTunnel')}>
           <ValueFieldSelect testID={`${id}.tunnel`} label={t('projects.deployments.domainIngressTunnel')}
