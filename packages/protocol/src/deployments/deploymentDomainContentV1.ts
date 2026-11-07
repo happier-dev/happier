@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
 import { DeploymentDomainHealthCheckV1Schema } from './deploymentDomainHealthCheckV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
@@ -6,7 +7,7 @@ import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
 const path = z.string().check(z.startsWith('/'));
 
 /** Private desired routing input; native custody remains on the Domain owner. */
-export const DeploymentDomainContentV1Schema = z.strictObject({
+export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObject({
     hostname: text,
     target: z.strictObject({ service: text,
         containerPort: z.number().check(z.int(), z.minimum(1), z.maximum(65535)),
@@ -25,5 +26,5 @@ export const DeploymentDomainContentV1Schema = z.strictObject({
         z.strictObject({ kind: z.literal('custom') }),
     ])),
     basicAuth: z.optional(z.strictObject({ username: text })),
-});
+}));
 export type DeploymentDomainContentV1 = z.infer<typeof DeploymentDomainContentV1Schema>;

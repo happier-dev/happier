@@ -49,9 +49,9 @@ export const ActionOperationActionInputSchemasV1 = {
   'projects.execution.output.copy': ProjectExecutionOutputReadInputV1Schema,
 } as const satisfies Record<ActionOperationActionIdV1, z.ZodMiniType>;
 export const ActionOperationActionOutputSchemasV1 = {
-  'action.operations.list': ActionOperationListV1ResponseSchema,
-  'action.operations.get': ActionOperationGetV1ResponseSchema,
-  'action.operations.cancel': ActionOperationCancelV1ResponseSchema,
+  'action.operations.list': lazyZodSchema(() => z.lazy(() => ActionOperationListV1ResponseSchema)),
+  'action.operations.get': lazyZodSchema(() => z.lazy(() => ActionOperationGetV1ResponseSchema)),
+  'action.operations.cancel': lazyZodSchema(() => z.lazy(() => ActionOperationCancelV1ResponseSchema)),
   'projects.execution.output.read': TerminalStreamReadOkResponseSchema,
   'projects.execution.output.open': ProjectExecutionOutputOpenResultV1Schema,
   'projects.execution.output.copy': ProjectExecutionOutputCopyResultV1Schema,
