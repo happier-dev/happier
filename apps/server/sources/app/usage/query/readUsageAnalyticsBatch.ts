@@ -13,7 +13,7 @@ import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsa
 import { toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
-import { loadUsageEventCandidatesForQueries } from './loadUsageEventCandidatesForQueries';
+import { loadUsageEventCandidatesForQuery } from './loadUsageEventCandidatesForQuery';
 
 const usageQuerySliceMs = 20;
 
@@ -68,10 +68,25 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
     let rows: UsageAnalyticsSnapshot['rows'];
     let evidenceRows: ScopedUsageEvidenceRow[] | undefined;
     let rawEvidenceRows: UsageAnalyticsSnapshot['rawEvidenceRows'];
+    let windowEvidenceById: ReadonlyMap<string, ScopedUsageEvidenceRow> | undefined;
     const preparedPopulations = new Map<string, UsageAnalyticsSnapshot>();
     if ('evidence' in events && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         rawEvidenceRows = events.evidence;
-        rows = await loadUsageEventCandidatesForQueries(tx, accountId, queries);
+        const windowRows: ScopedUsageEvidenceRow[] = [];
+        let sliceStartedAt = performance.now();
+        for (const row of events.evidence) {
+            const observedAtMs = row.observedAt.getTime();
+            if (queries.some(query => observedAtMs >= query.dateRange!.startMs!
+                && (query.dateRange?.endMs === undefined || observedAtMs < query.dateRange.endMs))) {
+                windowRows.push(toScopedUsageEvidenceRow(row));
+                if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {
+                    await setImmediate();
+                    sliceStartedAt = performance.now();
+                }
+            }
+        }
+        windowEvidenceById = new Map(windowRows.map(row => [row.id, row]));
+        rows = await loadUsageEventCandidatesForQuery(tx, accountId, queries, windowRows, legacyReports);
     } else if ('evidence' in events) {
         evidenceRows = [];
         let sliceStartedAt = performance.now();
@@ -123,7 +138,7 @@ export async function captureUsageAnalyticsBatchInTx(tx: Tx, accountId: string, 
         const messageCountsBySession = hasUsageMessageCountDemand(query)
             ? counts.get(JSON.stringify(query.dateRange ?? {})) : undefined;
         snapshots.set(getUsageAnalyticsQueryRequestKey(query), {
-            ...(prepared ?? { evidenceRows, rawEvidenceRows, legacyReports }),
+            ...(prepared ?? { evidenceRows, rawEvidenceRows, normalizedEvidenceById: windowEvidenceById, legacyReports }),
             rows: prepared?.rows ?? rows,
             preparedQueryKey: prepared ? getUsageAnalyticsQueryRequestKey(query) : undefined,
             priceCatalog, messageCountsBySession });
@@ -144,7 +159,7 @@ async function admitUsageBatchMetadata(snapshot: Awaited<ReturnType<typeof captu
         if (!admitted) {
             admitted = { evidenceRows: [], normalizedEvidenceById: new Map() };
             for (const row of captured.rawEvidenceRows) {
-                const evidence = toScopedUsageEvidenceRow(row);
+                const evidence = captured.normalizedEvidenceById?.get(row.id) ?? toScopedUsageEvidenceRow(row);
                 admitted.evidenceRows.push(evidence);
                 admitted.normalizedEvidenceById.set(evidence.id, evidence);
                 if (performance.now() - sliceStartedAt >= usageQuerySliceMs) {

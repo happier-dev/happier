@@ -18,7 +18,7 @@ import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 
 type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number;
-    metadataReads?: number };
+    metadataReads?: number; metadataReadIds?: Set<string> };
 
 /** Observe the real transaction's database results, leaving the query and projector intact. */
 function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
@@ -52,6 +52,8 @@ function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
                         const metadata = Reflect.get(row, 'metadata');
                         Object.defineProperty(row, 'metadata', { enumerable: true, get() {
                             count.metadataReads! += 1;
+                            const id = Reflect.get(row, 'id');
+                            if (typeof id === 'string') count.metadataReadIds?.add(id);
                             return metadata;
                         } });
                     }
@@ -155,27 +157,31 @@ describe('Usage analytics PostgreSQL event transport', () => {
 
     it('keeps opaque native competitors, fallback baselines and malformed historical metadata coherent', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const session = await db.session.create({ data: { accountId: account.id,
+            tag: 'candidate-attribution', encryptionMode: 'e2ee', metadata: 'ciphertext' } });
         const subject = { kind: 'native', machineId: ' machine ',
             agent: { pluginId: 'happier.agent.claude', localId: 'claude' },
             sourceRootKey: ' root ', nativeSessionKey: ' native ' };
-        const event = (id: string, at: number, metadata: Prisma.InputJsonValue, tokens: number, cumulative = false) => ({
+        const event = (id: string, at: number, metadata: Prisma.InputJsonValue, tokens: number,
+            cumulative = false, sessionId: string | null = null) => ({
             id, accountId: account.id, observedAt: new Date(at), createdAt: new Date(at),
-            agentId: 'claude', machineId: 'machine', source: 'native', metadata,
+            agentId: 'claude', machineId: 'machine', source: 'native', metadata, sessionId,
             scope: cumulative ? 'session_cumulative' : 'turn_delta', isCumulative: cumulative,
             inputTokens: tokens, totalTokens: tokens,
         });
         await db.usageEvent.createMany({ data: [
-            event('candidate-native-baseline', 100, JSON.stringify({ accountingSubject: subject }), 100, true),
-            event('candidate-native-current', 200, { accountingSubject: subject }, 110, true),
-            event('candidate-fallback-baseline', 100, { usageAccounting: { nativeSessionId: ' fallback ' } }, 40, true),
+            event('candidate-native-baseline', 100, JSON.stringify({ accountingSubject: subject }), 100, true, session.id),
+            event('candidate-native-current', 200, { accountingSubject: subject }, 110, true, session.id),
+            event('candidate-fallback-baseline', 100, { usageAccounting: { nativeSessionId: ' \uFEFFfallback\u2003 ' } }, 40, true),
             event('candidate-fallback-current', 200, JSON.stringify({ usageAccounting: { nativeSessionId: 'fallback' } }), 45, true),
             event('candidate-malformed', 100, '{invalid json', 999),
-            event('candidate-unrelated', 100, { accountingSubject: { ...subject, nativeSessionKey: 'native' } }, 999),
+            event('candidate-unrelated', 100, { accountingSubject: { ...subject, sourceRootKey: 'another root' } }, 999, false, session.id),
         ] });
         const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 175, endMs: 250 },
             includeSeries: true, includeActivity: true, breakdowns: ['source'] });
         const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request),
             { readOnly: true, isolationLevel: 'Serializable' });
+        expect(captured.rows, 'unrelated histories sharing a native producer stay in storage').toHaveLength(4);
         const control = { ...captured, rows: await inTx(tx => loadUsageEventsForQuery(tx, account.id, request)),
             rawEvidenceRows: undefined, evidenceRows: undefined, replayContext: undefined, normalizedEvidenceById: undefined };
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics(control, request));
@@ -191,10 +197,13 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const request = UsageAnalyticsQueryRequestSchema.parse({
             dateRange: { startMs: 26397_000, endMs: 33659_000 },
         });
-        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0, metadataReads: 0 };
+        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0,
+            metadataReads: 0, metadataReadIds: new Set() };
         const captured = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, count),
             account.id, request), { readOnly: true, isolationLevel: 'Serializable' });
-        expect(count.metadataReads, 'historical metadata admission and replay must wait until the snapshot commits').toBe(0);
+        const demandedIds = new Set(captured.rows.map(row => row.id));
+        expect([...count.metadataReadIds!].filter(id => !demandedIds.has(id)),
+            'snapshot admission never touches unrelated historical metadata').toEqual([]);
         // Option A ruling: complete demanded histories, rather than all historical bodies.
         expect(count.bodyRows).toBe(7_262);
         expect(captured.rows).toHaveLength(7_262);

@@ -3217,10 +3217,11 @@ The 0.3 development query owner captures raw `UsageEvent` and retained
 `UsageReport` facts in the canonical read snapshot shared by the direct service,
 v1, v2 and batch routes. Bounded PostgreSQL queries capture thin pre-end history
 and a conservative set of complete candidate histories in two event statements;
-unbounded queries capture full history in one. PostgreSQL metadata admission,
-normalization, subject selection and body projection run after the snapshot commits.
-Candidate selection uses Session and opaque native hints only to overselect storage
-rows; the accounting replay owner alone decides canonical subject membership.
+unbounded queries capture full history in one. Only in-window metadata is admitted
+inside a bounded PostgreSQL snapshot to identify candidate subjects. Historical
+metadata admission, replay and body projection run after commit. Candidate
+selection consumes the accounting owner's typed identities and uses conservative
+storage hints; the replay owner alone decides historical subject membership.
 Historical identity and coverage evidence preserve legacy
 suppression and global replay order. Only accounting subjects that can contribute
 to the requested windows and Session or dimension filters enter body projection,

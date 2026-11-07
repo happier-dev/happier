@@ -69,23 +69,32 @@ export function resolveUsageContributionSourceContext(row: Pick<ScopedUsageEvent
     return { path, execution };
 }
 
-export function usageAccountingSubjectKey(row: Pick<ScopedUsageEventRow,
-    'id' | 'sessionId' | 'agentId' | 'machineId' | 'metadata' | 'accountingEvidence'>): string {
+export type ScopedUsageSubjectIdentity = readonly ['native', string, string, string, string, string]
+    | readonly ['session', string, string | null]
+    | readonly ['native', string | null, string | null, string]
+    | readonly ['unidentified', string];
+
+export function usageAccountingSubjectIdentity(row: Pick<ScopedUsageEventRow,
+    'id' | 'sessionId' | 'agentId' | 'machineId' | 'metadata' | 'accountingEvidence'>): ScopedUsageSubjectIdentity {
     // A witnessed native subject owns accounting across live and collector
     // rows; the real Session remains attribution on the selected contribution.
     const { accounting, subject } = readScopedUsageAccountingEvidence(row);
     if (subject) {
         const native = subject;
-        return JSON.stringify(["native", native.machineId, native.agent.pluginId, native.agent.localId,
-            native.sourceRootKey, native.nativeSessionKey]);
+        return ["native", native.machineId, native.agent.pluginId, native.agent.localId,
+            native.sourceRootKey, native.nativeSessionKey];
     }
-    if (row.sessionId) return JSON.stringify(["session", row.sessionId, row.agentId]);
+    if (row.sessionId) return ["session", row.sessionId, row.agentId];
     const nativeSessionId = accounting?.nativeSessionId;
     // Admission owns native identity. A missing subject cannot merge every
     // nullable Session row into one counter stream.
     return nativeSessionId
-        ? JSON.stringify(["native", row.machineId, row.agentId, nativeSessionId])
-        : JSON.stringify(["unidentified", row.id]);
+        ? ["native", row.machineId ?? null, row.agentId, nativeSessionId]
+        : ["unidentified", row.id];
+}
+
+export function usageAccountingSubjectKey(row: Parameters<typeof usageAccountingSubjectIdentity>[0]): string {
+    return JSON.stringify(usageAccountingSubjectIdentity(row));
 }
 
 function compareChronologically(left: ScopedUsageReplayEvidence, right: ScopedUsageReplayEvidence): number {

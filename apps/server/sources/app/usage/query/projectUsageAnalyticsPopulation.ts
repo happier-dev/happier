@@ -84,8 +84,8 @@ export function* prepareUsageAnalyticsSnapshotSteps(snapshot: UsageAnalyticsSnap
     const normalized: ScopedUsageEvidenceRow[] = [];
     const normalizedEvidenceById = new Map<string, ScopedUsageEvidenceRow>();
     for (const row of rows) {
-        const evidence = row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence }
-            : toScopedUsageEvidenceRow(row);
+        const evidence = snapshot.normalizedEvidenceById?.get(row.id)
+            ?? (row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence } : toScopedUsageEvidenceRow(row));
         normalized.push(evidence);
         normalizedEvidenceById.set(evidence.id, evidence);
         if (shouldYield()) yield;
