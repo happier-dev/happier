@@ -871,9 +871,11 @@ describe('own-server target at the Action host boundary', () => {
                 const initial = await target.review({ actionId: request.actionId, input: request.input, content: receipt.content, context: sourceContext });
                 receipt.deployment.state = 'running';
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
+                phase('backup-seed-activate');
                 const initialActivation = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id });
                 expect(initialActivation, initialActivation.ok ? undefined : initialActivation.errorCode).toMatchObject({ ok: true });
+                phase('backup-seed-settled');
                 Object.assign(serving, structuredClone(receipt));
                 serving.deployment.state = 'succeeded';
                 environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
@@ -894,8 +896,12 @@ describe('own-server target at the Action host boundary', () => {
                     await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
                     const boundary = await installRestoreBoundary(root, 'success', { toolDirectory: join(root, 'docker'),
                         environmentId: environment.environment.id });
+                    const restorePhases: string[] = [];
                     const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home',
-                        custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId });
+                        custodyBinding: { serverId: 'home', installationId: 'installation-a' }, resolveAccountId: async () => accountId,
+                        publishSnapshot(snapshot) {
+                            if (snapshot.progress?.kind === 'phase') restorePhases.push(snapshot.progress.phase);
+                        } });
                     const deploymentBackupAction = createDeploymentBackupActionForHost({ serverId: 'home', machineId: 'machine-a',
                         async assertCurrent() { caller.signal.throwIfAborted(); }, backup: target.backup,
                         readBackupOperations: (target, context) => operations.readDeploymentBackupOperations({ target, context }) });
@@ -961,29 +967,36 @@ describe('own-server target at the Action host boundary', () => {
                         return result;
                     };
                     if (scenario === 'public_backup_recorded_health') {
-                        expect(await readRecordedHealth()).toEqual({ status: 'actionNeeded', reason: 'no_verified_backup_yet', backups: {} });
+                        expect(await readRecordedHealth()).toEqual({ status: 'actionNeeded', reason: 'no_verified_backup_yet',
+                            backups: { history: { entries: [] } } });
                     }
+                    phase('backup-run');
                     const run = await executor.execute('deployments.backups.run', buildDeploymentBackupActionInputV1('deployments.backups.run', targetInput),
                         { ...actionContext, actionRequestId: 'public-backup-run' });
                     expect(run, JSON.stringify(run)).toMatchObject({ ok: true, result: { kind: 'verified' } });
+                    phase('backup-run-settled');
                     if (!run.ok) throw new Error('Expected a retained backup operation');
                     const captured = DeploymentBackupRunResultV1Schema.parse(run.result);
                     const manifest = captured.manifests[0];
                     if (!manifest) throw new Error('Expected exact native snapshot evidence');
+                    phase('backup-inventory');
                     const inventory = await executor.execute('deployments.backups.inventory',
                         buildDeploymentBackupActionInputV1('deployments.backups.inventory', targetInput),
                         { ...actionContext, actionRequestId: 'public-backup-inventory' });
                     expect(inventory, JSON.stringify(inventory)).toMatchObject({ ok: true, result: { kind: 'inventory' } });
                     if (!inventory.ok) throw new Error('Expected the selected repository inventory');
+                    phase('backup-inventory-settled');
                     expect(DeploymentBackupInventoryResultV1Schema.parse(inventory.result).snapshots).toContainEqual({
                         snapshot: manifest.snapshot, source: { sourceId: 'database', kind: 'dump' }, totalBytesProcessed: manifest.totalBytesProcessed,
                         verification: { kind: 'verified', backupOperationId: captured.operationId, configRevision: manifest.configRevision } });
                     const beforeVerify = await readFile(boundary.eventsFile, 'utf8');
+                    phase('backup-verify');
                     const verified = await executor.execute('deployments.backups.verify', buildDeploymentBackupActionInputV1('deployments.backups.verify', {
                         ...targetInput, backupOperationId: captured.operationId, snapshotId: manifest.snapshot.snapshotId, level: 'manifestReadBack',
                     }), { ...actionContext, actionRequestId: 'public-backup-verify' });
                     expect(verified, JSON.stringify(verified)).toMatchObject({ ok: true, result: { kind: 'verified',
                         backupOperationId: captured.operationId, snapshotId: manifest.snapshot.snapshotId, verified: true } });
+                    phase('backup-verify-settled');
                     const verifyEvents = (await readFile(boundary.eventsFile, 'utf8')).slice(beforeVerify.length).trim().split('\n').filter(Boolean)
                         .map(line => JSON.parse(line) as { kind: string; argv?: string[] });
                     expect(verifyEvents.some(event => event.kind === 'postgres' || event.kind === 'nativeControl'
@@ -1050,7 +1063,7 @@ describe('own-server target at the Action host boundary', () => {
                         const legacyOperationId = 'legacy-manifest-run';
                         operations.store.create({ operationId: legacyOperationId, actionId: 'deployments.backups.run',
                             scope: original.scope, title: original.title, cancellation: original.cancellation,
-                            inputIdentity: JSON.stringify(targetInput) });
+                            inputIdentity: JSON.stringify({ ...targetInput, deploymentId: 'prior-deployment-generation' }) });
                         operations.store.succeed(legacyOperationId, DeploymentBackupRunResultV1Schema.parse({ kind: 'verified',
                             operationId: legacyOperationId, manifests: captured.manifests }));
                         const { configRevision: _configRevision, ...selectedTarget } = targetInput;
@@ -1069,25 +1082,39 @@ describe('own-server target at the Action host boundary', () => {
                         expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeRefused);
                         backupConfiguration.configRevision = 2;
                         backupConfiguration.retention = { kind: 'keep', last: 3 };
-                        for (const [surface, backupOperationId] of [['ui', captured.operationId], ['agent', legacyOperationId]] as const) {
-                            const settings = setScopedActionApprovalPreference({ settings: actionsSettings,
-                                actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: targetInput.environmentId },
-                                surface, mode: 'waived' });
-                            const prepareInput = { ...selectedTarget, mode: 'prepare' as const,
-                                backupOperationId, restoreBackupId: manifest.snapshot.snapshotId };
-                            const preparedResult = await executor.execute('deployments.backups.restore', prepareInput,
-                                { ...actionContext, surface, actionsSettings: settings, actionRequestId: `scheduled-prepare-${surface}` });
-                            expect(preparedResult, JSON.stringify(preparedResult)).toMatchObject({ ok: true, result: { kind: 'prepared',
-                                steps: [{ id: 'safety', status: 'completed' }] } });
-                            if (!preparedResult.ok) throw new Error('Expected scheduled snapshot preparation');
-                            const prepared = DeploymentBackupRestoreResultV1Schema.parse(preparedResult.result);
-                            if (prepared.kind !== 'prepared') throw new Error('Expected exact scheduled snapshot preparation');
-                            expect(prepared.evidence).toMatchObject({ native: { prepared: { source: manifest,
-                                destination: { database } }, configuration: { configRevision: surface === 'ui' ? 1 : 2 } } });
-                            expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
-                                prepareOperationId: prepared.operationId }, { ...actionContext, surface, actionsSettings: settings,
-                                actionRequestId: `scheduled-confirm-${surface}` }))
-                                .toMatchObject({ ok: true, result: { kind: 'restored', verified: true, nextAction: 'none' } });
+                        const prepareInput = { ...selectedTarget, mode: 'prepare' as const,
+                            backupOperationId: legacyOperationId, restoreBackupId: manifest.snapshot.snapshotId };
+                        restorePhases.length = 0;
+                        phase('scheduled-ui-prepare');
+                        const preparedResult = await executor.execute('deployments.backups.restore', prepareInput,
+                            { ...actionContext, actionRequestId: 'scheduled-prepare-ui' });
+                        expect(preparedResult, JSON.stringify(preparedResult)).toMatchObject({ ok: true, result: { kind: 'prepared',
+                            steps: [{ id: 'safety', status: 'completed' }] } });
+                        phase('scheduled-ui-prepared');
+                        expect(restorePhases).toContain('restore.safety.running');
+                        expect(restorePhases).toContain('restore.safety.completed');
+                        if (!preparedResult.ok) throw new Error('Expected scheduled snapshot preparation');
+                        const prepared = DeploymentBackupRestoreResultV1Schema.parse(preparedResult.result);
+                        if (prepared.kind !== 'prepared') throw new Error('Expected exact scheduled snapshot preparation');
+                        expect(prepared.evidence).toMatchObject({ native: { prepared: { source: manifest,
+                            destination: { database } }, configuration: { configRevision: 2 } } });
+                        const agentSettings = setScopedActionApprovalPreference({ settings: actionsSettings,
+                            actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: targetInput.environmentId },
+                            surface: 'agent', mode: 'waived' });
+                        phase('scheduled-agent-confirm');
+                        expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
+                            prepareOperationId: prepared.operationId }, { ...actionContext, surface: 'agent', actionsSettings: agentSettings,
+                            actionRequestId: 'scheduled-confirm-agent' }))
+                            .toMatchObject({ ok: true, result: { kind: 'restored', verified: true, nextAction: 'none',
+                                steps: expect.arrayContaining([{ id: 'safety', status: 'completed' },
+                                    { id: 'restore', status: 'completed' }, { id: 'health', status: 'completed' }]) } });
+                        phase('scheduled-agent-confirmed');
+                        const restoreEvents = (await readFile(boundary.eventsFile, 'utf8')).trim().split('\n')
+                            .filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                        expect(restoreEvents.filter(event => event.kind === 'postgres' && event.argv?.[0] === 'pg_restore'
+                            && !event.argv.includes('--version'))).toHaveLength(1);
+                        for (const event of restoreEvents.filter(event => event.kind === 'restic' && event.argv?.includes('dump'))) {
+                            expect(event.argv).toContain(manifest.snapshot.snapshotId);
                         }
                         expect(await docker.readOperationContainerIds()).toEqual([]);
                         return;
@@ -1175,6 +1202,7 @@ describe('own-server target at the Action host boundary', () => {
                 return;
             }
             if (scenario === 'public_restore' || scenario === 'standalone_public_restore') {
+                phase('standalone-seed');
                 const roles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const;
                 for (const role of roles) {
                     environment.content.bindings.push({ purpose: 'backupDestination', configKey: 'destination', role,
@@ -1188,6 +1216,7 @@ describe('own-server target at the Action host boundary', () => {
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
                 expect(await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id })).toMatchObject({ ok: true });
+                phase('standalone-seeded');
                 Object.assign(serving, structuredClone(receipt));
                 serving.deployment.state = 'succeeded';
                 environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
@@ -1249,12 +1278,10 @@ describe('own-server target at the Action host boundary', () => {
                     resolveRequestHeaders: async () => ({ Authorization: `Bearer ${token}` }),
                     async dispatchReceipt() { throw new Error('Standalone restore must not allocate a deployment receipt'); } });
                 let approvalRequests = 0;
-                let confirmationAllowed = false;
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), serverId: 'home', machineId: 'machine-a',
                     resolveEnvironmentApprovalScope: storage.resolveEnvironmentApprovalScope,
-                    // Approval persistence and the person's answer are external UI/storage boundaries.
+                    // Approval persistence is an external storage boundary.
                     approvalsCreate: async () => ({ artifactId: `import-restore-review-${++approvalRequests}` }),
-                    presentUserActionConfirmation: async () => confirmationAllowed,
                     deploymentRestore, runActionOperation: value => operations.runActionOperation(value) });
                 const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                     serverId: 'home', runtimeAccountId: accountId,
@@ -1266,6 +1293,9 @@ describe('own-server target at the Action host boundary', () => {
                     deploymentId: recoveryCapture!.deployment.id, restoreBackupId: capture.source.snapshot.snapshotId,
                     expectedRevision: environment.environment.revision };
                 const defaultSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+                const requiredUiSettings = setScopedActionApprovalPreference({ settings: defaultSettings,
+                    actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: environment.environment.id },
+                    surface: 'ui', mode: 'required' });
                 const agentContext = { ...actionContext, surface: 'agent' as const, authority: 'account_automation' as const,
                     actionCaller: { kind: 'host' as const }, actionsSettings: defaultSettings };
                 const waivedAgentContext = { ...agentContext, actionsSettings: setScopedActionApprovalPreference({
@@ -1280,10 +1310,9 @@ describe('own-server target at the Action host boundary', () => {
                     .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
                 expect(approvalRequests).toBe(1);
                 expect(await executor.execute('deployments.backups.restore', restoreInput,
-                    { ...actionContext, actionsSettings: setScopedActionApprovalPreference({ settings: defaultSettings,
-                        actionId: 'deployments.backups.restore', scope: { kind: 'environment', environmentId: environment.environment.id },
-                        surface: 'ui', mode: 'required' }), actionRequestId: 'import-prepare-denied' }))
-                    .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                    { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-prepare-ui-ask' }))
+                    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                expect(approvalRequests).toBe(2);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforePrepare);
                 expect(await docker.readInvocations()).toHaveLength(before.length);
                 const missingConfirmation = await executor.execute('deployments.backups.restore', { ...restoreInput,
@@ -1293,6 +1322,7 @@ describe('own-server target at the Action host boundary', () => {
                 const discardedPreparation = await executor.execute('deployments.backups.restore', restoreInput,
                     { ...actionContext, actionRequestId: 'discarded-prepare' });
                 expect(discardedPreparation).toMatchObject({ ok: true, result: { kind: 'prepared' } });
+                phase('standalone-discarded-prepared');
                 if (!discardedPreparation.ok) throw new Error('Expected public restore preparation for stale input');
                 const discarded = DeploymentBackupRestoreResultV1Schema.parse(discardedPreparation.result);
                 if (discarded.kind !== 'prepared') throw new Error('Expected discarded restore preparation evidence');
@@ -1303,13 +1333,14 @@ describe('own-server target at the Action host boundary', () => {
                     .toMatchObject({ ok: false, errorCode: 'stale_input' });
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeStale);
                 const beforeApprovedPrepare = await readFile(boundary.eventsFile, 'utf8');
-                confirmationAllowed = true;
+                phase('standalone-prepare');
                 const preparation = await executor.execute('deployments.backups.restore', restoreInput,
-                    { ...actionContext, actionsSettings: defaultSettings, actionRequestId: 'standalone-prepare' });
+                    { ...actionContext, actionRequestId: 'standalone-prepare' });
                 expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });
                 if (!preparation.ok) throw new Error('Expected retained public restore preparation');
                 const preparedResult = DeploymentBackupRestoreResultV1Schema.parse(preparation.result);
                 if (preparedResult.kind !== 'prepared') throw new Error('Expected public restore preparation evidence');
+                phase('standalone-prepared');
                 expect(preparedResult.steps).toEqual([{ id: 'safety', status: 'completed' }]);
                 expect(preparedResult.evidence).toMatchObject({ native: { prepared: { source: capture.source,
                     repository: capture.repository, destination: { databaseExists: true, hasMeaningfulData: true },
@@ -1329,18 +1360,20 @@ describe('own-server target at the Action host boundary', () => {
                 expect(await executor.execute('deployments.backups.restore', confirmInput,
                     { ...agentContext, actionRequestId: 'import-confirm-ask' }))
                     .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-                expect(approvalRequests).toBe(2);
-                confirmationAllowed = false;
+                expect(approvalRequests).toBe(3);
                 expect(await executor.execute('deployments.backups.restore', confirmInput,
-                    { ...actionContext, actionsSettings: defaultSettings, actionRequestId: 'import-confirm-denied' }))
-                    .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                    { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-confirm-ui-ask' }))
+                    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                expect(approvalRequests).toBe(4);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeConfirmation);
+                phase('standalone-confirm');
                 const result = await executor.execute('deployments.backups.restore', confirmInput,
                     { ...waivedAgentContext, actionRequestId: 'standalone-confirm' });
                 expect(result).toMatchObject({ ok: true, result: { kind: 'restored', verified: true, steps: [
                     { id: 'safety', status: 'completed' }, { id: 'restore', status: 'completed' },
                     { id: 'stop', status: 'completed' }, { id: 'start', status: 'completed' }, { id: 'health', status: 'completed' },
                 ] } });
+                phase('standalone-confirmed');
                 const completedEvents = await readFile(boundary.eventsFile, 'utf8');
                 const nativeEvents = completedEvents.trim().split('\n').map(line => JSON.parse(line) as { kind: string; argv?: string[] });
                 expect(nativeEvents.filter(event => event.kind === 'postgres' && event.argv?.[0] === 'pg_restore'

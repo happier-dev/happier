@@ -5,6 +5,7 @@ import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploym
 import { DeploymentBackupRetentionV1Schema } from './deploymentBackupActionsV1.js';
 import { DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { DeploymentIngressV1Schema, OwnServerEnvironmentReleasePolicyV1Schema } from './storedAppInputV1.js';
+import { DeploymentPreviewTemplateV1Schema } from './deploymentPreviewTemplateV1.js';
 
 /** Content authoring operands share one schema and classification across admission and preparation. */
 export const DeploymentEnvironmentContentPatchV1Schema = lazyZodSchema(() => z.strictObject({
@@ -13,6 +14,7 @@ export const DeploymentEnvironmentContentPatchV1Schema = lazyZodSchema(() => z.s
         retention: DeploymentBackupRetentionV1Schema })),
     ownServer: z.optional(z.partial(OwnServerEnvironmentReleasePolicyV1Schema)),
     retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
+    previewTemplate: z.optional(z.nullable(DeploymentPreviewTemplateV1Schema)),
 }));
 
 export function hasDeploymentEnvironmentContentPatchV1(patch: unknown): boolean {

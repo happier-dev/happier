@@ -440,6 +440,10 @@ export type ProjectExecutionActionResultById = {
                         memberProvisioning?: 'linuxUsersV1' | undefined;
                     };
                 } | {
+                    kind: 'managedAgentStart';
+                    machineId: string;
+                    agentId: string;
+                } | {
                     kind: 'managedBootstrap';
                     phase: 'apply' | 'check';
                     response: 'invalid_response' | 'missing_result' | 'result';
@@ -521,6 +525,7 @@ export type ProjectExecutionActionResultById = {
                         ok: true;
                         environmentId: string;
                         revision: number;
+                        environmentRemoved?: true | undefined;
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -1032,6 +1037,7 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    environmentRemoved?: true | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -1731,6 +1737,10 @@ export type ProjectExecutionActionResultById = {
                         memberProvisioning?: 'linuxUsersV1' | undefined;
                     };
                 } | {
+                    kind: 'managedAgentStart';
+                    machineId: string;
+                    agentId: string;
+                } | {
                     kind: 'managedBootstrap';
                     phase: 'apply' | 'check';
                     response: 'invalid_response' | 'missing_result' | 'result';
@@ -1812,6 +1822,7 @@ export type ProjectExecutionActionResultById = {
                         ok: true;
                         environmentId: string;
                         revision: number;
+                        environmentRemoved?: true | undefined;
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -2323,6 +2334,7 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    environmentRemoved?: true | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -3022,6 +3034,10 @@ export type ProjectExecutionActionResultById = {
                         memberProvisioning?: 'linuxUsersV1' | undefined;
                     };
                 } | {
+                    kind: 'managedAgentStart';
+                    machineId: string;
+                    agentId: string;
+                } | {
                     kind: 'managedBootstrap';
                     phase: 'apply' | 'check';
                     response: 'invalid_response' | 'missing_result' | 'result';
@@ -3103,6 +3119,7 @@ export type ProjectExecutionActionResultById = {
                         ok: true;
                         environmentId: string;
                         revision: number;
+                        environmentRemoved?: true | undefined;
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -3614,6 +3631,7 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    environmentRemoved?: true | undefined;
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;

@@ -1,5 +1,6 @@
-import { projectDeploymentFailure } from '../../deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
+import { readDeploymentOutputValidation } from '../../outputValidation';
+import { projectDeploymentFailure } from '../../deploymentFailure';
 import { configuration } from '@/configuration';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployment-protocol';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
@@ -187,7 +188,13 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                 const compose = initial.content.sourceIntent.kind === 'repository' ? initial.content.sourceIntent.compose
                     : { ...initial.content.sourceIntent, path: 'compose.yaml' };
                 await stageOutput.beginStep({ stepId: 'build' });
+                const referenceAddresses: NonNullable<OwnServerDeploymentDetailsV1['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build',
+                    onReferenceAddresses: addresses => {
+                        for (const address of addresses) if (!referenceAddresses.some(value => isDeepStrictEqual(value, address))) {
+                            referenceAddresses.push(address);
+                        }
+                    },
                     executionDirectory: runtime.buildExecutionDirectory, exec: runtime.exec, envPort, source,
                     files: [compose.path], profiles: compose.profiles, services: initial.basis.services,
                     physicalProjectName: initial.basis.physicalProjectName, sourceKind: initial.content.sourceIntent.kind, images: initial.content.images,
@@ -241,7 +248,8 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                         return { images, imageArchives };
                     });
                     const content = DeploymentOwnServerContentV1Schema.parse({ ...initial.content, images, ownServer: {
-                        ...initial.content.ownServer, imageArchives, buildSecretRevisions: revisions } });
+                        ...initial.content.ownServer, imageArchives, buildSecretRevisions: revisions,
+                        ...(referenceAddresses.length ? { referenceAddresses } : {}) } });
                     if (!isOwnServerBuildReceiptComplete(content)) refuse('deployment_image_unavailable');
                     await assertCurrent();
                     const latest = await host.readReceipt({ environmentId: source.environmentId,
@@ -258,10 +266,11 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
         } catch (error) {
             const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'deployment_failed';
             const captured = captureOwnServerDeploymentStageLog(initial.content, stageOutput);
+            const validation = readDeploymentOutputValidation(error);
             const written = await host.writeTransition({ environmentId: initial.receipt.deployment.environmentId,
                 deploymentId: initial.receipt.deployment.id, receiptHeader: initial.deployment,
                 expectedRevision: initial.receipt.deployment.revision, state: 'running',
-                content: { ...captured, failure: { code, phase: 'build' } }, context: request.context });
+                content: { ...captured, failure: { code, phase: 'build', ...(validation ? { validation } : {}) } }, context: request.context });
             if (!written.ok) return written;
             throw error;
         } finally {

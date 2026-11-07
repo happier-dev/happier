@@ -35,10 +35,19 @@ export function createDeploymentMemberVersionProjectionV1(link: DeploymentTarget
         addReceipt(receipt) {
             if (!unresolved.size) return true;
             if (receipt.deployment.environmentId !== link.environmentId || !lineage.has(receipt.deployment.targetLinkId)) return false;
+            const removed = receipt.deployment.operation === 'teardown' && receipt.deployment.state === 'succeeded'
+                ? new Map(receipt.content.teardown?.machines.map(member => [member.machineId, member.installationId])) : null;
             const results = new Map(receipt.content.machineResults.map(result => [result.machineId, result]));
             const unknownMachines = receipt.deployment.state === 'outcome_unknown' ? new Set(receipt.content.machines) : null;
             for (const machineId of unresolved) {
                 const member = versions[machineId]!;
+                // Completion proves absence for these installations. Older
+                // activation proof must not revive a removed generation.
+                if (removed?.get(machineId) === member.installationId) {
+                    versions[machineId] = { ...member, deploymentId: null };
+                    unresolved.delete(machineId);
+                    continue;
+                }
                 const result = results.get(machineId);
                 if (result && result.installationId !== member.installationId) continue;
                 const version = result && provedVersion(result);
@@ -54,7 +63,7 @@ export function createDeploymentMemberVersionProjectionV1(link: DeploymentTarget
         },
         getVersions() {
             return Object.fromEntries(Object.entries(versions).map(([machineId, member]) =>
-                [machineId, member.deploymentId === null ? { ...member, uncertain: true } : member]));
+                [machineId, unresolved.has(machineId) ? { ...member, uncertain: true } : member]));
         },
     };
 }

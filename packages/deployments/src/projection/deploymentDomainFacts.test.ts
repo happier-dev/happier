@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { projectDeploymentDomainFactsV1 } from './deploymentDomainFacts';
+import { projectDeploymentDomainFactsV1, projectDeploymentDomainHealthFactsV1 } from './deploymentDomainFacts';
 
 const domain: DeploymentDomainHeaderV1 = { v: 1, id: 'domain', environmentId: 'environment', targetLinkId: 'link',
     state: 'removing', revision: 2, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 2,
@@ -44,5 +44,70 @@ describe('Domain lifecycle projection', () => {
             expect(projectDeploymentDomainFactsV1(header, 'account', { kind: 'not_found' }))
                 .toEqual({ state: header.state, retryRemoval: false, failure: null });
         }
+    });
+});
+
+describe('Domain saved health facts', () => {
+    const evidence = (kind: string, facts: Record<string, string | number>) => ({ v: 1 as const,
+        items: [{ source: { kind: 'alert' as const, label: kind }, author: { kind: 'process' as const },
+            text: JSON.stringify({ kind, ...facts }) }] });
+    const certificate = { domainId: domain.id, domainRevision: domain.revision, targetLinkRevision: 1,
+        kind: 'certificate' as const, observerMachineId: 'controller', vantage: 'outside' as const,
+        result: { status: 'up' as const, observedAt: 2000, evidence: evidence('certificate', { notBefore: 0, notAfter: 3000 }) } };
+    const content = { hostname: 'app.test', target: { service: 'app', containerPort: 80 }, tls: { kind: 'custom' as const } };
+    it('projects the custom certificate replacement point and expiry without a managed renewal window', () => {
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [certificate], null, 2000))
+            .toMatchObject({ certificate: { state: 'expiresSoon', expiresAt: 3000 }, needsYou: { cause: 'certificate' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, { ...content, tls: { kind: 'managed' } }, [certificate], null, 2000))
+            .toMatchObject({ certificate: { state: 'valid', expiresAt: 3000 }, needsYou: null });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...certificate,
+            result: { ...certificate.result, status: 'down', observedAt: 3000 } }], null, 3000))
+            .toMatchObject({ certificate: { state: 'expired' }, needsYou: { cause: 'certificate' } });
+    });
+    it('distinguishes DNS, outside network access, TLS and unavailable observations', () => {
+        const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
+            observedAt: 2000, evidence: evidence('http', { reason: 'connection' }) } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [http], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'network', vantage: 'outside' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, vantage: 'sameMachine' }], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'network', vantage: 'sameMachine' } });
+        expect(projectDeploymentDomainHealthFactsV1({ ...domain, dnsHealth: { status: 'down',
+            evidence: evidence('dns', { reason: 'dns_missing' }) } }, content, [], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'dns' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http,
+            result: { ...http.result, evidence: evidence('http', { reason: 'tls' }) } }], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'certificate' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [], 'machine_unavailable', 2000))
+            .toMatchObject({ availability: 'unavailable', unavailableReason: 'machine_unavailable', needsYou: null });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, domainRevision: 999 }], null, 2000))
+            .toMatchObject({ certificate: { state: 'not_checked' }, needsYou: null });
+    });
+    it('keeps an outside failure distinct from a newer local success and advances known expiry only at read', () => {
+        const outside = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
+            observedAt: 1000, evidence: evidence('http', { reason: 'connection' }) } };
+        const local = { ...outside, vantage: 'sameMachine' as const, result: { ...outside.result,
+            status: 'up' as const, observedAt: 2000 } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [outside, local], null, 2000))
+            .toMatchObject({ needsYou: { cause: 'network', vantage: 'outside' } });
+        const early = { ...certificate, result: { ...certificate.result, observedAt: 1000 } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [early], null, 2000))
+            .toMatchObject({ observedAt: 1000, certificate: { state: 'expiresSoon' } });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [early], null, 3000))
+            .toMatchObject({ observedAt: 1000, certificate: { state: 'expired' } });
+    });
+    it('keeps an absent configured check distinct from an unavailable finite observation', () => {
+        const unknown = { ...certificate, kind: 'http' as const, result: { status: 'unknown' as const,
+            observedAt: 2000, evidence: evidence('http', { reason: 'not_checked' }) } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [unknown], null, 2000))
+            .toMatchObject({ availability: 'not_checked', observedAt: null, needsYou: null });
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...unknown,
+            result: { ...unknown.result, evidence: evidence('http', { reason: 'transport_incomplete' }) } }], null, 2000))
+            .toMatchObject({ availability: 'unavailable', unavailableReason: 'transport_incomplete', needsYou: null });
+    });
+    it('keeps an outside DNS failure primary while the custom certificate replacement is advisory', () => {
+        const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
+            observedAt: 2000, evidence: evidence('http', { reason: 'dns' }) } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [http, certificate], null, 2000))
+            .toMatchObject({ certificate: { state: 'expiresSoon' }, needsYou: { cause: 'dns', vantage: 'outside' } });
     });
 });

@@ -41,7 +41,8 @@ import {
     OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, findExistingNativeComposeTargetLinkV1,
 } from '@happier-dev/deployment-protocol';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
-import { createDeploymentMemberVersionProjectionV1 } from '@happier-dev/deployments';
+import { createDeploymentMemberVersionProjectionV1, deploymentDomainProbeVantageV1,
+    projectDeploymentDomainHealthFactsV1 } from '@happier-dev/deployments';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -1192,6 +1193,49 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         || environment.controllerMachineId !== request.machineId) return failure('target_mismatch');
                     lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
                     const current = lease?.registry.currentDomainEdgeObservation;
+                    if (request.domainIds !== undefined) {
+                        const readAt = Date.now();
+                        const domainHealth = [];
+                        let observation = null;
+                        const proof = current?.readProof(environment.id, link.id);
+                        for (const domainId of new Set(request.domainIds)) {
+                            const loaded = await storage('deployments.domains.get', { serverId: host.serverId,
+                                environmentId: environment.id, domainId }, context);
+                            if ('errorCode' in loaded) { current?.withdrawDomain(environment.id, domainId); return loaded; }
+                            const detail = DeploymentDomainMutationResultV1Schema.parse(loaded);
+                            if (!detail.ok) {
+                                current?.withdrawDomain(environment.id, domainId);
+                                if (detail.error === 'deployment_unavailable') continue;
+                                return failure(detail.error);
+                            }
+                            const domain = detail.domain;
+                            if (detail.environmentId !== environment.id || domain.id !== domainId
+                                || domain.environmentId !== environment.id || domain.targetLinkId !== link.id
+                                || domain.deletedAtMs !== undefined) {
+                                current?.withdrawDomain(environment.id, domainId);
+                                continue;
+                            }
+                            // The retained check owner decides provenance; this read
+                            // matches its evidence to the current Home metadata.
+                            const retained = current?.readDomainProofs(environment.id, link.id, [domainId]).filter(entry =>
+                                entry.domainObservation.domainRevision === domain.revision
+                                && entry.domainObservation.targetLinkRevision === link.revision
+                                && entry.domainObservation.observerMachineId === environment.controllerMachineId
+                                && entry.domainObservation.vantage === deploymentDomainProbeVantageV1(
+                                    environment, link, entry.domainObservation.observerMachineId)) ?? [];
+                            const observations = retained.map(entry => entry.domainObservation);
+                            const tlsKind = retained.find(entry => entry.domainObservation.kind === 'certificate')?.tlsKind;
+                            domainHealth.push({ domainId, domainRevision: domain.revision, observations,
+                                facts: projectDeploymentDomainHealthFactsV1(domain,
+                                    { ...(tlsKind === undefined ? {} : { tls: { kind: tlsKind } }) },
+                                    observations, current ? null : 'source_unavailable', readAt) });
+                            if (proof && retained.includes(proof) && environment.ingress?.kind === 'edgeCaddy'
+                                && proof.observation.machineId === environment.ingress.edgeMachineId) observation = proof.observation;
+                        }
+                        await assertHttpAuthority(context);
+                        return DeploymentActionOutputSchemasV1[actionId].parse({ ok: true,
+                            environmentId: environment.id, targetLinkId: link.id, observation, domainHealth });
+                    }
                     const proof = current?.readProof(environment.id, link.id);
                     let observation = proof?.observation ?? null;
                     if (proof && (environment.ingress?.kind !== 'edgeCaddy'

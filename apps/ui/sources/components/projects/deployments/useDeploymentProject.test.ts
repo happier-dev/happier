@@ -3,7 +3,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForTestEvent } from '@/dev/testkit/hooks/waitForTestEvent';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1,
+    createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { useDeploymentActivity, useDeploymentCollection } from './useDeploymentReads';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
@@ -18,6 +19,54 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 describe('deployment ProjectSource scope', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it('refreshes only demanded bound Environments on a saved Secret rotation push', async () => {
+        const serverId = await homes.addHome({ name: 'Secret revisions', serverUrl: 'https://deployment-secret-revisions.test', accountId: 'alice' });
+        const account = await captureLazyActionAccountContext(serverId);
+        const base = createDeploymentEnvironmentDetailV1();
+        const demand = { mounted: true, visible: true, focused: true };
+        const hook = await renderHook(() => useDeploymentProject(account.accountLifetime, base.environment.projectSourceId, demand));
+        const controller = hook.getCurrent().controller!;
+        const leases: ReturnType<typeof controller.acquireEnvironment>[] = [];
+        let savedRevision = 1;
+        try {
+            for (const id of ['bound', 'other']) {
+                const environment = createDeploymentEnvironmentHeaderV1({ id, serverId,
+                    contentArtifactId: `artifact-${id}`, owner: { kind: 'account', accountId: 'alice' } });
+                const binding = createDeploymentSecretVariableBindingV1({ name: 'TOKEN', phase: 'runtime', resourceId: id, resourceRevision: 1 });
+                await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                    header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: id },
+                    body: JSON.stringify({ ...base.content, bindings: [binding] }) });
+                homes.answer(serverId, `/v1/deployments/environments/${id}`, { select: () => ({ body: { ok: true, environment,
+                    targetLinks: [createDeploymentTargetLinkHeaderV1({ environmentId: id })],
+                    savedSecretRevisions: [{ resourceId: id, revision: savedRevision }] } }) });
+                const lease = controller.acquireEnvironment(id, demand);
+                leases.push(lease);
+                await act(async () => { await lease.refresh(); });
+                expect(lease.getSnapshot().status).toBe('ready');
+                expect(lease.getSnapshot().value?.secretRevisions[0]?.facts[0]).toMatchObject({
+                    currentRevision: 1, runningRevision: null, status: 'unknown' });
+            }
+            // Creating the second Artifact also pushes the incumbent Account wake;
+            // join that admitted refresh before measuring the Secret event alone.
+            await act(async () => { await Promise.all(leases.map(lease => lease.refresh())); });
+            const reads = (id: string) => homes.requests.filter(request => request.path.split('?')[0] === `/v1/deployments/environments/${id}`);
+            const beforeBound = reads('bound').length;
+            const beforeOther = reads('other').length;
+            savedRevision = 2;
+            await act(async () => publishHomeAccountChange(serverId, ['bound'], { changeKinds: ['savedSecretResource'] }));
+            // One existing front-door Action reads its Environment approval scope,
+            // then performs the metadata effect; this wake starts that Action once.
+            await vi.waitFor(() => expect(reads('bound')).toHaveLength(beforeBound + 2));
+            await vi.waitFor(() => expect(leases[0]!.getSnapshot().value?.secretRevisions[0]?.facts[0]?.currentRevision).toBe(2));
+            expect(reads('other')).toHaveLength(beforeOther);
+            expect(leases[1]!.getSnapshot().value?.secretRevisions[0]?.facts[0]?.currentRevision).toBe(1);
+        } finally {
+            leases.forEach(lease => lease.release());
+            await hook.unmount();
+            account.dispose();
+        }
+    });
 
     it('delivers global activity through a typed Home wake with no content, Machine or unrelated receipt reads', async () => {
         const serverId = await homes.addHome({ name: 'Badge Home', serverUrl: 'https://deployment-badge.test', accountId: 'alice' });

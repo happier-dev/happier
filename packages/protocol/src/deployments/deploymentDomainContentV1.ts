@@ -28,3 +28,17 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
     basicAuth: z.optional(z.strictObject({ username: text })),
 }));
 export type DeploymentDomainContentV1 = z.infer<typeof DeploymentDomainContentV1Schema>;
+
+/** The configured ingress address remains the address even when that route redirects. */
+export function readDeploymentDomainServingUrlV1(content: unknown): string | null {
+    const parsed = DeploymentDomainContentV1Schema.safeParse(content);
+    if (!parsed.success) return null;
+    try {
+        const hostname = parsed.data.hostname.trim();
+        if (/[\s/%\\?#@:]/u.test(hostname) || hostname.includes('*')) return null;
+        const address = new URL(`https://${hostname}`);
+        if (address.port || address.username || address.password || address.pathname !== '/' || address.search || address.hash) return null;
+        address.pathname = parsed.data.target.path ?? '/';
+        return address.href;
+    } catch { return null; }
+}

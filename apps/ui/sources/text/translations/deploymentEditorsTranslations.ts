@@ -23,6 +23,7 @@ type DeploymentEditorsTranslations = Readonly<{
   chooseCertificate: string;
   chooseKey: string;
   secretRotated: string;
+  referenceAddressChanged: string;
   rotatedTitle: string;
   rotatedBody: string;
   useNewRevision: string;
@@ -78,6 +79,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Point at another service',
     referenceTarget: 'Service',
     secretRotated: 'New revision saved · redeploy to apply',
+    referenceAddressChanged: 'Address changed · redeploy to apply',
     rotatedTitle: 'A secret has a new revision',
     rotatedBody: 'The running release still uses the old one. Use the new revision here, then deploy.',
     useNewRevision: 'Use the new revision',
@@ -120,6 +122,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Указать на другой сервис',
     referenceTarget: 'Сервис',
     secretRotated: 'Сохранена новая версия · разверните заново',
+    referenceAddressChanged: 'Адрес изменился · разверните заново',
     rotatedTitle: 'У секрета новая версия',
     rotatedBody: 'Работающий релиз использует старую. Выберите новую версию, затем разверните.',
     useNewRevision: 'Использовать новую версию',
@@ -161,6 +164,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Wskaż inną usługę',
     referenceTarget: 'Usługa',
     secretRotated: 'Zapisano nową wersję · wdróż ponownie',
+    referenceAddressChanged: 'Adres się zmienił · wdróż ponownie',
     rotatedTitle: 'Sekret ma nową wersję',
     rotatedBody: 'Działające wydanie używa starej. Wybierz nową wersję, potem wdróż.',
     useNewRevision: 'Użyj nowej wersji',
@@ -203,6 +207,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Apuntar a otro servicio',
     referenceTarget: 'Servicio',
     secretRotated: 'Nueva revisión guardada · vuelve a desplegar',
+    referenceAddressChanged: 'La dirección ha cambiado · vuelve a desplegar',
     rotatedTitle: 'Un secreto tiene una revisión nueva',
     rotatedBody: 'La versión en marcha usa la anterior. Usa la revisión nueva aquí y despliega.',
     useNewRevision: 'Usar la revisión nueva',
@@ -245,6 +250,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Pointer vers un autre service',
     referenceTarget: 'Service',
     secretRotated: 'Nouvelle révision enregistrée · redéployez',
+    referenceAddressChanged: 'Adresse modifiée · redéployez pour appliquer',
     rotatedTitle: 'Un secret a une nouvelle révision',
     rotatedBody: 'La version en cours utilise l’ancienne. Utilisez la nouvelle révision ici, puis déployez.',
     useNewRevision: 'Utiliser la nouvelle révision',
@@ -287,6 +293,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Punta a un altro servizio',
     referenceTarget: 'Servizio',
     secretRotated: 'Nuova revisione salvata · distribuisci di nuovo',
+    referenceAddressChanged: 'Indirizzo cambiato · distribuisci di nuovo',
     rotatedTitle: 'Un segreto ha una nuova revisione',
     rotatedBody: 'La release in esecuzione usa quella vecchia. Usa la nuova revisione qui, poi distribuisci.',
     useNewRevision: 'Usa la nuova revisione',
@@ -328,6 +335,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Apontar para outro serviço',
     referenceTarget: 'Serviço',
     secretRotated: 'Nova revisão guardada · implante de novo',
+    referenceAddressChanged: 'Endereço alterado · implante de novo',
     rotatedTitle: 'Um segredo tem uma nova revisão',
     rotatedBody: 'A versão em execução usa a antiga. Use a nova revisão aqui e implante.',
     useNewRevision: 'Usar a nova revisão',
@@ -370,6 +378,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Apunta a un altre servei',
     referenceTarget: 'Servei',
     secretRotated: 'Nova revisió desada · torna a desplegar',
+    referenceAddressChanged: 'Adreça canviada · torna a desplegar',
     rotatedTitle: 'Un secret té una revisió nova',
     rotatedBody: 'La versió en marxa fa servir l’antiga. Fes servir la revisió nova aquí i desplega.',
     useNewRevision: 'Fes servir la revisió nova',
@@ -411,6 +420,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: 'Auf einen anderen Dienst zeigen',
     referenceTarget: 'Dienst',
     secretRotated: 'Neue Revision gespeichert · neu deployen',
+    referenceAddressChanged: 'Adresse geändert · erneut deployen',
     rotatedTitle: 'Ein Secret hat eine neue Revision',
     rotatedBody: 'Das laufende Release nutzt noch die alte. Übernimm hier die neue Revision und deploye dann.',
     useNewRevision: 'Neue Revision verwenden',
@@ -451,6 +461,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: '指向另一个服务',
     referenceTarget: '服务',
     secretRotated: '已保存新版本 · 重新部署以生效',
+    referenceAddressChanged: '地址已更改 · 重新部署以生效',
     rotatedTitle: '某个密钥有新版本',
     rotatedBody: '运行中的版本仍使用旧版本。在此使用新版本后再部署。',
     useNewRevision: '使用新版本',
@@ -491,6 +502,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: '指向另一個服務',
     referenceTarget: '服務',
     secretRotated: '已儲存新版本 · 重新部署以套用',
+    referenceAddressChanged: '位址已變更 · 重新部署以套用',
     rotatedTitle: '某個密鑰有新版本',
     rotatedBody: '執行中的版本仍使用舊版本。在此使用新版本後再部署。',
     useNewRevision: '使用新版本',
@@ -532,6 +544,7 @@ export const deploymentEditorsTranslations = {
     addReferenceTitle: '別のサービスを指す',
     referenceTarget: 'サービス',
     secretRotated: '新しいリビジョンを保存 · 再デプロイで反映',
+    referenceAddressChanged: 'アドレスが変更されました · 再デプロイで反映',
     rotatedTitle: 'シークレットに新しいリビジョンがあります',
     rotatedBody: '実行中のリリースは古いものを使っています。ここで新しいリビジョンを使ってからデプロイします。',
     useNewRevision: '新しいリビジョンを使う',

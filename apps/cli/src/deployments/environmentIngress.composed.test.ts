@@ -2,8 +2,8 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployment-protocol';
-import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, readDeploymentEnvironmentArtifactV1,
+    DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
@@ -31,10 +31,15 @@ const resolveOwnerRequesterIdentity = async (context: import('@happier-dev/proto
 };
 
 it.each((['plain', 'e2ee'] as const).flatMap(mode =>
-    (['ui', 'mcp', 'denied Manage'] as const).map(entry => ({ mode, entry }))))(
-    'prepares current-reference ingress through the admitted $entry Action in $mode mode', async ({ mode, entry }) => {
+    (['ui', 'mcp', 'denied Manage'] as const).flatMap(entry =>
+        (['ingress', 'previewTemplate', 'remove previewTemplate'] as const).map(edit => ({ mode, entry, edit })))))(
+    'prepares current-reference $edit through the admitted $entry Action in $mode mode', async ({ mode, entry, edit }) => {
     const environment = createDeploymentEnvironmentDetailV1();
-    const original = { ...environment.content, ingress: undefined };
+    const previewTemplate = { v: 1 as const, enabled: false, forkPreviews: 'off' as const,
+        repository: { kind: 'github', deployment: 'https://github.example/enterprise', repository: 'private-owner/private-app' },
+        runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
+    const original = { ...environment.content, ingress: undefined,
+        ...(edit !== 'previewTemplate' ? { previewTemplate } : {}) };
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
     const machineKey = new Uint8Array(32).fill(57);
     const credentials: StoredCredentials = { token, encryption: mode === 'plain' ? null : {
@@ -49,7 +54,7 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
         body: encode({ body: JSON.stringify(original) }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     const artifacts = new Map<string, Record<string, unknown>>([[originalArtifact.id, originalArtifact]]);
     const artifactWrites: string[] = [];
-    const storageWrites: ReturnType<typeof DeploymentActionInputSchemasV1['deployments.environments.update']['parse']>[] = [];
+    const storageWrites: ReturnType<typeof DeploymentEnvironmentUpdateStorageInputV1Schema.parse>[] = [];
     // Home HTTP is the boundary; requester admission, Action routing,
     // private codecs and Environment preparation remain production code.
     vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -76,7 +81,7 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
         if (request.method?.toUpperCase() === 'GET') return { status: 200, data: { ok: true,
             environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
         expect(request.method).toBe('PATCH');
-        storageWrites.push(DeploymentActionInputSchemasV1['deployments.environments.update'].parse(request.data));
+        storageWrites.push(DeploymentEnvironmentUpdateStorageInputV1Schema.parse(request.data));
         return { status: 200, data: { ok: true, environmentId: environment.environment.id,
             revision: environment.environment.revision + 1 } };
     });
@@ -86,6 +91,8 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
     const actionId = 'deployments.environments.update' as const;
     const ingress = { kind: 'cloudflareTunnel' as const };
+    const patch = edit === 'ingress' ? { ingress }
+        : { previewTemplate: edit === 'previewTemplate' ? previewTemplate : null };
     const surface = entry === 'ui' ? 'ui' : 'mcp';
     const context: ActionExecutorContext = { ...ownerContext, surface,
         actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable',
@@ -96,7 +103,7 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
     const result = await executor.execute(actionId, { serverId: 'home', environmentId: environment.environment.id,
         expectedRevision: environment.environment.revision, contentArtifactId: environment.environment.contentArtifactId,
         contentHeaderVersion: environment.environment.contentHeaderVersion, contentBodyVersion: environment.environment.contentBodyVersion,
-        patch: { ingress } }, context);
+        patch }, context);
     if (entry === 'denied Manage') {
         expect(result).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
         expect(artifactWrites).toEqual([]);
@@ -108,13 +115,19 @@ it.each((['plain', 'e2ee'] as const).flatMap(mode =>
     expect(artifactWrites).toHaveLength(1);
     expect(storageWrites).toHaveLength(1);
     const stored = storageWrites[0]!;
-    expect(stored).toMatchObject({ patch: { ingress }, expectedRevision: environment.environment.revision });
+    expect(stored).toMatchObject({ expectedRevision: environment.environment.revision });
+    expect(stored.patch).toEqual(edit === 'ingress' ? patch : {});
+    if (edit !== 'ingress') expect(JSON.stringify(stored)).not.toContain('private-owner/private-app');
     expect(stored.contentArtifactId).not.toBe(environment.environment.contentArtifactId);
     expect(stored.contentArtifactId).toBe(artifactWrites[0]);
+    if (mode === 'e2ee' && edit !== 'ingress') expect(JSON.stringify(artifacts.get(stored.contentArtifactId)))
+        .not.toContain('private-owner/private-app');
     const artifact = await runWithServerHttpBaseUrl('https://home.test', () =>
         createCredentialedAccountArtifactStore(credentials).read(stored.contentArtifactId,
             { prepareRecipients: false, includeSharedAudience: false }));
     const candidate = readDeploymentEnvironmentArtifactV1(stored, artifact);
-    expect(candidate).toMatchObject({ ok: true, content: { ...original, ingress } });
+    const expectedContent = JSON.parse(JSON.stringify({ ...original,
+        ...(edit === 'ingress' ? { ingress } : { previewTemplate: edit === 'previewTemplate' ? previewTemplate : undefined }) }));
+    expect(candidate).toEqual({ ok: true, content: expectedContent, title: original.name });
     expect(artifacts.get(originalArtifact.id)).toEqual(originalArtifact);
 });

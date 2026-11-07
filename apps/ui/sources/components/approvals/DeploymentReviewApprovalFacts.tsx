@@ -292,7 +292,7 @@ export function useDeploymentReviewDecision(
   };
 }
 
-/** The settings that grant host power, as the one amber callout after the facts (never as neutral rows). */
+/** Changed references and settings worth checking share one amber callout after the facts. */
 function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | null; multiple: boolean; testID: string }>) {
   const { review } = props.machine;
   const risks = RISK_KINDS.flatMap((kind) => {
@@ -303,7 +303,8 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
       : [];
   });
   const warnings = review.storage?.warnings ?? [];
-  if (risks.length === 0 && warnings.length === 0) return null;
+  const referenceChanges = review.referenceChanges ?? [];
+  if (risks.length === 0 && warnings.length === 0 && referenceChanges.length === 0) return null;
   const on = props.multiple && props.name ? { machine: props.name } : null;
   return (
     <AttentionBanner
@@ -311,6 +312,11 @@ function MachineRisks(props: Readonly<{ machine: ReviewMachine; name: string | n
       tone="warning"
       title={on ? t('projects.deployments.review.risksOn', on) : t('projects.deployments.review.risksTitle')}
       points={[
+        ...referenceChanges.map(change => [
+          { code: change.name }, ' · ',
+          t(change.phase === 'build' ? 'projects.deployments.phaseBuild' : 'projects.deployments.phaseRuntime'), ' · ',
+          t('projects.deployments.editors.referenceAddressChanged'),
+        ]),
         // The service leads, as the lab reads it: "worker · Can control Docker on the host".
         ...risks.map((risk) => [
           ...(risk.services.length > 0 ? [{ code: risk.services.join(', ') }, ' · '] : []),

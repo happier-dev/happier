@@ -4,14 +4,6 @@
 import type { JsonValue } from '../../identity.js';
 
 export type DaemonAdminActionInputById = {
-    readonly "daemon.filesystem.listRoots": Record<string, never>;
-    readonly "daemon.filesystem.browseDirectory": {
-        [x: string]: unknown;
-        path: string;
-        includeFiles?: boolean | undefined;
-        includeGitIgnore?: boolean | undefined;
-        maxEntries?: null | number | undefined;
-    };
     readonly "bugreport.collectDiagnostics": {
         [x: string]: unknown;
         sessionId?: string | undefined;
@@ -32,8 +24,6 @@ export type DaemonAdminActionInputById = {
     };
 };
 export type DaemonAdminActionResultById = {
-    readonly "daemon.filesystem.listRoots": JsonValue;
-    readonly "daemon.filesystem.browseDirectory": JsonValue;
     readonly "bugreport.collectDiagnostics": JsonValue;
     readonly "bugreport.getLogTail": JsonValue;
     readonly "bugreport.uploadArtifact": JsonValue;

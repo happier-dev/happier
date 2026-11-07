@@ -1,13 +1,18 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
 import type { HealthCheckResultV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentHealthObservationV1 } from '@happier-dev/deployments';
+import { deploymentDomainProbeVantageV1, type DeploymentHealthObservationV1 } from '@happier-dev/deployments';
 import type { DeploymentDomainHeaderV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import type { HealthCheckDefinitionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { DeploymentCurrentDomainObservationV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 
-type Entry = Readonly<{ sourceInstanceId: string; checkId: string;
+type Entry = Readonly<{ environmentId: string; targetLinkId: string; sourceInstanceId: string; checkId: string;
     caller: PluginMachineMaterializationRefV1; occurrenceId: string; check: HealthCheckDefinitionV1;
-    domainId: string; domainRevision: number; observation: DeploymentHealthObservationV1 }>;
-type Listener = () => void;
+    domainId: string; domainRevision: number; observation: DeploymentHealthObservationV1 | null;
+    domainObservation: DeploymentCurrentDomainObservationV1; tlsKind?: 'custom' | 'managed' }>;
+type EdgeEntry = Entry & Readonly<{ observation: DeploymentHealthObservationV1 }>;
+type Scope = Readonly<{ environmentId: string; targetLinkId: string; domainIds?: readonly string[] }>;
+type Listener = Readonly<{ callback: () => void; scope?: Scope }>;
 const statusRank = { up: 0, degraded: 1, unknown: 2, down: 3 } as const;
 
 /** Runtime-only current facts from the incumbent saved-check observer, never its transition cursor. */
@@ -16,17 +21,27 @@ export function createCurrentDomainEdgeObservation() {
     const listeners = new Set<Listener>();
     const key = (environmentId: string, targetLinkId: string, sourceInstanceId: string, checkId: string) =>
         JSON.stringify([environmentId, targetLinkId, sourceInstanceId, checkId]);
-    const emit = () => { for (const listener of listeners) listener(); };
-    const readProof = (environmentId: string, targetLinkId: string): Entry | null => {
-        let selected: Entry | null = null;
+    const emit = (environmentId: string, targetLinkId: string, edgeChanged: boolean, domainIds: readonly string[]) => {
+        if (!edgeChanged && !domainIds.length) return;
+        for (const { callback, scope } of listeners) {
+            if (!scope) { callback(); continue; }
+            if (scope.environmentId !== environmentId || scope.targetLinkId !== targetLinkId) continue;
+            const selectedDomains = scope.domainIds;
+            if (selectedDomains ? domainIds.some(id => selectedDomains.includes(id)) : edgeChanged) callback();
+        }
+    };
+    const isEdgeEntry = (entry: Entry): entry is EdgeEntry => entry.observation !== null;
+    const readProof = (environmentId: string, targetLinkId: string): EdgeEntry | null => {
+        let selected: EdgeEntry | null = null;
         for (const entry of entries.values()) {
+            if (!isEdgeEntry(entry)) continue;
             const candidate = entry.observation;
             if (candidate.environmentId !== environmentId || candidate.targetLinkId !== targetLinkId) continue;
             if (!selected || statusRank[candidate.status] > statusRank[selected.observation.status]) selected = entry;
         }
         return selected;
     };
-    const sameCurrent = (before: Entry | null, after: Entry | null) => {
+    const sameCurrent = (before: EdgeEntry | null, after: EdgeEntry | null) => {
         const a = before?.observation;
         const b = after?.observation;
         return a === b || a !== undefined && b !== undefined && a.status === b.status
@@ -34,85 +49,95 @@ export function createCurrentDomainEdgeObservation() {
             && a.source.kind === 'domain' && b.source.kind === 'domain'
             && a.source.observerMachineId === b.source.observerMachineId;
     };
-    const emitIfChanged = (before: Entry | null, environmentId: string, targetLinkId: string) => {
-        if (!sameCurrent(before, readProof(environmentId, targetLinkId))) emit();
+    const sameDomain = (before: Entry | undefined, after: Entry) => {
+        if (!before) return false;
+        const semantic = (entry: Entry) => {
+            const { observedAt: _observedAt, latencyMs: _latencyMs, ...result } = entry.domainObservation.result;
+            return { ...entry.domainObservation, result, tlsKind: entry.tlsKind };
+        };
+        return isDeepStrictEqual(semantic(before), semantic(after));
+    };
+    const remove = (matches: (entry: Entry, identity: string) => boolean) => {
+        const changed = new Map<string, { environmentId: string; targetLinkId: string;
+            edge: EdgeEntry | null; domainIds: Set<string> }>();
+        for (const [identity, entry] of entries) {
+            if (!matches(entry, identity)) continue;
+            const groupKey = JSON.stringify([entry.environmentId, entry.targetLinkId]);
+            let group = changed.get(groupKey);
+            if (!group) {
+                group = { environmentId: entry.environmentId, targetLinkId: entry.targetLinkId,
+                    edge: readProof(entry.environmentId, entry.targetLinkId), domainIds: new Set() };
+                changed.set(groupKey, group);
+            }
+            group.domainIds.add(entry.domainId);
+            entries.delete(identity);
+        }
+        for (const group of changed.values()) emit(group.environmentId, group.targetLinkId,
+            !sameCurrent(group.edge, readProof(group.environmentId, group.targetLinkId)), [...group.domainIds]);
     };
     return Object.freeze({
         publish(input: Readonly<{ sourceInstanceId: string; sourceRevision: string; checkId: string; kind: 'http' | 'certificate';
             caller: PluginMachineMaterializationRefV1; occurrenceId: string; check: HealthCheckDefinitionV1;
             environment: DeploymentEnvironmentHeaderV1; targetLink: DeploymentTargetLinkHeaderV1;
             domain: DeploymentDomainHeaderV1; observer: Readonly<{ machineId: string }>;
-            result: HealthCheckResultV1 }>) {
-            if (input.kind !== 'http') return;
+            result: HealthCheckResultV1; tlsKind?: 'custom' | 'managed' }>) {
             const environment = input.environment;
             const identity = key(environment.id, input.targetLink.id, input.sourceInstanceId, input.checkId);
             const before = readProof(environment.id, input.targetLink.id);
             const edgeMachineId = environment.ingress?.kind === 'edgeCaddy' ? environment.ingress.edgeMachineId : null;
-            const valid = edgeMachineId && edgeMachineId !== input.observer.machineId
-                && environment.controllerMachineId === input.observer.machineId
+            const valid = environment.controllerMachineId === input.observer.machineId
                 && environment.runtimeTargetLinkId === input.targetLink.id
                 && input.domain.targetLinkId === input.targetLink.id;
             if (!valid) {
-                if (entries.delete(identity)) emitIfChanged(before, environment.id, input.targetLink.id);
+                remove((_entry, candidate) => candidate === identity);
                 return;
             }
-            const observation: DeploymentHealthObservationV1 = {
+            const vantage = deploymentDomainProbeVantageV1(environment, input.targetLink, input.observer.machineId);
+            const observation: DeploymentHealthObservationV1 | null = input.kind === 'http'
+                && vantage === 'outside' && edgeMachineId ? {
                 environmentId: environment.id, targetLinkId: input.targetLink.id,
                 targetLinkRevision: input.targetLink.revision, machineId: edgeMachineId,
                 role: 'edge', source: { kind: 'domain', observerMachineId: input.observer.machineId },
                 status: input.result.status, observedAtMs: input.result.observedAt,
                 ...(input.result.latencyMs === undefined ? {} : { latencyMs: input.result.latencyMs }),
-            };
-            const next = { sourceInstanceId: input.sourceInstanceId, checkId: input.checkId,
+            } : null;
+            const next: Entry = { environmentId: environment.id, targetLinkId: input.targetLink.id,
+                sourceInstanceId: input.sourceInstanceId, checkId: input.checkId,
                 caller: input.caller, occurrenceId: input.occurrenceId, check: input.check,
                 domainId: input.domain.id,
-                domainRevision: input.domain.revision, observation };
+                domainRevision: input.domain.revision, observation,
+                domainObservation: { domainId: input.domain.id, domainRevision: input.domain.revision,
+                    targetLinkRevision: input.targetLink.revision, kind: input.kind,
+                    observerMachineId: input.observer.machineId, vantage, result: input.result },
+                ...(input.tlsKind === undefined ? {} : { tlsKind: input.tlsKind }) };
+            const domainChanged = !sameDomain(entries.get(identity), next);
             entries.set(identity, next);
-            emitIfChanged(before, environment.id, input.targetLink.id);
+            emit(environment.id, input.targetLink.id, !sameCurrent(before, readProof(environment.id, input.targetLink.id)),
+                domainChanged ? [input.domain.id] : []);
         },
         readProof,
+        readDomainProofs(environmentId: string, targetLinkId: string, domainIds?: readonly string[]): readonly Entry[] {
+            return [...entries.values()].filter(entry => entry.environmentId === environmentId
+                && entry.targetLinkId === targetLinkId && (!domainIds || domainIds.includes(entry.domainId)));
+        },
         read(environmentId: string, targetLinkId: string): DeploymentHealthObservationV1 | null {
             return readProof(environmentId, targetLinkId)?.observation ?? null;
         },
         withdraw(environmentId: string, targetLinkId?: string) {
-            const before = new Map<string, Entry | null>();
-            for (const [identity, entry] of entries) {
-                if (entry.observation.environmentId !== environmentId
-                    || targetLinkId && entry.observation.targetLinkId !== targetLinkId) continue;
-                before.set(entry.observation.targetLinkId,
-                    before.get(entry.observation.targetLinkId) ?? readProof(environmentId, entry.observation.targetLinkId));
-                entries.delete(identity);
-            }
-            for (const [linkId, prior] of before) emitIfChanged(prior, environmentId, linkId);
+            remove(entry => entry.environmentId === environmentId && (!targetLinkId || entry.targetLinkId === targetLinkId));
         },
         withdrawDomain(environmentId: string, domainId: string) {
-            const before = new Map<string, Entry | null>();
-            for (const [identity, entry] of entries) {
-                if (entry.observation.environmentId !== environmentId || entry.domainId !== domainId) continue;
-                before.set(entry.observation.targetLinkId,
-                    before.get(entry.observation.targetLinkId) ?? readProof(environmentId, entry.observation.targetLinkId));
-                entries.delete(identity);
-            }
-            for (const [linkId, prior] of before) emitIfChanged(prior, environmentId, linkId);
+            remove(entry => entry.environmentId === environmentId && entry.domainId === domainId);
         },
         reconcile(isCurrent: (entry: Entry) => boolean) {
-            const before = new Map<string, Entry | null>();
-            for (const [identity, entry] of entries) {
-                if (isCurrent(entry)) continue;
-                const key = JSON.stringify([entry.observation.environmentId, entry.observation.targetLinkId]);
-                before.set(key, before.get(key) ?? readProof(entry.observation.environmentId, entry.observation.targetLinkId));
-                entries.delete(identity);
-            }
-            for (const [key, prior] of before) {
-                const [environmentId, targetLinkId] = JSON.parse(key) as [string, string];
-                emitIfChanged(prior, environmentId, targetLinkId);
-            }
+            remove(entry => !isCurrent(entry));
         },
-        subscribe(listener: Listener) {
+        subscribe(callback: () => void, scope?: Scope) {
+            const listener = { callback, scope };
             listeners.add(listener);
             return { dispose() { listeners.delete(listener); } };
         },
-        dispose() { if (entries.size) { entries.clear(); emit(); } listeners.clear(); },
+        dispose() { remove(() => true); listeners.clear(); },
     });
 }
 

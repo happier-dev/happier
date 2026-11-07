@@ -387,6 +387,7 @@ export type HostAuthorizedPluginExecLaunch = Readonly<{
     secretRedactionLease?: ProviderRedactionLease;
     /** Exact value-free generation inputs, captured before finite input retirement. */
     deploymentSecretRefs?: readonly Readonly<{ resourceId: string; resourceRevision: number }>[];
+    deploymentReferenceAddresses?: import('@/deployments/secrets/deploymentExecEnvPort').DeploymentExecEnvironmentMaterialForHost['referenceAddresses'];
     /** Actual finalized direct-native prefix, captured by the private P41 projection. */
     nativeExecutablePrefix?: readonly string[];
     /** Helper-only AM-9 files are no native mount: retire after actual CLI settlement,
@@ -872,6 +873,8 @@ async function resolveExecRequesterIdentity(input: Readonly<{
 }>): Promise<HostRequesterExecutionIdentity | undefined> {
     const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: input.agentIsolation,
         requesterIdentity: input.requesterIdentity, signal: input.signal });
+    if (input.executionKind !== 'person_break_glass')
+        await input.agentIsolation?.qualifyNativeReadiness?.({ requesterIdentity: identity, signal: input.signal });
     if (identity || input.executionKind === 'person_break_glass') {
         assertHostRequesterExecutionAdmissionForHost({ identity, personBreakGlass: input.executionKind === 'person_break_glass',
             agentLaunchKind: input.agentLaunchKind,
@@ -1496,7 +1499,7 @@ export function createStablePluginExecService(params: Readonly<{
             };
             const prepared = Object.freeze({ ...authorized, env,
                 ...(deploymentRuntimeProjection ? { retireDeploymentRuntimeFiles: () => consumed.retireRuntimeFiles() } : {}),
-                secretRedactionLease: redaction, deploymentSecretRefs: refs,
+                secretRedactionLease: redaction, deploymentSecretRefs: refs, deploymentReferenceAddresses: consumed.referenceAddresses,
                 async recheckInputs() {
                     if (retired || !retained) fail('unavailable', 'Deployment execution environment is unavailable');
                     const current = retained;
@@ -1515,7 +1518,8 @@ export function createStablePluginExecService(params: Readonly<{
                     // Reuse the original authorized Docker tuple, not a filtered
                     // application environment or a new ambient environment.
                     const original = authorized.detachDeploymentEnvironmentForObservation?.() ?? authorized;
-                    return Object.freeze({ ...original, secretRedactionLease: redaction, deploymentSecretRefs: refs, release });
+                    return Object.freeze({ ...original, secretRedactionLease: redaction, deploymentSecretRefs: refs,
+                        deploymentReferenceAddresses: consumed.referenceAddresses, release });
                 },
                 release });
             material = undefined;
@@ -2349,6 +2353,7 @@ export function createStablePluginExecService(params: Readonly<{
         guard(combinedSignal);
         const identity = await resolveHostRequesterExecutionIdentityForLaunch({ context: params.agentIsolation,
             requesterIdentity: params.requesterIdentity, signal: combinedSignal });
+        await params.agentIsolation?.qualifyNativeReadiness?.({ requesterIdentity: identity, signal: combinedSignal });
         guard(combinedSignal);
         assertHostRequesterExecutionAdmissionForHost({ identity: identity ?? { kind: 'unknown', reason: 'requester_authority_unavailable' },
             snapshot: params.agentIsolation?.read(), agentLaunchKind: kind });

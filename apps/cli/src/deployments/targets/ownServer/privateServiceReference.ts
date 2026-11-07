@@ -35,7 +35,7 @@ export async function resolvePrivateServiceReferenceForHost(input: Readonly<{
     if (sameEnvironment && source.via === 'auto') return `${exported.scheme}://${exported.service}:${exported.containerPort}`;
     if (source.via === 'public' || exported.exposure !== 'privateNetwork' || !exported.privateNetwork) return unavailable();
     const link = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
-    if (!link?.activeDeploymentId) return unavailable();
+    if (!link) return unavailable();
     const authorization = input.context.externalActionExecutionAuthorization;
     const readMachine = (machineId: string) => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => authorization
         ? ApiClient.getRequesterMachine(machineId, { authorization, signal, effectActionId: input.actionId })
@@ -68,8 +68,8 @@ export async function resolvePrivateServiceReferenceForHost(input: Readonly<{
             rows = result.kind === 'snapshot' ? result.services : [];
         }
         for (const row of rows) {
-            if (row.environmentId !== source.environmentId || row.deployment?.deploymentId !== link.activeDeploymentId
-                || row.deployment.installationId !== member.installationId || row.deployment.service.composeService !== exported.service
+            if (row.environmentId !== source.environmentId || row.deployment?.installationId !== member.installationId
+                || row.deployment.service.composeService !== exported.service
                 || row.health?.freshness !== 'current' || row.health.status === 'down'
                 || row.native?.phase !== 'running') continue;
             for (const network of networks) {

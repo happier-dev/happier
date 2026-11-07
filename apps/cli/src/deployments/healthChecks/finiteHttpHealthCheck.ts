@@ -50,14 +50,15 @@ function endpoint(check: AdmittedHttpHealthCheckV1): Readonly<{ url: string; exp
     return { url: url.href, expectStatus };
 }
 
-function nativeFailure(error: unknown, url: string): 'tls' | 'connection' | undefined {
+function nativeFailure(error: unknown, url: string): 'tls' | 'dns' | 'connection' | undefined {
     if (!(error instanceof Error)) return;
     const native = error.cause instanceof Error ? error.cause : error;
     if (!('code' in native) || typeof native.code !== 'string') return;
     if (isNativeTlsErrorCode(native.code, new URL(url).protocol === 'https:')) return 'tls';
+    if (native.code === 'ENOTFOUND') return 'dns';
     // Reset/timeout may occur after headers while reading a keyword body;
     // those are incomplete evidence, not a proved connection refusal.
-    if (['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH'].includes(native.code)) {
+    if (['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(native.code)) {
         return 'connection';
     }
     return undefined;
@@ -121,11 +122,13 @@ async function observe(check: AdmittedHttpHealthCheckV1, context: HealthCheckFin
         if (isPluginError(error) && error.code !== 'plugin_fetch_response_too_large') throw error;
         if (error instanceof Error && error.name === 'AbortError') throw error;
         const failure = nativeFailure(error, url);
-        if (failure === 'tls' || (failure === 'connection' && kind === 'http')) {
+        if (failure === 'tls' || ((failure === 'connection' || failure === 'dns') && kind === 'http')) {
             return result(check, kind, context, startedAt, 'down', { reason: failure,
-                requiredFact: failure === 'tls' ? 'validEndpointTlsConnection' : 'reachableHealthEndpoint',
+                requiredFact: failure === 'tls' ? 'validEndpointTlsConnection'
+                    : failure === 'dns' ? 'resolvableHealthEndpoint' : 'reachableHealthEndpoint',
                 remedy: failure === 'tls'
                     ? 'Check the endpoint TLS configuration, certificate chain, hostname and validity from the selected observer.'
+                    : failure === 'dns' ? 'Check the endpoint DNS records from the selected observer.'
                     : 'Check endpoint DNS, service availability and network or firewall access from the selected observer.' });
         }
         return result(check, kind, context, startedAt, 'unknown', { reason: 'transport_incomplete' });

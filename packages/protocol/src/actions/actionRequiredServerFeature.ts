@@ -104,6 +104,7 @@ export function getActionRequiredServerFeatureId(
       case 'deployments.teardown': case 'deployments.cancel':
       case 'deployments.environments.get': case 'deployments.environments.list':
       case 'deployments.receipts.get': case 'deployments.receipts.list': case 'deployments.receipts.observe':
+      case 'deployments.observation.get':
       case 'deployments.health.read': case 'deployments.health.current': case 'deployments.drift.read': case 'deployments.logs.read':
         return null;
       default: return 'deployments';

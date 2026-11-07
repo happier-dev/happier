@@ -16,6 +16,7 @@ export type DeploymentExecEnvironmentMaterialForHost = Readonly<{
     env: Readonly<Record<string, string>>;
     secretValues: readonly string[];
     refs: readonly Readonly<{ resourceId: string; resourceRevision: number }>[];
+    referenceAddresses?: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>>['referenceAddresses'];
     recheck(): Promise<void>;
     dispose(): void;
 }>;
@@ -25,6 +26,7 @@ type Attachment = Readonly<{
         env: Readonly<Record<string, string>>;
         redaction: ProviderRedactionLease;
         refs: DeploymentExecEnvironmentMaterialForHost['refs'];
+        referenceAddresses: NonNullable<DeploymentExecEnvironmentMaterialForHost['referenceAddresses']>;
         recheck(): Promise<void>;
         retireEnvironment(): void;
         dispose(): Promise<void>;
@@ -151,6 +153,8 @@ export function createDeploymentExecEnvPortForHost(input: Readonly<{
                     : backupInput ? await backupInput.prepare({ configKey: backupConfigKey!, signal })
                         : await operationalInput!.prepare({ bindingIdentity: operationalInput!.bindingIdentity, signal });
                 const refs = Object.freeze(material.refs.map(ref => Object.freeze({ ...ref })));
+                const referenceAddresses = Object.freeze((material.referenceAddresses ?? []).map(value =>
+                    Object.freeze({ ...value, source: Object.freeze({ ...value.source }) })));
                 let disposed = false;
                 let retired = false;
                 let consumed = false;
@@ -248,7 +252,7 @@ export function createDeploymentExecEnvPortForHost(input: Readonly<{
                                 // value in its error cause. The private native-file
                                 // projection never sends these bytes as OS env.
                                 if (delivery !== 'runtimeProjection' && Object.values(loanEnvironment).some(value => value.includes('\0'))) refuse();
-                                return { env: loanEnvironment, redaction: loanRedaction, refs, recheck,
+                                return { env: loanEnvironment, redaction: loanRedaction, refs, referenceAddresses, recheck,
                                     retireEnvironment: retireLoan, dispose: disposeLoan,
                                     async projectRuntime(projection, host, admit, signal) {
                                         if (sourceInput?.phase !== 'runtime' || projection.source !== sourceInput.source) refuse();

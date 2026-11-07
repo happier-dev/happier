@@ -119,6 +119,10 @@ export type WorkspaceLayoutActionInputById = {
                 kind: 'workingTree';
             };
         };
+        resource?: undefined | {
+            kind: 'ciRun' | 'issue' | 'pullRequest' | 'securityAlert';
+            url: string;
+        };
         present?: boolean | undefined;
         find?: undefined | {
             query: string;

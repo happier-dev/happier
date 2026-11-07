@@ -193,6 +193,9 @@ export function registerDeploymentRoutes(app: Fastify): void {
                 z.transform(value => typeof value === 'string' ? [value] : value))),
             previewPullRequestIds: z.optional(z.pipe(z.union([z.string(), z.array(z.string())]),
                 z.transform(value => typeof value === 'string' ? [value] : value))),
+            previewRepository: z.optional(z.pipe(z.string(), z.transform(value => {
+                try { return JSON.parse(value) as unknown; } catch { return null; }
+            }))),
         }), inputs['deployments.environments.list']), response: responses(outputs['deployments.environments.list']) },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send(invalid);
@@ -237,10 +240,21 @@ export function registerDeploymentRoutes(app: Fastify): void {
         if (request.validationError || request.body.environmentId !== request.params.environmentId) return reply.code(400).send(invalid);
         // Receipt admission and explicit detach own the Environment row lock and revision CAS.
         // A Serializable snapshot also conflicts with unrelated Account cursor publication.
-        const result = await inTx(tx => 'detachKeepRunning' in request.body
-            ? unlinkDeploymentTargetInTx(tx, request.userId, request.body, readTeamOperationAuthenticationFromRequest(request))
-            : createDeploymentInTx(tx, request.userId, request.body, 'teardown',
-                readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined),
+        const result = await inTx(async tx => {
+            if ('nothingDeployed' in request.body) {
+                const removed = await deleteDeploymentEnvironmentInTx(tx, request.userId, {
+                    serverId: request.body.serverId, environmentId: request.body.environmentId,
+                    expectedRevision: request.body.expectedRevision, requestKey: request.body.requestKey,
+                    teardownDeploymentIds: [],
+                }, readTeamOperationAuthenticationFromRequest(request));
+                return removed.ok ? { ok: true as const, environmentId: removed.environmentId, revision: removed.revision,
+                    nothingDeployed: true as const, environmentRemoved: true as const } : removed;
+            }
+            return 'detachKeepRunning' in request.body
+                ? unlinkDeploymentTargetInTx(tx, request.userId, request.body, readTeamOperationAuthenticationFromRequest(request))
+                : createDeploymentInTx(tx, request.userId, request.body, 'teardown',
+                    readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined);
+        },
             { isolationLevel: 'ReadCommitted' });
         return reply.code(status(result)).send(result);
     });

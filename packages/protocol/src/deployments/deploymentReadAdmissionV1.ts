@@ -4,15 +4,8 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentHealthReadInputV1Schema, DeploymentHealthCurrentInputV1Schema,
   DeploymentDriftReadInputV1Schema, DeploymentLogsReadInputV1Schema } from './deploymentReadsV1.js';
 
-export function isDeploymentReadActionIdV1(value: string): value is
-  'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
-  return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value);
-}
-
-export function isDeploymentNativeReadActionIdV1(value: string): value is
-  'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
-  return value === 'deployments.health.read' || value === 'deployments.drift.read' || value === 'deployments.logs.read';
-}
+import { isDeploymentReadActionIdV1 } from './deploymentActionIdsV1.js';
+export { isDeploymentReadActionIdV1, isDeploymentNativeReadActionIdV1 } from './deploymentActionIdsV1.js';
 
 const references = { environmentId: id, deploymentId: id, targetLinkId: id, machineId: id, installationId: id };
 

@@ -22,6 +22,7 @@ export type MachineAgentInstallActionInputById = {
     readonly "machines.agents.install.status": {
         jobId: string;
         machineId: string;
+        waitForTerminal?: boolean | undefined;
         cursor?: number | undefined;
     };
     readonly "machines.agents.install.cancel": {

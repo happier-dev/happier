@@ -146,7 +146,8 @@ export function createDaemonHostResourceRead(input: Readonly<{
                         if (!signal.aborted) end({ code: 'unavailable',
                             diagnostics: [isPluginError(error) ? error.code : 'plugin_resource_unavailable'] });
                     });
-                });
+                }, { environmentId: reference.input.environmentId, targetLinkId: reference.input.targetLinkId,
+                    ...(reference.input.domainIds ? { domainIds: reference.input.domainIds } : {}) });
                 try {
                     const initial = await read(reference, machineId, context);
                     return { digest: initial.digest, async dispose() { onChange.dispose(); await lease.release(); } };

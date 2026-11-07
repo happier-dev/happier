@@ -52,6 +52,7 @@ function readProject(lifetime: ServerAccountScopeLifetime, projectSourceId: stri
     // records stale retained pages; only presented borrowers demand its Home transport.
     const onChange = (event: HomeAccountChangeEvent) => {
         if (retired || !lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
+        if (event.changeKinds?.includes('savedSecretResource')) controller.invalidateSavedSecrets(event.entityIds);
         if (event.changeKinds && !event.changeKinds.includes('account')) return;
         if (!event.entityIds || event.entityIds.some(id => isAccountCurrentnessEntityIdV1(id)
             || id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {

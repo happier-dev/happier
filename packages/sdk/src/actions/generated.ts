@@ -133,6 +133,12 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "computer.control.interrupt",
   "computer.input",
   "computer.permissions.openSettings",
+  "computer.recording.attachToComposer",
+  "computer.recording.cancel",
+  "computer.recording.cleanupExpired",
+  "computer.recording.discard",
+  "computer.recording.start",
+  "computer.recording.stop",
   "computer.target.close",
   "computer.target.select",
   "connectedServices.accounts.credentials.save",
@@ -1347,6 +1353,16 @@ export type GeneratedActions = Readonly<{
       readonly openSettings: (input: PublicActionInputById["computer.permissions.openSettings"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.permissions.openSettings">>;
     }> ;
     readonly query: (input: PublicActionInputById["computer.query"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.query">>;
+    readonly recording: Readonly<{
+      readonly attachToComposer: (input: PublicActionInputById["computer.recording.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.attachToComposer">>;
+      readonly cancel: (input: PublicActionInputById["computer.recording.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.cancel">>;
+      readonly cleanupExpired: (input: PublicActionInputById["computer.recording.cleanupExpired"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.cleanupExpired">>;
+      readonly discard: (input: PublicActionInputById["computer.recording.discard"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.discard">>;
+      readonly listForTarget: (input: PublicActionInputById["computer.recording.listForTarget"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.listForTarget">>;
+      readonly start: (input: PublicActionInputById["computer.recording.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.start">>;
+      readonly status: (input: PublicActionInputById["computer.recording.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.status">>;
+      readonly stop: (input: PublicActionInputById["computer.recording.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.recording.stop">>;
+    }> ;
     readonly target: Readonly<{
       readonly close: (input: PublicActionInputById["computer.target.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.target.close">>;
       readonly get: (input: PublicActionInputById["computer.target.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"computer.target.get">>;
@@ -1473,10 +1489,12 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly deployments: Readonly<{
     readonly backups: Readonly<{
+      readonly history: (input: PublicActionInputById["deployments.backups.history"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.history">>;
       readonly inventory: (input: PublicActionInputById["deployments.backups.inventory"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.inventory">>;
       readonly prune: (input: PublicActionInputById["deployments.backups.prune"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.prune">>;
       readonly restore: (input: PublicActionInputById["deployments.backups.restore"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.restore">>;
       readonly run: (input: PublicActionInputById["deployments.backups.run"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.run">>;
+      readonly test: (input: PublicActionInputById["deployments.backups.test"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.test">>;
       readonly verify: (input: PublicActionInputById["deployments.backups.verify"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.backups.verify">>;
     }> ;
     readonly bindings: Readonly<{
@@ -4179,6 +4197,16 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         openSettings: (input: PublicActionInputById["computer.permissions.openSettings"], options?: ActionExecutionOptions) => execute("computer.permissions.openSettings", input, options),
       },
       query: (input: PublicActionInputById["computer.query"], options?: ActionExecutionOptions) => execute("computer.query", input, options),
+      recording: {
+        attachToComposer: (input: PublicActionInputById["computer.recording.attachToComposer"], options?: ActionExecutionOptions) => execute("computer.recording.attachToComposer", input, options),
+        cancel: (input: PublicActionInputById["computer.recording.cancel"], options?: ActionExecutionOptions) => execute("computer.recording.cancel", input, options),
+        cleanupExpired: (input: PublicActionInputById["computer.recording.cleanupExpired"], options?: ActionExecutionOptions) => execute("computer.recording.cleanupExpired", input, options),
+        discard: (input: PublicActionInputById["computer.recording.discard"], options?: ActionExecutionOptions) => execute("computer.recording.discard", input, options),
+        listForTarget: (input: PublicActionInputById["computer.recording.listForTarget"], options?: ActionExecutionOptions) => execute("computer.recording.listForTarget", input, options),
+        start: (input: PublicActionInputById["computer.recording.start"], options?: ActionExecutionOptions) => execute("computer.recording.start", input, options),
+        status: (input: PublicActionInputById["computer.recording.status"], options?: ActionExecutionOptions) => execute("computer.recording.status", input, options),
+        stop: (input: PublicActionInputById["computer.recording.stop"], options?: ActionExecutionOptions) => execute("computer.recording.stop", input, options),
+      },
       target: {
         close: (input: PublicActionInputById["computer.target.close"], options?: ActionExecutionOptions) => execute("computer.target.close", input, options),
         get: (input: PublicActionInputById["computer.target.get"], options?: ActionExecutionOptions) => execute("computer.target.get", input, options),
@@ -4305,10 +4333,12 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     deployments: {
       backups: {
+        history: (input: PublicActionInputById["deployments.backups.history"], options?: ActionExecutionOptions) => execute("deployments.backups.history", input, options),
         inventory: (input: PublicActionInputById["deployments.backups.inventory"], options?: ActionExecutionOptions) => execute("deployments.backups.inventory", input, options),
         prune: (input: PublicActionInputById["deployments.backups.prune"], options?: ActionExecutionOptions) => execute("deployments.backups.prune", input, options),
         restore: (input: PublicActionInputById["deployments.backups.restore"], options?: ActionExecutionOptions) => execute("deployments.backups.restore", input, options),
         run: (input: PublicActionInputById["deployments.backups.run"], options?: ActionExecutionOptions) => execute("deployments.backups.run", input, options),
+        test: (input: PublicActionInputById["deployments.backups.test"], options?: ActionExecutionOptions) => execute("deployments.backups.test", input, options),
         verify: (input: PublicActionInputById["deployments.backups.verify"], options?: ActionExecutionOptions) => execute("deployments.backups.verify", input, options),
       },
       bindings: {

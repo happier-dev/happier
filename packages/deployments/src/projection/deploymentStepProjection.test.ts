@@ -32,6 +32,29 @@ function harness(receipts: Map<string, DeploymentReceiptDetailV1>) {
 }
 
 describe('receipt-derived current member versions', () => {
+    it.each(['succeeded', 'failed', 'outcome_unknown'] as const)('ends older member proof only for a completed teardown (%s)', state => {
+        const link = createDeploymentTargetLinkHeaderV1({ machines: members.map(member => member.machineId), members });
+        const teardown = receipt('teardown', 2, [], state);
+        teardown.deployment.operation = 'teardown';
+        teardown.content.teardown = { reason: 'manual', targetLinkRevision: link.revision,
+            machines: members.slice(0, 2).map(({ machineId, installationId }, index) => ({ machineId,
+                installationId: index === 1 ? 'old-installation' : installationId })), resources: [], proofs: [] };
+        const prior = receipt('u1', 1, members.map((_member, index) => result(index, 'u1')), 'succeeded');
+        expect(deriveDeploymentMemberVersionsV1(link, [prior, teardown])).toMatchObject({
+            'machine-a': { deploymentId: state === 'succeeded' ? null : 'u1', uncertain: state === 'outcome_unknown' },
+            'machine-b': { deploymentId: 'u1', uncertain: state === 'outcome_unknown' },
+            'machine-c': { deploymentId: 'u1', uncertain: state === 'outcome_unknown' },
+        });
+        if (state === 'succeeded') {
+            const fresh = receipt('redeploy', 3, [result(0, 'redeploy')], 'succeeded');
+            expect(deriveDeploymentMemberVersionsV1(link, [prior, teardown, fresh])['machine-a'])
+                .toMatchObject({ deploymentId: 'redeploy', uncertain: false });
+            const projection = createDeploymentMemberVersionProjectionV1({ ...link,
+                machines: [members[0]!.machineId], members: [members[0]!] });
+            expect(projection.addReceipt(teardown)).toBe(true);
+            expect(projection.getVersions()['machine-a']).toMatchObject({ deploymentId: null, uncertain: false });
+        }
+    });
     it('reads member proof only until every current installation has a newest authoritative version', () => {
         const link = createDeploymentTargetLinkHeaderV1({ machines: members.map(member => member.machineId), members });
         let proofReads = 0;

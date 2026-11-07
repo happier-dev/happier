@@ -140,6 +140,21 @@ export type FilesystemActionInputById = {
         path: string;
         maxDepth: number;
     };
+    readonly "daemon.filesystem.listRoots": Record<string, never>;
+    readonly "daemon.filesystem.browseDirectory": {
+        [x: string]: unknown;
+        path: string;
+        includeFiles?: boolean | undefined;
+        includeGitIgnore?: boolean | undefined;
+        maxEntries?: null | number | undefined;
+    };
+    readonly "daemon.filesystem.listFiles": {
+        rootPath: string;
+        query?: string | undefined;
+        includeHidden?: boolean | undefined;
+        limit?: number | undefined;
+        budgetMs?: number | undefined;
+    };
 };
 export type FilesystemActionResultById = {
     readonly "daemon.filesystem.readFile": {
@@ -486,5 +501,59 @@ export type FilesystemActionResultById = {
         success: true;
         tree: FilesystemTreeNode;
         truncated?: boolean | undefined;
+    };
+    readonly "daemon.filesystem.listRoots": {
+        [x: string]: unknown;
+        ok: false;
+        error: string;
+        errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        [x: string]: unknown;
+        ok: true;
+        roots: {
+            [x: string]: unknown;
+            id: string;
+            label: string;
+            path: string;
+        }[];
+    };
+    readonly "daemon.filesystem.browseDirectory": {
+        [x: string]: unknown;
+        ok: false;
+        error: string;
+        errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        [x: string]: unknown;
+        ok: true;
+        path: string;
+        entries: {
+            [x: string]: unknown;
+            name: string;
+            path: string;
+            type: 'directory' | 'file' | 'other';
+            size?: number | undefined;
+            modified?: number | undefined;
+            gitIgnored?: boolean | undefined;
+        }[];
+        truncated: boolean;
+        gitIgnoreAvailable?: boolean | undefined;
+    };
+    readonly "daemon.filesystem.listFiles": {
+        ok: false;
+        errorCode: 'filesystem_identity_custody_unavailable' | 'invalid_request' | 'method_unavailable' | 'path_not_allowed' | 'ripgrep_failed' | 'ripgrep_unavailable' | 'root_not_found';
+        exitCode?: number | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        ok: true;
+        paths: string[];
+        truncated: boolean;
     };
 };

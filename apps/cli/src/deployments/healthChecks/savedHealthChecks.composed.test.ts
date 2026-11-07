@@ -14,6 +14,7 @@ import { MachineServicesDetailResultV1Schema, sealAutomationTriggerDefinitionSto
 import { createAutomationEventAdoptedDefinitionSetHostV1 } from '@/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 import { createSavedHealthChecksHost } from './savedHealthChecks';
+import { createCurrentDomainEdgeObservation } from './currentDomainEdgeObservation';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createPluginHttpService } from '@/plugins/runtime/fetch/service';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
@@ -146,6 +147,8 @@ describe('saved source finite native producer binding', () => {
                     targetKind: 'ownServer', state: 'configured', ...targetContent,
                     machines: { create: { machineId: home.machineId, installationId: home.installationId,
                         position: 0, state: 'active' } } } });
+                await db.deploymentEnvironment.update({ where: { id: environment.id },
+                    data: { runtimeTargetLinkId: link.id } });
                 const domain = await db.deploymentDomain.create({ data: { environmentId: environment.id, targetLinkId: link.id,
                     createdByAccountId: home.accountId, state: 'active', ...domainContent } });
                 const sourceConfig: HealthCheckSourceConfigV1 = { v: 1,
@@ -161,13 +164,18 @@ describe('saved source finite native producer binding', () => {
                     requests.push(url);
                     return { status: expectedStatus, body: new Uint8Array(), finalUrl: url,
                         tlsPeer: { url, fingerprint256: 'AA:BB', notBefore: Date.now() - 60_000, notAfter: Date.now() + 60_000 } };
+                }), requestStream: vi.fn(async ({ url }: { url: string }) => {
+                    requests.push(url);
+                    return { status: expectedStatus, finalUrl: url, headers: {},
+                        chunks: (async function* () {})(), dispose: async () => {} };
                 }) } as unknown as HttpService;
                 const openDomainArtifact = vi.fn(async (artifactId: string, signal: AbortSignal) =>
                     await runWithServerHttpBaseUrl(home.baseUrl, () => artifacts.read(artifactId, {
                         signal, prepareRecipients: false, includeSharedAudience: false })));
-                const onDomainResult = vi.fn();
+                const currentDomain = createCurrentDomainEdgeObservation();
                 const host = createSavedHealthChecksHost({ serverId: profile.id,
-                    resolveAdoptedDefinitionSet: () => f.owner, readObserver: () => f.observer, openDomainArtifact, onDomainResult });
+                    resolveAdoptedDefinitionSet: () => f.owner, readObserver: () => f.observer, openDomainArtifact,
+                    onDomainResult: value => currentDomain.publish(value) });
                 const actionsFor = (token: string) => createPluginInvocationActionsService({ seed: actionSeed,
                     actionExecutor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
                         ...createDaemonDeploymentActionDeps({ credentials: { token, encryption: null },
@@ -193,7 +201,12 @@ describe('saved source finite native producer binding', () => {
                 await expect(ownerService.setup({ sourceInstanceId: 'health:subject', sourceConfig: {
                     ...sourceConfig, checks: [{ ...sourceConfig.checks[0]!, config: { endpoint: 'https://attacker.example', expectStatus: 200 } }],
                 }, heartbeatContributionId: 'health-heartbeat' })).rejects.toMatchObject({ code: 'source_config_invalid' });
-                expect((await ownerService.read({ sourceInstanceId: 'health:subject', checkIds: [kind] }))[0]?.result.status).toBe('up');
+                const firstResult = (await ownerService.read({ sourceInstanceId: 'health:subject', checkIds: [kind] }))[0]?.result;
+                expect(firstResult?.status).toBe('up');
+                expect(firstResult?.evidence.items.map(item => item.text).join('\n'))
+                    .toContain('"vantage":"sameMachine"');
+                expect(firstResult?.evidence.items.map(item => item.text).join('\n'))
+                    .toContain('checked from the server itself');
                 expect(requests).toEqual(['https://app.example.test/ready']);
                 const changedArtifact = await runWithServerHttpBaseUrl(home.baseUrl, () => artifacts.create({
                     header: { kind: 'deployment-domain.v1', title: 'Saved Domain authority' },
@@ -206,11 +219,10 @@ describe('saved source finite native producer binding', () => {
                 expectedStatus = 205;
                 expect((await ownerService.read({ sourceInstanceId: 'health:subject', checkIds: [kind] }))[0]?.result.status).toBe('up');
                 expect(requests).toEqual(['https://app.example.test/ready', 'https://app.example.test/changed']);
-                expect(onDomainResult).toHaveBeenCalledTimes(2);
-                expect(onDomainResult).toHaveBeenLastCalledWith(expect.objectContaining({ kind,
-                    sourceRevision: '1', environment: expect.objectContaining({ id: environment.id }),
-                    targetLink: expect.objectContaining({ id: link.id }), domain: expect.objectContaining({ id: domain.id }),
-                    result: expect.objectContaining({ status: 'up' }) }));
+                const retained = currentDomain.readDomainProofs(environment.id, link.id)[0];
+                expect(retained?.domainObservation).toMatchObject({ kind, domainId: domain.id,
+                    domainRevision: domain.revision + 1, observerMachineId: home.machineId,
+                    vantage: 'sameMachine', result: { status: 'up' } });
                 const requesterService = host.bind(actionSeed, { actions: actionsFor(requesterToken), http });
                 if (!requesterService) throw new Error('Requester service must bind');
                 await expect(requesterService.setup({ sourceInstanceId: 'health:subject', sourceConfig,
@@ -219,7 +231,7 @@ describe('saved source finite native producer binding', () => {
                     .rejects.toMatchObject({ code: 'deployment_access_denied' });
                 expect(requests).toHaveLength(2);
                 expect(openDomainArtifact).toHaveBeenCalledTimes(3);
-                expect(onDomainResult).toHaveBeenCalledTimes(2);
+                expect(currentDomain.readDomainProofs(environment.id, link.id)[0]).toBe(retained);
                 const otherLink = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
                     createdByAccountId: home.accountId, role: 'data', sourceKind: 'plugin', pluginId: 'example.data',
                     contributionLocalId: 'database', targetKind: 'database', state: 'configured', ...targetContent } });

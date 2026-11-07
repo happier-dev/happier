@@ -134,6 +134,9 @@ export type ManagedMachinesActionInputById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+        };
         agentStart?: undefined | {
             directory: {
                 kind: 'managed';
@@ -1210,6 +1213,9 @@ export type ManagedMachinesActionInputById = {
                     };
                     reason: 'not_selected';
                 }[];
+            };
+            agentInstallConsent?: undefined | {
+                vendorRecipe: boolean;
             };
             observeSessionCommit?: true | undefined;
             authoringOrigin?: undefined | {
@@ -2290,6 +2296,9 @@ export type ManagedMachinesActionInputById = {
             effect: 'delete' | 'stop';
         };
         wakeOnAcceptedMessage: boolean;
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+        };
         controller?: undefined | {
             machineId: string;
             installationId: string;
@@ -3370,6 +3379,9 @@ export type ManagedMachinesActionInputById = {
                     };
                     reason: 'not_selected';
                 }[];
+            };
+            agentInstallConsent?: undefined | {
+                vendorRecipe: boolean;
             };
             observeSessionCommit?: true | undefined;
             authoringOrigin?: undefined | {
@@ -4494,6 +4506,7 @@ export type ManagedMachinesActionInputById = {
                 expectedRevision: number;
                 serverId: string;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
+                onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                 pendingDeploy?: undefined | {
                     t: 'encrypted';
                     c: string;
@@ -4531,6 +4544,7 @@ export type ManagedMachinesActionInputById = {
                         targetLinkId: string;
                         actionOperationId: string;
                         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                        onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                         triggerOccurrence?: undefined | {
                             automationId: string;
                             triggerId: string;
@@ -5016,6 +5030,7 @@ export type ManagedMachinesActionInputById = {
                     expectedRevision: number;
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
+                    onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -5053,6 +5068,7 @@ export type ManagedMachinesActionInputById = {
                             targetLinkId: string;
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -7216,6 +7232,7 @@ export type ManagedMachinesActionInputById = {
                     expectedRevision: number;
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
+                    onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -7253,6 +7270,7 @@ export type ManagedMachinesActionInputById = {
                             targetLinkId: string;
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -9418,6 +9436,13 @@ export type ManagedMachinesActionInputById = {
     };
     readonly "machines.managed.retention.update": {
         expectedIntentRevision: number;
+        creationScopeRetention: null | {
+            effect: 'delete' | 'stop';
+        };
+        homeId: string;
+        managedId: string;
+    } | {
+        expectedIntentRevision: number;
         retention: {
             kind: 'deadline';
             at: number;
@@ -11161,6 +11186,21 @@ export type ManagedMachinesActionResultById = {
                 };
                 reviewedEffectDigest?: string | undefined;
             };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
@@ -11814,6 +11854,21 @@ export type ManagedMachinesActionResultById = {
                 installationId: string;
             };
             reviewedEffectDigest?: string | undefined;
+        };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+            afterMs?: number | undefined;
+            source?: undefined | {
+                kind: 'run';
+                source: {
+                    kind: 'workflow_run';
+                    runId: string;
+                };
+            } | {
+                kind: 'session';
+                sessionId: string;
+            };
+            endedAt?: number | undefined;
         };
         observation?: undefined | {
             observedAt: number;
@@ -12499,6 +12554,21 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 };
                 reviewedEffectDigest?: string | undefined;
+            };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
             };
             observation?: undefined | {
                 observedAt: number;
@@ -13205,6 +13275,21 @@ export type ManagedMachinesActionResultById = {
                 };
                 reviewedEffectDigest?: string | undefined;
             };
+            creationScopeRetention?: undefined | {
+                effect: 'delete' | 'stop';
+                afterMs?: number | undefined;
+                source?: undefined | {
+                    kind: 'run';
+                    source: {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+                endedAt?: number | undefined;
+            };
             observation?: undefined | {
                 observedAt: number;
                 availability: 'absent' | 'present' | 'unavailable';
@@ -13881,6 +13966,21 @@ export type ManagedMachinesActionResultById = {
                 installationId: string;
             };
             reviewedEffectDigest?: string | undefined;
+        };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+            afterMs?: number | undefined;
+            source?: undefined | {
+                kind: 'run';
+                source: {
+                    kind: 'workflow_run';
+                    runId: string;
+                };
+            } | {
+                kind: 'session';
+                sessionId: string;
+            };
+            endedAt?: number | undefined;
         };
         observation?: undefined | {
             observedAt: number;
@@ -15737,6 +15837,7 @@ export type ManagedMachinesActionResultById = {
                 expectedRevision: number;
                 serverId: string;
                 whenBusy?: 'refuse' | 'supersede' | undefined;
+                onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                 pendingDeploy?: undefined | {
                     t: 'encrypted';
                     c: string;
@@ -15774,6 +15875,7 @@ export type ManagedMachinesActionResultById = {
                         targetLinkId: string;
                         actionOperationId: string;
                         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                        onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                         triggerOccurrence?: undefined | {
                             automationId: string;
                             triggerId: string;
@@ -19030,6 +19132,7 @@ export type ManagedMachinesActionResultById = {
                         expectedRevision: number;
                         serverId: string;
                         whenBusy?: 'refuse' | 'supersede' | undefined;
+                        onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                         pendingDeploy?: undefined | {
                             t: 'encrypted';
                             c: string;
@@ -19067,6 +19170,7 @@ export type ManagedMachinesActionResultById = {
                                 targetLinkId: string;
                                 actionOperationId: string;
                                 sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                                onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                                 triggerOccurrence?: undefined | {
                                     automationId: string;
                                     triggerId: string;
@@ -20557,6 +20661,7 @@ export type ManagedMachinesActionResultById = {
                     expectedRevision: number;
                     serverId: string;
                     whenBusy?: 'refuse' | 'supersede' | undefined;
+                    onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                     pendingDeploy?: undefined | {
                         t: 'encrypted';
                         c: string;
@@ -20594,6 +20699,7 @@ export type ManagedMachinesActionResultById = {
                             targetLinkId: string;
                             actionOperationId: string;
                             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
+                            onFailure?: 'keepPartial' | 'rollbackAll' | undefined;
                             triggerOccurrence?: undefined | {
                                 automationId: string;
                                 triggerId: string;
@@ -21682,6 +21788,21 @@ export type ManagedMachinesActionResultById = {
             };
             reviewedEffectDigest?: string | undefined;
         };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+            afterMs?: number | undefined;
+            source?: undefined | {
+                kind: 'run';
+                source: {
+                    kind: 'workflow_run';
+                    runId: string;
+                };
+            } | {
+                kind: 'session';
+                sessionId: string;
+            };
+            endedAt?: number | undefined;
+        };
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
@@ -22408,6 +22529,21 @@ export type ManagedMachinesActionResultById = {
             };
             reviewedEffectDigest?: string | undefined;
         };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+            afterMs?: number | undefined;
+            source?: undefined | {
+                kind: 'run';
+                source: {
+                    kind: 'workflow_run';
+                    runId: string;
+                };
+            } | {
+                kind: 'session';
+                sessionId: string;
+            };
+            endedAt?: number | undefined;
+        };
         observation?: undefined | {
             observedAt: number;
             availability: 'absent' | 'present' | 'unavailable';
@@ -23060,6 +23196,21 @@ export type ManagedMachinesActionResultById = {
                 installationId: string;
             };
             reviewedEffectDigest?: string | undefined;
+        };
+        creationScopeRetention?: undefined | {
+            effect: 'delete' | 'stop';
+            afterMs?: number | undefined;
+            source?: undefined | {
+                kind: 'run';
+                source: {
+                    kind: 'workflow_run';
+                    runId: string;
+                };
+            } | {
+                kind: 'session';
+                sessionId: string;
+            };
+            endedAt?: number | undefined;
         };
         observation?: undefined | {
             observedAt: number;

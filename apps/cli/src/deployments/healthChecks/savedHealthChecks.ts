@@ -19,6 +19,7 @@ import { readCertificateHealthCheckV1, readHttpHealthCheckV1, type AdmittedHttpH
 import { readDnsHealthCheckV1, readTcpHealthCheckV1 } from './finiteNetworkHealthCheck';
 import { readHeartbeatHealthCheckV1 } from './finiteHeartbeatHealthCheck';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
+import { deploymentDomainProbeVantageV1 } from '@happier-dev/deployments';
 
 function unavailable(code: string): never {
     throw new PluginError({ code, message: 'The saved health check is unavailable', retryable: false });
@@ -44,7 +45,7 @@ export function createSavedHealthChecksHost(input: Readonly<{
         subject: Readonly<{ kind: 'environment'; environmentId: string }>;
         environment: DeploymentEnvironmentHeaderV1; targetLink: DeploymentTargetLinkHeaderV1;
         domain: DeploymentDomainHeaderV1; observer: Readonly<{ machineId: string; installationId: string }>;
-        result: HealthCheckResultV1; signal: AbortSignal }>): Promise<void> | void;
+        result: HealthCheckResultV1; tlsKind?: 'custom' | 'managed'; signal: AbortSignal }>): Promise<void> | void;
     now?(): number;
     enrollHeartbeat?(input: Readonly<{ caller: PluginMachineMaterializationRefV1; sourceInstanceId: string;
         checkId: string; heartbeatContributionId: string }>, signal: AbortSignal): Promise<Readonly<{ webhookEndpointId: string }>>;
@@ -205,9 +206,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                             if (!config.success) return unavailable('source_config_invalid');
                             return { kind: 'domain' as const, check, current, value: {
                                 sourceInstanceId: request.sourceInstanceId, checkId: check.checkId, subject,
-                                observer, vantage: environment.environment.ingress?.kind === 'edgeCaddy'
-                                    && environment.environment.ingress.edgeMachineId === observer.machineId
-                                    ? 'sameMachine' as const : 'outside' as const,
+                                observer, vantage: deploymentDomainProbeVantageV1(
+                                    environment.environment, current.targetLink, observer.machineId),
                                 target: { kind: 'domain' as const, environmentId: subject.environmentId,
                                     targetLinkId: current.targetLink.id, domainId: current.domain.id,
                                     domainRevision: current.domain.revision, targetLinkRevision: current.targetLink.revision,
@@ -231,7 +231,8 @@ export function createSavedHealthChecksHost(input: Readonly<{
                                 checkId: item.check.checkId,
                                 kind: item.check.kind.localId as 'http' | 'certificate', subject,
                                 environment: environment.environment, targetLink: item.current.targetLink,
-                                domain: item.current.domain, observer, result: results[index]!.result, signal });
+                                domain: item.current.domain, observer, result: results[index]!.result,
+                                tlsKind: item.current.content.tls?.kind, signal });
                         }
                         return results;
                     }

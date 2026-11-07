@@ -50,8 +50,7 @@ import {
   Badge,
   Banner,
   Button,
-  DiffStat,
-  DiffViewer,
+  ChangedFilesReview,
   Divider,
   EmptyState,
   ErrorState,
@@ -86,6 +85,8 @@ import {
   type MetadataEntry,
   type PluginActionExecution,
   type PluginTranslate,
+  type ChangedFile,
+  type ChangedFileDiff,
 } from '@happier-dev/plugin-ui';
 import {
   TriageDetailSurfaceInputV1Schema,
@@ -102,7 +103,7 @@ import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailur
 import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
 import { GithubPullRequestPreviewStep } from './pullRequestPreview.js';
 import type { GithubReadFailureV1 } from './detail/readBoundary.js';
-import { GithubFilesViewedFact, GithubFileViewedMark, useGithubFileViewedSource } from './detail/filesViewed.js';
+import { useGithubFileViewedSource } from './detail/filesViewed.js';
 import type { GithubCheckActionsTargetV1 } from '../triage/checks.js';
 import {
   completeTriagePostMutationIfNeeded,
@@ -142,12 +143,8 @@ import {
   type TriagePullRequestOperationOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-  groupGithubChangedFiles,
-  orderGithubChangedFiles,
-} from '../triage/detail/files/orderChangedFiles.js';
+import { orderGithubChangedFiles } from '../triage/detail/files/orderChangedFiles.js';
 import type {
-  GithubProjectedChangedFileRowV1,
   GithubProjectedCheckRowV1,
   GithubProjectedTimelineRowV1,
 } from '../triage/detail/projection.js';
@@ -216,7 +213,7 @@ import {
   useGithubTimeline,
 } from './detail/resourceOwners.js';
 import {
-  useGithubChangedFileDiff,
+  useGithubChangedFileDiffLoader,
   useGithubCapabilities,
   useGithubFeedbackThreadReplies,
   useGithubOverview,
@@ -276,12 +273,10 @@ import {
   type GithubDetailTabIdV1,
 } from './detail/tabDeclarations.js';
 import {
-  GITHUB_CHANGED_FILE_STATUS_LABELS_V1,
   GITHUB_CHECK_CONCLUSION_LABELS_V1,
   GITHUB_CHECK_STATUS_LABELS_V1,
   GITHUB_REVIEW_STATE_LABELS_V1,
   GITHUB_TIMELINE_HEADLINES_V1,
-  githubChangedFileStatusKey,
   githubCheckConclusionKey,
   githubCheckStatusKey,
   githubDetailFieldLabelKey,
@@ -2816,37 +2811,10 @@ function TimelinePanel({
 
 /* ------------------------------------------------------------------------ Files */
 
-const CHANGED_FILE_TONES: Readonly<Record<string, 'success' | 'danger' | 'info' | 'neutral'>> =
-  Object.freeze({
-    added: 'success',
-    removed: 'danger',
-    renamed: 'info',
-    copied: 'info',
-  });
-
 /** A text-only slot's "+53 −5", by the shared diff-stat owner: a side with nothing to say is left out. */
 function githubDiffStatText(additions: number, deletions: number, locale: string): string {
   const counts = formatHappierDiffStat(additions, deletions, { locale });
   return [counts.added, counts.removed].filter((count) => count !== null).join(' ') || 'None';
-}
-
-function changedFileSubtitle(text: PluginTranslate, row: GithubProjectedChangedFileRowV1): string | undefined {
-  const declaredStatus = GITHUB_CHANGED_FILE_STATUS_LABELS_V1[row.status];
-  // Modified is what a changed file usually is, and its +/− counts already say how: the row names its status
-  // only when it is something else (added, removed, renamed), so a long list does not repeat one word.
-  const status = row.status === 'modified' ? null : declaredStatus === undefined
-    ? row.status
-    : text(githubChangedFileStatusKey(row.status), declaredStatus);
-  const renamed = row.previousPath === undefined
-    ? null
-    : text('plugins.github.ui.fileWasAt', 'was {path}', { path: row.previousPath });
-  // A file GitHub omitted the patch for is a real provider fact, and it renders
-  // as that fact rather than as an empty diff.
-  const diff = row.diffAvailable
-    ? null
-    : text('plugins.github.ui.fileDiffUnavailable', 'diff unavailable for this file');
-  const parts = [status, renamed, diff].filter((part) => part !== null);
-  return parts.length === 0 ? undefined : parts.join(' · ');
 }
 
 function checkStatusText(text: PluginTranslate, row: GithubProjectedCheckRowV1): string {
@@ -2883,32 +2851,56 @@ function quietRowActions(
   };
 }
 
+/** A changed file's GitHub status in the shared review's vocabulary. */
+function toReviewChangedFile(
+  text: PluginTranslate,
+  row: GithubChangedFileViewV1,
+): ChangedFile {
+  const status = row.status === 'added' ? 'added' as const
+    : row.status === 'removed' ? 'deleted' as const
+      : row.status === 'renamed' ? 'renamed' as const
+        : row.status === 'copied' ? 'copied' as const : 'modified' as const;
+  return {
+    path: row.path,
+    status,
+    additions: row.additions,
+    deletions: row.deletions,
+    ...(row.previousPath === undefined ? {} : { previousPath: row.previousPath }),
+    // A file GitHub omitted the patch for is a real provider fact: it stays listed and says so.
+    ...(row.diffAvailable
+      ? {}
+      : { diffUnavailableReason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') }),
+  };
+}
+
+/**
+ * The pull request's changed files in Happier's one changed-files review (the Session review tab's
+ * index, tree/list modes and continuous diffs). GitHub lists the files and answers one file's diff
+ * when the review reaches it; the host's Viewed source supplies the marks.
+ */
 function FilesPanel({
   input,
-  locale,
-}: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string }>): React.ReactElement {
+}: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const hostApi = usePluginHostApi();
   const controller = useGithubChangedFiles();
   const { state } = controller;
-  // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner; each row observes its own path.
+  const { active } = useTabPanelActivity();
+  // GitHub's Viewed marks for this PR and head, from the host's one Viewed owner.
   const viewed = useGithubFileViewedSource(input);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
-  // Which files are open in place. Opening a file reads its own diff; closing it drops that read.
-  const [openPaths, setOpenPaths] = React.useState<ReadonlySet<string>>(() => new Set());
-  const expansionCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
+  // A file the reader or an agent asked to open: the shared review opens it and brings it into view.
+  // Folding stays the review's own, so an agent's close is refused rather than claimed.
+  const [focusPath, setFocusPath] = React.useState<string | null>(null);
+  const openCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.rows
     .filter(row => row.diffAvailable).map(row => ({ title: row.path,
-      operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: !openPaths.has(row.path) } })), [state.rows, openPaths]);
-  const expand = useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
-    if (operation.kind !== 'setSourceItemExpanded' || !state.rows.some(row => row.path === operation.itemId && row.diffAvailable)) return { status: 'unavailable' };
-    setOpenPaths(current => {
-      const next = new Set(current);
-      if (operation.expanded) next.add(operation.itemId); else next.delete(operation.itemId);
-      return next;
-    });
+      operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: true } })), [state.rows]);
+  useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
+    if (operation.kind !== 'setSourceItemExpanded' || !operation.expanded
+      || !state.rows.some(row => row.path === operation.itemId && row.diffAvailable)) return { status: 'unavailable' };
+    setFocusPath(operation.itemId);
     return { status: 'applied' };
-  }, expansionCommands);
+  }, openCommands);
   const pagingCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.canLoadMore && !state.pending
     ? [{ title: text('plugins.github.ui.loadMoreFiles', 'Load more files'), operation: { kind: 'loadMoreSourceItems', list: 'files' } }] : [],
   [state.canLoadMore, state.pending, text]);
@@ -2917,14 +2909,30 @@ function FilesPanel({
     controller.loadMore();
     return { status: 'applied' };
   }, pagingCommands);
-  // The reading order is a source-owned fact computed over everything read so
-  // far, so appending a page reorders within the same three bands rather than
-  // stapling a second, differently ordered list onto the end.
-  const sections = React.useMemo(
-    () => groupGithubChangedFiles(orderGithubChangedFiles(state.rows))
-      .map((section) => ({ key: section.band, title: section.title, data: section.rows })),
-    [state.rows],
-  );
+  // The reading order is a source-owned fact computed over everything read so far.
+  const rows = React.useMemo(() => orderGithubChangedFiles(state.rows).map((entry) => entry.row), [state.rows]);
+  const files = React.useMemo(() => rows.map((row) => toReviewChangedFile(text, row)), [rows, text]);
+  const rowsRef = React.useRef(rows);
+  rowsRef.current = rows;
+  const readDiff = useGithubChangedFileDiffLoader(input);
+  const loadDiff = React.useCallback(async (path: string, signal: AbortSignal): Promise<ChangedFileDiff> => {
+    const row = rowsRef.current.find((candidate) => candidate.path === path);
+    if (row === undefined) return { state: 'unavailable', reason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') };
+    const read = await readDiff(row, signal);
+    if (read.kind === 'failed') {
+      return { state: 'unavailable', reason: failureDescription(read.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text) };
+    }
+    const { evidence, unifiedDiff } = read.value;
+    if (evidence.state === 'unavailable' || unifiedDiff === null) {
+      return { state: 'unavailable', reason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') };
+    }
+    return evidence.state === 'truncated'
+      ? { state: 'truncated', unifiedDiff, reason: text('plugins.github.ui.fileDiffTruncated', 'GitHub shortened this diff. The rest is on GitHub.') }
+      : { state: 'available', unifiedDiff };
+  }, [readDiff, text]);
+  const { localRef } = useTriageDetailRequest(input);
+  const headSha = input.observation.snapshot.reviewRevision?.headSha ?? '';
+  const identity = `github:${input.observation.locator.routingToken ?? ''}#${localRef.entryId}@${headSha}`;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" />;
@@ -2962,149 +2970,57 @@ function FilesPanel({
     );
   }
 
-  return (
-    <List
-      accessibilityLabel="Files this pull request changes"
-      accessibilityLabelKey="plugins.github.ui.filesLabel"
-      sections={sections}
-      keyForItem={(row) => row.path}
-      header={(
-        <Stack gap="small">
-          {viewed === null ? null : <GithubFilesViewedFact source={viewed} total={state.rows.length} />}
-          <PageFailureBanner state={state} />
-          {incomplete === null
-            ? null
-            : (
-              // Known-incomplete is a rendered state, not a log line: a count
-              // that stops at a round number with no explanation reads as a
-              // defect in this product rather than a limit of GitHub's.
-              <Banner tone="warning" title="This file list is incomplete" titleKey="plugins.github.ui.incompleteFiles" description={incomplete} />
-            )}
-        </Stack>
-      )}
-      footer={(
-        <Stack gap="small">
-          <Text
-            variant="micro"
-            tone="neutral"
-            valueKey={state.omittedRowCount === 0
-              ? 'plugins.github.ui.filesRead'
-              : 'plugins.github.ui.filesReadWithUnreadable'}
-            fallback={state.omittedRowCount === 0
-              ? '{count} changed file(s) read.'
-              : '{count} changed file(s) read. {unreadable} row(s) on the pages read could not be understood.'}
-            values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
-          />
-          {state.canLoadMore
-            ? (
-              <Button
-                title="Load more files"
-                titleKey="plugins.github.ui.loadMoreFiles"
-                variant="secondary"
-                busy={state.pending}
-                onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
-              />
-            )
-            : null}
-        </Stack>
-      )}
-      // A changed-file list reads like a file tree: tight single-line rows, so a whole pull request fits in view.
-      density="compact"
-      renderItem={(row) => (
-        <Item
-          title={row.path}
-          density="tight"
-          titleEllipsizeMode="middle"
-          {...(() => {
-            const subtitle = changedFileSubtitle(text, row);
-            return subtitle === undefined ? {} : { subtitle };
-          })()}
-          accessory={viewed === null
-            ? <DiffStat added={row.additions} removed={row.deletions} locale={locale} />
-            : (
-              <Row gap="medium" align="center">
-                <DiffStat added={row.additions} removed={row.deletions} locale={locale} />
-                <GithubFileViewedMark source={viewed} path={row.path} />
-              </Row>
-            )}
-          // The Viewed checkbox is its own control: a press on it never opens or closes the file.
-          accessoryOutsidePressable={viewed !== null}
-          // On a narrow pane the marks move under the path instead of starving it.
-          accessoryWraps={viewed !== null}
-          tone={CHANGED_FILE_TONES[row.status] ?? 'neutral'}
-          {...(row.diffAvailable
-            ? {
-              expanded: openPaths.has(row.path),
-              onPress: () => { void expand({ kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: !openPaths.has(row.path) }); },
-              expandedContent: <GithubFileDiffBody input={input} row={row} />,
-            }
-            : {})}
-          {...quietRowActions(hostApi, text, {
-            copyValue: row.path,
-            ...(row.webUrl === undefined ? {} : { openUrl: row.webUrl }),
-          })}
-        />
-      )}
-    />
+  const notices = (
+    <>
+      <PageFailureBanner state={state} />
+      {incomplete === null
+        ? null
+        // Known-incomplete is a rendered state, not a log line: a count that stops at a round
+        // number with no explanation reads as a defect in this product rather than a limit of GitHub's.
+        : <Banner tone="warning" title="This file list is incomplete" titleKey="plugins.github.ui.incompleteFiles" description={incomplete} />}
+    </>
   );
-}
+  const more = state.canLoadMore || state.omittedRowCount > 0
+    ? (
+      <Stack gap="small">
+        {state.omittedRowCount === 0
+          ? null
+          : (
+            <Text
+              variant="micro"
+              tone="neutral"
+              valueKey="plugins.github.ui.filesReadWithUnreadable"
+              fallback="{count} changed file(s) read. {unreadable} row(s) on the pages read could not be understood."
+              values={{ count: state.rows.length, unreadable: state.omittedRowCount }}
+            />
+          )}
+        {state.canLoadMore
+          ? (
+            <Button
+              title="Load more files"
+              titleKey="plugins.github.ui.loadMoreFiles"
+              variant="secondary"
+              busy={state.pending}
+              onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
+            />
+          )
+          : null}
+      </Stack>
+    )
+    : undefined;
 
-/** One opened file: its own diff, read only while open. A shortened diff says so; a file without one says that. */
-function GithubFileDiffBody({
-  input,
-  row,
-}: Readonly<{ input: TriageDetailSurfaceInputV1; row: GithubChangedFileViewV1 }>): React.ReactElement {
-  const text = usePluginTranslation();
-  const diff = useGithubChangedFileDiff(input, row);
-  const { state } = diff;
-  if (state.kind === 'loading') {
-    return (
-      <Text
-        variant="micro"
-        tone="secondary"
-        valueKey="plugins.github.ui.readingFileDiff"
-        fallback="Reading this file's diff from GitHub…"
-      />
-    );
-  }
-  if (state.kind === 'unavailable') {
-    return (
-      <Text
-        variant="micro"
-        tone="secondary"
-        value={failureDescription(state.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text)}
-      />
-    );
-  }
-  const { evidence, unifiedDiff } = state.value;
-  if (evidence.state === 'unavailable' || unifiedDiff === null) {
-    return (
-      <Text
-        variant="micro"
-        tone="secondary"
-        valueKey="plugins.github.ui.fileDiffNone"
-        fallback="GitHub has no diff for this file."
-      />
-    );
-  }
   return (
-    <Stack gap="small">
-      <DiffViewer
-        unifiedDiff={unifiedDiff}
-        filePath={row.path}
-        label={text('plugins.github.ui.fileDiffLabel', 'Changes in this file')}
-      />
-      {evidence.state === 'truncated'
-        ? (
-          <Text
-            variant="micro"
-            tone="secondary"
-            valueKey="plugins.github.ui.fileDiffTruncated"
-            fallback="GitHub shortened this diff. The rest is on GitHub."
-          />
-        )
-        : null}
-    </Stack>
+    <ChangedFilesReview
+      identity={identity}
+      label={text('plugins.github.ui.filesLabel', 'Files this pull request changes')}
+      files={files}
+      loadDiff={loadDiff}
+      fileViewed={viewed}
+      focusPath={focusPath}
+      leadingContent={notices}
+      {...(more === undefined ? {} : { trailingContent: more })}
+      active={active}
+    />
   );
 }
 
@@ -4912,7 +4828,7 @@ function GithubDetailBody({
       />
     ),
     timeline: <TimelinePanel locale={locale} nowMs={nowMs} />,
-    files: <FilesPanel input={input} locale={locale} />,
+    files: <FilesPanel input={input} />,
     checks: <ChecksPanel locale={locale} nowMs={nowMs} signal={detailActivity.activeSignal} />,
     feedback: (
       <FeedbackPanel

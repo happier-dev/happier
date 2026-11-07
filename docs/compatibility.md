@@ -18,6 +18,11 @@ publication share receipt/provenance/Domain readiness rather than accepting a
 caller-owned URL. The canonical GET binder encodes the structured repository
 selector as JSON; the Home route decodes it before strict input validation.
 
+Preview-template edits use the existing Environment content-update proof and
+sole template schema. The authored patch carries the private operand; prepared
+Home storage rejects it and accepts only the rewritten Artifact reference plus
+the remaining metadata patch. Existing template content keeps its wire shape.
+
 Matching development Protocol, Home, daemon/CLI, SDK, UI and GitHub plugin must
 load together. Older strict development readers may reject the new fields or
 Actions. An additive preview lookup index serves the exact PR query on each
@@ -3217,6 +3222,13 @@ RPC code and preserve the underlying typed `failureCause`. The daemon projection
 keeps a credential-redacted nested code, name and message, includes that reason
 in the Action error text, and logs the same projection with the request id.
 It does not serialize the raw exception, request payload or stack.
+RPC manager admission refusals use the same `error`/`errorCode` envelope as
+serialized handler exceptions, preserving `effectAttempted: false` and any
+typed cause. They do not carry a domain `ok` flag. The shared refusal reader
+raises that typed error before a consumer parses its domain success schema;
+Sync recovery still accepts only `settled` or `recovery_needed` success results.
+This producer correction requires the current daemon; it does not grant recovery
+access when requester isolation or retained custody is unavailable.
 Its relationship owner stamps endpoint provenance before bootstrap; a fresh ref
 inherits its proven source anchor without requiring a Project object. A folder
 already anchored to a different Project is refused before bootstrap. The owner
@@ -3589,8 +3601,12 @@ The wire operation is V1, independently of package SemVer. All request, result
 and nested reason objects are closed; unknown fields and status variants reject.
 No persisted format or protocol epoch changes. The clean scoped 0.2 predecessor
 at `ead3f779118d6a3d17e167517a64660f9e2c2c0d` has no workspace watch operation in
-`packages/protocol/src/rpc.ts` or `scm.ts`. A new UI receiving method-not-found
-settles watch availability and retains the existing visible refresh fallback;
+`packages/protocol/src/rpc.ts` or `scm.ts`. A new UI receiving affirmative
+`RPC_METHOD_NOT_FOUND` settles watch availability for that Machine through the
+existing method-absence classifier. Watch absence does not publish an SCM read
+error: Session and Project Git still load, manual refresh remains available and
+the existing visible refresh fallback continues. Observation is not retried
+during the retained presentation lifetime;
 matching development Protocol, daemon and UI enable native observation. No
 predecessor adapter, retry timer or new stream protocol is added.
 
@@ -5631,6 +5647,15 @@ This is an undeployed Workflow direct cut, not a released-format compatibility
 shim. Old development readers cannot execute these new definitions correctly;
 use the current admission and coordinator together. No new rollout mode or
 dual writer is introduced.
+
+Accepted Action contracts retain a finite Action's terminal schema once, in
+`completion.terminalOutputSchema`; `outputSchema` points to it with the
+contract-relative JSON pointer `#/completion/terminalOutputSchema`.
+`readWorkflowActionOutputSchemaV1` resolves the schema for execution, recovery
+and review, and still reads older snapshots containing both copies. Immediate
+Actions retain their inline output schema. Admission and storage use the HTTP
+request-body boundary rather than Automation's unrelated per-field ceiling.
+Load the current freezer and readers together for this development change.
 
 Inline Workflow body progress also retains the selected project workspace as
 `frameProjectWorkspace`, including its generated-checkout creation intent.
@@ -9372,11 +9397,27 @@ managed-resource producer. This preserves the Home-presence coexistence contract
 above; it does not promise managed wake against an older development Home.
 
 Current development Machine reads and new/update events also publish optional
-`managedInputRuntime: { nativeReady, wakeState } | null`. The managed runtime
+`managedInputRuntime: { nativeReady, wakeState, acceptedInputWakeOwner?, newSessionWake?, state? } | null`. The managed runtime
 owner derives native qualification independently of connectivity; existing
 guest presence still decides reachability. `wakeState` is `asleep`, `starting`
 or null and makes a wake claim only while the owner enables accepted-input
-wake. Neither this projection nor Can use on the guest grants manual power or
+wake. Optional `acceptedInputWakeOwner: 'home'` identifies Home Pending wake for
+existing Session input, including a controllerless resource served by a running
+custodian Account daemon. Optional `newSessionWake` is `{ kind: 'available' }` or
+`{ kind: 'unavailable', reason: 'no_controller' }`, projected from
+`resolveManagedFiniteWakeControllerV1`, which also owns finite wake custody and
+preparation. New Session start-on-send requires both an owner-enabled `wakeState`
+and `newSessionWake.kind === 'available'`; a missing support fact makes no claim.
+Controllerless pre-Session wake remains unsupported and requires starting the
+Machine before sending. Optional `state` reports the current native transition (`starting` or
+`stopping`), a parked resource (`asleep`), or null, independently of wake
+eligibility. Desired intent alone does not prove a transition. It contains no
+protected native identity, and native Running does not prove guest reachability.
+Machine rows, headers and Project Services consume the same presentation and
+recovery from these facts; dated native observations remain in Details. Matching
+Protocol, Home and UI development readers reload together because older strict
+readers reject the additional optional member. Neither this projection nor Can
+use on the guest grants manual power or
 access to the controller's managed allocation. Missing or null projections make
 no readiness or wake claim. This changes no retained database field or protocol
 epoch. The inspected 0.2 frontier `ead3f779118d6a3d17e167517a64660f9e2c2c0d`

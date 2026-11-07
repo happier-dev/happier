@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { decryptString, encryptString } from '@/modules/encrypt';
 import type { DeploymentEnvironmentListInputV1, DeploymentTargetLinksListInputV1 } from '@happier-dev/protocol';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
 const sealed = z.strictObject({ t: z.literal('sealed_v1'), c: z.string().check(z.minLength(1)) });
 type DeploymentListCursorInput = DeploymentEnvironmentListInputV1 | DeploymentTargetLinksListInputV1;
@@ -18,6 +19,8 @@ const path = (actorAccountId: string, input: DeploymentListCursorInput) => 'scop
         ...(input.environmentIds === undefined ? [] : [[...new Set(input.environmentIds)].sort()]),
         ...(input.includeDeleted ? ['includeDeleted'] : []),
         ...(input.previewRepositoryId === undefined ? [] : ['previews', input.previewRepositoryId,
+            [...new Set(input.previewPullRequestIds)].sort()]),
+        ...(input.previewRepository === undefined ? [] : ['previewRepository', normalizeScmHostingRepositoryIdentity(input.previewRepository),
             [...new Set(input.previewPullRequestIds)].sort()]),
         ...(input.previewTemplateEnvironmentId === undefined ? [] : ['previewTemplate', input.previewTemplateEnvironmentId])]),
 ];

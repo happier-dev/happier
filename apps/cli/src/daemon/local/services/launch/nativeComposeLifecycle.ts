@@ -69,6 +69,8 @@ export type NativeComposeProjectRender = Readonly<{
     /** Host-only admission coordinates, never serialized as review/receipt content. */
     keys: readonly MachineNativeEffectKey[];
     review: NativeComposeRuntimeReview;
+    /** Resolved by this render's authorized launch; never forwarded as review values. */
+    referenceAddresses?: NonNullable<HostAuthorizedPluginExecLaunch['deploymentReferenceAddresses']>;
     storage?: NativeComposeStorageReview;
     /** Invocation-only source plan; never serialized as review/receipt content. */
     sharedData?: NativeComposeSharedDataPlan;
@@ -1122,6 +1124,8 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                 ...(sharedData ? { sharedData } : {}),
                 environmentInstanceId: input.source.environmentInstanceId, admissionProjectName,
                 keys: [{ kind: 'composeProject', dockerEndpoint: engineId, projectName: admissionProjectName }], review,
+                ...(actualLaunch.deploymentReferenceAddresses?.length
+                    ? { referenceAddresses: actualLaunch.deploymentReferenceAddresses } : {}),
                 ...(storage ? { storage: { warnings: storage.warnings.map(warning => ({ ...warning,
                     service: actualLaunch.secretRedactionLease!.redact(warning.service),
                     target: actualLaunch.secretRedactionLease!.redact(warning.target) })) } } : {}),

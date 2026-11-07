@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 
 export type HomeDomainHttpRequestV1 = Readonly<{
   method: string;
@@ -38,7 +39,7 @@ function appendQueryValue(query: URLSearchParams, key: string, value: unknown): 
     for (const item of value) appendQueryValue(query, key, item);
     return;
   }
-  throw new TypeError(`Home-domain GET field cannot be encoded in a query: ${key}`);
+  query.append(key, JSON.stringify(projectNativeJsonValueForTransport(value)));
 }
 
 /**
@@ -82,7 +83,7 @@ export function bindHomeDomainHttpRequestV1(params: Readonly<{
   }
 
   return { method: params.transport.method, path,
-    body: params.transport.preservePathFieldsInBody ? parsed : remaining };
+    body: projectNativeJsonValueForTransport(params.transport.preservePathFieldsInBody ? parsed : remaining) };
 }
 
 /**

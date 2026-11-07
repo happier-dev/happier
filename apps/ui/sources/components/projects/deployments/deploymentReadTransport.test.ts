@@ -42,7 +42,7 @@ describe('deployment scoped read transport', () => {
             machines: ['machine'],
             members: [{ machineId: 'machine', installationId: 'installation', state: 'active' }] });
         const detail = { ...base, environment: { ...base.environment, serverId, runtimeTargetLinkId: targetLink.id },
-            targetLinks: [{ targetLink }], runtimeTargetLink: targetLink, memberVersions: {} };
+            targetLinks: [{ targetLink }], runtimeTargetLink: targetLink, memberVersions: {}, secretRevisions: [] };
         let state: 'down' | 'up' = 'down';
         let installationId = 'installation';
         let denied = false;
@@ -179,7 +179,10 @@ describe('deployment scoped read transport', () => {
             onRetire: () => ({ dispose() {} }) };
         const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
         const receiptDetail = createDeploymentReceiptDetailV1();
+        receiptDetail.deployment.state = 'running';
         receiptDetail.content.steps = [{ id: 'source', label: 'Source', state: 'succeeded' }];
+        receiptDetail.content.machineResults = [{ machineId: receiptDetail.content.machines[0]!, installationId: 'installation',
+            steps: [], activation: 'pending', health: 'unknown', incumbentStopped: true }];
         const environmentHeader = detail.environment;
         const targetHeader = detail.targetLinks[0]!.targetLink;
         // Retained custody has no body consumer on the selected Environment page.
@@ -207,7 +210,9 @@ describe('deployment scoped read transport', () => {
         const runtimeTargetLink = { ...targetHeader, activeDeploymentId: receiptHeader.id };
         homes.answer(serverId, root, { body: { ok: true, items: [environmentHeader], currentDeployments: [receiptHeader],
             projectSources, runtimeTargetLinks: [runtimeTargetLink], nextCursor: null } });
-        homes.answer(serverId, `${root}/${environmentHeader.id}`, { body: { ok: true, environment: environmentHeader, targetLinks } });
+        const controllerAvailability = { machineId: environmentHeader.controllerMachineId, state: 'paused' };
+        homes.answer(serverId, `${root}/${environmentHeader.id}`, { body: { ok: true, environment: environmentHeader,
+            targetLinks, controller: controllerAvailability } });
         homes.answer(serverId, `${root}/${environmentHeader.id}/deployments`, { body: { ok: true, items: [receiptHeader, otherReceipt], nextCursor: null } });
         homes.answer(serverId, `/v1/deployments/receipts/${receiptHeader.id}`, { body: { ok: true, deployment: receiptHeader, cancellable: false } });
         const transport = createDeploymentReadTransport(lifetime);
@@ -257,11 +262,13 @@ describe('deployment scoped read transport', () => {
         const beforeDetail = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
         expect(await transport.readEnvironment(scope, environmentHeader.id, options)).toEqual({ ok: true, value: {
             environment: environmentHeader, content: detail.content, targetLinks: targetLinks.map(targetLink => ({ targetLink })),
+            controller: controllerAvailability,
         } });
         expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').slice(beforeDetail).map(request => request.input))
             .toEqual([{ artifactIds: [environmentHeader.contentArtifactId] }]);
         expect(await transport.readReceipt(scope, environmentHeader.id, receiptHeader.id, options))
-            .toEqual({ ok: true, value: { ...receiptDetail, cancellable: false } });
+            .toEqual({ ok: true, value: { ...receiptDetail, cancellable: false,
+                cancellationConsequence: { kind: 'service-down-until-rollback' } } });
         homes.answer(serverId, root, { body: { ok: true, items: [environmentHeader], currentDeployments: [otherReceipt],
             projectSources, runtimeTargetLinks: [runtimeTargetLink], nextCursor: null } });
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true,

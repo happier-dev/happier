@@ -1,3 +1,6 @@
+import { createProductionPluginSettingsHostFactory } from './invocation/services/settingsHost';
+import { createStablePluginEventsBroker } from './invocation/services/events';
+import { resolveAgentPluginSettingsFromService } from './agentPluginSettings';
 
 import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
@@ -220,7 +223,6 @@ import {
     createProductionPluginInvocationServiceOwners,
     type ManagedProviderRuntimeInvocationServices,
 } from './invocation/services/production';
-import { readPluginSettingsValuesWithDefaults } from './invocation/services/settings';
 import { createAccountPluginSettingsRecordStorage } from './context/accountPluginSettingsRecordStorage';
 import type {
     PluginAccountSettingsRecordAdapter,
@@ -3877,7 +3879,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 caller: entry.caller, occurrenceId: entry.occurrenceId,
                 sourceInstanceId: entry.sourceInstanceId, signal: consumerAssembly.allRetirementSignal });
             return batch.kind === 'available' && batch.source.subject.kind === 'environment'
-                && batch.source.subject.environmentId === entry.observation.environmentId
+                && batch.source.subject.environmentId === entry.environmentId
                 && isDeepStrictEqual(batch.source.checks.find(check => check.checkId === entry.checkId), entry.check);
         }),
     }) : null;
@@ -6232,36 +6234,22 @@ export async function resolveExecutablePluginRuntimeRegistry(
     };
 
     resolveAgentPluginSettings = async ({ pluginId, localAgentId, includeDefaults = true, signal }) => {
-        signal?.throwIfAborted();
-        // An Agent may consume only its own declarations. Account and daemon
-        // remain distinct records; no key merge or precedence rule exists.
-        const scopes = new Set<'account' | 'daemon'>();
-        for (const entry of authoritativeContributes.settings ?? []) {
-            if (entry.pluginId !== pluginId || entry.definition.target.kind !== 'agent') continue;
-            const target = entry.definition.target.agent;
-            const matches = typeof target === 'string'
-                ? target === localAgentId
-                : target.pluginId === pluginId && target.localId === localAgentId;
-            if (matches) scopes.add(entry.definition.scope);
-        }
-        if (scopes.size === 0) return null;
-        const services = createProjectionPluginServices({ pluginId });
-        if (!services || services.availability('settings').status !== 'available') return null;
-        const snapshot: { -readonly [Scope in keyof AgentCliSessionCommandPluginSettingsV1]: AgentCliSessionCommandPluginSettingsV1[Scope] } = {};
-        for (const scope of scopes) {
-            try {
-                const scoped = services.settings.forScope({ kind: scope });
-                snapshot[scope] = includeDefaults
-                    ? await readPluginSettingsValuesWithDefaults(scoped, { signal })
-                    : (await scoped.snapshot({ signal })).values;
-            } catch (error) {
-                if (!includeDefaults && (!(error instanceof PluginError) || error.code !== 'plugin_settings_scope_unavailable')) throw error;
-                // One unavailable scope cannot be substituted with or merged
-                // into the other. The exact available record remains useful.
-            }
-            signal?.throwIfAborted();
-        }
-        return snapshot.account || snapshot.daemon ? Object.freeze(snapshot) : null;
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('@happier-dev/protocol/account/settings/accountSettings');
+        return await resolveAgentPluginSettingsFromService({
+            pluginId, localAgentId, includeDefaults, signal,
+            declarations: authoritativeContributes.settings ?? [],
+            releasedAccountSettings: {
+                settings: capturedSavedSecretOperationContext
+                    ? capturedSavedSecretOperationContext.readSnapshot()?.rawSettings ?? null
+                    : params?.accountExecution || scopedActionRuntime
+                        ? null : getActiveAccountSettingsSnapshot()?.rawSettings ?? null,
+                hostDefaults: ACCOUNT_SETTING_ARTIFACTS.defaults,
+            },
+            resolveSettingsService: () => {
+                const services = createProjectionPluginServices({ pluginId });
+                return services?.availability('settings').status === 'available' ? services.settings : null;
+            },
+        });
     };
 
     async function prepareAgentInvocationServiceOperation(agentParams: Parameters<CreateAgentInvocationServices>[0]) {
@@ -6991,6 +6979,19 @@ export async function resolveExecutablePluginRuntimeRegistry(
             }
         },
         createPluginSettingsService(settingsParams) {
+            if (settingsParams.accountSettingsRecordAdapter) {
+                // A requester supplies an Account record owner, never an ambient daemon record.
+                if (settingsParams.scope.kind !== 'account') return null;
+                const seed = createProjectionPluginInvocationSeed(settingsParams);
+                if (!seed) return null;
+                const host = createProductionPluginSettingsHostFactory({
+                    accountScoped: true,
+                    accountSettingsRecordAdapter: settingsParams.accountSettingsRecordAdapter,
+                    broker: createStablePluginEventsBroker(),
+                })((authoritativeContributes.settings ?? []).filter(entry => entry.definition.scope === 'account')
+                    .map(entry => ({ pluginId: entry.pluginId, contribution: entry.definition })));
+                return host.bind(seed)?.forScope(settingsParams.scope) ?? null;
+            }
             const services = createProjectionPluginServices(settingsParams);
             return services?.availability('settings').status === 'available'
                 ? services.settings.forScope(settingsParams.scope)

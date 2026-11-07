@@ -2187,6 +2187,7 @@ export type SavedSecretSharingActionResultById = {
                 rotate: boolean;
                 manageAccess: boolean;
                 delete: boolean;
+                reveal?: boolean | undefined;
             };
             storage?: undefined | {
                 kind: 'external';

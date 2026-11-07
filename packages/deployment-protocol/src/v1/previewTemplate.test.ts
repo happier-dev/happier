@@ -2,8 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 import { createDeploymentEnvironmentDetailV1 } from '../testing/v1.js';
 import { DeploymentEnvironmentContentV1Schema, DeploymentEnvironmentHeaderV1Schema } from './environment.js';
+import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol';
+import { DeploymentEnvironmentUpdateStorageInputV1Schema } from './operations.js';
 
 describe('P44 preview template private content', () => {
+    it('admits a preview template edit only through private content preparation before storage', () => {
+        const previewTemplate = { v: 1, enabled: true, forkPreviews: 'off',
+            repository: { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' },
+            runtimeTargetLinkId: 'runtime', domain: null, bindingBlueprints: [], data: [] };
+        const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+            contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1,
+            patch: { buildMachineId: 'builder', previewTemplate } };
+        expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse(input).success).toBe(true);
+        expect(DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse(input).success).toBe(false);
+        expect(DeploymentEnvironmentUpdateStorageInputV1Schema.safeParse({ ...input,
+            patch: { buildMachineId: 'builder' } }).success).toBe(true);
+        expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ ...input,
+            patch: { previewTemplate: null } }).success).toBe(true);
+    });
     it('retains strict preview template choices in private content without admitting operational bindings or approval authority', () => {
         const environment = createDeploymentEnvironmentDetailV1();
         const repository = { kind: 'github', deployment: 'https://github.example/enterprise', repository: 'owner/app' };
@@ -30,7 +46,9 @@ describe('P44 preview template private content', () => {
                 source: { kind: 'secret', ref: 'saved-secret', resourceRevision: 1 } }] },
             { ...previewTemplate, data: [{ ...previewTemplate.data[0], password: 'inline-secret' }] },
             { ...previewTemplate, domain: { ...previewTemplate.domain, reservedHostname: 'pr-1-app.example' } },
-        ]) expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content, previewTemplate: invalid }).success).toBe(false);
+        ]) {
+            expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content, previewTemplate: invalid }).success).toBe(false);
+        }
         expect(DeploymentEnvironmentHeaderV1Schema.safeParse({ ...environment.environment, previewTemplate }).success).toBe(false);
     });
 

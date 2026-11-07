@@ -236,9 +236,20 @@ describe('finite saved HTTP and certificate health', () => {
         const unresolved = await readHttpHealthCheckV1(admitted(url), context(url));
         expect(unresolved.status).toBe('down');
         expect(JSON.parse(unresolved.evidence.items[0]?.text ?? '{}')).toMatchObject({
-            reason: 'connection', requiredFact: 'reachableHealthEndpoint', remedy: expect.any(String),
+            reason: 'dns', requiredFact: 'resolvableHealthEndpoint', remedy: expect.any(String),
         });
         expect(JSON.stringify(unresolved)).not.toContain('private-');
+    });
+
+    it('keeps a temporary resolver failure unavailable rather than claiming outside DNS failure', async () => {
+        const url = 'https://service.example/health';
+        stubFetch(async () => { throw new TypeError('private-transport-message', {
+            cause: Object.assign(new Error('private-resolver'), { code: 'EAI_AGAIN' }),
+        }); });
+        const observed = await readHttpHealthCheckV1(admitted(url), context(url));
+        expect(observed.status).toBe('unknown');
+        expect(JSON.parse(observed.evidence.items[0]?.text ?? '{}')).toMatchObject({ reason: 'transport_incomplete' });
+        expect(JSON.stringify(observed)).not.toContain('private-');
     });
 
     it('keeps the Domain public authority and expected authentication challenge with same-Machine disclosure', async () => {

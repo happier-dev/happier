@@ -7,6 +7,7 @@ import {
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
     readDeploymentReceiptArtifactV1,
     readDeploymentDomainArtifactV1,
+    projectDeploymentCancellationConsequenceV1,
     type DeploymentArtifactHeaderV1,
 } from '@happier-dev/deployment-protocol/v1';
 import type {
@@ -18,7 +19,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
-import { environmentHealthObserver } from './observeEnvironmentHealth';
+import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1 } from '@happier-dev/deployments';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
@@ -61,6 +62,18 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         } finally { account?.dispose(); }
     }
     const home = { serverId: lifetime.scope.serverId };
+    const readEnvironmentMetadata = async (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1) => {
+        const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(await execute('deployments.environments.get',
+            { ...home, environmentId }, { signal: options.signal }));
+        if (!parsed.success) return failure('invalid_response');
+        const detail = parsed.data;
+        if (!detail.ok) return failure(detail.error);
+        if (detail.environment.id !== environmentId
+            || (scope.projectSourceId !== undefined && detail.environment.projectSourceId !== scope.projectSourceId)
+            || !areServerProfileIdentifiersEquivalent(detail.environment.serverId, lifetime.scope.serverId)
+            || !detail.targetLinks.every(link => link.environmentId === environmentId)) return failure('invalid_response');
+        return { ok: true as const, value: detail };
+    };
     return {
         listDomains: (scope, environmentId, query, options) => scoped(scope, options, async account => {
             const parsed = DeploymentDomainListResultV1Schema.safeParse(await execute('deployments.domains.list',
@@ -86,6 +99,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ...(coverage === undefined ? {} : { coverage }) } };
         }),
         observeEnvironmentHealth: environmentHealthObserver(lifetime),
+        observeDomainHealth: domainHealthObserver(lifetime, (scope, environmentId, options) =>
+            scoped(scope, options, () => readEnvironmentMetadata(scope, environmentId, options))),
         readActivity: (scope, options) => scoped(scope, options, async () => {
             const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
                 { ...home, projectSourceId: scope.projectSourceId, projection: 'activity' }, { signal: options.signal }));
@@ -150,15 +165,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ...(coverage === undefined ? {} : { coverage }) } };
         }),
         readEnvironment: (scope, environmentId, options) => scoped(scope, options, async account => {
-            const parsed = DeploymentEnvironmentGetResultV1Schema.safeParse(await execute('deployments.environments.get',
-                { ...home, environmentId }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const detail = parsed.data;
-            if (!detail.ok) return failure(detail.error);
-            if (detail.environment.id !== environmentId
-                || (scope.projectSourceId !== undefined && detail.environment.projectSourceId !== scope.projectSourceId)
-                || !areServerProfileIdentifiersEquivalent(detail.environment.serverId, lifetime.scope.serverId)
-                || !detail.targetLinks.every(link => link.environmentId === environmentId)) return failure('invalid_response');
+            const metadata = await readEnvironmentMetadata(scope, environmentId, options);
+            if (!metadata.ok) return metadata;
+            const detail = metadata.value;
             // The selected page consumes Environment content and custody headers,
             // not private bodies from every retained TargetLink.
             const [artifact] = await account.readArtifactContents([detail.environment.contentArtifactId], { signal: options.signal });
@@ -166,7 +175,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const environment = readDeploymentEnvironmentArtifactV1(detail.environment, artifact.value);
             if (!environment.ok) return failure(environment.error);
             const targetLinks = detail.targetLinks.map(targetLink => ({ targetLink }));
-            return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks } };
+            return { ok: true, value: { environment: detail.environment, content: environment.content, targetLinks,
+                ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }),
+                ...(detail.controller ? { controller: detail.controller } : {}) } };
         }),
         listHistory: (scope, environmentId, query, options) => scoped(scope, options, async account => {
             const parsed = DeploymentReceiptListResultV1Schema.safeParse(await execute('deployments.receipts.list',
@@ -200,8 +211,13 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             if (receipt.deployment.environmentId !== environmentId || receipt.deployment.id !== deploymentId) return failure('invalid_response');
             const artifact = await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: options.signal });
             const content = readDeploymentReceiptArtifactV1(receipt.deployment, artifact);
-            return content.ok ? { ok: true, value: { deployment: receipt.deployment, content: content.content,
-                ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }) } } : failure(content.error);
+            if (!content.ok) return failure(content.error);
+            const cancellationConsequence = projectDeploymentCancellationConsequenceV1({
+                deployment: receipt.deployment, content: content.content,
+            });
+            return { ok: true, value: { deployment: receipt.deployment, content: content.content,
+                ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }),
+                ...(cancellationConsequence ? { cancellationConsequence } : {}) } };
         }),
     };
 }

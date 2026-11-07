@@ -108,8 +108,8 @@ export function createMachineServicesRuntime(input: Readonly<{
                 intent = readIntent();
             }
             const sameRegistry = registry === lease.registry;
-            const demanded = serviceId ? intent?.byId.get(serviceId) : undefined;
             const changed = !sameRegistry || reconciled !== intent;
+            const demanded = serviceId ? intent?.byId.get(serviceId) : undefined;
             if (!changed) {
                 const handle = demanded ? adoptedHandles.get(demanded.watchId) : undefined;
                 if (!demanded || handle && handle.isCurrent() && !handle.retirementSignal.aborted) return;

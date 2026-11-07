@@ -1280,6 +1280,58 @@ export type MachineStorageActionResultById = {
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
         };
+        docker?: undefined | {
+            kind: 'ready';
+            engineId: string;
+            images: {
+                count: number;
+                custody: {
+                    kind: 'complete';
+                    candidates: {
+                        nativeId: string;
+                        configDigest: string;
+                        platform: string;
+                        sizeBytes?: number | undefined;
+                        reclaimableBytes?: number | undefined;
+                    }[];
+                } | {
+                    kind: 'unavailable';
+                    reason: 'image_custody_unavailable';
+                    deploymentIds?: string[] | undefined;
+                };
+                sizeBytes?: number | undefined;
+                reclaimableBytes?: number | undefined;
+            };
+            volumes: {
+                count: number;
+                alwaysKept: true;
+                sizeBytes?: number | undefined;
+            };
+            buildCache: {
+                count: number;
+                reclaimableBytes: 0;
+                reason: 'build_cache_custody_unavailable';
+                sizeBytes?: number | undefined;
+            };
+            releases: {
+                kind: 'ready';
+                environments: {
+                    environmentId: string;
+                    keptReleaseCount: number;
+                }[];
+            } | {
+                kind: 'unavailable';
+                reason: 'image_custody_unavailable';
+                deploymentIds?: string[] | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+            reason: 'native_inventory_unavailable' | 'native_runtime_unavailable';
+            cause?: undefined | {
+                code: string;
+                statusCode?: number | undefined;
+            };
+        };
         incomplete?: undefined | {
             categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
             reason: 'permission_denied';
@@ -1516,6 +1568,58 @@ export type MachineStorageActionResultById = {
                 previousScanAt?: number | undefined;
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
+        };
+        docker?: undefined | {
+            kind: 'ready';
+            engineId: string;
+            images: {
+                count: number;
+                custody: {
+                    kind: 'complete';
+                    candidates: {
+                        nativeId: string;
+                        configDigest: string;
+                        platform: string;
+                        sizeBytes?: number | undefined;
+                        reclaimableBytes?: number | undefined;
+                    }[];
+                } | {
+                    kind: 'unavailable';
+                    reason: 'image_custody_unavailable';
+                    deploymentIds?: string[] | undefined;
+                };
+                sizeBytes?: number | undefined;
+                reclaimableBytes?: number | undefined;
+            };
+            volumes: {
+                count: number;
+                alwaysKept: true;
+                sizeBytes?: number | undefined;
+            };
+            buildCache: {
+                count: number;
+                reclaimableBytes: 0;
+                reason: 'build_cache_custody_unavailable';
+                sizeBytes?: number | undefined;
+            };
+            releases: {
+                kind: 'ready';
+                environments: {
+                    environmentId: string;
+                    keptReleaseCount: number;
+                }[];
+            } | {
+                kind: 'unavailable';
+                reason: 'image_custody_unavailable';
+                deploymentIds?: string[] | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+            reason: 'native_inventory_unavailable' | 'native_runtime_unavailable';
+            cause?: undefined | {
+                code: string;
+                statusCode?: number | undefined;
+            };
         };
         incomplete?: undefined | {
             categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';

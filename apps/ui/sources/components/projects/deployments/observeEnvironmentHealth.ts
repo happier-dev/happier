@@ -1,5 +1,7 @@
 import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
-    type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1 } from '@happier-dev/deployments';
+    type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
+    type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
+import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -13,6 +15,73 @@ const currentEdgeProjection = Object.freeze({
         return previous && sameStrictJsonValue(previous, next) ? previous : next;
     },
 });
+
+/** Domain metadata remains usable while this separate demanded controller read is pending. */
+export function domainHealthObserver(lifetime: ServerAccountScopeLifetime,
+    readMetadata: (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<Readonly<{
+        environment: DeploymentEnvironmentHeaderV1; targetLinks: readonly DeploymentTargetLinkHeaderV1[];
+    }>>>): NonNullable<DeploymentReadTransportV1['observeDomainHealth']> {
+    return (scope, environmentId, initialItems, publish, options) => {
+        if (options.signal.aborted || initialItems.length === 0) return () => {};
+        let items = initialItems;
+        let closed = false;
+        const subscriptions: (() => void)[] = [];
+        const unavailable = (reason: string) => {
+            if (closed) return;
+            items = items.map(item => ({ ...item, healthUnavailableReason: reason }));
+            publish(items);
+        };
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            options.signal.removeEventListener('abort', close);
+            for (const unsubscribe of subscriptions) unsubscribe();
+        };
+        options.signal.addEventListener('abort', close, { once: true });
+        void readMetadata(scope, environmentId, options).then(result => {
+            if (closed) return;
+            if (!result.ok) { unavailable(result.failure.code); return; }
+            const { environment, targetLinks } = result.value;
+            if (!environment.controllerMachineId) { unavailable('machine_unavailable'); return; }
+            for (const targetLinkId of new Set(items.map(item => item.domain.targetLinkId))) {
+                const selected = items.filter(item => item.domain.targetLinkId === targetLinkId);
+                const domainIds = selected.map(item => item.domain.id);
+                const link = targetLinks.find(link => link.id === targetLinkId);
+                if (!link || link.targetKind !== 'ownServer' || environment.runtimeTargetLinkId !== link.id) {
+                    items = items.map(item => domainIds.includes(item.domain.id)
+                        ? { ...item, health: undefined, healthUnavailableReason: 'coverage_unavailable' } : item);
+                    publish(items);
+                    continue;
+                }
+                const owner = createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+                    hostRead: 'deployments.health.edge', input: { serverId: lifetime.scope.serverId,
+                        machineId: environment.controllerMachineId, environmentId, targetLinkId, domainIds },
+                }, projection: currentEdgeProjection });
+                const update = () => {
+                    if (closed) return;
+                    const snapshot = owner.selection.getSnapshot();
+                    const value = snapshot.value;
+                    const reason = snapshot.error?.code ?? (value && !value.ok ? value.error : null);
+                    if (!reason && !value) return;
+                    const valid = value?.ok && value.environmentId === environmentId && value.targetLinkId === targetLinkId;
+                    items = items.map(item => {
+                        if (!domainIds.includes(item.domain.id)) return item;
+                        if (reason) return { ...item, healthUnavailableReason: reason };
+                        const row = valid ? value.domainHealth?.find(row => row.domainId === item.domain.id
+                            && row.domainRevision === item.domain.revision) : undefined;
+                        return { ...item, health: row?.facts,
+                            healthUnavailableReason: row ? row.facts.unavailableReason ?? undefined : 'coverage_unavailable' };
+                    });
+                    publish(items);
+                };
+                subscriptions.push(owner.selection.subscribe(update, true));
+                update();
+            }
+        }).catch(() => unavailable('deployment_read_failed'));
+        if (options.signal.aborted) close();
+        return close;
+    };
+}
 
 /** Borrow the existing selected Services Resource; this never probes or samples health. */
 export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentHealth']> {

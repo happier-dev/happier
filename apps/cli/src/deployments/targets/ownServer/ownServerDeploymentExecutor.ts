@@ -370,6 +370,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 return effect({ native, createInput, runtime: recovery.runtime,
                     async createBackupInput(operands) {
                         return { ...native, ...operands, runtimeImage: await project.prepareResticRuntime({ render, context }),
+                            operationProgress: input.request.context.operationProgress,
                             onStopPending: () => input.onStopPending?.() };
                     } });
             };
@@ -547,6 +548,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             const inputBasis = basis(request, snapshot, native);
             return { inputBasis, runtimePlatform: native.platform, reviewedEffect: projectNativeJsonValueForTransport(projectOwnServerDeploymentReview({
                 machineId: host.machineId, environment: snapshot.environment, inputBasis, servingReceipt,
+                ...(native.referenceAddresses ? { referenceAddresses: native.referenceAddresses } : {}),
                 onFailure: content.onFailure,
                 ...(commitSubject === undefined ? {} : { commitSubject }),
                 nativeReview: native.review, ...(native.storage ? { storage: native.storage } : {}),

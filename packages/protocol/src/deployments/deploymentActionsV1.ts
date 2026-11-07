@@ -75,6 +75,8 @@ import { DeploymentStoredDefinitionInputV1Schema, DeploymentTextV1Schema, Deploy
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { DeploymentEnvironmentContentPatchV1Schema } from './deploymentEnvironmentContentPatchV1.js';
 export { DeploymentEnvironmentContentPatchV1Schema, hasDeploymentEnvironmentContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
+export { DeploymentPreviewTemplateV1Schema, DeploymentPreviewDataSelectionV1Schema,
+  type DeploymentPreviewTemplateV1, type DeploymentPreviewDataSelectionV1 } from './deploymentPreviewTemplateV1.js';
 import { DeploymentIngressV1Schema } from './storedAppInputV1.js';
 export { DeploymentIngressV1Schema, type DeploymentIngressV1 } from './storedAppInputV1.js';
 import { DeploymentTargetManagedRetentionV1Schema } from './storedAppInputV1.js';
@@ -196,16 +198,18 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
 export const DeploymentEnvironmentCreateActionInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema,
 ]));
-/** Content CAS and reviewed build/ingress placement share one manager-owned update. */
-export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...environment, ...DeploymentArtifactContentReferenceV1Schema.shape,
-  patch: z.optional(z.strictObject({
+/** One owning patch shape serves authored inputs and the prepared storage projection. */
+export const DeploymentEnvironmentUpdatePatchV1Schema = lazyZodSchema(() => z.strictObject({
     buildMachineId: z.optional(DeploymentIdentifierV1Schema),
     ...DeploymentEnvironmentContentPatchV1Schema.shape,
     protection: z.optional(DeploymentEnvironmentHeaderV1Schema.shape.protection),
     deployerMode: z.optional(z.enum(['managers', 'members', 'chosen'])),
     deployerPrincipals: z.optional(DeploymentEnvironmentDeployerPrincipalsV1Schema),
-  })),
+}));
+/** Content CAS and reviewed build/ingress placement share one manager-owned update. */
+export const DeploymentEnvironmentUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...environment, ...DeploymentArtifactContentReferenceV1Schema.shape,
+  patch: z.optional(DeploymentEnvironmentUpdatePatchV1Schema),
 }));
 /** Manager-owned controller reassignment changes records and future assignments, never workload content. */
 export const DeploymentEnvironmentControllerSetInputV1Schema = lazyZodSchema(() => z.strictObject({

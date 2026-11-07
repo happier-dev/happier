@@ -3,12 +3,29 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTimestampV1Schema as timestamp } from './deploymentIdentifiersV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../local/services/serviceIdentityV1.js';
 import { ManagedServiceNativeStateV1Schema } from '../local/services/nativeStateV1.js';
+import { HealthCheckResultV1Schema } from './healthCheckV1.js';
+import { DeploymentReferenceSourceV1Schema, EnvironmentVariableBindingV1Schema } from './storedAppInputV1.js';
+import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema,
   ManagedServiceUnavailableReasonV1Schema } from '../local/services/nativeLogsV1.js';
 
 const target = { environmentId: id, deploymentId: id, targetLinkId: id, machineId: id, installationId: id };
 const input = { serverId: id, ...target };
 const service = { service: MachineDeploymentServiceIdentityV1Schema };
+const referenceBinding = () => ({ name: EnvironmentVariableBindingV1Schema.shape.name,
+  phase: EnvironmentVariableBindingV1Schema.shape.phase, source: DeploymentReferenceSourceV1Schema });
+/** Nonsecret address actually supplied to the exact installed build/runtime phase. */
+export const DeploymentReferenceAddressV1Schema = lazyZodSchema(() => z.strictObject({
+  ...referenceBinding(), machineId: id, installationId: id, address: z.string(),
+}));
+export type DeploymentReferenceAddressV1 = z.infer<typeof DeploymentReferenceAddressV1Schema>;
+export const DeploymentSecretRevisionFactV1Schema = lazyZodSchema(() => z.strictObject({
+  name: EnvironmentVariableBindingV1Schema.shape.name, phase: EnvironmentVariableBindingV1Schema.shape.phase,
+  ref: SharedSavedSecretReferenceSelectionV1Schema.shape.ref,
+  runningRevision: z.nullable(revision), currentRevision: z.nullable(revision),
+  status: z.enum(['unchanged', 'redeploy_required', 'unavailable', 'unknown']), reason: z.optional(z.string()),
+}));
+export type DeploymentSecretRevisionFactV1 = z.infer<typeof DeploymentSecretRevisionFactV1Schema>;
 const matchesService = (value: { environmentId: string; machineId: string; service: z.infer<typeof MachineDeploymentServiceIdentityV1Schema> }) =>
   value.environmentId === value.service.environmentId && value.machineId === value.service.machineId;
 const serviceIdentityCheck = { message: 'The stable service belongs to the selected Environment and Machine.' };
@@ -17,7 +34,26 @@ const freshness = { observedAtMs: z.nullable(timestamp), freshness: z.enum(['cur
 /** Reads the admitted observer's current fact; never accepts a probe destination. */
 export const DeploymentHealthCurrentInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, machineId: id, environmentId: id, targetLinkId: id,
+  /** Selected Domain rows only; omitted by the existing edge aggregate reader. */
+  domainIds: z.optional(z.array(id).check(z.minLength(1))),
 }));
+const domainVantage = () => z.enum(['sameMachine', 'outside']);
+/** Existing saved-check evidence, never a new probe or scheduling contract. */
+export const DeploymentCurrentDomainObservationV1Schema = lazyZodSchema(() => z.strictObject({
+  domainId: id, domainRevision: revision, targetLinkRevision: revision,
+  kind: z.enum(['http', 'certificate']), observerMachineId: id, vantage: domainVantage(),
+  result: HealthCheckResultV1Schema,
+}));
+export type DeploymentCurrentDomainObservationV1 = z.infer<typeof DeploymentCurrentDomainObservationV1Schema>;
+export const DeploymentDomainHealthFactsV1Schema = lazyZodSchema(() => z.strictObject({
+  availability: z.enum(['observed', 'not_checked', 'unavailable']), unavailableReason: z.nullable(id),
+  observedAt: z.nullable(timestamp), vantage: z.nullable(domainVantage()),
+  certificate: z.strictObject({ state: z.enum(['not_checked', 'valid', 'invalid', 'expired', 'expiresSoon']),
+    expiresAt: z.nullable(timestamp) }),
+  needsYou: z.nullable(z.strictObject({ cause: z.enum(['dns', 'network', 'certificate', 'http']),
+    reason: id, vantage: z.nullable(domainVantage()) })),
+}));
+export type DeploymentDomainHealthFactsV1 = z.infer<typeof DeploymentDomainHealthFactsV1Schema>;
 export const DeploymentCurrentEdgeObservationV1Schema = lazyZodSchema(() => z.strictObject({
   environmentId: id, targetLinkId: id, targetLinkRevision: revision,
   machineId: id, installationId: z.optional(id), role: z.literal('edge'),
@@ -29,6 +65,8 @@ export const DeploymentCurrentEdgeObservationV1Schema = lazyZodSchema(() => z.st
 export const DeploymentHealthCurrentSuccessV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true), environmentId: id, targetLinkId: id,
   observation: z.nullable(DeploymentCurrentEdgeObservationV1Schema),
+  domainHealth: z.optional(z.array(z.strictObject({ domainId: id, domainRevision: revision,
+    facts: DeploymentDomainHealthFactsV1Schema, observations: z.array(DeploymentCurrentDomainObservationV1Schema) }))),
 }).check(z.refine(value => value.observation === null || (
   value.observation.environmentId === value.environmentId && value.observation.targetLinkId === value.targetLinkId
 ), { message: 'The current observation belongs to the selected Environment and target link.' })));

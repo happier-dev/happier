@@ -40,6 +40,27 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it.each([false, true])('shows changed reference names and phases from the host review (controller: %s)', async controller => {
+    const review = { ...machineReview, risks: [], referenceChanges: [
+      { name: 'DATABASE_URL', phase: 'runtime' as const },
+      { name: 'BUILD_ENDPOINT', phase: 'build' as const },
+    ] };
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: controller
+        ? { ...machineReview, risks: [], runtimeMachines: [{ machineId: 'machine-target', review }] } : review,
+        promotion: null }} serverId={getActiveServerSnapshot().serverId} testID="facts" />,
+    );
+    expect(screen.findHostByTestId('facts.risks')).not.toBeNull();
+    const text = screen.getTextContent();
+    for (const fact of ['DATABASE_URL', 'BUILD_ENDPOINT', 'projects.deployments.phaseRuntime',
+      'projects.deployments.phaseBuild', 'projects.deployments.editors.referenceAddressChanged']) expect(text).toContain(fact);
+    const unchanged = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, risks: [] }, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="unchanged" />,
+    );
+    expect(unchanged.findHostByTestId('unchanged.risks')).toBeNull();
+  });
+
   it('shows the selected deployment failure policy independently of migration recovery', async () => {
     const screen = await renderScreen(
       <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'keepPartial',

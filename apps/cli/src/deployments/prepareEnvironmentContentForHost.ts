@@ -140,6 +140,12 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                     candidate = { ...candidate, content: { ...candidate.content, retainPreviousDeployments: retainedDeployments } };
                     preparedContent = { input: request.input, owner: loaded.environment.owner };
                 }
+                const previewTemplate = request.input.patch?.previewTemplate;
+                if (previewTemplate !== undefined) {
+                    if (!currentReference) return { ok: false, errorCode: 'deployment_invalid', error: 'deployment_invalid' };
+                    candidate = { ...candidate, content: { ...candidate.content, previewTemplate: previewTemplate ?? undefined } };
+                    preparedContent = { input: request.input, owner: loaded.environment.owner };
+                }
                 // This check owns opened content in both Account modes. An E2EE
                 // server cannot inspect this private leaf on the client's behalf.
                 if (!isDeepStrictEqual(previous.content.template, candidate.content.template)
@@ -178,7 +184,9 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                             return headers;
                         } },
                 }));
-                return { input: { ...prepared.input, contentArtifactId: created.artifactId,
+                const storagePatch = { ...prepared.input.patch };
+                delete storagePatch.previewTemplate;
+                return { input: { ...prepared.input, patch: storagePatch, contentArtifactId: created.artifactId,
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion },
                     ...(isDeploymentEnvironmentUpdateNativeAdmissionV1(native) ? { authoredInputDigest: native.inputDigest } : {}) };
             }

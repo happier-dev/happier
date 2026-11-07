@@ -1,6 +1,6 @@
 import { selectDeploymentRuntimeTargetLinkV1 } from '../projection/deploymentSelectors.js';
 import type { createDeploymentProjectionV1 } from '../projection/deploymentStore.js';
-import type { DeploymentEnvironmentReadDetailV1, DeploymentReadScopeV1, DeploymentReadTransportV1 } from './deploymentReadControllerTypes.js';
+import type { DeploymentDomainReadPageV1, DeploymentEnvironmentReadDetailV1, DeploymentReadScopeV1, DeploymentReadTransportV1 } from './deploymentReadControllerTypes.js';
 
 export type DeploymentEnvironmentHealthObservationV1 = {
     basis: string;
@@ -48,5 +48,26 @@ export function reconcileDeploymentEnvironmentHealthObservationV1(entry: Entry, 
         const snapshot = entry.projection.getSnapshot();
         if (snapshot.value) entry.projection.publish({ ...snapshot,
             value: { ...snapshot.value as DeploymentEnvironmentReadDetailV1, healthFeed } });
+    }, { signal: observation.abort.signal });
+}
+
+/** The same controller demand owns Domain facts; Home metadata never waits for a Machine. */
+export function reconcileDeploymentDomainHealthObservationV1(entry: Entry, enabled: boolean,
+    scope: DeploymentReadScopeV1, environmentId: string, transport: DeploymentReadTransportV1): void {
+    const page = entry.projection.getSnapshot().value as DeploymentDomainReadPageV1 | null;
+    if (!enabled || !page?.items.length || !transport.observeDomainHealth) {
+        stopDeploymentEnvironmentHealthObservationV1(entry);
+        return;
+    }
+    const basis = JSON.stringify(page.items.map(({ domain }) => [domain.id, domain.revision, domain.targetLinkId]));
+    if (entry.healthObservation?.basis === basis) return;
+    stopDeploymentEnvironmentHealthObservationV1(entry);
+    const observation: DeploymentEnvironmentHealthObservationV1 = { basis, abort: new AbortController() };
+    entry.healthObservation = observation;
+    observation.stop = transport.observeDomainHealth(scope, environmentId, page.items, items => {
+        if (observation.abort.signal.aborted) return;
+        const snapshot = entry.projection.getSnapshot();
+        if (snapshot.value) entry.projection.publish({ ...snapshot,
+            value: { ...snapshot.value as DeploymentDomainReadPageV1, items } });
     }, { signal: observation.abort.signal });
 }
