@@ -17,7 +17,7 @@ import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTt
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { t } from '@/text';
 import { describeTtsSampleFailure } from '@/voice/settings/panels/localTts/ttsSampleFailureMessage';
-import { getLocalTtsProviderSpec, useLocalTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
+import { useLocalTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -56,7 +56,7 @@ export function LocalVoiceTtsGroup(props: {
   const [testStatus, setTestStatus] = React.useState<'idle' | 'speaking'>('idle');
 
   const cfg = props.cfgTts;
-  const providerSpec = getLocalTtsProviderSpec(cfg.provider);
+  const providerSpec = providerSpecs.find(spec => spec.id === cfg.provider);
   const setCfg = (patch: Partial<VoiceLocalTtsSettings>) => props.setTts({ ...cfg, ...patch });
 
   return (
