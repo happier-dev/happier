@@ -13876,7 +13876,7 @@ const voicePresenceTranslations = { fr: {
         mute: "Couper le micro",
         unmute: "Réactiver",
         end: "Terminer",
-        captions: { connecting: "Ouverture du canal audio", listening: "Vas-y", transcribing: "Transcription en cours", thinking: "Préparation d’une réponse", speaking: "Tu peux interrompre à tout moment", interrupted: "Vas-y", muted: "Réactive le micro pour parler · Voix peut encore parler", reconnecting: "Connexion perdue · nouvelle tentative", blocked: "Autorise l’accès au micro pour parler", failed: "Réessaie ou vérifie les réglages de Voix" },
+        captions: { connecting: "Ouverture du canal audio", listening: "Vas-y", transcribing: "Transcription en cours", thinking: "Préparation d’une réponse", speaking: "Tu peux interrompre à tout moment", interrupted: "Vas-y", muted: "Réactive le micro pour parler · Voix peut encore parler", reconnecting: "Connexion perdue · nouvelle tentative", blocked: "Autorise l’accès au micro pour parler", failed: "Réessaie ou vérifie les réglages de Voix", needsYou: "En attente de ta décision" },
         recovery: { allow: "Autoriser", setUp: "Configurer" },
         readAloud: { preparing: "Préparation de la lecture", speaking: "Lecture à voix haute", stop: "Arrêter la lecture" },
         containerA11y: ({ status }) => `Voix, ${status}`,

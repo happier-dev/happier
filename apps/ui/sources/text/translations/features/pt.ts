@@ -13828,7 +13828,7 @@ const voicePresenceTranslations = { pt: {
         mute: "Silenciar",
         unmute: "Ativar som",
         end: "Encerrar",
-        captions: { connecting: "Abrindo o canal de áudio", listening: "Pode falar", transcribing: "Transformando em texto", thinking: "Preparando uma resposta", speaking: "Você pode interromper a qualquer momento", interrupted: "Pode falar", muted: "Ative o som para falar · a Voz ainda pode falar", reconnecting: "Conexão perdida · tentando de novo", blocked: "Permita o acesso ao microfone para falar", failed: "Tente de novo ou confira os ajustes da Voz" },
+        captions: { connecting: "Abrindo o canal de áudio", listening: "Pode falar", transcribing: "Transformando em texto", thinking: "Preparando uma resposta", speaking: "Você pode interromper a qualquer momento", interrupted: "Pode falar", muted: "Ative o som para falar · a Voz ainda pode falar", reconnecting: "Conexão perdida · tentando de novo", blocked: "Permita o acesso ao microfone para falar", failed: "Tente de novo ou confira os ajustes da Voz", needsYou: "Aguardando sua decisão" },
         recovery: { allow: "Permitir", setUp: "Configurar" },
         readAloud: { preparing: "Preparando a leitura", speaking: "Lendo em voz alta", stop: "Parar a leitura" },
         containerA11y: ({ status }) => `Voz, ${status}`,

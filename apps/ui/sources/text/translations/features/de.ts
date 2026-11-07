@@ -13487,7 +13487,7 @@ const voicePresenceTranslations = { de: {
         mute: "Stumm",
         unmute: "Ton an",
         end: "Beenden",
-        captions: { connecting: "Audiokanal wird geöffnet", listening: "Leg los", transcribing: "Wird in Text umgewandelt", thinking: "Antwort wird erarbeitet", speaking: "Du kannst jederzeit unterbrechen", interrupted: "Leg los", muted: "Stummschaltung aufheben, um zu sprechen · Voice kann weiter sprechen", reconnecting: "Verbindung verloren · neuer Versuch", blocked: "Erlaube den Mikrofonzugriff, um zu sprechen", failed: "Versuch es erneut oder prüfe die Voice-Einstellungen" },
+        captions: { connecting: "Audiokanal wird geöffnet", listening: "Leg los", transcribing: "Wird in Text umgewandelt", thinking: "Antwort wird erarbeitet", speaking: "Du kannst jederzeit unterbrechen", interrupted: "Leg los", muted: "Stummschaltung aufheben, um zu sprechen · Voice kann weiter sprechen", reconnecting: "Verbindung verloren · neuer Versuch", blocked: "Erlaube den Mikrofonzugriff, um zu sprechen", failed: "Versuch es erneut oder prüfe die Voice-Einstellungen", needsYou: "Wartet auf deine Entscheidung" },
         recovery: { allow: "Erlauben", setUp: "Einrichten" },
         readAloud: { preparing: "Vorlesen wird vorbereitet", speaking: "Liest vor", stop: "Vorlesen beenden" },
         containerA11y: ({ status }) => `Voice, ${status}`,

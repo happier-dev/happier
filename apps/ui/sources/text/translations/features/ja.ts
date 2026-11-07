@@ -13815,7 +13815,7 @@ const voicePresenceTranslations = { ja: {
         mute: "ミュート",
         unmute: "ミュート解除",
         end: "終了",
-        captions: { connecting: "音声チャネルを開いています", listening: "どうぞ", transcribing: "テキストに変換しています", thinking: "回答を考えています", speaking: "いつでも割り込めます", interrupted: "どうぞ", muted: "話すにはミュートを解除 · 音声は引き続き話せます", reconnecting: "接続が切れました · 再試行中", blocked: "話すにはマイクへのアクセスを許可してください", failed: "もう一度試すか、音声の設定を確認してください" },
+        captions: { connecting: "音声チャネルを開いています", listening: "どうぞ", transcribing: "テキストに変換しています", thinking: "回答を考えています", speaking: "いつでも割り込めます", interrupted: "どうぞ", muted: "話すにはミュートを解除 · 音声は引き続き話せます", reconnecting: "接続が切れました · 再試行中", blocked: "話すにはマイクへのアクセスを許可してください", failed: "もう一度試すか、音声の設定を確認してください", needsYou: "あなたの判断を待っています" },
         recovery: { allow: "許可", setUp: "設定" },
         readAloud: { preparing: "読み上げを準備中", speaking: "読み上げ中", stop: "読み上げを停止" },
         containerA11y: ({ status }) => `音声、${status}`,

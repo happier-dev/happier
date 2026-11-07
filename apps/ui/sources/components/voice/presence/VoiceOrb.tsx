@@ -114,7 +114,9 @@ export const VoiceOrb = React.memo(function VoiceOrb(props: Readonly<{
                         {/* The chip is the options target and keeps saying what the call is doing
                             (lab: "Speaking 2:14"); its accessible name is "Voice options". */}
                         <GlassPanel radius={13} shadowLevel={2} innerShadow={false} style={styles.caption}>
-                            {readingOnly ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress ? (
+                            {/* A failure leads with its status ("Couldn't connect"): the target's name
+                                alone would leave the Orb looking fine. */}
+                            {readingOnly ? <VoiceReadAloudStatus phase={readAloud.phase} size="pill" /> : voice.targetSessionAddress && voice.tone !== 'error' ? (
                                 // The same admitted name remains after End, with the ended status in place of a live clock.
                                 <View style={voice.live ? styles.targetCaption : styles.endedTargetCaption}>
                                     <View style={styles.targetName}>

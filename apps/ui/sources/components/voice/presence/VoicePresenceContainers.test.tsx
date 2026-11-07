@@ -513,6 +513,15 @@ describe('VoiceOrb', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    it('says a bound call failed in its chip instead of naming only the target', async () => {
+        // The chip of a failed call bound to a Session led with the Session's name and dropped the
+        // status, so the Orb showed no failure at all (RUN79 restart-claude-error).
+        const voice = { ...projection('failed'), targetSessionAddress: { serverId: 'server-1', sessionId: 'session-1' } };
+        screen = await renderScreen(orb(voice).element);
+        expect(screen.findByTestId('voice-orb-options')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(voice.statusWord);
+    });
+
     it('opens its options chip toward the window centre from either side, pinned to one edge only', async () => {
         // On web the first branch's offsets become the chip's static class; a branch that leaves the
         // other edge unset keeps it, so a right-resting Orb opened its chip off-screen.

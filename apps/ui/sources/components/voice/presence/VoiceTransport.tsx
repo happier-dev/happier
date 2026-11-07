@@ -245,7 +245,9 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
     const interrupt = turn?.canBargeIn ? secondary('interrupt', t('voicePresence.interrupt'), 'hand', turn.onBargeIn) : null;
     // A reply can be cancelled without ending the call (thinking, or speaking without barge-in).
     const cancelReply = turn?.canCancelTurn && !turn.canBargeIn
-        ? secondary('cancel-reply', t('voiceSurface.a11y.cancelTurn'), 'stop', turn.onCancelTurn)
+        // The short verb fits three-up on the phone sheet beside Mute and End (lab As); the full
+        // "Cancel response" stays its accessible name.
+        ? secondary('cancel-reply', t('common.cancel'), 'stop', turn.onCancelTurn, t('voiceSurface.a11y.cancelTurn'))
         : null;
     const end = controls.end ? (
         <RoundButton

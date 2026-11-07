@@ -13851,7 +13851,7 @@ const voicePresenceTranslations = { ca: {
         mute: "Silencia",
         unmute: "Activa el so",
         end: "Acaba",
-        captions: { connecting: "Obrint el canal d'àudio", listening: "Endavant", transcribing: "Passant-ho a text", thinking: "Pensant una resposta", speaking: "Pots interrompre quan vulguis", interrupted: "Endavant", muted: "Activa el so per parlar · la Veu encara pot parlar", reconnecting: "S'ha perdut la connexió · tornant-ho a provar", blocked: "Permet l'accés al micròfon per parlar", failed: "Torna-ho a provar o revisa la configuració de la Veu" },
+        captions: { connecting: "Obrint el canal d'àudio", listening: "Endavant", transcribing: "Passant-ho a text", thinking: "Pensant una resposta", speaking: "Pots interrompre quan vulguis", interrupted: "Endavant", muted: "Activa el so per parlar · la Veu encara pot parlar", reconnecting: "S'ha perdut la connexió · tornant-ho a provar", blocked: "Permet l'accés al micròfon per parlar", failed: "Torna-ho a provar o revisa la configuració de la Veu", needsYou: "Esperant la teva decisió" },
         recovery: { allow: "Permet", setUp: "Configura" },
         readAloud: { preparing: "Preparant la lectura", speaking: "Llegint en veu alta", stop: "Atura la lectura" },
         containerA11y: ({ status }) => `Veu, ${status}`,

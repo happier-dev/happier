@@ -10,17 +10,21 @@ const FAILED: ReadonlySet<string> = new Set(['permission_required', 'error']);
 /** States in which what the call needs matters more than the last thing said. */
 const CALL_FIRST: ReadonlySet<string> = new Set(['connecting', 'reconnecting', 'permission_required', 'error']);
 
-type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>;
+type CaptionFacts = Pick<VoiceAttemptControlProjection, 'live' | 'muted' | 'surfaceState' | 'captionLabel'>
+    & Partial<Pick<VoiceAttemptControlProjection, 'statusCell'>>;
 
 /**
  * The call state's one helpful line (lab `voice-presence` captions): a failure's reason from the
- * projection (`captionLabel`) wins, then muted, otherwise the conversing/connection state's caption.
+ * projection (`captionLabel`) wins, then muted, then a waiting request (the status word already says
+ * Needs you, so the caption cannot report the phase beneath it), otherwise the conversing/connection
+ * state's caption.
  * Connecting to a bound Session reads its instructions (lab `b-voice C`, D38): one caption inside the
  * existing connecting state, not a new lifecycle step. `targetName` is null in global mode.
  */
 export function resolveVoicePresenceCaption(voice: CaptionFacts, targetName: string | null = null): string | null {
     if (FAILED.has(voice.surfaceState)) return voice.captionLabel.trim() || null;
     if (voice.live && voice.muted) return t('voicePresence.captions.muted');
+    if (voice.live && voice.statusCell === 'needs_you') return t('voicePresence.captions.needsYou');
     if (voice.surfaceState === 'connecting' && targetName) return t('sessionVoice.preparing', { name: targetName });
     if (CAPTIONED.has(voice.surfaceState)) return t(`voicePresence.captions.${voice.surfaceState as CaptionedState}`);
     return null;

@@ -71,6 +71,16 @@ describe('Voice presence captions for a bound Session target', () => {
     ).toEqual({ kind: 'caption', text: t('voicePresence.captions.speaking') });
   });
 
+  it('captions a call that needs you with the decision it waits on, not the phase it is in', () => {
+    // A request arrives while Voice is still thinking: the word says Needs you, so the caption
+    // cannot say "Working out an answer" beneath it.
+    const voice = { ...base, surfaceState: 'thinking', statusCell: 'needs_you' } as const;
+    expect(resolveVoicePresenceCaption(voice)).toBe(t('voicePresence.captions.needsYou'));
+    expect(resolveVoiceCompactLine(voice, null, null)).toEqual({ kind: 'caption', text: t('voicePresence.captions.needsYou') });
+    // A muted call still says so first.
+    expect(resolveVoicePresenceCaption({ ...voice, muted: true })).toBe(t('voicePresence.captions.muted'));
+  });
+
   it('names an ended call\'s target plainly instead of saying Voice is still talking to it', () => {
     expect(
       resolveVoiceCompactLine(
