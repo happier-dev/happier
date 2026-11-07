@@ -11141,8 +11141,6 @@ const zhHans: typeof en = {
         confirmDescription: '这会从你所有已同步的设备上移除该草稿。',
         failedTitle: '无法删除此草稿',
         launchInCustody: '此草稿正在启动会话。启动完成后即可删除。',
-        failedTitle: '无法删除此草稿',
-        launchInCustody: '此草稿正在启动会话。启动完成后即可删除。',
     },
     conflict: {
         title: '检查冲突的更改',

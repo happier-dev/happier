@@ -11161,8 +11161,6 @@ const es: typeof en = {
         confirmDescription: 'Esto quita el borrador de tus dispositivos sincronizados.',
         failedTitle: 'No se pudo eliminar este borrador',
         launchInCustody: 'Este borrador está iniciando una sesión. Podrás eliminarlo cuando termine el inicio.',
-        failedTitle: 'No se pudo eliminar este borrador',
-        launchInCustody: 'Este borrador está iniciando una sesión. Podrás eliminarlo cuando termine el inicio.',
     },
     conflict: {
         title: 'Revisa los cambios en conflicto',
