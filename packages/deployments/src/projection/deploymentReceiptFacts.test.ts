@@ -4,6 +4,22 @@ import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-p
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
+    it('offers the existing log viewer a platform receipt reference without native stage files', () => {
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.content.ownServer = undefined;
+        receipt.content.platform = { targetLinkRevision: 1,
+            credentialPrincipal: { kind: 'account', accountId: 'actor',
+                purpose: { consumer: { pluginId: 'acme.alpha', localId: 'inspect' }, purpose: 'deploy' },
+                target: { kind: 'account', account: { service: { pluginId: 'acme.alpha', localId: 'account' }, accountId: 'provider' } } },
+            providerIdentity: { providerAccountId: 'provider', providerResourceId: 'project', providerEnvironment: 'production' },
+            providerEnvironment: { kind: 'production' }, observation: { v: 1, state: 'succeeded', observedAtMs: 1,
+                providerDeploymentId: 'dpl_exact' } };
+        receipt.deployment.acceptedExecution = { v: 1, controller: { machineId: 'controller', installationId: 'installation' } };
+        expect(projectDeploymentReceiptFactsV1(receipt).logs).toEqual([{ scope: 'operation', excerpt: null, reference: {
+            kind: 'build', environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
+            targetLinkId: receipt.deployment.targetLinkId, machineId: 'controller', installationId: 'installation' } }]);
+    });
+
     it('joins previous, retained count and rollback to the same history instead of captured admission and configured capacity', () => {
         const base = createDeploymentReceiptDetailV1();
         if (base.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
@@ -56,11 +72,13 @@ describe('receipt facts', () => {
             runtime, targetLinks: [runtime], retainPreviousDeployments: 1 }))
             .toEqual({ previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null });
     });
-    it('names a failed history attempt by its revision and recorded reason instead of the Environment title', () => {
+    it('names a history attempt by its revision and carries its recorded failure as a fact, never a title word', () => {
         const base = createDeploymentReceiptDetailV1();
+        const failure = { code: 'native_activate_failed', phase: 'activate' } as const;
         const failed = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }),
-            content: { ...base.content, failure: { code: 'native_activate_failed', phase: 'activate' } } });
-        expect(projectDeploymentReceiptHistoryEntryV1(failed)).toMatchObject({ historyTitle: 'aaaaaaa · native_activate_failed' });
+            content: { ...base.content, failure } });
+        expect(projectDeploymentReceiptHistoryEntryV1(failed)).toMatchObject({ historyTitle: 'aaaaaaa', failure });
+        expect(projectDeploymentReceiptHistoryEntryV1(base)).toMatchObject({ historyTitle: 'aaaaaaa', failure: null });
     });
     it('keeps data teardown outcome evidence without inventing an app source revision', () => {
         const receipt = createDeploymentReceiptDetailV1();

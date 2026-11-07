@@ -83,14 +83,14 @@ export type DeploymentReceiptFactsV1 = Readonly<{
     downtime: 'stopThenStart' | null;
 }>;
 
-/** The small history projection avoids preparing unconsumed step/log trees for every visible attempt. */
-export function projectDeploymentReceiptHistoryEntryV1({ deployment, content }: DeploymentReceiptDetailV1):
-    Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null }> {
+/** The small history projection avoids preparing unconsumed step/log trees for every visible attempt.
+ * The title names what was deployed; the recorded failure stays a typed fact for the client's own words. */
+export function projectDeploymentReceiptHistoryEntryV1({ content }: DeploymentReceiptDetailV1):
+    Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null; failure: DeploymentReceiptFailureV1 | null }> {
     const source = content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null;
-    const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, content.commitSubject,
-        deployment.state === 'failed' ? content.failure?.code ?? content.steps.find(step => step.state === 'failed')?.label : null]
+    const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, content.commitSubject]
         .filter(Boolean).join(' · ') || null;
-    return { source, historyTitle };
+    return { source, historyTitle, failure: content.failure ?? null };
 }
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */
@@ -102,6 +102,12 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
             targetLinkId: deployment.targetLinkId, machineId: log.machineId, installationId: log.installationId },
         excerpt: log.excerpt ?? null,
     }));
+    const controller = deployment.acceptedExecution?.controller;
+    if (content.platform?.observation.providerDeploymentId && controller) logs.push({
+        scope: 'operation', reference: { kind: 'build', environmentId: deployment.environmentId, deploymentId: deployment.id,
+            targetLinkId: deployment.targetLinkId, machineId: controller.machineId, installationId: controller.installationId },
+        excerpt: null,
+    });
     const memberLogs = new Map(logs.map(log => [JSON.stringify([
         log.reference.machineId, log.reference.installationId,
     ]), [log]]));

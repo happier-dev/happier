@@ -1,8 +1,12 @@
+export type { ActionConfirmationWhen } from './definePlugin.js';
+export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
+export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';
 export type { BackupDestinationContributionV1 } from './backupDestinations.js';
-export type { PluginBotTemplateContributionV1 } from './manifest.js';
+export type { BackupDestinationOpenV1 } from './backupDestinations.js';
+export { BackupDestinationOpenV1ProtocolSchema, BackupDestinationCredentialBindingV1ProtocolSchema } from './backupDestinations.js';
 export type {
     DeploymentTargetAuthorDefinitionV1, DeploymentTargetCommonV1, DeploymentTargetContributionV1,
-    DeploymentTargetFailureTransitionV1, DeploymentTargetCredentialPrincipalV1,
+    DeploymentTargetCredentialPrincipalV1,
     DeploymentTargetProviderIdentityV1, DeploymentTargetProviderEnvironmentV1,
     DeploymentTargetRepositoryAccessV1, DeploymentTargetRoleCommonInputV1,
     DeploymentTargetPreparationBaseV1, DeploymentTargetInspectInputV1,
@@ -14,7 +18,7 @@ export type {
     DeploymentTargetRuntimeRoleV1, DeploymentTargetRoleInputV1,
     DeploymentTargetRoleResultV1, DeploymentTargetRoleFailureV1,
 } from './deploymentTargets.js';
-export { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
+export { DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetLogsResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1 } from './deploymentTargets.js';
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';
@@ -23,19 +27,23 @@ export { HealthCheckTcpConfigV1ProtocolSchema, HealthCheckDnsConfigV1ProtocolSch
 export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HealthCheckSetupInputV1ProtocolSchema, HealthCheckSetupDraftV1ProtocolSchema,
     HealthCheckHttpConfigV1ProtocolSchema, isHealthCheckLoopbackRefusedV1 } from './healthCheckKinds.js';
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from './healthCheckKinds.js';
-export type { ActionConfirmationWhen } from './definePlugin.js';
-export { summarizeUsageRunLengthObservations, resolveUsageCalendarInstant } from './usage.js';
+export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';
+export { createDockerMembershipStep } from './machineSetup.js';
+export { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from './machineSetup.js';
+export type { PluginActionAuthorConfirmation } from './definePlugin.js';
+export { summarizeUsageRunLengthObservations, resolveUsageCalendarInstant, PUBLIC_PROFILE_FACT_FIELDS_V1 } from './usage.js';
 export type { UsageRunLengthObservation, UsageRunLengthObservationSummary, UsageRunLengthSummary, PublicProfileSnapshotV1, PublicUsageFactsV1,
     PublicProfileReadResultV1, PublicProfileViewV1, BuiltinUsagePublicPresentationV1 } from './usage.js';
-export type { PluginWorkItemsRuntime, PluginWorkItemV1, PluginWorkItemCategoryV1, PluginWorkItemsContributionV1, PluginWorkItemsResolveRequestV1, PluginWorkItemsResolveResultV1, PluginWorkItemsFindLinkedRequestV1, PluginWorkItemsWatchRequestV1, PluginWorkItemTransitionInputV1 } from './workItems.js';
+export type { PluginWorkItemsRuntime, PluginWorkItemV1, PluginWorkItemCategoryV1, PluginWorkItemsContributionV1, PluginWorkItemsResolveRequestV1, PluginWorkItemsResolveResultV1, PluginWorkItemsFindLinkedRequestV1, PluginWorkItemsFindLinkedResultV1, PluginWorkItemsWatchRequestV1, PluginWorkItemTransitionInputV1 } from './workItems.js';
+export { PluginWorkItemTransitionInputV1Schema } from './workItems.js';
 export { ComposerReferenceCandidateIdV1Schema } from './composerReferenceProviders.js';
 export type { ComposerReferenceCandidatePageV1 } from './composerReferenceProviders.js';
 export type {
     PluginProjectNativeAdapterDefinitionV1, PluginProjectNativeAdapterDeclarationV1, PluginProjectNativeAdapterRuntimeV1,
     PluginProjectNativeInspectionV1, PluginProjectNativeFileFactV1, PluginProjectNativeCommandV1,
     PluginProjectNativeCommandRequestV1, PluginProjectNativeCommandResultV1,
-    PluginProjectNativeEnvironmentRequestV1, PluginProjectNativeEnvironmentResultV1, PluginProjectNativeFailureV1,
-    ProjectDefinitionDetectionV1, ProjectNativeRefV1, ProjectEnvironmentSelectionV1, ProjectNativeAdapterRoleV1,
+    PluginProjectNativeToolchainRequestV1, PluginProjectNativeToolchainResultV1, PluginProjectNativeFailureV1,
+    ProjectDefinitionDetectionV1, ProjectNativeRefV1, ProjectToolchainSelectionV1, ProjectNativeAdapterRoleV1,
 } from './projectNativeAdapters.js';
 export type { ComposerReferenceRuntime } from './activation.js';
 export type { PluginDragSourceRuntime, PluginDropTargetRuntime, EntityDragItemV1, EntityDragScopeV1, EntityDragKindV1, EntityDropAdmissionV1, EntityDropEffectV1, EntityDropPreviewV1, EntityDropReasonV1, EntityDropOutcomeV1 } from './entityDragDrop.js';
@@ -45,8 +53,10 @@ export type { PluginInputTypeReferenceV1 } from './manifest.js';
 export type { PluginLocalizedStringV2 } from './manifest.js';
 export type { PluginAtmospherePictureContributionV1 } from './manifest.js';
 export type { PluginRegistrySourceContributionV1 } from './manifest.js';
+export type { DeploymentTemplateV1, DeploymentTemplateDataV1, DeploymentTemplateSecretProfileV1 } from './manifest.js';
 export type { PluginLanguageServerContributionV1 } from './manifest.js';
 export type { PluginSkillContributionV1 } from './manifest.js';
+export type { PluginBotTemplateContributionV1 } from './manifest.js';
 export { MAX_PLUGIN_SEARCH_ITEM_COMMAND_UTF8_BYTES_V1 } from './searchProviders.js';
 export { PluginSearchItemV1Schema } from './searchProviders.js';
 export { PluginSearchQueryV1Schema } from './searchProviders.js';
@@ -134,6 +144,11 @@ export type { DefinedPluginActionContracts } from './definePlugin.js';
 export type { DefinedPluginContributes } from './definePlugin.js';
 export type { DefinedPluginManifest } from './definePlugin.js';
 export type { Disposable } from './lifecycle.js';
+export type {
+    DeploymentSourceMaterializationPortV1,
+    DeploymentSourceMaterializationRequestV1,
+    DeploymentSourceMaterializationV1,
+} from './services/deployments.js';
 export type { JsonValue } from './identity.js';
 export type {
     PluginEphemeralSharedScope,
@@ -144,6 +159,10 @@ export type { MessageActionAvailableSnapshotV1 } from './invocation.js';
 export type { PluginApi } from './activation.js';
 export type { PluginAccountApi, PluginAccountActivationModule } from './activation.js';
 export type { PluginCaptureSourceRuntime } from './captureSources.js';
+export type { PluginSecretSourceAcquisitionV1, PluginSecretSourceRequestV1, PluginSecretSourceRuntimeV1, PluginSecretSourceDefinitionV1,
+    PluginSecretSourceFailureV1, PluginSecretSourceOperationFailureV1, PluginSecretSourceFieldV1,
+    PluginSecretSourceListRequestV1, PluginSecretSourceListResultV1,
+    PluginSecretSourceStoreRequestV1, PluginSecretSourceStoreResultV1 } from './secretSources.js';
 export type { PluginCaptureSourceDefinition } from './definePlugin.js';
 export type { PluginClientActivationModule } from './activation.js';
 export type { PluginClientApi } from './activation.js';
@@ -173,6 +192,7 @@ export type { PluginInvocationContributionIdentity } from './identity.js';
 export type { PluginInvocationOriginSurface } from './invocation.js';
 export type { PluginJsonValueV2 } from './identity.js';
 export { computeCanonicalDomainSeparatedDigest } from './identity.js';
+export { computeSha256HexDigest } from './identity.js';
 export { createCanonicalJsonSigningInput } from './identity.js';
 export type { PluginMachineMaterializationRefV1 } from './invocation.js';
 export type { PluginOperationAvailability } from './availability.js';
@@ -181,7 +201,7 @@ export type { PluginReference } from './identity.js';
 export type { PluginRemediationData } from './availability.js';
 export type { PluginServiceId } from './services/index.js';
 export type { PluginServices } from './services/index.js';
-export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1 } from './services/machineProvisioners.js';
+export type { MachineProvisionersService, MachineProvisionerBootstrapCredentialLeaseV1, MachineProvisionerNativeCredentialHeadersResultV1 } from './services/machineProvisioners.js';
 export type {
     ComposerContentCapabilitiesV1,
     ComposerContentService,
@@ -222,51 +242,3 @@ export { readTrimmedString } from './sessions/fileStores/records.js';
 export { redactBugReportSensitiveText } from './diagnostics.js';
 export { trimBugReportTextToMaxBytes } from './diagnostics.js';
 export type { PluginCaptureFrameV1, PluginCaptureReceiptV1, PluginCaptureCodecIdV1, PluginCaptureSourceDeclaration } from './captureSources.js';
-export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';
-
-export type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from './services/deployments.js';
-
-export { BackupDestinationOpenV1ProtocolSchema } from './backupDestinations.js';
-
-export type { BackupDestinationOpenV1 } from './backupDestinations.js';
-
-
-
-export type { PluginSecretSourceAcquisitionV1, PluginSecretSourceRequestV1, PluginSecretSourceRuntimeV1, PluginSecretSourceDefinitionV1,
-    PluginSecretSourceFailureV1, PluginSecretSourceOperationFailureV1, PluginSecretSourceFieldV1,
-    PluginSecretSourceListRequestV1, PluginSecretSourceListResultV1,
-    PluginSecretSourceStoreRequestV1, PluginSecretSourceStoreResultV1 } from './secretSources.js';
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-export type { ProjectToolchainSelectionV1 } from './projectNativeAdapters.js';
-
-export type { PluginProjectNativeToolchainRequestV1 } from './projectNativeAdapters.js';
-
-export type { PluginProjectNativeToolchainResultV1 } from './projectNativeAdapters.js';
-export type { StoreKindContributionV1, StoreKindLaunchInputV1, PluginStoreItemReferenceV1, PluginStoreItemV1 } from './storeKinds.js';
-export { createPluginStoreItemHref, PluginStoreItemReferenceV1ProtocolSchema, PluginStoreItemV1ProtocolSchema } from './storeKinds.js';
-
-export type { DeploymentTargetRoleV1 } from './deploymentTargets.js';
-export type { HealthCheckDnsConfigV1, HealthCheckHeartbeatConfigV1, HealthCheckTcpConfigV1 } from './healthCheckKinds.js';
-export type { DeploymentTargetDataInputV1 } from './deploymentTargets.js';
-export { createDockerMembershipStep } from './machineSetup.js';
-export { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from './machineSetup.js';

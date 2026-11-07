@@ -6,6 +6,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import type { WorkflowDataCreationResult } from './workflowDataCreationResult';
 import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import {
     DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleCommonInputV1Schema,
     type DeploymentTargetRoleInputV1, type DeploymentTargetRoleCommonInputV1,
@@ -29,9 +30,9 @@ export type DeploymentTargetRoleAdmissionHost = Readonly<{
     credentials: StoredCredentials;
     serverHttpBaseUrl: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
+    resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
-    resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     assertCurrent(context: ActionExecutorContext): Promise<void>;
 }>;
 
@@ -50,9 +51,9 @@ export type DeploymentTargetRoleAdmissionRequest = Readonly<{
     purposeAuthorization: RegistryConnectedAccountActionFormPurposeAuthorization | null;
 }>;
 
-const refuse = (code: string, phase = 'deployment.target.admission'): never => {
-    if (code === 'deployment_access_denied') throw new PluginError({ code,
-        failureCause: projectActionFailureCauseV1(new Error(code), phase) });
+const refuse = (code: string, phase?: string): never => {
+    if (code === 'deployment_access_denied' || phase !== undefined) throw new PluginError({ code,
+        failureCause: projectActionFailureCauseV1(new Error(code), phase ?? 'deployment.target.admission') });
     throw Object.assign(new Error(code), { code });
 };
 
@@ -77,6 +78,8 @@ export type DeploymentTargetRoleAdmissionForHost = Readonly<{
     environment: DeploymentEnvironmentDetailV1;
     receipt?: DeploymentReceiptDetailV1;
     role: string;
+    /** Existing accepted native mutation, captured once by role admission. */
+    workloadControl?: MachineNativeEffectOperation;
 }> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'branches.delete'; environment?: never; receipt?: never }>;
 function roleName(role: string): role is DeploymentTargetRoleV1 {
     return has(DeploymentTargetRoleInputSchemasV1, role);
@@ -164,14 +167,15 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         const link = selected?.targetLink;
         const content = selected?.content;
         if (!link || !content || link.environmentId !== environment.id
-            || link.deletedAtMs !== undefined || link.detachedAtMs !== undefined || link.source.kind !== 'plugin') return refuse('target_mismatch');
+            || link.deletedAtMs !== undefined || link.detachedAtMs !== undefined || link.source.kind !== 'plugin')
+            return refuse('target_mismatch', 'deployment.target.admission.link_identity');
         if (!retained && link.createdByAccountId !== principal.accountId)
             return refuse('deployment_access_denied', 'deployment.target.admission.link_author');
-        candidates = candidates.filter(({ binding }) => link.role === (binding.role.includes('.') ? 'data' : 'runtime')
+        candidates = candidates.filter(({ binding }) => link.role === (binding.role.includes('.') && !binding.role.startsWith('logs.') ? 'data' : 'runtime')
             && link.source.kind === 'plugin'
             && link.source.contribution.pluginId === request.pluginId && link.source.contribution.localId === binding.targetLocalId
             && link.targetKind === binding.targetKind);
-        if (!candidates.length) return refuse('target_mismatch');
+        if (!candidates.length) return refuse('target_mismatch', 'deployment.target.admission.link_identity');
         if (link.revision !== input.expectedTargetLinkRevision) return refuse('deployment_conflict');
         if (retained && (link.source.contribution.pluginId !== retained.source.pluginId
             || link.source.contribution.localId !== retained.source.localId
@@ -197,7 +201,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     if ((request.executionTarget === 'account' || candidates.some(candidate => candidate.binding.role.includes('.') || candidate.binding.role === 'uploadDeploy'))
         && environment.controllerMachineId !== host.machineId) return refuse('machine_unavailable');
     candidates = candidates.filter(({ binding }) => ['inspect', 'observe', 'projects.list', 'projects.provisionOptions',
-        'projects.link', 'branches.list', 'query.readOnly'].includes(binding.role)
+        'projects.link', 'branches.list', 'query.readOnly', 'logs.build', 'logs.runtime'].includes(binding.role)
         ? environment.capabilities.read : ['link', 'projects.provision', 'connectionSecret.save'].includes(binding.role)
             ? environment.capabilities.manageTargets : environment.capabilities.deploy
                 || admittedOperation === (binding.role === 'uploadDeploy' ? 'deploy' : binding.role));
@@ -209,13 +213,14 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     if (candidates.some(({ binding }) => ['deploy', 'uploadDeploy', 'rollback', 'promote'].includes(binding.role))
         && environment.runtimeTargetLinkId !== input.targetLinkId) return refuse('target_mismatch');
     let receipt: DeploymentReceiptDetailV1 | undefined;
+    let workloadControl: MachineNativeEffectOperation | undefined;
     if (!preparation && 'deploymentId' in input) {
         receipt = await host.readReceipt({ environmentId: environment.id, deploymentId: input.deploymentId, context: request.context });
         const header = receipt.deployment;
         if (header.id !== input.deploymentId || header.environmentId !== environment.id || header.targetLinkId !== input.targetLinkId
             || header.actionOperationId !== input.actionOperationId) return refuse('target_mismatch');
         if (header.revision !== input.expectedDeploymentRevision) return refuse('deployment_conflict');
-        const observe = candidates.every(({ binding }) => binding.role === 'observe');
+        const observe = candidates.every(({ binding }) => binding.role === 'observe' || binding.role.startsWith('logs.'));
         const cancel = candidates.every(({ binding }) => binding.role === 'cancel');
         if (!observe) {
             const accepted = header.acceptedExecution;
@@ -228,9 +233,15 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
             if (!cancel && request.context.operationAcceptance?.operationId !== input.actionOperationId) return refuse('operation_unavailable');
             const operations: readonly string[] = candidates.map(({ binding }) => binding.role === 'uploadDeploy' ? 'deploy' : binding.role);
             if (!cancel && !operations.includes(header.operation)) return refuse('target_mismatch');
+            workloadControl = { operationId: header.actionOperationId,
+                kind: `deployments.${candidates[0]!.binding.role}`,
+                ...(request.context.signal ? { signal: request.context.signal } : {}) };
         }
         const platform = receipt.content.platform;
-        if (!platform || platform.targetLinkRevision !== input.expectedTargetLinkRevision)
+        // Logs read the receipt's recorded deployment; Link edits do not change that identity.
+        // Account/target provenance is still compared against both the live Link and this receipt.
+        const logsRead = candidates.every(({ binding }) => binding.role.startsWith('logs.'));
+        if (!platform || !logsRead && platform.targetLinkRevision !== input.expectedTargetLinkRevision)
             return refuse('deployment_access_denied', 'deployment.target.admission.receipt.target_link_revision');
         assertProviderProvenance('receipt', platform, input);
         if ('sourceIntent' in input && (!isDeepStrictEqual(receipt.content.sourceIntent, input.sourceIntent)
@@ -255,5 +266,6 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     }
     await host.assertCurrent(request.context);
     request.context.signal?.throwIfAborted();
-    return { input, environment: detail, ...(receipt ? { receipt } : {}), role: candidates[0]!.binding.role };
+    return { input, environment: detail, ...(receipt ? { receipt } : {}),
+        ...(workloadControl ? { workloadControl } : {}), role: candidates[0]!.binding.role };
 }

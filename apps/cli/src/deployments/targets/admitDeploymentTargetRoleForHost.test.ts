@@ -3,8 +3,92 @@ import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonV
 import { describe, expect, it } from 'vitest';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { request as requestCloudflareDeployment } from '../../../../../packages/plugins/deploy-cloudflare/src/platform/deploymentHttp';
 
 describe('deployment role host admission', () => {
+    describe('receipt-owned log admission', () => {
+        function historicalLogs(role: 'logs.build' | 'logs.runtime' = 'logs.build') {
+            const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+            fixture.state.environment.environment.capabilities.deploy = false;
+            fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
+            fixture.state.receipt.deployment.state = 'succeeded';
+            fixture.state.receipt.deployment.acceptedExecution = undefined;
+            fixture.state.receipt.content.platform!.observation.providerDeploymentId = 'dpl_exact';
+            const localId = role === 'logs.build' ? 'build-logs-read' : 'runtime-logs-read';
+            const request = { ...fixture.request, localId, role,
+                bindings: [{ ...fixture.request.bindings[0]!, role }],
+                purposeAuthorization: { ...fixture.request.purposeAuthorization!,
+                    action: { pluginId: fixture.request.pluginId, localId } },
+                input: { ...fixture.input, expectedTargetLinkRevision: 2, providerDeploymentId: 'dpl_exact',
+                    ...(role === 'logs.runtime' ? { service: { kind: 'deployment' as const, machineId: 'controller',
+                        environmentId: fixture.input.environmentId, environmentInstanceId: 'instance',
+                        composeService: 'web', serviceId: 'instance/web' } } : {}) } };
+            return { ...fixture, request };
+        }
+
+        it.each(['logs.build', 'logs.runtime'] as const)('reads retained %s after Link revision 1 advances to 2', async role => {
+            // QA #82: the same Account/target and Link, with an older completed receipt.
+            const fixture = historicalLogs(role);
+            await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({
+                role, receipt: { content: { platform: { targetLinkRevision: 1 } } } });
+        });
+
+        it.each(['missing', 'deleted', 'detached', 'replaced target', 'foreign Account', 'foreign provider', 'foreign receipt'] as const)(
+            'refuses retained logs for %s with the owning fact', async change => {
+                const fixture = historicalLogs();
+                const row = fixture.state.environment.targetLinks[0]!;
+                let code = 'target_mismatch';
+                let phase = 'deployment.target.admission.link_identity';
+                switch (change) {
+                    case 'missing': fixture.state.environment.targetLinks = []; break;
+                    case 'deleted': row.targetLink.deletedAtMs = 123; break;
+                    case 'detached': row.targetLink.detachedAtMs = 123; break;
+                    case 'replaced target':
+                        row.targetLink.source = { kind: 'plugin', contribution: { pluginId: 'acme.alpha', localId: 'replacement' } };
+                        break;
+                    case 'foreign Account':
+                        row.targetLink.createdByAccountId = 'foreign-account';
+                        code = 'deployment_access_denied'; phase = 'deployment.target.admission.link_author'; break;
+                    case 'foreign provider':
+                        row.content!.providerIdentity = { ...row.content!.providerIdentity!, providerResourceId: 'foreign-project' };
+                        code = 'deployment_access_denied'; phase = 'deployment.target.admission.link.provider_identity'; break;
+                    case 'foreign receipt':
+                        fixture.state.receipt.content.platform!.providerIdentity = {
+                            ...fixture.state.receipt.content.platform!.providerIdentity, providerResourceId: 'foreign-project' };
+                        code = 'deployment_access_denied'; phase = 'deployment.target.admission.receipt.provider_identity'; break;
+                }
+                await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({
+                    code, data: { failureCause: { phase } } });
+            });
+
+        it('keeps current revision equality for non-log lifecycle observation', async () => {
+            const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+            fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
+            await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
+                input: { ...fixture.input, expectedTargetLinkRevision: 2 } }, fixture.host)).rejects.toMatchObject({
+                code: 'deployment_access_denied', data: { failureCause: { phase: 'deployment.target.admission.receipt.target_link_revision' } } });
+        });
+    });
+
+    it('reads completed platform build logs with read capability and rejects a substituted provider receipt', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+        fixture.state.environment.environment.capabilities.deploy = false;
+        fixture.state.receipt.deployment.state = 'succeeded';
+        fixture.state.receipt.deployment.acceptedExecution = undefined;
+        fixture.state.receipt.content.platform!.observation.providerDeploymentId = 'dpl_exact';
+        const request = { ...fixture.request, localId: 'build-logs-read',
+            role: 'logs.build' as const,
+            bindings: [{ ...fixture.request.bindings[0]!, role: 'logs.build' }],
+            purposeAuthorization: { ...fixture.request.purposeAuthorization!,
+                action: { pluginId: fixture.request.pluginId, localId: 'build-logs-read' } },
+            input: { ...fixture.input, providerDeploymentId: 'dpl_exact' } };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ role: 'logs.build' });
+        await expect(admitDeploymentTargetRoleForHost({ ...request,
+            input: { ...request.input, providerDeploymentId: 'dpl_foreign' } }, fixture.host)).rejects.toMatchObject({ code: 'target_mismatch' });
+    });
+
     it.each(['deploy', 'uploadDeploy'] as const)('continues admitted %s from a custody-only Environment read', async role => {
         const fixture = createDeploymentTargetRoleAdmissionFixture(role);
         if (role === 'uploadDeploy') fixture.state.receipt.content.sourceMethod = 'upload';
@@ -98,4 +182,260 @@ describe('deployment role host admission', () => {
             .rejects.toMatchObject({ code: 'deployment_conflict' });
     });
 
+    it('projects credential principal refusal before reading protected content', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('uploadDeploy');
+        const failure = await admitDeploymentTargetRoleForHost({ ...fixture.request, input: { ...fixture.input,
+            credentialPrincipal: { ...fixture.input.credentialPrincipal, accountId: 'private-foreign-account' } } }, fixture.host)
+            .then(() => null, error => {
+                expect(error).toMatchObject({ code: 'deployment_access_denied' });
+                return normalizeActionExecutorThrownError(error);
+            });
+        expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+            phase: 'deployment.target.admission.credential_principal', httpStatus: null } });
+        expect(fixture.state.reads).toBe(0);
+        expect(JSON.stringify(failure)).not.toContain('private-foreign-account');
+    });
+
+    it.each(['link', 'receipt'] as const)('projects named %s provenance mismatch families without exposing operands', async scope => {
+        for (const family of ['credential_principal', 'provider_identity', 'provider_environment', 'repository_access', 'prepared_native'] as const) {
+            const fixture = createDeploymentTargetRoleAdmissionFixture('uploadDeploy');
+            fixture.state.receipt.content.sourceMethod = 'upload';
+            const content = scope === 'link' ? fixture.state.environment.targetLinks[0]!.content!
+                : fixture.state.receipt.content.platform!;
+            if (family === 'credential_principal') content.credentialPrincipal = { ...fixture.input.credentialPrincipal,
+                purpose: { ...fixture.input.credentialPrincipal.purpose, purpose: 'private-substituted-purpose' } };
+            if (family === 'provider_identity') content.providerIdentity = { ...fixture.input.providerIdentity,
+                providerResourceId: 'private-substituted-resource' };
+            if (family === 'provider_environment') content.providerEnvironment = { kind: 'custom', id: 'private-substituted-environment' };
+            if (family === 'repository_access') content.repositoryAccess = { status: 'ready',
+                repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/substitution' } };
+            if (family === 'prepared_native') content.preparedNative = { projectName: 'private-substituted-project' };
+            const failure = await admitDeploymentTargetRoleForHost(fixture.request, fixture.host)
+                .then(() => null, error => {
+                    expect(error).toMatchObject({ code: 'deployment_access_denied' });
+                    return normalizeActionExecutorThrownError(error);
+                });
+            expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+                phase: `deployment.target.admission.${scope}.${family}`, httpStatus: null } });
+            expect(JSON.stringify(failure)).not.toContain('private-');
+            expect(JSON.stringify(failure)).not.toContain('private/');
+        }
+        const control = createDeploymentTargetRoleAdmissionFixture('uploadDeploy');
+        control.state.receipt.content.sourceMethod = 'upload';
+        await expect(admitDeploymentTargetRoleForHost(control.request, control.host)).resolves.toMatchObject({ role: 'uploadDeploy' });
+    });
+
+    it.each([401, 403])('projects provider HTTP %s with its phase and no response body', async status => {
+        const failure = await requestCloudflareDeployment({ signal: new AbortController().signal, now: () => 1,
+            http: { async request() { return { status, headers: {}, body: new TextEncoder().encode('private-provider-body') }; } } },
+            'account', '/pages/projects/project/deployments', 'send', 'POST', {})
+            .then(() => null, error => {
+                expect(error).toMatchObject({ code: 'deployment_access_denied' });
+                return normalizeActionExecutorThrownError(error);
+            });
+        expect(failure).toMatchObject({ errorCode: 'action_failed', failureCause: {
+            phase: 'deployment.provider.send', httpStatus: status } });
+        expect(JSON.stringify(failure)).not.toContain('private-provider-body');
+    });
+
+    it('admits a saved profile for the same Home and refuses a foreign Home before reading', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect');
+        const host = { ...fixture.host, serverId: 'srv_deployment_home' };
+        fixture.state.environment.environment.serverId = host.serverId;
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: 'deployment-home-profile', createIfMissing: true,
+            observation: 'exact', descriptor: { v: 1, homeServerIdentityId: host.serverId,
+                canonicalServerUrl: 'https://deployment-home.test', revision: 1,
+                endpoints: [{ kind: 'https', url: 'https://deployment-home.test' }] } });
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
+            input: { ...fixture.input, serverId: 'deployment-home-profile' } }, host))
+            .resolves.toMatchObject({ role: 'inspect' });
+        const beforeForeign = fixture.state.reads;
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
+            input: { ...fixture.input, serverId: 'srv_foreign_deployment_home' } }, host))
+            .rejects.toMatchObject({ code: 'server_scope_mismatch' });
+        expect(fixture.state.reads).toBe(beforeForeign);
+    });
+
+    it('retains Account group custody and rejects a different service before reading the Environment', async () => {
+        const service = { pluginId: 'acme.alpha', localId: 'account' };
+        const fixture = createDeploymentTargetRoleAdmissionFixture('inspect', {
+            target: { kind: 'group', service, groupId: 'selected-group' },
+        });
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({
+            input: { credentialPrincipal: { target: { kind: 'group', groupId: 'selected-group' } } },
+        });
+        fixture.state.reads = 0;
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input: {
+            ...fixture.input, credentialRef: { ...fixture.input.credentialRef, service: { ...service, localId: 'foreign' } },
+        } }, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+        expect(fixture.state.reads).toBe(0);
+    });
+
+    it('consumes an exact admitted data teardown child without another Environment authorization read', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('branches.delete');
+        const action = { pluginId: 'acme.alpha', localId: 'branches-delete' };
+        const input = normalizeStrictJsonValue(fixture.input);
+        fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'custom', id: 'branch-B' };
+        const port = createHostReviewedChildPortV1({ actionId: 'deployments.teardown', input: {
+            serverId: 'home', environmentId: fixture.input.environmentId, targetLinkId: fixture.input.targetLinkId },
+            context: fixture.request.context, reviewAdmitted: true,
+            plan: { children: [{ action, role: 'branches.delete', input }] },
+            policies: [{ action, role: 'branches.delete', surface: 'cli' }],
+            async execute(_envelope, context) {
+                const admitted = await admitDeploymentTargetRoleForHost({ ...fixture.request, localId: action.localId,
+                    input: fixture.input, context }, fixture.host);
+                return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
+            } });
+        await expect(port.invoke({ action, role: 'branches.delete', input })).resolves.toMatchObject({ ok: true });
+        expect(fixture.state.reads).toBe(0);
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, localId: action.localId,
+            context: { ...fixture.request.context, hostReviewedChild: port } }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+
+    it.each(['deploy', 'branches.create'] as const)('binds the %s link author to the Account whose credential is spent', async role => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        fixture.state.environment.environment.owner = { kind: 'team', teamId: 'shared-team' };
+        const link = fixture.state.environment.targetLinks[0]!.targetLink;
+        link.createdByAccountId = 'another-team-manager';
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+        link.createdByAccountId = fixture.input.credentialPrincipal.accountId;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host))
+            .resolves.toMatchObject({ input: { credentialPrincipal: fixture.input.credentialPrincipal } });
+    });
+
+    it.each([
+        ['link', 'repository'], ['receipt', 'repository'], ['link', 'trigger'], ['receipt', 'trigger'],
+        ['link', 'previewId'], ['receipt', 'previewId'], ['link', 'gitBranch'], ['receipt', 'gitBranch'],
+        ['link', 'workerTag'], ['receipt', 'workerTag'], ['link', 'scriptName'], ['receipt', 'scriptName'],
+    ] as const)('refuses substituted prepared native operands against the %s (%s)', async (changed, operand) => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        const preparedNative = { projectName: 'captured-project', gitSource: { type: 'github' as const, repoId: '123' },
+            triggerUuid: 'captured-trigger-uuid', previewId: 'captured-preview-id', gitBranch: 'actual-provider-branch',
+            workerTag: 'captured-worker-tag', scriptName: 'captured-script-name' };
+        const wrong = operand === 'trigger' ? { ...preparedNative, triggerUuid: 'foreign-trigger-uuid' }
+            : operand === 'repository' ? { ...preparedNative, gitSource: { type: 'github' as const, repoId: 'foreign-repository' } }
+            : { ...preparedNative, [operand]: 'foreign-native-operand' };
+        Object.assign(fixture.state.environment.targetLinks[0]!.content!, { preparedNative });
+        Object.assign(fixture.state.receipt.content.platform!, { preparedNative: changed === 'receipt' ? wrong : preparedNative });
+        const input = { ...fixture.input, preparedNative: changed === 'link' ? wrong : preparedNative };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input }, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+
+    it.each(['branches.list', 'branches.create', 'branches.delete', 'query.readOnly', 'connectionSecret.save'] as const)(
+        'admits exact managed data %s on the controller without a runtime receipt', async role => {
+            const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+            await expect(admitDeploymentTargetRoleForHost({ ...fixture.request,
+                input: { ...fixture.input, database: 'selected-database' } }, fixture.host)).resolves.toMatchObject({
+                input: { targetLinkId: fixture.input.targetLinkId, providerIdentity: fixture.input.providerIdentity },
+            });
+            expect(fixture.state.reads).toBe(1);
+        });
+    it('runs daemon data reads on the controller independently of runtime target placement', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('branches.list');
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, executionTarget: 'daemon' }, fixture.host))
+            .resolves.toMatchObject({ input: { targetLinkId: 'data-link' } });
+    });
+    it.each(['projects.list', 'projects.provisionOptions', 'projects.provision'] as const)(
+        'admits initial %s with the actual Account and no fabricated provider resource', async role => {
+            const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+            const { targetLinkId: _link, expectedTargetLinkRevision: _revision, providerIdentity: _identity, ...scope } = fixture.input;
+            const credentialPrincipal = { ...scope.credentialPrincipal, purpose: fixture.request.purposeAuthorization!.purpose };
+            await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input: {
+                ...scope, credentialPrincipal, providerAccountId: 'provider-owner',
+            } }, fixture.host)).resolves.toMatchObject({ input: { providerAccountId: 'provider-owner' } });
+        });
+    it.each([
+        ['runtime link', 'target_mismatch'], ['foreign target', 'target_mismatch'],
+        ['foreign native resource', 'deployment_access_denied'], ['foreign branch', 'deployment_access_denied'],
+        ['foreign principal', 'deployment_access_denied'], ['wrong controller', 'machine_unavailable'],
+        ['stale link', 'deployment_conflict'], ['missing read capability', 'deployment_access_denied'],
+    ] as const)('refuses managed data with %s', async (change, code) => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('query.readOnly');
+        if (change === 'runtime link') fixture.state.environment.targetLinks[0]!.targetLink.role = 'runtime';
+        if (change === 'foreign target') fixture.state.environment.targetLinks[0]!.targetLink.targetKind = 'foreign';
+        if (change === 'foreign native resource') fixture.state.environment.targetLinks[0]!.content!.providerIdentity = {
+            ...fixture.input.providerIdentity, providerResourceId: 'foreign',
+        };
+        if (change === 'foreign branch') fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'custom', id: 'foreign' };
+        if (change === 'foreign principal') fixture.request = { ...fixture.request, input: {
+            ...fixture.input, credentialPrincipal: { ...fixture.input.credentialPrincipal, accountId: 'foreign' },
+        } };
+        if (change === 'wrong controller') fixture.state.environment.environment.controllerMachineId = 'foreign';
+        if (change === 'stale link') fixture.state.environment.targetLinks[0]!.targetLink.revision = 2;
+        if (change === 'missing read capability') fixture.state.environment.environment.capabilities.read = false;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code });
+    });
+    it.each(['projects.provision', 'connectionSecret.save'] as const)('requires target management for %s', async role => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        fixture.state.environment.environment.capabilities.manageTargets = false;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it.each(['branches.create', 'branches.delete'] as const)('requires deploy authority for %s', async role => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        fixture.state.environment.environment.capabilities.deploy = false;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it('refuses branch deletion from a standard Environment even with caller-asserted preview ownership', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('branches.delete', { preview: false });
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, input: {
+            ...fixture.input, previewOwnership: { environmentId: fixture.input.environmentId, owned: true },
+        } }, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it.each(['deploy', 'cancel', 'teardown'] as const)('refuses reader-only %s before any vendor effect', async role => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        fixture.state.environment.environment.capabilities = { ...fixture.state.environment.environment.capabilities, deploy: false };
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it('requires manageTargets when modifying an existing protected link', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('link');
+        fixture.state.environment.environment.capabilities = { ...fixture.state.environment.environment.capabilities, manageTargets: false };
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it('allows inspect for a reader and link for its current manager', async () => {
+        for (const role of ['inspect', 'link'] as const) {
+            const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+            await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({ input: { environmentId: fixture.input.environmentId } });
+        }
+    });
+    it.each(['succeeded', 'failed', 'cancelled', 'outcome_unknown'] as const)('never re-sends a deploy from %s receipt', async state => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        fixture.state.receipt.deployment.state = state;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_conflict' });
+    });
+    it('refuses a replaced accepted controller installation', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        fixture.state.receipt.deployment.acceptedExecution!.controller.installationId = 'replaced';
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'machine_unavailable' });
+    });
+    it('cannot hide protected receipt admission behind a reused link role', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        fixture.state.receipt.content.platform!.providerIdentity.providerResourceId = 'different-provider-project';
+        const request = { ...fixture.request, bindings: [
+            { targetLocalId: 'platform', targetKind: 'platform', role: 'link' },
+            ...fixture.request.bindings,
+        ] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it('retains a valid lifecycle receipt when its Action also serves link', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('deploy');
+        const request = { ...fixture.request, bindings: [
+            { targetLocalId: 'platform', targetKind: 'platform', role: 'link' },
+            ...fixture.request.bindings,
+        ] };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ input: { deploymentId: fixture.input.deploymentId } });
+    });
+    it('allows link-only declared product operands without requiring a receipt', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('link');
+        const request = { ...fixture.request, input: { ...fixture.input, mode: 'adopt', project: 'provider-project' } };
+        await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).resolves.toMatchObject({ input: { targetLinkId: fixture.input.targetLinkId } });
+        expect(request.input).toMatchObject({ mode: 'adopt', project: 'provider-project' });
+    });
+    it('allows observing a settled receipt without replaying its effect', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('observe');
+        fixture.state.receipt.deployment.state = 'succeeded';
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({ input: { deploymentId: fixture.input.deploymentId } });
+    });
 });

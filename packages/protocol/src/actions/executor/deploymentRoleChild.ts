@@ -2,24 +2,29 @@ import { normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStric
 import { readRecord } from '../../inputs/inputRecords.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
-import { isDeploymentChildRootActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { isDeploymentChildEffectActionIdV1, isDeploymentDomainAddActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { ActionId } from '../actionIds.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../externalActionApi.js';
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
+import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
 import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
   HostReviewedChildPortV1, HostReviewedChildInvocationV1, HostReviewedChildrenPlanV1 } from './types.js';
 
 const deploymentRoleChild = Symbol('deploymentRoleChild');
+const credentialScopeAdmission = Symbol('credentialScopeAdmission');
 type ReviewedOperation = Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> & Readonly<{ [deploymentRoleChild]?: true }>;
-type RootActionId = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.cancel';
+type RootActionId = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.cancel' | 'deployments.receipts.observe' | 'deployments.logs.read';
 export type HostReviewedChildPolicyV1 = Readonly<{
   action: HostReviewedChildInvocationV1['action'];
   role: string;
   /** Preparation lists Require choices; an authenticated admitted continuation need not repeat them. */
   requiredActionIds?: readonly string[];
   surface: NonNullable<ActionExecutorContext['surface']>;
+  /** Host-private concrete credential admission; omitted by the wire policy schema. */
+  [credentialScopeAdmission]?: Readonly<{ grant: ApiTokenGrantV1; target: ActionExecutorContext['externalActionTarget'] }>;
 }>;
 export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<{
   action: TAction | Exclude<HostReviewedChildInvocationV1['action'], ActionId>;
@@ -28,7 +33,7 @@ export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<
 }>;
 export type HostReviewedParentV1 = ReviewedOperation['parent'];
 type ChildProof = Readonly<{
-  rootActionId: string;
+  rootActionId?: string;
   signal?: AbortSignal;
   qualifiedActionId: string;
   envelope?: Readonly<Record<string, JsonValue>> & Readonly<{
@@ -36,10 +41,14 @@ type ChildProof = Readonly<{
     input?: JsonValue;
   }>;
   input: JsonValue;
-  operation: ReviewedOperation;
+  operation?: ReviewedOperation;
+  [deploymentRoleChild]?: true;
   reviewedChild?: ReviewedActionChildHttpProofV1;
+  originalAuthorization?: ExternalActionExecutionAuthorizationV1;
+  childAuthorization?: ExternalActionExecutionAuthorizationV1;
   environmentId?: string;
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
+  [credentialScopeAdmission]?: HostReviewedChildPolicyV1[typeof credentialScopeAdmission];
 }>;
 type ChildContext = ActionExecutorContext & { [deploymentRoleChild]?: ChildProof };
 type ReviewedChildPort = HostReviewedChildPortV1 & Readonly<{ [deploymentRoleChild]?: true }>;
@@ -73,7 +82,7 @@ export function isHostAdmittedReviewedChildPolicyV1(operation: ReviewedOperation
 /** Original reviewed operation facts, not a credential or transported proof. */
 export function readHostReviewedParentV1(context: ActionExecutorContext | undefined): HostReviewedParentV1 | null {
   const proof = (context as ChildContext | undefined)?.[deploymentRoleChild];
-  return proof?.operation[deploymentRoleChild] === true
+  return proof?.operation?.[deploymentRoleChild] === true
     ? proof.operation.parent : context?.hostReviewedChild?.parent ?? null;
 }
 
@@ -87,8 +96,7 @@ export function readHostAdmittedReviewedParentV1(port: HostReviewedChildPortV1 |
 export function readDeploymentRoleRootInputV1(context: ActionExecutorContext, actionId: string,
   input: unknown, hostInternal: boolean, discovery = false): Readonly<{ actionId: RootActionId; environmentId: string }> | null {
   const proof = hostInternal ? readProof(context, actionId, input, discovery) : null;
-  return proof?.environmentId && (isDeploymentChildRootActionIdV1(proof.rootActionId)
-    || proof.rootActionId === 'deployments.teardown' || proof.rootActionId === 'deployments.cancel')
+  return proof?.rootActionId && proof.environmentId
     ? { actionId: proof.rootActionId as RootActionId, environmentId: proof.environmentId } : null;
 }
 
@@ -100,7 +108,26 @@ export function readHostReviewedChildRootV1(context: ActionExecutorContext, acti
   // this child request. Its existing child credential remains the ceiling.
   if (proof && context.externalActionExecutionAuthorization?.binding.actionId
     && context.externalActionExecutionAuthorization.binding.actionId !== proof.rootActionId) return null;
-  return proof?.operation.parent ?? null;
+  return proof?.operation?.parent ?? null;
+}
+
+/** Spend this invocation's exact prepared scope admission; public context cannot supply the symbol proof. */
+export function hasHostReviewedChildCredentialScopeAdmissionV1(context: ActionExecutorContext, actionId: string,
+  input: unknown, discovery = false): boolean {
+  const proof = readProof(context, actionId, input, discovery);
+  const admission = proof?.[credentialScopeAdmission];
+  return Boolean(proof && admission && admission.grant === context.externalActionCredential?.grant
+    && sameStrictJsonValue(admission.target ?? null, context.externalActionTarget ?? null)
+    && (!context.externalActionExecutionAuthorization
+      || context.externalActionExecutionAuthorization.binding.actionId === proof.rootActionId));
+}
+
+/** Retain the credential owner's admitted fact on this private policy, never its JSON projection. */
+export function retainHostReviewedChildCredentialScopeAdmissionV1(policy: HostReviewedChildPolicyV1,
+  context: ActionExecutorContext): HostReviewedChildPolicyV1 {
+  const grant = context.externalActionCredential?.grant;
+  return grant ? { ...policy, [credentialScopeAdmission]: { grant,
+    target: context.externalActionTarget ? structuredClone(context.externalActionTarget) : undefined } } : policy;
 }
 
 /** Physical custody is independently admitted; the original SOURCE root stays unchanged. */
@@ -115,9 +142,40 @@ export function readHostReviewedChildReceivingAdmissionV1(context: ActionExecuto
 export function readHostAdmittedReviewedChildV1(context: ActionExecutorContext | undefined):
   (ReviewedActionChildHttpProofV1 & Readonly<{ input: JsonValue }>) | null {
   const proof = (context as ChildContext | undefined)?.[deploymentRoleChild];
-  if (!proof?.reviewedChild || proof.operation[deploymentRoleChild] !== true
+  if (!proof?.reviewedChild || (proof.operation?.[deploymentRoleChild] !== true && proof[deploymentRoleChild] !== true)
     || !readProof(context, proof.qualifiedActionId, proof.input)) return null;
   return { ...proof.reviewedChild, input: proof.input };
+}
+
+/** Only this issuer's exact child can retain the original ingress authority.
+ * Descriptor clones do not inherit authority from either authorization object. */
+export function readHostReviewedChildOriginalAuthorizationV1(context: ActionExecutorContext | undefined):
+  ExternalActionExecutionAuthorizationV1 | undefined {
+  const proof = (context as ChildContext | undefined)?.[deploymentRoleChild];
+  if (!proof?.reviewedChild || proof.operation?.[deploymentRoleChild] !== true
+    || !readProof(context, proof.qualifiedActionId, proof.input)
+    || context?.externalActionExecutionAuthorization !== proof.childAuthorization) return undefined;
+  return proof.originalAuthorization;
+}
+
+/** Restore an exact signed leaf already admitted by ingress, without inventing parent consent.
+ * Only the trusted ingress adapter supplies this operand after verifying its signed binding. */
+export async function invokeHostAdmittedSignedReviewedChildV1<T>(params: Readonly<{
+  context: ActionExecutorContext;
+  child: ReviewedActionChildHttpProofV1 & Readonly<{ input: JsonValue }>;
+  receivingAdmission?: SocketRpcMachineAdmissionContextV1;
+  execute(input: JsonValue, context: ActionExecutorContext): Promise<T>;
+}>): Promise<T> {
+  const { input, ...reviewedChild } = params.child;
+  const proof: ChildProof = {
+    qualifiedActionId: reviewedChild.actionId, input: normalizeStrictJsonValue(input), reviewedChild,
+    [deploymentRoleChild]: true,
+    ...(params.context.signal ? { signal: params.context.signal } : {}),
+    ...(params.receivingAdmission ? { receivingAdmission: params.receivingAdmission } : {}),
+  };
+  const context: ChildContext = { ...params.context, bypassApprovals: false,
+    hostReviewedChild: undefined, [deploymentRoleChild]: proof };
+  return params.execute(proof.input, context);
 }
 
 /** Single in-process issuer. Domain adapters supply admitted, normalized facts. */
@@ -158,9 +216,12 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   if (!envelope && (!childInput || typeof childInput !== 'object' || Array.isArray(childInput))) return denied();
   const qualifiedActionId = envelope ? formatQualifiedPluginActionId(envelope.action) : action as ActionId;
   const proofInput = envelope ? envelope.input ?? null : childInput;
+  const domainNative = isDeploymentDomainAddActionIdV1(qualifiedActionId) && 'content' in readRecord(proofInput)
+    ? projectDeploymentNativeAdmissionV1(qualifiedActionId, proofInput) : undefined;
   const reviewedChild = params.admittedReview && binding?.actionId === parent.actionId
     ? Object.freeze({ actionId: qualifiedActionId, role: child.role,
-      inputDigest: computeActionInputApprovalDigestV1(qualifiedActionId as ActionId, proofInput) }) : undefined;
+      inputDigest: computeActionInputApprovalDigestV1(qualifiedActionId as ActionId, proofInput),
+      ...(isDeploymentDomainNativeAdmissionV1(domainNative) ? { deploymentNativeAdmission: domainNative } : {}) }) : undefined;
   const proof: ChildProof = {
     rootActionId: parent.actionId, qualifiedActionId, input: proofInput,
     ...(reviewedChild ? { reviewedChild } : {}),
@@ -168,6 +229,9 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     ...(envelope ? { envelope } : {}),
     ...(params.environmentId ? { environmentId: params.environmentId } : {}),
     ...(receiving ? { receivingAdmission: structuredClone(receiving) } : {}),
+    ...(params.admittedReview?.[credentialScopeAdmission] ? {
+      [credentialScopeAdmission]: params.admittedReview[credentialScopeAdmission],
+    } : {}),
     operation: {
       ...(params.admittedReview ? { [deploymentRoleChild]: true as const } : {}),
       parent: { actionId: parent.actionId, input: parentInput as Record<string, JsonValue> },
@@ -184,6 +248,10 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   // Independently Home-bound Run children keep their own incumbent ceiling.
   if (reviewedChild && authorization && http) {
     const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
+    Object.defineProperties(proof, {
+      originalAuthorization: { value: readHostReviewedChildOriginalAuthorizationV1(context) ?? authorization },
+      childAuthorization: { value: childAuthorization },
+    });
     Object.defineProperties(childAuthorization, {
       ...Object.getOwnPropertyDescriptors(authorization),
       requesterHttpProjection: { value: Object.freeze({ ...http,
@@ -216,8 +284,11 @@ export function createHostReviewedChildPortV1(params: Readonly<{
   const plan = params.plan;
   const parent = { actionId: params.actionId, input: projectNativeJsonValueForTransport(params.input) as Record<string, JsonValue> };
   const parentInput = readRecord(parent.input);
-  const environmentId = (isDeploymentChildRootActionIdV1(params.actionId) || params.actionId === 'deployments.teardown'
-    || params.actionId === 'deployments.cancel') && typeof parentInput.environmentId === 'string' ? parentInput.environmentId : undefined;
+  const environmentId = ((params.context.externalActionExecutionAuthorization
+    ? params.context.externalActionExecutionAuthorization.binding.deploymentChildRoot === true
+    : isDeploymentChildEffectActionIdV1(params.actionId)) || params.actionId === 'deployments.teardown'
+    || params.actionId === 'deployments.cancel' || params.actionId === 'deployments.receipts.observe'
+    || params.actionId === 'deployments.logs.read') && typeof parentInput.environmentId === 'string' ? parentInput.environmentId : undefined;
   const denied = (): ActionExecuteResult => ({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
   const port: ReviewedChildPort = {
     ...(params.reviewAdmitted ? { parent, [deploymentRoleChild]: true as const } : {}),

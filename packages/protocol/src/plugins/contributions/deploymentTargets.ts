@@ -7,9 +7,9 @@ import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../ac
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
 import type { PluginResourceContributionV2 } from './v2.js';
-import type { PluginEventContributionV1 } from './events.js';
-import { DeploymentTargetFailureTransitionV1ProtocolSchema, DeploymentTargetRoleInputProtocolSchemasV1,
-    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
+import { DeploymentTargetRoleInputProtocolSchemasV1,
+    DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema,
+    DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
 export * from './deploymentTargetRolesV1.js';
 
 const local = () => asProtocolZod(PluginContributionLocalIdSchema);
@@ -64,8 +64,7 @@ const descriptorFields = () => ({
 
 /** Runtime and data are closed alternatives; association unlink stays with the host. */
 export const DeploymentTargetContributionV1Schema = lazyZodSchema(() => z.discriminatedUnion('role', [
-    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), actions: createDeploymentTargetRuntimeActionsV1Schema(local()),
-        failureTransitionEvent: z.optional(local()) }),
+    z.strictObject({ ...descriptorFields(), role: z.literal('runtime'), actions: createDeploymentTargetRuntimeActionsV1Schema(local()) }),
     z.strictObject({ ...descriptorFields(), role: z.literal('data'), dataV1: z.optional(createDeploymentTargetDataV1Schema(local(), local())) }),
 ]));
 export type DeploymentTargetContributionV1 = z.infer<typeof DeploymentTargetContributionV1Schema>;
@@ -120,29 +119,13 @@ export function readDeploymentTargetActionRolesV1(descriptor: DeploymentTargetCo
 /** Declaration admission grants no invocation authority; installation and role custody remain host-owned. */
 export function validateDeploymentTargetContributionsV1(
     value: Readonly<{ deploymentTargets: readonly DeploymentTargetContributionV1[]; actions: readonly PluginActionContributionV2[];
-        resources: readonly PluginResourceContributionV2[]; events?: readonly PluginEventContributionV1[] }>,
+        resources: readonly PluginResourceContributionV2[] }>,
     context: z.core.$RefinementCtx,
 ): void {
     const ids = new Set<string>();
     value.deploymentTargets.forEach((descriptor, index) => {
         if (ids.has(descriptor.id)) context.addIssue({ code: 'custom', path: ['deploymentTargets', index, 'id'], message: 'Duplicate deployment target id.' });
         ids.add(descriptor.id);
-        if (descriptor.role === 'runtime' && descriptor.failureTransitionEvent !== undefined) {
-            const path = ['deploymentTargets', index, 'failureTransitionEvent'];
-            const event = value.events?.find(candidate => candidate.id === descriptor.failureTransitionEvent);
-            if (event?.kind !== 'event' || !event.payloadSchema) {
-                context.addIssue({ code: 'custom', path, message: 'Deployment failures require a declared same-plugin Event.' });
-            } else {
-                try {
-                    if (!pluginJsonValuesEqual(normalizePluginJsonSchema(event.payloadSchema),
-                        normalizePluginJsonSchema(DeploymentTargetFailureTransitionV1ProtocolSchema.jsonSchema))) {
-                        context.addIssue({ code: 'custom', path, message: 'Deployment failure Events require the canonical transition payload.' });
-                    }
-                } catch {
-                    context.addIssue({ code: 'custom', path, message: 'Deployment failure Events require a valid closed transition payload.' });
-                }
-            }
-        }
         for (const binding of readDeploymentTargetReferenceRolesV1(descriptor)) {
             const path = ['deploymentTargets', index, ...binding.path];
             if (binding.targetFamily === 'resources') {
@@ -173,7 +156,8 @@ export function validateDeploymentTargetContributionsV1(
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.inputSchema),
                             normalizePluginJsonSchema(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema))
                         || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
-                            normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema))) {
+                            normalizePluginJsonSchema((binding.role.startsWith('logs.')
+                                ? DeploymentTargetLogsResultV1ProtocolSchema : DeploymentTargetRoleResultV1ProtocolSchema).jsonSchema))) {
                         context.addIssue({ code: 'custom', path, message: 'Deployment lifecycle roles require their exact canonical input and observation schemas.' });
                     }
                 } catch {
