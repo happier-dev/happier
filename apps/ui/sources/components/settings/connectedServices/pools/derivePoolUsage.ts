@@ -20,6 +20,16 @@ export type PoolMemberUsageInput = Readonly<{
     meters: ReadonlyArray<ConnectedServiceQuotaMeterV1> | null;
 }>;
 
+/** Current availability and last-known readings, decided together for every pool consumer. */
+export type PoolMemberUsageState = Readonly<{
+    credentialStatus: ReturnType<typeof parseDisplayableCredentialHealthStatus>;
+    health: AccountHealth;
+    isStale: boolean;
+    room: PoolMemberRoom;
+    lowestRemainingPct: number | null;
+    meters: readonly ComparableReading[];
+}>;
+
 /** One window of "Left across the pool": the members' average, the earliest reset. */
 export type PoolUsageWindow = Readonly<{
     meterId: string;
@@ -34,15 +44,8 @@ export type PoolUsage = Readonly<{
     windows: readonly PoolUsageWindow[];
     /** "N of M have room": M is every member; only usable enabled accounts contribute reported room. */
     room: Readonly<{ withRoom: number; total: number; reporting: number; unreported: number }>;
-    availabilityByAccountId: Readonly<Record<string, Readonly<{
-        credentialStatus: ReturnType<typeof parseDisplayableCredentialHealthStatus>;
-        health: AccountHealth;
-        isStale: boolean;
-    }>>>;
-    roomByAccountId: Readonly<Record<string, PoolMemberRoom>>;
-    /** Each member's lowest window, for "the one with the most left"; null when it reports nothing. */
-    lowestRemainingByAccountId: Readonly<Record<string, number | null>>;
-    /** The member that has room again first, when every reporting member is waiting. */
+    memberByAccountId: Readonly<Record<string, PoolMemberUsageState>>;
+    /** The member that has room again first, when every usable enabled member is currently waiting. */
     firstBack: Readonly<{ accountId: string; atMs: number }> | null;
 }>;
 
@@ -53,6 +56,7 @@ type ComparableReading = Readonly<{
     resetsAt: number | null;
     exhausted: boolean;
     estimated: boolean;
+    status: ConnectedServiceQuotaMeterV1['status'];
 }>;
 
 /**
@@ -79,6 +83,7 @@ function readComparable(meters: ReadonlyArray<ConnectedServiceQuotaMeterV1>, now
             resetsAt: resetPassed ? null : resetsAt,
             exhausted,
             estimated: entry.meter.status === 'estimated',
+            status: entry.meter.status,
         }];
     });
 }
@@ -94,46 +99,49 @@ export function derivePoolUsage(input: Readonly<{
     now: number;
 }>): PoolUsage {
     const windows = new Map<string, { label: string; sum: number; count: number; resetsAt: number | null; estimated: boolean }>();
-    const roomByAccountId: Record<string, PoolMemberRoom> = {};
-    const availabilityByAccountId: Record<string, PoolUsage['availabilityByAccountId'][string]> = {};
-    const lowestRemainingByAccountId: Record<string, number | null> = {};
+    const memberByAccountId: Record<string, PoolMemberUsageState> = {};
     let withRoom = 0;
     let reporting = 0;
     let unreported = 0;
+    let allWaiting = true;
     let firstBack: { accountId: string; atMs: number } | null = null;
 
     for (const member of input.members) {
         const readings = member.meters ? readComparable(member.meters, input.now) : [];
-        lowestRemainingByAccountId[member.accountId] = readings.length > 0
+        const lowestRemainingPct = readings.length > 0
             ? Math.min(...readings.map((reading) => reading.remainingPct))
             : null;
-        const room: PoolMemberRoom = readings.length === 0
-            ? 'unknown'
-            : readings.some((reading) => reading.exhausted) ? 'waiting' : 'room';
-        roomByAccountId[member.accountId] = room;
-        const credentialStatus = parseDisplayableCredentialHealthStatus(member.credentialStatus);
-        availabilityByAccountId[member.accountId] = {
-            credentialStatus,
-            health: deriveAccountHealth({
-                status: credentialStatus,
-                capacityPct: lowestRemainingByAccountId[member.accountId],
-                isStale: member.isStale,
-            }),
-            isStale: member.isStale === true,
-        };
         const credentialUsable = isConnectedServiceCredentialHealthStatusUsable(
             normalizeConnectedServiceCredentialHealthStatus(member.credentialStatus),
         );
-        if (!credentialUsable || member.isStale) lowestRemainingByAccountId[member.accountId] = null;
+        const room: PoolMemberRoom = readings.length === 0 || member.isStale || !credentialUsable
+            ? 'unknown'
+            : readings.some((reading) => reading.exhausted) ? 'waiting' : 'room';
+        const credentialStatus = parseDisplayableCredentialHealthStatus(member.credentialStatus);
+        const state: PoolMemberUsageState = {
+            credentialStatus,
+            health: deriveAccountHealth({
+                status: credentialStatus,
+                capacityPct: lowestRemainingPct,
+                isStale: member.isStale,
+            }),
+            isStale: member.isStale === true,
+            room,
+            lowestRemainingPct: room === 'unknown' ? null : lowestRemainingPct,
+            meters: readings,
+        };
+        memberByAccountId[member.accountId] = state;
         if (!member.enabled || !credentialUsable) continue;
-        if (room === 'unknown') {
+        // Missing or stale usage cannot establish that this member is currently waiting.
+        if (state.room !== 'waiting') allWaiting = false;
+        if (state.room === 'unknown') {
             unreported += 1;
-            continue;
+        } else {
+            reporting += 1;
         }
-        reporting += 1;
         // Old readings remain useful windows, but cannot establish who has room now or is back first.
-        if (room === 'room' && !member.isStale) withRoom += 1;
-        if (room === 'waiting' && !member.isStale) {
+        if (state.room === 'room') withRoom += 1;
+        if (state.room === 'waiting') {
             // Back when its last exhausted window resets.
             const backAt = readings
                 .filter((reading) => reading.exhausted)
@@ -166,10 +174,8 @@ export function derivePoolUsage(input: Readonly<{
             estimated: window.estimated,
         })),
         room: { withRoom, total: input.members.length, reporting, unreported },
-        availabilityByAccountId,
-        roomByAccountId,
-        lowestRemainingByAccountId,
-        firstBack: withRoom === 0 && reporting > 0 ? firstBack : null,
+        memberByAccountId,
+        firstBack: allWaiting ? firstBack : null,
     };
 }
 
@@ -180,11 +186,11 @@ export function derivePoolUsage(input: Readonly<{
 export function resolvePoolManualSwitchSuggestion(input: Readonly<{
     activeAccountId: string | null;
     members: ReadonlyArray<Readonly<{ accountId: string; enabled: boolean; priority: number }>>;
-    roomByAccountId: Readonly<Record<string, PoolMemberRoom>>;
+    memberByAccountId: Readonly<Record<string, Pick<PoolMemberUsageState, 'room'>>>;
 }>): string | null {
     const candidates = [...input.members]
         .filter((member) => member.enabled && member.accountId !== input.activeAccountId
-            && input.roomByAccountId[member.accountId] !== 'waiting')
+            && input.memberByAccountId[member.accountId]?.room !== 'waiting')
         .sort((left, right) => left.priority - right.priority || left.accountId.localeCompare(right.accountId));
     return candidates[0]?.accountId ?? null;
 }

@@ -27,7 +27,7 @@ const fiveHour = (pct: number | null, resetsIn: number) => meter('5h', '5-hour',
 const weekly = (pct: number | null, resetsIn: number) => meter('wk', 'Weekly', pct, resetsIn, { windowDurationMs: 7 * 24 * 60 * MIN });
 
 describe('derivePoolUsage', () => {
-    it('counts every member and exposes the shared account health without changing quota-only switching facts', () => {
+    it('counts every member and exposes credential health and current room in one member state', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
             { accountId: 'work', enabled: true, credentialStatus: 'connected', meters: [weekly(0, 60 * MIN)] },
             { accountId: 'lab', enabled: true, credentialStatus: 'connected', meters: [weekly(0, 30 * MIN)], isStale: true },
@@ -35,27 +35,28 @@ describe('derivePoolUsage', () => {
             { accountId: 'spare', enabled: true, credentialStatus: 'needs_reauth', meters: null },
             { accountId: 'off', enabled: false, credentialStatus: 'connected', meters: [weekly(90, 30 * MIN)], isStale: true },
         ] });
-        expect(usage.room).toEqual({ withRoom: 0, total: 5, reporting: 2, unreported: 0 });
-        expect(usage.availabilityByAccountId).toMatchObject({
+        expect(usage.room).toEqual({ withRoom: 0, total: 5, reporting: 1, unreported: 1 });
+        expect(usage.memberByAccountId).toMatchObject({
             work: { health: 'error', credentialStatus: 'connected', isStale: false },
             lab: { health: 'error', credentialStatus: 'connected', isStale: true },
             personal: { health: 'error', credentialStatus: 'needs_reauth', isStale: false },
             off: { health: 'attention', credentialStatus: 'connected', isStale: true },
         });
-        expect(usage.roomByAccountId.personal).toBe('room');
-        expect(usage.lowestRemainingByAccountId.personal).toBeNull();
+        expect(usage.memberByAccountId.personal).toMatchObject({ room: 'unknown', lowestRemainingPct: null });
     });
     it('keeps stale last-known windows without claiming live room, a switch ranking or a recovery time', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
             { accountId: 'stale-room', enabled: true, credentialStatus: 'connected', isStale: true, meters: [weekly(75, 30 * MIN)] },
             { accountId: 'stale-waiting', enabled: true, credentialStatus: 'connected', isStale: true, meters: [weekly(0, 60 * MIN)] },
         ] });
-        expect(usage.room).toEqual({ withRoom: 0, total: 2, reporting: 2, unreported: 0 });
+        expect(usage.room).toEqual({ withRoom: 0, total: 2, reporting: 0, unreported: 2 });
         expect(usage.windows).toEqual([expect.objectContaining({ remainingPct: 38, reportingCount: 2 })]);
-        expect(usage.lowestRemainingByAccountId).toEqual({ 'stale-room': null, 'stale-waiting': null });
+        expect(usage.memberByAccountId).toMatchObject({
+            'stale-room': { room: 'unknown', lowestRemainingPct: null, meters: [expect.objectContaining({ remainingPct: 75 })] },
+            'stale-waiting': { room: 'unknown', lowestRemainingPct: null, meters: [expect.objectContaining({ remainingPct: 0 })] },
+        });
         expect(usage.firstBack).toBeNull();
-        expect(usage.roomByAccountId).toEqual({ 'stale-room': 'room', 'stale-waiting': 'waiting' });
-        expect(usage.availabilityByAccountId['stale-room']).toMatchObject({ health: 'attention', isStale: true });
+        expect(usage.memberByAccountId['stale-room']).toMatchObject({ health: 'attention', isStale: true });
     });
     it('excludes signed-out members from pool capacity while retaining exhausted connected members and their reset', () => {
         const usage = derivePoolUsage({ now: NOW, members: [
@@ -71,7 +72,7 @@ describe('derivePoolUsage', () => {
         expect(signedOut.windows).toEqual([]);
         expect(signedOut.room).toEqual({ withRoom: 0, total: 1, reporting: 0, unreported: 0 });
         expect(signedOut.firstBack).toBeNull();
-        expect(signedOut.lowestRemainingByAccountId['signed-out']).toBeNull();
+        expect(signedOut.memberByAccountId['signed-out']?.lowestRemainingPct).toBeNull();
     });
     it('averages each window over the members that are on and report it, with the earliest reset', () => {
         const usage = derivePoolUsage({
@@ -101,7 +102,7 @@ describe('derivePoolUsage', () => {
         });
         expect(usage.windows).toEqual([expect.objectContaining({ meterId: '5h', remainingPct: 40, reportingCount: 1 })]);
         expect(usage.room).toEqual({ withRoom: 1, total: 3, reporting: 1, unreported: 2 });
-        expect(usage.roomByAccountId).toEqual({ work: 'room', lab: 'unknown', bot: 'unknown' });
+        expect(usage.memberByAccountId).toMatchObject({ work: { room: 'room' }, lab: { room: 'unknown' }, bot: { room: 'unknown' } });
     });
 
     it('marks a member with an exhausted window as waiting and names the first member back', () => {
@@ -113,9 +114,23 @@ describe('derivePoolUsage', () => {
             ],
         });
         expect(usage.room).toEqual({ withRoom: 0, total: 2, reporting: 2, unreported: 0 });
-        expect(usage.roomByAccountId).toEqual({ work: 'waiting', lab: 'waiting' });
+        expect(usage.memberByAccountId).toMatchObject({ work: { room: 'waiting' }, lab: { room: 'waiting' } });
         // Lab's 5-hour resets first, but its weekly keeps it waiting; Work is back first.
         expect(usage.firstBack).toEqual({ accountId: 'work', atMs: NOW + 135 * MIN });
+    });
+
+    it.each([
+        { label: 'stale room', isStale: true, meters: [fiveHour(86, 60 * MIN)] },
+        { label: 'stale exhaustion', isStale: true, meters: [fiveHour(0, 60 * MIN)] },
+        { label: 'unread usage', isStale: false, meters: null },
+        { label: 'unreported usage', isStale: false, meters: [fiveHour(null, 60 * MIN)] },
+    ])('does not claim the whole pool is waiting when a member has $label', ({ isStale, meters }) => {
+        const usage = derivePoolUsage({ now: NOW, members: [
+            { accountId: 'work', enabled: true, credentialStatus: 'connected', meters: [fiveHour(0, 90 * MIN)] },
+            { accountId: 'backup', enabled: true, credentialStatus: 'connected', isStale, meters },
+        ] });
+        expect(usage.room.withRoom).toBe(0);
+        expect(usage.firstBack).toBeNull();
     });
 
     it('carries an estimated reading so the pool meter can say so', () => {
@@ -134,17 +149,17 @@ describe('resolvePoolManualSwitchSuggestion', () => {
         { accountId: 'lab', enabled: true, priority: 300 },
         { accountId: 'off', enabled: false, priority: 400 },
     ];
-    const room = { work: 'room', personal: 'room', lab: 'room', off: 'room' } as const;
+    const room = { work: { room: 'room' }, personal: { room: 'room' }, lab: { room: 'room' }, off: { room: 'room' } } as const;
 
     it('skips the current, disabled and waiting members', () => {
-        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, roomByAccountId: { ...room, personal: 'waiting' } })).toBe('lab');
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, memberByAccountId: { ...room, personal: { room: 'waiting' } } })).toBe('lab');
     });
 
     it('suggests the first available member in user order, without ranking quota', () => {
-        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, roomByAccountId: room })).toBe('personal');
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members, memberByAccountId: room })).toBe('personal');
     });
 
     it('nothing when no other member is on', () => {
-        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members: members.map((m) => (m.accountId === 'work' ? m : { ...m, enabled: false })), roomByAccountId: room })).toBeNull();
+        expect(resolvePoolManualSwitchSuggestion({ activeAccountId: 'work', members: members.map((m) => (m.accountId === 'work' ? m : { ...m, enabled: false })), memberByAccountId: room })).toBeNull();
     });
 });

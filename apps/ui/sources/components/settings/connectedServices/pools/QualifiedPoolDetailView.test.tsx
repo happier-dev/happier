@@ -787,6 +787,7 @@ describe('QualifiedPoolDetailView', () => {
         expect(screen.getTextContent()).toContain('connectedServicesPool.notReported(count=1)');
         expect(screen.findByTestId('connected-services-pool-detail:now')).toBeNull();
         expect(memberRow(screen, 'work').usage).toMatchObject({ kind: 'meters', meters: [expect.objectContaining({ remainingPct: 86 })] });
+        expect(memberRow(screen, 'work').note?.icon).toBe('clock');
         expect(itemProps(screen, 'connected-services-pool-detail:summary').description).toBeTruthy();
         await screen.update(<QualifiedPoolDetailView {...currentProps} group={group} now={NOW + 2 * MIN}
             memberQuotaByAccountId={quota({ ...Object.fromEntries(Object.entries(memberQuotaByAccountId).map(([id, entry]) => [id, entry.snapshot])),

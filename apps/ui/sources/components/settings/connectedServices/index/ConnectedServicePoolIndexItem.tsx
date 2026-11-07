@@ -76,7 +76,7 @@ export const ConnectedServicePoolIndexItemView = React.memo(function ConnectedSe
     const chips = usage ? (
         <View style={styles.members}>
             {props.members.map((member) => {
-                const pct = usage.lowestRemainingByAccountId[member.accountId] ?? null;
+                const pct = usage.memberByAccountId[member.accountId]?.lowestRemainingPct ?? null;
                 const tone = pct === null ? 'neutral' : resolveQuotaTone(pct);
                 const color = tone === 'danger' ? theme.colors.state.danger.textForeground
                     : tone === 'warning' ? theme.colors.state.warning.textForeground : theme.colors.text.primary;

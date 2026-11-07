@@ -838,7 +838,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
                             const autoOff = member.state.autoDisabledReason === 'model_not_entitled';
                             const note: PoolMemberNote | null = autoOff
                                 ? { icon: 'info', text: t('connectedServicesPool.autoOffModel') }
-                                : member.enabled && snapshot && memberState?.isStale && !sharedRead
+                                : member.enabled && snapshot && memberState?.isStale && !(sharedRead && allStale)
                                     ? { icon: 'clock', text: t('connectedServicesPool.checkedAt', { time: formatAsOfTime(snapshot.fetchedAt, now) }) }
                                     : null;
                             const memberUsage: PoolMemberUsage = !member.enabled
