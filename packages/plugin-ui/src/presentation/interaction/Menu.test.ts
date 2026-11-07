@@ -133,6 +133,27 @@ describe('shared menu selection and keyboard semantics', () => {
     })).toBe('left');
   });
 
+  // A submenu from a menu that fills a phone has room on neither side: squeezed beside it, it was 66 px wide
+  // at 390 (QA-J3-1106). It opens above or below instead, at full width, and scrolls in that height.
+  it('opens a side menu above or below when neither side holds it', () => {
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto-horizontal',
+      preferredMinAvailable: 280,
+      available: { top: 620, bottom: 40, left: 90, right: 10 },
+    })).toBe('top');
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto-horizontal',
+      preferredMinAvailable: 280,
+      available: { top: 60, bottom: 500, left: 90, right: 10 },
+    })).toBe('bottom');
+    // One side that holds it still wins, as before.
+    expect(resolveHappierPopoverPlacement({
+      placement: 'auto-horizontal',
+      preferredMinAvailable: 280,
+      available: { top: 620, bottom: 40, left: 300, right: 10 },
+    })).toBe('left');
+  });
+
   it('keeps an explicit side unless asked to flip it, and flips only to a roomier opposite side', () => {
     const cramped = { top: 4, bottom: 700, left: 320, right: 480 };
     expect(resolveHappierPopoverPlacement({ placement: 'top', preferredMinAvailable: 72, available: cramped })).toBe('top');

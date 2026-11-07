@@ -443,7 +443,9 @@ export function resolveHappierPopoverPlacement(input: Readonly<{
     const preferredMinAvailable = Math.max(0, input.preferredMinAvailable ?? 0);
     if (input.available.right >= preferredMinAvailable) return 'right';
     if (input.available.left >= preferredMinAvailable) return 'left';
-    return input.available.right >= input.available.left ? 'right' : 'left';
+    // Neither side holds it (a submenu from a menu that fills a phone): squeezed beside the anchor it reads as
+    // a sliver, so it opens over the larger vertical room at full width and scrolls within that height.
+    return input.available.top > input.available.bottom ? 'top' : 'bottom';
   }
   if (input.placement !== 'auto') {
     if (input.flip !== true) return input.placement;
