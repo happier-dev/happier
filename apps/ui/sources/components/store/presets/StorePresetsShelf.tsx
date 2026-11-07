@@ -1,29 +1,29 @@
 import * as React from 'react';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
-import {
-  ManagedPresetMark,
-  MANAGED_PROVISIONER_MARK_SIZE,
-} from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
+import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
+import { Directory, ROW_MARK_PX, type DirectoryRow } from '../StoreKindPage';
 import { describeStorePreset } from './StoreAddToPreset';
 import { useStorePresets } from './useStorePresets';
 
 const NO_SERVERS: readonly string[] = [];
+const NO_GROUPS: readonly [] = [];
+/** Rows reach the directory only once read: it never draws its own loading for them. */
+const HELD_LIST = { loading: false, hasNextPage: false } as const;
 
 /**
  * Store → Software's Presets shelf (lab `w/kind`, S40-U3b): the Account's own presets, each saying what it sets up.
- * A preset opens in the one P20 preset page; the "+" starts a new one there. The collection is read once the page
- * has been presented, and its held answer stays on screen while the page is hidden or refreshing.
+ * Its rows are the same directory rows as Runtimes and Programs above it (one rhythm, one material). A preset opens
+ * in the one P20 preset page; the "+" starts a new one there. The collection is read once the page has been
+ * presented, and its held answer stays on screen while the page is hidden or refreshing.
  */
 export function StorePresetsShelf(
   props: Readonly<{ presented: boolean; query: string }>,
@@ -47,8 +47,30 @@ export function StorePresetsShelf(
           (row) =>
             !query || row.preset.name.toLocaleLowerCase().includes(query),
         )
-        .sort((a, b) => a.preset.name.localeCompare(b.preset.name)),
-    [presets.rows, query],
+        .sort((a, b) => a.preset.name.localeCompare(b.preset.name))
+        .map((row): DirectoryRow => ({
+          key: `preset:${row.serverId}:${row.preset.id}`,
+          title: row.preset.name,
+          description: describeStorePreset(row.preset) || null,
+          group: 'presets',
+          mark: (
+            <ManagedPresetMark
+              serverId={row.serverId}
+              preset={row.preset}
+              size={ROW_MARK_PX}
+            />
+          ),
+          // A preset is already the Account's: the row opens its page and carries no "+".
+          addable: false,
+          open: () =>
+            router.push(
+              machinePresetCollectionHref({
+                serverId: row.serverId,
+                presetId: row.preset.id,
+              }) as never,
+            ),
+        })),
+    [presets.rows, query, router],
   );
   if (!serverId) return null;
   // A search that matched no preset leaves the shelf out rather than saying "no presets" under matching software.
@@ -70,69 +92,56 @@ export function StorePresetsShelf(
         }
       />
     ) : null;
+  // The heading and any one-line state are a bare section; the rows are the same page directory as Runtimes and
+  // Programs above, standing on the page frame beside them rather than inset inside the section.
   return (
-    <ItemGroup
-      testID="store.software.presets"
-      // Bare rows, as the Runtimes and Programs above them: one directory rhythm, not a sheet among bare sections.
-      surface="none"
-      title={t('capabilities.store.softwarePage.presetsTitle')}
-      description={t('capabilities.store.softwarePage.presetsDescription')}
-      action={add}
-    >
-      {state?.error ? (
-        <SurfaceStateCard
-          testID="store.software.presets.state"
-          size="line"
-          kind={denied ? 'denied' : 'unavailable'}
-          title={
-            denied
-              ? t('machinePresets.accessLost')
-              : t('capabilities.store.softwarePage.presetsFailed')
-          }
-          diagnosticCode={state.error}
-          action={{ label: t('common.retry'), onPress: presets.refresh }}
-        />
-      ) : rows.length === 0 ? (
-        // Loading and empty share one line on the rows' edge, so the section never shifts when the answer arrives.
-        <EmptyState
-          testID="store.software.presets.empty"
-          layout="line"
-          title={
-            awaiting
-              ? t('machinePresets.loading')
-              : t('capabilities.store.softwarePage.presetsEmpty')
-          }
-          lineLoading={awaiting}
-        />
-      ) : (
-        rows.map((row) => (
-          <Item
-            key={`${row.serverId}:${row.preset.id}`}
-            testID={`store.software.preset.${row.preset.id}`}
-            rowRole="catalogRow"
-            title={row.preset.name}
-            subtitle={describeStorePreset(row.preset) || undefined}
-            icon={
-              <HappierCollectionListMark rowRole="catalogRow">
-                <ManagedPresetMark
-                  serverId={row.serverId}
-                  preset={row.preset}
-                  size={MANAGED_PROVISIONER_MARK_SIZE.row}
-                />
-              </HappierCollectionListMark>
+    <>
+      <ItemGroup
+        testID="store.software.presets"
+        surface="none"
+        title={t('capabilities.store.softwarePage.presetsTitle')}
+        description={t('capabilities.store.softwarePage.presetsDescription')}
+        action={add}
+      >
+        {state?.error ? (
+          <SurfaceStateCard
+            testID="store.software.presets.state"
+            size="line"
+            kind={denied ? 'denied' : 'unavailable'}
+            title={
+              denied
+                ? t('machinePresets.accessLost')
+                : t('capabilities.store.softwarePage.presetsFailed')
             }
-            showChevron
-            onPress={() =>
-              router.push(
-                machinePresetCollectionHref({
-                  serverId: row.serverId,
-                  presetId: row.preset.id,
-                }) as never,
-              )
-            }
+            diagnosticCode={state.error}
+            action={{ label: t('common.retry'), onPress: presets.refresh }}
           />
-        ))
-      )}
-    </ItemGroup>
+        ) : rows.length === 0 ? (
+          // Loading and empty share one line on the rows' edge, so the section never shifts when the answer arrives.
+          <EmptyState
+            testID="store.software.presets.empty"
+            layout="line"
+            title={
+              awaiting
+                ? t('machinePresets.loading')
+                : t('capabilities.store.softwarePage.presetsEmpty')
+            }
+            lineLoading={awaiting}
+          />
+        ) : null}
+      </ItemGroup>
+      {!state?.error && rows.length > 0 ? (
+        <Directory
+          kind="software"
+          label={t('capabilities.store.softwarePage.presetsTitle')}
+          rows={rows}
+          groups={NO_GROUPS}
+          list={HELD_LIST}
+          query=""
+          sourceTitle={null}
+          selectedKey={null}
+        />
+      ) : null}
+    </>
   );
 }

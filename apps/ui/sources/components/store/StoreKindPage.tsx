@@ -57,7 +57,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
-const ROW_MARK_PX = 26;
+export const ROW_MARK_PX = 26;
 /** The page is the scroller: the directory's Collection draws none of its own. */
 const passThroughScroller = (children: React.ReactNode) => children;
 

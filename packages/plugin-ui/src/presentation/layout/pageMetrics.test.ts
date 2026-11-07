@@ -71,6 +71,30 @@ describe('isHappierSectionActionStacked', () => {
     ).toBe(true);
   });
 
+  it('keeps a lone icon action on the title line of a described phone section', () => {
+    // "Your presets" + its "+" on a 390pt phone: a single icon control is a quiet trailing glyph, not a
+    // labelled action, so it stays at the title line's end instead of dropping onto a line of its own.
+    expect(
+      isHappierSectionActionStacked({
+        headerWidthPx: 358,
+        actionWidthPx: 28,
+        gapPx: 12,
+        actionLayout: 'inline',
+        hasDescription: true,
+      }),
+    ).toBe(false);
+    // An adaptive labelled action on the same phone still moves beneath.
+    expect(
+      isHappierSectionActionStacked({
+        headerWidthPx: 358,
+        actionWidthPx: 132,
+        gapPx: 12,
+        actionLayout: 'adaptive',
+        hasDescription: true,
+      }),
+    ).toBe(true);
+  });
+
   it('keeps a trailing icon cluster on the title line at any width', () => {
     expect(
       isHappierSectionActionStacked({

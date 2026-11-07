@@ -282,6 +282,9 @@ export function isHappierSectionActionStacked(input: Readonly<{
   // A trailing icon cluster needs no text column of its own: the title beside it shrinks instead.
   if (input.actionLayout === 'trailing') return false;
   if (typeof headerWidthPx !== 'number' || !Number.isFinite(headerWidthPx) || headerWidthPx <= 0) return false;
+  // A lone icon control (a "+", an ⓘ) is no wider than one control's square: like a trailing cluster it
+  // keeps its place at the title line's end, where a labelled action would sit against wrapped lines.
+  if (typeof actionWidthPx === 'number' && actionWidthPx > 0 && actionWidthPx <= HAPPIER_PAGE_METRICS.controlHeightPx) return false;
   if ((input.actionLayout === 'adaptive' || input.hasDescription === true) && isHappierPageRowNarrow(headerWidthPx)) return true;
   if (typeof actionWidthPx !== 'number' || !Number.isFinite(actionWidthPx) || actionWidthPx <= 0) {
     return isHappierPageRowNarrow(headerWidthPx);
