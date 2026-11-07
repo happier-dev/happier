@@ -27,29 +27,28 @@ vi.mock('./MachinePathBrowserModal', async () => {
     return { MachinePathBrowserModal: () => null };
 });
 
-describe('openMachinePathBrowserModal', () => {
-    it('can show the modal shell without loading the path browser implementation first', async () => {
-        await import('./openMachinePathBrowserModal');
-        vi.resetModules();
-        browserModuleGate.block = true;
-        // Decide on module-graph order, not wall-clock: loading the opener's shared graph (the
-        // spinner, stores) can take seconds on a busy runner, but it must finish without ever
-        // requesting the path browser implementation.
-        const browserRequested = new Promise<'browser-requested'>((resolve) => {
-            browserModuleGate.onRequested = () => resolve('browser-requested');
-        });
-        const openerLoaded = import('./openMachinePathBrowserModal').then(() => 'opener-loaded' as const);
+// Observe the initial cold import during collection, as the other heavy UI owner suites do.
+// The ordering assertion is independent of how long the shared spinner/store graph takes to load.
+const openerLoad = await (async () => {
+    browserModuleGate.block = true;
+    const browserRequested = new Promise<'browser-requested'>((resolve) => {
+        browserModuleGate.onRequested = () => resolve('browser-requested');
+    });
+    const loaded = import('./openMachinePathBrowserModal');
+    const outcome = await Promise.race([loaded.then(() => 'opener-loaded' as const), browserRequested]);
+    browserModuleGate.onRequested = null;
+    browserModuleGate.block = false;
+    browserModuleGate.release?.();
+    return { outcome, module: await loaded };
+})();
 
-        try {
-            expect(await Promise.race([openerLoaded, browserRequested])).toBe('opener-loaded');
-        } finally {
-            browserModuleGate.onRequested = null;
-            browserModuleGate.release?.();
-        }
+describe('openMachinePathBrowserModal', () => {
+    it('can show the modal shell without loading the path browser implementation first', () => {
+        expect(openerLoad.outcome).toBe('opener-loaded');
     });
 
     it('opens the path browser with shared modal-card chrome so contained native modals own the sizing frame', async () => {
-        const { openMachinePathBrowserModal } = await import('./openMachinePathBrowserModal');
+        const { openMachinePathBrowserModal } = openerLoad.module;
 
         const promise = openMachinePathBrowserModal({
             machineId: 'machine-1',

@@ -78,7 +78,7 @@ function seedDirectoryTruncationByPathFromCache(input: Readonly<{
     return map;
 }
 
-export function useLazyDirectoryTree(input: {
+export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     scopeKey: string;
     enabled: boolean;
     /** An offline workspace keeps authorized cached rows without issuing reads. */
@@ -89,8 +89,9 @@ export function useLazyDirectoryTree(input: {
     reloadToken?: string | number | null;
     getCachedEntries: (directoryPath: string) => LazyDirectoryTreeEntry[] | null;
     getCachedDirectoryMetadata?: (directoryPath: string) => Readonly<{ truncated?: boolean }> | null;
-    loadDirectoryEntries: (directoryPath: string, signal: AbortSignal) => Promise<LazyDirectoryTreeLoadResult>;
-    warmDirectoryEntries?: ((directoryPath: string, signal: AbortSignal) => Promise<LazyDirectoryTreeLoadResult>) | null;
+    loadContext?: LoadContext;
+    loadDirectoryEntries: (directoryPath: string, signal: AbortSignal, context?: LoadContext) => Promise<LazyDirectoryTreeLoadResult>;
+    warmDirectoryEntries?: ((directoryPath: string, signal: AbortSignal, context?: LoadContext) => Promise<LazyDirectoryTreeLoadResult>) | null;
     warmChildDirectoriesLimit?: number;
     /** Keep settled file mutations queued while a create/rename field owns the tree. */
     reconciliationPaused?: boolean;
@@ -191,7 +192,9 @@ export function useLazyDirectoryTree(input: {
     }, [getCachedDirectoryMetadata, getCachedEntries, rootDirectoryPath, scopeKey]);
 
     const loadingRef = React.useRef<Set<string>>(new Set());
-    const pendingForcedReloadsRef = React.useRef<Set<string>>(new Set());
+    const pendingForcedReloadsRef = React.useRef(new Map<string, LoadContext | undefined>());
+    const loadContextRef = React.useRef(input.loadContext);
+    loadContextRef.current = input.loadContext;
     const previousNodesRef = React.useRef<readonly LazyDirectoryTreeNode[]>([]);
     const directoryEntriesByPathRef = React.useRef(directoryEntriesByPath);
     const directoryErrorsRef = React.useRef(directoryErrors);
@@ -258,7 +261,7 @@ export function useLazyDirectoryTree(input: {
         pendingForcedReloadsRef.current.clear();
     }, [scopeKey]);
 
-    const warmChildren = React.useCallback((entries: readonly LazyDirectoryTreeEntry[]) => {
+    const warmChildren = React.useCallback((entries: readonly LazyDirectoryTreeEntry[], context?: LoadContext) => {
         if (!warmDirectoryEntries || warmChildDirectoriesLimit <= 0) return;
         const signal = requestLifetimeRef.current?.signal;
         if (!signal || signal.aborted) return;
@@ -267,7 +270,7 @@ export function useLazyDirectoryTree(input: {
             .slice(0, warmChildDirectoriesLimit);
         for (const entry of childDirectories) {
             // Warming is optional; foreground loading reports its own failures.
-            void warmDirectoryEntries(entry.path, signal).catch(() => {});
+            void warmDirectoryEntries(entry.path, signal, context).catch(() => {});
         }
     }, [warmChildDirectoriesLimit, warmDirectoryEntries]);
     const loadDirectoryEntriesRef = React.useRef(loadDirectoryEntries);
@@ -279,13 +282,14 @@ export function useLazyDirectoryTree(input: {
         expandedDirectoriesRef.current = expandedDirectories;
     }, [expandedDirectories, loadDirectoryEntries, warmChildren]);
 
-    const loadDirectory = React.useCallback(async (directoryPath: string, options?: Readonly<{ forceReload?: boolean }>) => {
+    const loadDirectory = React.useCallback(async (directoryPath: string, options?: Readonly<{ forceReload?: boolean; context?: LoadContext }>) => {
         const rootDirectoryPath = rootDirectoryPathRef.current;
         const clean = directoryPath === rootDirectoryPath ? rootDirectoryPath : normalizeDirectoryPath(directoryPath);
         if (!clean && clean !== rootDirectoryPath) return;
+        const context = options && 'context' in options ? options.context : loadContextRef.current;
         if (loadingRef.current.has(clean)) {
             if (options?.forceReload) {
-                pendingForcedReloadsRef.current.add(clean);
+                pendingForcedReloadsRef.current.set(clean, context);
             }
             return;
         }
@@ -306,13 +310,13 @@ export function useLazyDirectoryTree(input: {
         });
 
         try {
-            const result = await loadDirectoryEntriesRef.current(clean, signal);
+            const result = await loadDirectoryEntriesRef.current(clean, signal, context);
             if (signal.aborted || scopeKeyRef.current !== requestScopeKey) {
                 return;
             }
             applyDirectoryLoadResult(clean, result);
             if (result.ok) {
-                warmChildrenRef.current(result.entries);
+                warmChildrenRef.current(result.entries, context);
             }
         } catch (error) {
             if (!signal.aborted) applyDirectoryLoadResult(clean, { ok: false, error: error instanceof Error ? error.message : 'unknown_error' });
@@ -325,8 +329,10 @@ export function useLazyDirectoryTree(input: {
                 next.delete(clean);
                 return next;
             });
-            if (pendingForcedReloadsRef.current.delete(clean) && scopeKeyRef.current === requestScopeKey) {
-                void loadDirectory(clean, { forceReload: true });
+            if (pendingForcedReloadsRef.current.has(clean) && scopeKeyRef.current === requestScopeKey) {
+                const pendingContext = pendingForcedReloadsRef.current.get(clean);
+                pendingForcedReloadsRef.current.delete(clean);
+                void loadDirectory(clean, { forceReload: true, context: pendingContext });
             }
         }
     }, [applyDirectoryLoadResult]);
@@ -353,7 +359,7 @@ export function useLazyDirectoryTree(input: {
         reconcilePaths([]);
     }, [enabled, input.reconciliationPaused, reconcilePaths]);
 
-    const toggleDirectory = React.useCallback(async (path: string) => {
+    const toggleDirectory = React.useCallback(async (path: string, context?: LoadContext) => {
         const clean = normalizeDirectoryPath(path);
         if (!clean) return;
 
@@ -364,19 +370,19 @@ export function useLazyDirectoryTree(input: {
         }
 
         setExpandedPaths((prev) => [...prev, clean]);
-        await loadDirectory(clean);
+        await loadDirectory(clean, { context });
     }, [loadDirectory, setExpandedPaths]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
     }, [setExpandedPaths]);
 
-    const retryRoot = React.useCallback(async () => {
+    const retryRoot = React.useCallback(async (context?: LoadContext) => {
         setRootError(null);
-        await loadDirectory(rootDirectoryPath, { forceReload: true });
+        await loadDirectory(rootDirectoryPath, { forceReload: true, context });
     }, [loadDirectory, rootDirectoryPath]);
 
-    const retryDirectory = React.useCallback(async (directoryPath: string) => {
+    const retryDirectory = React.useCallback(async (directoryPath: string, context?: LoadContext) => {
         const clean = normalizeDirectoryPath(directoryPath);
         if (!clean) return;
         setDirectoryErrors((prev) => {
@@ -385,7 +391,7 @@ export function useLazyDirectoryTree(input: {
             next.delete(clean);
             return next;
         });
-        await loadDirectory(clean, { forceReload: true });
+        await loadDirectory(clean, { forceReload: true, context });
     }, [loadDirectory]);
 
     React.useEffect(() => {

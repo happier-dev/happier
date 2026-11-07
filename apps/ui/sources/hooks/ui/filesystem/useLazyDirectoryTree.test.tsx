@@ -189,8 +189,8 @@ describe('useLazyDirectoryTree', () => {
 
         await waitForNodePaths(api, ['src', 'src/index.ts']);
 
-        expect(loadDirectoryEntries).toHaveBeenCalledWith('', expect.any(AbortSignal));
-        expect(loadDirectoryEntries).toHaveBeenCalledWith('src', expect.any(AbortSignal));
+        expect(loadDirectoryEntries).toHaveBeenCalledWith('', expect.any(AbortSignal), undefined);
+        expect(loadDirectoryEntries).toHaveBeenCalledWith('src', expect.any(AbortSignal), undefined);
     });
 
     it('preserves absolute root directory paths so machine root rows can expand', async () => {
@@ -243,7 +243,7 @@ describe('useLazyDirectoryTree', () => {
 
         await waitForNodePaths(api, ['/', '/Users']);
 
-        expect(loadDirectoryEntries).toHaveBeenCalledWith('/', expect.any(AbortSignal));
+        expect(loadDirectoryEntries).toHaveBeenCalledWith('/', expect.any(AbortSignal), undefined);
     });
 
     it('renders nested absolute child directories after expanding them', async () => {
@@ -303,7 +303,7 @@ describe('useLazyDirectoryTree', () => {
 
         await waitForNodePaths(api, ['/', '/Users', '/Users/leeroy']);
 
-        expect(loadDirectoryEntries).toHaveBeenCalledWith('/Users', expect.any(AbortSignal));
+        expect(loadDirectoryEntries).toHaveBeenCalledWith('/Users', expect.any(AbortSignal), undefined);
     });
 
     it('adds an informational node when a directory result is truncated', async () => {

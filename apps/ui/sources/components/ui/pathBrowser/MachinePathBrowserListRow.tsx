@@ -6,7 +6,7 @@ import { resolveHappierTreeRowIndentPx } from '@happier-dev/plugin-ui/presentati
 import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import type { FilesystemBrowserNode } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
-import type { FilesystemTreeKeyboardNode, FilesystemTreeRowProps } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
+import { useFilesystemTreeRowActive, type FilesystemTreeActivePath, type FilesystemTreeKeyboardNode, type FilesystemTreeRowProps } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
 import { t } from '@/text';
 
 import { getPathBrowserRowTestId, getPathBrowserToggleTestId } from './pathBrowserTestIds';
@@ -16,16 +16,16 @@ type MachinePathBrowserListRowProps = Readonly<{
     node: FilesystemBrowserNode;
     showDivider: boolean;
     selected: boolean;
-    selectionMode: 'directory' | 'file';
-    interaction: 'confirm' | 'immediate';
     enableContextMenu: boolean;
     enableRowLongPressContextMenu: boolean;
     onToggleDirectory: (path: string) => void;
     onOpenContextMenu: (directoryPath: string, anchorNode: View | null) => void;
+    onContextMenuAnchorChange?: (path: string, anchorNode: View | null) => void;
     onRetryDirectory: (directoryPath: string) => void;
-    onSelectPath: (path: string) => void;
-    onPickPathImmediately: (path: string) => void;
-    getTreeRowProps: (node: FilesystemTreeKeyboardNode, onDisclosure?: () => void) => FilesystemTreeRowProps;
+    onActivatePath: (path: string) => void;
+    getTreeRowProps: (node: FilesystemTreeKeyboardNode, active: boolean, onDisclosure?: () => void) => FilesystemTreeRowProps;
+    /** The tree's tab stop, read per row (`useFilesystemTreeKeyboard().activePath`). */
+    treeActivePath: FilesystemTreeActivePath;
 }>;
 
 function stopToggleEventPropagation(event: unknown): void {
@@ -48,10 +48,17 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
     // The context-menu anchor sits where the shared tree row starts this node's content.
     const rowPaddingLeft = resolveHappierTreeRowIndentPx(props.node.depth);
     const contextMenuRowAnchorRef = React.useRef<View | null>(null);
+    const { onContextMenuAnchorChange } = props;
+    const contextMenuPath = props.node.path;
+    const setContextMenuRowAnchor = React.useCallback((anchor: View | null) => {
+        contextMenuRowAnchorRef.current = anchor;
+        onContextMenuAnchorChange?.(contextMenuPath, anchor);
+    }, [contextMenuPath, onContextMenuAnchorChange]);
     const { getTreeRowProps, node, onToggleDirectory } = props;
-    const treeItemProps = React.useMemo(() => getTreeRowProps(node,
+    const active = useFilesystemTreeRowActive(props.treeActivePath, node.path);
+    const treeItemProps = React.useMemo(() => getTreeRowProps(node, active,
         node.type === 'directory' ? () => onToggleDirectory(node.path) : undefined),
-    [getTreeRowProps, node, onToggleDirectory]);
+    [getTreeRowProps, node, active, onToggleDirectory]);
 
     const handleTogglePress = React.useCallback(() => {
         props.onToggleDirectory(props.node.path);
@@ -123,32 +130,11 @@ export const MachinePathBrowserListRow = React.memo(function MachinePathBrowserL
                     props.onRetryDirectory(errorNode.parentDirectoryPath);
                 }
             }}
-            onPress={() => {
-                if (props.node.type === 'directory') {
-                    if (props.selectionMode === 'file') {
-                        props.onToggleDirectory(props.node.path);
-                        return;
-                    }
-                    if (props.interaction === 'immediate') {
-                        props.onPickPathImmediately(props.node.path);
-                        return;
-                    }
-                    props.onSelectPath(props.node.path);
-                    return;
-                }
-                if (props.node.type === 'file') {
-                    if (props.selectionMode !== 'file') return;
-                    if (props.interaction === 'immediate') {
-                        props.onPickPathImmediately(props.node.path);
-                        return;
-                    }
-                    props.onSelectPath(props.node.path);
-                }
-            }}
+            onPress={() => props.onActivatePath(props.node.path)}
             wrapContent={({ content }) => (
                 <View collapsable={false}>
                     <View
-                        ref={contextMenuRowAnchorRef}
+                        ref={setContextMenuRowAnchor}
                         collapsable={false}
                         pointerEvents="none"
                         style={{

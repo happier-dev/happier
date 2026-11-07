@@ -1,6 +1,6 @@
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Modal, type CustomModalInjectedProps } from '@/modal';
@@ -42,8 +42,14 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useMachinePathBrowserCommands } from './useMachinePathBrowserCommands';
 
 export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
+    currentUiContextCommandScope?: string;
+    callerContext?: ActionExecutorContext;
     machineId: string;
     serverId?: string | null;
     title?: string;
@@ -54,6 +60,8 @@ export type MachinePathBrowserModalProps = CustomModalInjectedProps & Readonly<{
 }>;
 
 export type MachinePathBrowserViewProps = Readonly<{
+    currentUiContextCommandScope?: string;
+    callerContext?: ActionExecutorContext;
     machineId: string;
     serverId?: string | null;
     /**
@@ -275,6 +283,7 @@ function toRootEntries(machineId: string, serverId?: string | null) {
 
 export function MachinePathBrowserView(props: MachinePathBrowserViewProps): React.ReactElement {
     const { theme } = useUnistyles();
+    const CommandBridge = useCurrentUiContextCommandBridge();
     const folderCaller = React.useMemo(() => new AbortController(), [props.machineId, props.serverId]);
     const browserListRef = React.useRef<VirtualizedListRef | null>(null);
     const lastScrolledSelectionRef = React.useRef<string | null>(null);
@@ -283,8 +292,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const usesRootsListing = rootDirectoryPath === '';
     const [searchQuery, setSearchQuery] = React.useState('');
     const [showHidden, setShowHidden] = React.useState(true);
-    const [treeReloadNonce, setTreeReloadNonce] = React.useState(0);
-    const [deepSearchReloadNonce, setDeepSearchReloadNonce] = React.useState(0);
+    const [treeRead, setTreeRead] = React.useState(() => ({ nonce: 0, callerContext: props.callerContext }));
+    const [queryRead, setQueryRead] = React.useState(() => ({ nonce: 0, callerContext: props.callerContext }));
     const initialPath = React.useMemo(() => normalizeAbsolutePath(props.initialPath ?? null), [props.initialPath]);
     const includeFiles = props.includeFiles === true || props.selectionMode === 'file';
     const selectionMode = props.selectionMode ?? 'directory';
@@ -313,6 +322,11 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         return () => folderCaller.abort();
     }, [folderCaller]);
     const contextMenuAnchorRef = React.useRef<View | null>(null);
+    const contextMenuAnchorsByPath = React.useRef(new Map<string, View>());
+    const trackContextMenuAnchor = React.useCallback((path: string, anchor: View | null) => {
+        if (anchor) contextMenuAnchorsByPath.current.set(path, anchor);
+        else contextMenuAnchorsByPath.current.delete(path);
+    }, []);
     const [contextMenuDirectoryPath, setContextMenuDirectoryPath] = React.useState<string | null>(null);
     const inlineLayoutStyle = React.useMemo(() => {
         const maxHeight = typeof props.maxHeight === 'number' && Number.isFinite(props.maxHeight)
@@ -363,9 +377,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         });
     }, [includeFiles, props.machineId, props.serverId, usesRootsListing]);
 
-    const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal): Promise<LazyDirectoryTreeLoadResult> => {
+    const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
         if (usesRootsListing && directoryPath === '') {
-            const result = await listMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId, signal });
+            const result = await listMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId, signal, callerContext });
             if (!result.ok) return result;
             return {
                 ok: true,
@@ -383,6 +397,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             includeFiles,
             serverId: props.serverId,
             signal,
+            callerContext,
         });
         if (!result.ok) return result;
         return {
@@ -399,9 +414,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         };
     }, [includeFiles, props.machineId, props.serverId, usesRootsListing]);
 
-    const warmDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal): Promise<LazyDirectoryTreeLoadResult> => {
+    const warmDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, callerContext?: ActionExecutorContext): Promise<LazyDirectoryTreeLoadResult> => {
         if (usesRootsListing && directoryPath === '') {
-            const result = await warmMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId, signal });
+            const result = await warmMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId, signal, callerContext });
             if (!result.ok) return result;
             return {
                 ok: true,
@@ -419,6 +434,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             includeFiles,
             serverId: props.serverId,
             signal,
+            callerContext,
         });
         if (!result.ok) return result;
         return {
@@ -442,13 +458,14 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         retryRoot,
         retryDirectory,
         toggleDirectory,
-    } = useLazyDirectoryTree({
+    } = useLazyDirectoryTree<ActionExecutorContext>({
         scopeKey: `${props.machineId}:${props.serverId ?? ''}:${includeFiles ? 'all' : 'dirs'}:${rootDirectoryPath}`,
         enabled: true,
         rootDirectoryPath: usesRootsListing ? '' : rootDirectoryPath,
         expandedPaths,
         onExpandedPathsChange: setExpandedPaths,
-        reloadToken: treeReloadNonce,
+        reloadToken: treeRead.nonce,
+        loadContext: treeRead.callerContext,
         getCachedEntries,
         getCachedDirectoryMetadata,
         loadDirectoryEntries,
@@ -505,7 +522,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         enabled: deepSearchEnabled && deepSearchAccountLifetime?.isCurrent() === true, mode: 'glob',
         accountLifetime: deepSearchAccountLifetime ?? undefined,
         includeHidden: showHidden, resultType: selectionMode === 'file' ? 'file' : 'folder',
-        reloadToken: deepSearchReloadNonce,
+        reloadToken: queryRead.nonce,
+        callerContext: queryRead.callerContext,
     });
     const deepSearchLoading = deepSearch.isSearching;
     const deepSearchError = deepSearch.error
@@ -595,14 +613,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         if (typedTarget && typedTargetPickable) setSelectedPath(typedTarget);
     }, [typedTarget, typedTargetPickable]);
 
-
-    const refresh = React.useCallback(() => {
+    const refresh = React.useCallback((callerContext?: ActionExecutorContext) => {
         clearCachedMachineFileBrowserRoots({ machineId: props.machineId, serverId: props.serverId });
         clearCachedMachineFileBrowserEntries({ machineId: props.machineId, serverId: props.serverId });
-        setTreeReloadNonce((n) => n + 1);
-        setDeepSearchReloadNonce((n) => n + 1);
-        void retryRoot();
-    }, [props.machineId, props.serverId, retryRoot]);
+        setTreeRead(previous => ({ nonce: previous.nonce + 1, callerContext }));
+        setQueryRead(previous => ({ nonce: previous.nonce + 1, callerContext }));
+    }, [props.machineId, props.serverId]);
 
     const collapseAll = React.useCallback(() => {
         setExpandedPaths([]);
@@ -753,8 +769,9 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         props.onPickPath(path);
     }, [props.onPickPath]);
 
-    const toggleDirectoryPath = React.useCallback((path: string) => {
-        void toggleDirectory(path);
+    const toggleDirectoryPath = React.useCallback((path: string, callerContext?: ActionExecutorContext) => {
+        setTreeRead(previous => ({ ...previous, callerContext }));
+        void toggleDirectory(path, callerContext);
     }, [toggleDirectory]);
 
     const revealTreeIndex = React.useCallback((index: number) => {
@@ -762,12 +779,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     }, []);
     const treeKeyboard = useFilesystemTreeKeyboard(nodes, revealTreeIndex);
 
-    const browserRetryRoot = React.useCallback(() => {
+    const browserRetryRoot = React.useCallback((callerContext?: ActionExecutorContext) => {
         if (deepSearchEnabled) {
-            setDeepSearchReloadNonce((n) => n + 1);
+            setQueryRead(previous => ({ nonce: previous.nonce + 1, callerContext }));
             return;
         }
-        return retryRoot();
+        return retryRoot(callerContext);
     }, [deepSearchEnabled, retryRoot]);
 
     const browserStyle = React.useMemo(() => ({ flex: 1, minHeight: 0 }), []);
@@ -775,47 +792,19 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         () => ({ paddingVertical: variant === 'modal' ? 16 : 0 }),
         [variant],
     );
-    const renderBrowserRow = React.useCallback(({ node, showDivider }: { node: FilesystemBrowserNode; showDivider: boolean }) => (
-        <MachinePathBrowserListRow
-            node={node}
-            showDivider={showDivider}
-            selected={
-                selectedPath === node.path
-                    && (selectionMode === 'file' ? node.type === 'file' : node.type === 'directory')
-            }
-            selectionMode={selectionMode}
-            interaction={interaction}
-            enableContextMenu={enableContextMenu}
-            enableRowLongPressContextMenu={enableRowLongPressContextMenu}
-            onToggleDirectory={toggleDirectoryPath}
-            onOpenContextMenu={openContextMenu}
-            onRetryDirectory={retryDirectory}
-            onSelectPath={selectPath}
-            onPickPathImmediately={pickPathImmediately}
-            getTreeRowProps={treeKeyboard.getRowProps}
-        />
-    ), [
-        enableContextMenu,
-        enableRowLongPressContextMenu,
-        interaction,
-        openContextMenu,
-        pickPathImmediately,
-        retryDirectory,
-        selectPath,
-        selectedPath,
-        selectionMode,
-        toggleDirectoryPath,
-        treeKeyboard.getRowProps,
-    ]);
-
-    const createFolderInDirectory = React.useCallback(async (directoryPath: string) => {
+    const createFolderInDirectory = React.useCallback(async (directoryPath: string, callerContext?: ActionExecutorContext) => {
         if (!enableContextMenu) return;
         if (!directoryPath) return;
         if (isCreatingFolder) return;
+        let confirmingContext = callerContext;
         const raw = await Modal.prompt(
             t('files.createFolderPromptTitle'),
             directoryPath,
-            { placeholder: t('promptLibrary.folderPlaceholder') },
+            { placeholder: t('promptLibrary.folderPlaceholder'),
+                ...(props.currentUiContextCommandScope === undefined ? {} : {
+                    commandBridge: CommandBridge,
+                    onConfirmContext: (context: ActionExecutorContext) => { confirmingContext = context; },
+                }) },
         );
         if (typeof raw !== 'string') return;
         if (folderCaller.signal.aborted) return;
@@ -830,17 +819,18 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 machineId: props.machineId,
                 serverId: props.serverId,
                 rootPath: directoryPath,
-            }, nextDirectoryPath, { signal: folderCaller.signal });
+            }, nextDirectoryPath, { signal: folderCaller.signal, callerContext: confirmingContext });
             if (folderCaller.signal.aborted) return;
             if (!res.success) {
-                Modal.alert(t('common.error'), res.error || t('files.createFolderFailed'));
+                Modal.alert(t('common.error'), res.error || t('files.createFolderFailed'), undefined,
+                    props.currentUiContextCommandScope === undefined ? undefined : { commandBridge: CommandBridge });
                 return;
             }
 
             setExpandedPaths((prev) => prev.includes(directoryPath) ? prev : [...prev, directoryPath]);
             clearCachedMachineFileBrowserEntries({ machineId: props.machineId, directoryPath, serverId: props.serverId });
             clearCachedMachineFileBrowserEntries({ machineId: props.machineId, directoryPath: nextDirectoryPath, serverId: props.serverId });
-            void retryDirectory(directoryPath);
+            void retryDirectory(directoryPath, confirmingContext);
 
             shouldAutoSelectInitialPathRef.current = false;
             shouldAutoScrollInitialSelectionRef.current = true;
@@ -849,23 +839,75 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             closeContextMenu();
         } catch (error) {
             if (folderCaller.signal.aborted) return;
-            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('files.createFolderFailed'));
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('files.createFolderFailed'), undefined,
+                props.currentUiContextCommandScope === undefined ? undefined : { commandBridge: CommandBridge });
         } finally {
             if (!folderCaller.signal.aborted) setIsCreatingFolder(false);
         }
-    }, [closeContextMenu, enableContextMenu, folderCaller, isCreatingFolder, props.machineId, props.serverId, retryDirectory]);
+    }, [closeContextMenu, enableContextMenu, folderCaller, isCreatingFolder, props.machineId, props.serverId, retryDirectory,
+        props.currentUiContextCommandScope, CommandBridge]);
+
+    const effectiveError = deepSearchEnabled ? deepSearchError : rootError;
+    const confirmDisabled = !selectedPath || Boolean(effectiveError);
+    const canCreateFolder = Boolean(selectedDirectoryPath) && !isCreatingFolder && enableContextMenu;
+    const canCollapse = expandedPaths.length > 0;
+    const toggleHidden = React.useCallback((callerContext?: ActionExecutorContext) => {
+        setQueryRead(previous => ({ ...previous, callerContext }));
+        setShowHidden(previous => !previous);
+    }, []);
+    const search = React.useCallback((value: string, callerContext?: ActionExecutorContext) => {
+        setTreeRead(previous => ({ ...previous, callerContext }));
+        setQueryRead(previous => ({ ...previous, callerContext }));
+        setSearchQuery(value);
+    }, []);
+    const invokeBrowserCommand = useMachinePathBrowserCommands({
+        scope: props.currentUiContextCommandScope, nodes, selectedPath, searchQuery, showHidden, selectionMode, interaction, modal: useCardChrome,
+        canConfirm: interaction === 'confirm' && !confirmDisabled, canCreateFolder, canClearSearch,
+        canCollapse, contextMenuDirectoryPath,
+        rootError: deepSearchEnabled ? deepSearch.error?.errorCode ?? null : rootError,
+        searchError: deepSearchEnabled && nodes.length > 0 && !deepSearchLoading && Boolean(deepSearchError),
+        onSelectPath: selectPath, onPickPathImmediately: pickPathImmediately, onToggleDirectory: toggleDirectoryPath,
+        onOpenContextMenu: path => openContextMenu(path, props.currentUiContextCommandScope === undefined
+            ? contextMenuAnchorRef.current : contextMenuAnchorsByPath.current.get(path) ?? null),
+        onCloseContextMenu: closeContextMenu,
+        onSearch: search, onToggleHidden: toggleHidden, onRefresh: refresh, onCollapseAll: collapseAll,
+        onConfirm: handleConfirm, onClose: props.onRequestClose ? handleClose : undefined,
+        onCreateFolder: context => { if (selectedDirectoryPath) void createFolderInDirectory(selectedDirectoryPath, context); },
+        onContextCreateFolder: context => {
+            const directoryPath = contextMenuDirectoryPath;
+            if (!directoryPath) return;
+            closeContextMenu();
+            void createFolderInDirectory(directoryPath, context);
+        },
+        onRetryRoot: browserRetryRoot, onRetryDirectory: retryDirectory, onRetrySearch: context => {
+            setQueryRead(previous => ({ ...previous, callerContext: context }));
+            deepSearch.retry();
+        },
+    });
+    const activatePath = React.useCallback((path: string) => invokeBrowserCommand('activate', { path }), [invokeBrowserCommand]);
+    const disclosePath = React.useCallback((path: string) => invokeBrowserCommand('disclosure', { path }), [invokeBrowserCommand]);
+    const retryPath = React.useCallback((path: string) => invokeBrowserCommand('retryDirectory', { path }), [invokeBrowserCommand]);
+    const requestContextMenu = React.useCallback((path: string, anchor: View | null) => {
+        contextMenuAnchorRef.current = anchor;
+        invokeBrowserCommand('contextMenu', { path });
+    }, [invokeBrowserCommand]);
+    const renderBrowserRow = React.useCallback(({ node, showDivider }: { node: FilesystemBrowserNode; showDivider: boolean }) => (
+        <MachinePathBrowserListRow node={node} showDivider={showDivider}
+            selected={selectedPath === node.path && node.type === selectionMode}
+            enableContextMenu={enableContextMenu} enableRowLongPressContextMenu={enableRowLongPressContextMenu}
+            onToggleDirectory={disclosePath} onOpenContextMenu={requestContextMenu} onRetryDirectory={retryPath}
+            onContextMenuAnchorChange={props.currentUiContextCommandScope === undefined ? undefined : trackContextMenuAnchor}
+            onActivatePath={activatePath} getTreeRowProps={treeKeyboard.getRowProps} treeActivePath={treeKeyboard.activePath} />
+    ), [selectedPath, selectionMode, enableContextMenu, enableRowLongPressContextMenu, disclosePath, requestContextMenu,
+        retryPath, activatePath, treeKeyboard.getRowProps, treeKeyboard.activePath, props.currentUiContextCommandScope, trackContextMenuAnchor]);
 
     const chromeActions = React.useMemo(() => {
         if (!useCardChrome) return null;
         return (
-            <Pressable
+            <HappierPressable
                 testID={PATH_BROWSER_CREATE_FOLDER_TEST_ID}
-                onPress={() => {
-                    if (!selectedDirectoryPath) return;
-                    void createFolderInDirectory(selectedDirectoryPath);
-                }}
-                disabled={!selectedDirectoryPath || isCreatingFolder}
-                hitSlop={10}
+                onPress={() => invokeBrowserCommand('createFolder')}
+                disabled={!canCreateFolder}
                 style={({ pressed }) => ([
                     styles.headerActionButton,
                     { opacity: (!selectedDirectoryPath || isCreatingFolder) ? 0.4 : (pressed ? motionTokens.press.opacity : 1) },
@@ -874,41 +916,35 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 accessibilityLabel={t('files.createFolderA11y')}
             >
                 <Icon name="folder" size={16} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            </HappierPressable>
         );
-    }, [createFolderInDirectory, isCreatingFolder, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
+    }, [invokeBrowserCommand, canCreateFolder, isCreatingFolder, selectedDirectoryPath, styles.headerActionButton, theme.colors.chrome.header.foreground, useCardChrome]);
 
     const chromeFooter = React.useMemo(() => {
         if (!useCardChrome || interaction !== 'confirm') return null;
-        const effectiveError = deepSearchEnabled ? deepSearchError : rootError;
-        const confirmDisabled = !selectedPath || Boolean(effectiveError);
         return (
             <View style={styles.footer}>
                 <Text numberOfLines={1} style={styles.selectionText}>
                     {selectedPathLabel ?? ''}
                 </Text>
-                <RoundButton title={t('common.cancel')} size="normal" display="inverted" onPress={handleClose} />
+                <RoundButton title={t('common.cancel')} size="normal" display="inverted" onPress={() => invokeBrowserCommand('close')} />
                 <RoundButton
                     testID={PATH_BROWSER_CONFIRM_TEST_ID}
                     title={t('common.use')}
                     size="normal"
-                    onPress={handleConfirm}
+                    onPress={() => invokeBrowserCommand('confirm')}
                     disabled={confirmDisabled}
                 />
             </View>
         );
     }, [
-        deepSearchEnabled,
-        deepSearchError,
-        handleClose,
-        handleConfirm,
         interaction,
-        rootError,
-        selectedPath,
         selectedPathLabel,
         styles.footer,
         styles.selectionText,
         useCardChrome,
+        invokeBrowserCommand,
+        confirmDisabled,
     ]);
 
     const chromeSetter = useCardChrome ? props.setChrome : undefined;
@@ -960,7 +996,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 menuIcon: 'funnel-simple',
                 accessibilityLabel: t('files.toolbar.hiddenFiles'),
                 selected: filterSelected,
-                onPress: () => setShowHidden((prev) => !prev),
+                onPress: () => invokeBrowserCommand('hidden'),
             },
             {
                 id: 'path-browser-refresh',
@@ -969,7 +1005,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 icon: <Icon name="arrows-clockwise" size={16} color={theme.colors.text.secondary} />,
                 menuIcon: 'arrow-clockwise',
                 accessibilityLabel: t('common.refresh'),
-                onPress: refresh,
+                onPress: () => invokeBrowserCommand('refresh'),
             },
         ];
 
@@ -981,12 +1017,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 icon: <Icon name="x" size={16} color={theme.colors.text.secondary} />,
                 menuIcon: 'x',
                 accessibilityLabel: t('files.clearSearchA11y'),
-                onPress: () => setSearchQuery(''),
+                onPress: () => invokeBrowserCommand('clearSearch'),
             });
         }
 
         return actions;
-    }, [canClearSearch, filterSelected, refresh, theme.colors.text.link, theme.colors.text.secondary]);
+    }, [canClearSearch, filterSelected, invokeBrowserCommand, theme.colors.text.link, theme.colors.text.secondary]);
 
     const buildOverflowItems = React.useCallback((hiddenActions: readonly FilesystemBrowserToolbarAction[]) => {
         const items: ItemAction[] = [
@@ -994,18 +1030,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 id: 'path-browser-collapse-all',
                 title: t('files.repositoryCollapseAll'),
                 icon: 'arrows-in',
-                disabled: expandedPaths.length === 0,
-                onPress: collapseAll,
+                disabled: !canCollapse,
+                onPress: () => invokeBrowserCommand('collapseAll'),
             },
             {
                 id: 'path-browser-create-folder',
                 title: t('files.createFolderA11y'),
                 icon: 'folder',
-                disabled: !selectedDirectoryPath || isCreatingFolder,
-                onPress: () => {
-                    if (!selectedDirectoryPath) return;
-                    void createFolderInDirectory(selectedDirectoryPath);
-                },
+                disabled: !canCreateFolder,
+                onPress: () => invokeBrowserCommand('createFolder'),
             },
         ];
 
@@ -1014,7 +1047,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 id: 'path-browser-close',
                 title: t('common.close'),
                 icon: 'x',
-                onPress: () => props.onRequestClose?.(),
+                onPress: () => invokeBrowserCommand('close'),
             });
         }
 
@@ -1029,7 +1062,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         }
 
         return items;
-    }, [collapseAll, createFolderInDirectory, expandedPaths.length, isCreatingFolder, props.onRequestClose, selectedDirectoryPath]);
+    }, [invokeBrowserCommand, canCollapse, canCreateFolder, props.onRequestClose]);
 
         return (
             <View
@@ -1040,11 +1073,12 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             >
             <View style={styles.body}>
                 <FilesystemBrowserToolbarChrome
+                    currentUiContextCommandScope={props.currentUiContextCommandScope}
                     testID="path-browser-toolbar"
                     searchTestID="path-browser-search"
                     searchPlaceholder={t('files.searchPlaceholder')}
                     searchValue={searchQuery}
-                    onSearchValueChange={setSearchQuery}
+                    onSearchValueChange={value => invokeBrowserCommand('search', { value })}
                     actions={toolbarActions}
                     buildOverflowItems={buildOverflowItems}
                     overflowTriggerTestID="path-browser-more"
@@ -1053,18 +1087,17 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 {deepSearchEnabled && nodes.length > 0 ? (
                     deepSearchLoading ? <SurfaceStateCard size="line" kind="loading" title={t('files.searching')} />
                         : deepSearchError ? <SurfaceStateCard testID="path-browser-search-error" size="line" kind="unavailable"
-                            title={deepSearchError} action={{ label: t('common.retry'), onPress: deepSearch.retry }} />
+                            title={deepSearchError} action={{ label: t('common.retry'), onPress: () => invokeBrowserCommand('retrySearch') }} />
                         : deepSearch.hasMore ? <SurfaceStateCard testID="path-browser-search-incomplete" size="line" kind="warning"
                             title={t('universalSearch.moreResultsAvailable')} /> : null
                 ) : null}
                 <FilesystemBrowser
                     nodes={nodes}
                     treeRole
-                    extraData={treeKeyboard.activePath}
                     rootLoading={deepSearchEnabled ? deepSearchLoading : rootLoading}
                     rootError={deepSearchEnabled ? deepSearch.error?.errorCode ?? null : rootError}
                     rootErrorReason={deepSearchEnabled ? deepSearchError : undefined}
-                    retryRoot={browserRetryRoot}
+                    retryRoot={() => invokeBrowserCommand('retryRoot')}
                     loadingLabel={t('common.loading')}
                     loadingLabelCentered={t('common.loading')}
                     inlineRetryLabel={t('common.retry')}
@@ -1079,7 +1112,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                 <DropdownMenu
                     open={enableContextMenu && contextMenuDirectoryPath != null}
                     onOpenChange={(next) => {
-                        if (!next) closeContextMenu();
+                        if (!next) invokeBrowserCommand('closeContextMenu');
                     }}
                     trigger={null}
                     popoverAnchorRef={contextMenuAnchorRef as React.RefObject<any>}
@@ -1092,17 +1125,15 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     rowKind="item"
                     itemRowProps={{ density: 'compact' }}
                     allowEmptySelection={true}
+                    closeOnSelect={false}
                     items={[{
                         id: 'create-folder',
                         title: t('files.createFolderA11y'),
                         icon: <Icon name="folder" size={16} color={theme.colors.text.primary} />,
                     }]}
                     onSelect={(itemId) => {
-                        const directoryPath = contextMenuDirectoryPath;
-                        if (!directoryPath) return;
                         if (itemId !== 'create-folder') return;
-                        closeContextMenu();
-                        void createFolderInDirectory(directoryPath);
+                        invokeBrowserCommand('contextCreateFolder');
                     }}
                 />
             </View>
@@ -1124,6 +1155,8 @@ export function MachinePathBrowserModal(props: MachinePathBrowserModalProps): Re
 
     return (
         <MachinePathBrowserView
+            currentUiContextCommandScope={props.currentUiContextCommandScope}
+            callerContext={props.callerContext}
             machineId={props.machineId}
             serverId={props.serverId}
             title={props.title}

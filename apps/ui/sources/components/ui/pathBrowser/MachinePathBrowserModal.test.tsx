@@ -3,13 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { FilesystemCreateDirectoryInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { FilesystemCreateDirectoryInputSchema, FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import {
     DaemonFilesystemListDirectoryRequestSchema,
+    type DaemonFilesystemListRootsResponse} from '@happier-dev/protocol/machines/fileBrowser';
+import {
     DaemonWorkspaceFileListRequestSchema,
-    type DaemonFilesystemListRootsResponse,
     type DaemonWorkspaceFileListResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/workspaceFiles';
 import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -30,6 +32,7 @@ import {
 } from './pathBrowserTestIds';
 import { flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { CustomModalChromeConfig, CustomModalInjectedProps } from '@/modal/types';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -80,7 +83,7 @@ const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(param
     ok: true;
     entries: Array<{ name: string; path: string; type: 'directory' | 'file' }>;
     truncated: boolean;
-} | { ok: false; error: string }>>(async (params: { directoryPath: string }) => {
+} | { ok: false; error: string; errorCode?: string }>>(async (params: { directoryPath: string }) => {
     if (params.directoryPath === '/') {
         return {
             ok: true as const,
@@ -194,13 +197,13 @@ vi.mock('@happier-dev/plugin-ui/presentation', async (importOriginal) => {
     };
 });
 
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
-    spies: {
-        prompt: (...args: any[]) => modalPromptMock(...args),
-        alert: (...args: any[]) => modalAlertMock(...args),
-        confirm: vi.fn(async () => false),
-    },
-}).module);
+// Radix's DOM focus/listener boundary has no real DOM in the mounted renderer.
+vi.mock('@/utils/web/radixCjs', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
+    const Inline = (props: React.PropsWithChildren) => props.children;
+    return { ...actual, requireRadixDismissableLayer: () => ({ Root: Inline, Branch: Inline }),
+        requireRadixFocusScope: () => ({ Root: Inline }) };
+});
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -253,6 +256,7 @@ const machineRequests = installSessionActionRpcBoundary(async (request, context)
 // Present-user folder creation is an external Account Action (one admitted filesystem owner): the
 // Home mints its authorization and the daemon executes the decoded input. Only that daemon reply is replaced.
 const folderActionRequests: Array<Readonly<{ machineId: string; input: unknown }>> = [];
+const readActionRequests: Array<Readonly<{ actionId: string; input: unknown; requestId?: string; invocation: ExternalActionRequesterInvocationV1 }>> = [];
 
 const defaultDirectoryEntries = listMachineFileBrowserDirectoryEntriesMock.getMockImplementation()!;
 const defaultRoots = listMachineFileBrowserRootsMock.getMockImplementation()!;
@@ -270,7 +274,8 @@ async function setFolderActionPolicy(mode: 'off' | 'ask' | 'allowed') {
         v: 1,
         actions: mode === 'off' ? { [actionId]: { disabledSurfaces: ['ui'] } }
             : mode === 'ask' ? { [actionId]: { approvalRequiredSurfaces: ['ui'] } } : {},
-        approvalWaivedSurfaces: mode === 'allowed' ? { [actionId]: ['ui'] } : {},
+        approvalWaivedSurfaces: { ...Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(id => [id, ['ui', 'agent']])),
+            ...(mode === 'allowed' ? { [actionId]: ['ui'] } : {}) },
     }) };
     const version = (storage.getState().settingsVersion ?? 0) + 1;
     storage.getState().applySettingsForScope(scope, settings, version);
@@ -293,6 +298,33 @@ async function addPathHome(options: Readonly<{ serverUrl: string; name: string; 
                 { serverId: id, accountId: 'target-account', signal: context.signal ?? undefined });
         },
     });
+    for (const actionId of Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1)) {
+        const readAction = await createExternalActionAccountHttpBoundary({ serverUrl: options.serverUrl,
+            serverIdentityId: options.serverIdentityId, accountId: 'target-account', machineId: machine.id,
+            actionId, tokenEpoch: 0, requesterInvocation: 'required',
+            execute: async (input, context) => {
+                readActionRequests.push({ actionId, input, requestId: context.requestId, invocation: context.invocation });
+                if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots) {
+                    return listMachineFileBrowserRootsMock({ machineId: context.target.machineId, serverId: id });
+                }
+                if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles) {
+                    return machineWorkspaceFileListMock(context.target.machineId, DaemonWorkspaceFileListRequestSchema.parse(input),
+                        { serverId: id, accountId: 'target-account', signal: context.signal });
+                }
+                const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
+                const response = await listMachineFileBrowserDirectoryEntriesMock({ directoryPath: payload.path,
+                    includeFiles: payload.includeFiles, machineId: context.target.machineId, serverId: id });
+                return response.ok ? { ...response, path: payload.path } : response;
+            },
+        });
+        for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
+            homes.answer(id, path, { select: async (_body, request) => {
+                const response = await readAction.handle(new URL(request.url), request.init);
+                if (!response) throw new Error('Unhandled browser read Action request');
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+    }
     const row = { ...createPlainMachineRowFixture({ id: machine.id, accountId: 'target-account' }),
         installationPublicKey: folderAction.machine.installationPublicKey,
         metadata: encodePlainMachineStoredContent(machine.metadata) };
@@ -313,13 +345,18 @@ async function addPathHome(options: Readonly<{ serverUrl: string; name: string; 
 // Load the real component after the boundary factories are initialized, during
 // collection rather than inside a fake-timer test's execution budget.
 await loadSyncSingletonForTests();
+const { Modal: actualModal } = await import('@/modal/ModalManager');
+const realModalPrompt = actualModal.prompt.bind(actualModal);
+const realModalAlert = actualModal.alert.bind(actualModal);
+let restoreModalBoundary = () => {};
 const { MachinePathBrowserModal, MachinePathBrowserView } = await import('./MachinePathBrowserModal');
 
 describe('MachinePathBrowserModal', () => {
     afterEach(async () => {
         vi.useRealTimers();
-        platformOS.current = 'web';
         standardCleanup();
+        restoreModalBoundary();
+        restoreModalBoundary = () => {};
         try {
             await connection?.dispose(); connection = undefined;
             await homes.reset();
@@ -327,9 +364,12 @@ describe('MachinePathBrowserModal', () => {
         } finally {
             portal?.restore(); portal = undefined;
             browser?.restore(); browser = undefined;
+            platformOS.current = 'web';
         }
     });
-    beforeEach(async () => {
+    beforeEach(async (context) => {
+        // Device credentials must be written on the platform the mounted owner reads.
+        platformOS.current = context.task.name.includes('native') ? 'ios' : 'web';
         browser = await installBrowserRuntimeForTests({ url: 'https://path-browser-active.example.test' });
         portal = installReactDomPortalBoundaryForTests();
         await homes.reset();
@@ -355,9 +395,15 @@ describe('MachinePathBrowserModal', () => {
         machineCreateDirectoryMock.mockClear();
         machineRequests.length = 0;
         folderActionRequests.length = 0;
+        readActionRequests.length = 0;
         machineWorkspaceFileListMock.mockReset().mockResolvedValue({ ok: true, paths: [], truncated: false });
         modalPromptMock.mockReset().mockResolvedValue(null);
-        modalAlertMock.mockClear();
+        modalAlertMock.mockReset();
+        // Legacy cases replace only dialog presentation; the composed case delegates these to the real host.
+        const promptSpy = vi.spyOn(actualModal, 'prompt').mockImplementation((...args) => modalPromptMock(...args));
+        const alertSpy = vi.spyOn(actualModal, 'alert').mockImplementation((...args) => modalAlertMock(...args));
+        const confirmSpy = vi.spyOn(actualModal, 'confirm').mockResolvedValue(false);
+        restoreModalBoundary = () => { promptSpy.mockRestore(); alertSpy.mockRestore(); confirmSpy.mockRestore(); };
         itemRenderCounts.clear();
         await setFolderActionPolicy('allowed');
     });
@@ -423,6 +469,210 @@ describe('MachinePathBrowserModal', () => {
         ]));
         expect(onResolve).toHaveBeenCalledWith('/Users');
         expect(onClose).toHaveBeenCalled();
+    });
+
+    it('keeps a native agent directory retry behind browseDirectory Action policy', async () => {
+        platformOS.current = 'ios';
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const scope = await setFolderActionPolicy('allowed');
+        const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { [FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory]: { disabledSurfaces: ['agent'] } },
+            approvalWaivedSurfaces: { [FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory]: ['ui'],
+                [ACTION_ID_FAMILIES_V1.current_ui_context[1]]: ['ui'] },
+        }) };
+        const version = (storage.getState().settingsVersion ?? 0) + 1;
+        storage.getState().applySettingsForScope(scope, settings, version);
+        homes.answer(scope.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version } });
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({ ok: false, error: 'MACHINE_RPC_FAILED', errorCode: 'MACHINE_RPC_FAILED' });
+        const screen = await renderMountedCurrentUiContext(<MachinePathBrowserView machineId="machine-1"
+            rootDirectoryPath="/" currentUiContextCommandScope="test.read-browser" onPickPath={() => {}} />,
+        { withModalProvider: true });
+        const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands ?? [];
+        const retry = () => commands().find(candidate => {
+            try { return JSON.parse(candidate.description ?? '{}').control === 'test.read-browser.retryRoot'; } catch { return false; }
+        });
+        await act(async () => { await vi.waitFor(() => expect(retry()).toBeTruthy()); });
+        const readsBeforeRetry = listMachineFileBrowserDirectoryEntriesMock.mock.calls.length;
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => {
+            await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: retry()!.id }, {
+                surface: 'agent', authority: 'account_automation', expectedAccountId: 'target-account',
+                actionRequestId: 'native-browser-read-retry',
+            });
+            await flushHookEffects();
+        });
+        await act(async () => { await vi.waitFor(() => {
+            const settledError = screen.findAll(node => node.props.diagnosticCode
+                && node.props.diagnosticCode !== 'MACHINE_RPC_FAILED');
+            expect(screen.findByTestId(getPathBrowserRowTestId('/Users')) ?? settledError[0]).toBeTruthy();
+        }); });
+        expect(screen.findByTestId(getPathBrowserRowTestId('/Users'))).toBeNull();
+        expect(screen.findAll(node => node.props.diagnosticCode === 'action_disabled').length).toBeGreaterThan(0);
+        expect(listMachineFileBrowserDirectoryEntriesMock.mock.calls.length).toBe(readsBeforeRetry);
+        await screen.pressByTestIdAsync('path-browser-refresh');
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/Users')),
+            JSON.stringify({ reads: readActionRequests, nativeRequests: machineRequests,
+                diagnostics: screen.findAll(node => Boolean(node.props.diagnosticCode)).map(node => node.props.diagnosticCode) }),
+        ).toBeTruthy()); });
+        expect(readActionRequests).toEqual(expect.arrayContaining([expect.objectContaining({
+            actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory,
+            invocation: expect.objectContaining({ surface: 'ui', authority: 'present_user' }),
+        })]));
+        expect(machineRequests).toEqual([]);
+    });
+
+    it('preserves the native opening agent through initial admitted directory reads', async () => {
+        platformOS.current = 'ios';
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const { openMachinePathBrowserModal } = await import('./openMachinePathBrowserModal');
+        const callerContext: ActionExecutorContext = { surface: 'agent', authority: 'account_automation',
+            expectedAccountId: 'target-account', actionRequestId: 'native-browser-agent-open' };
+        function OpenBrowser() {
+            const Bridge = useCurrentUiContextCommandBridge();
+            useCurrentUiContextLocalCommands([{ key: 'browse', title: 'Browse initial directory',
+                invoke: (_input, context) => { void openMachinePathBrowserModal({ machineId: 'machine-1', initialPath: '/Users',
+                    currentUiContextCommandScope: 'test.initial-browser', commandBridge: Bridge, callerContext: context }); },
+            }]);
+            return null;
+        }
+        const screen = await renderMountedCurrentUiContext(<OpenBrowser />, { withModalProvider: true });
+        const command = await vi.waitFor(() => {
+            const descriptor = readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands
+                .find(candidate => candidate.title === 'Browse initial directory');
+            expect(descriptor).toBeTruthy();
+            return descriptor!;
+        });
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command.id }, callerContext))
+            .toMatchObject({ ok: true }); });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/Users/leeroy'))).toBeTruthy()); });
+        const initialReads = readActionRequests.filter(request => request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory);
+        expect(initialReads.length).toBeGreaterThan(0);
+        expect(initialReads).toEqual(expect.arrayContaining([expect.objectContaining({ input: expect.objectContaining({ path: '/Users' }) })]));
+        expect(new Set(initialReads.map(request => request.requestId)).size).toBe(initialReads.length);
+        for (const request of readActionRequests) {
+            expect(request.invocation).toMatchObject({ surface: 'agent', authority: 'account_automation' });
+        }
+        expect(machineRequests).toEqual([]);
+    });
+
+    it('shares mounted browser selection, disclosure, filters and confirmation between UI and agent commands', async () => {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const confirmingContexts: ActionExecutorContext[] = [];
+        modalPromptMock.mockImplementation((...args: Parameters<typeof realModalPrompt>) => realModalPrompt(args[0], args[1], {
+            ...args[2],
+            onConfirmContext: context => {
+                confirmingContexts.push(context);
+                args[2]?.onConfirmContext?.(context);
+            },
+        }));
+        modalAlertMock.mockImplementation(realModalAlert);
+        const picked = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<ChromeHost>
+            <MachinePathBrowserModal machineId="machine-1" currentUiContextCommandScope="test.browser" onResolve={picked} onClose={() => {}} />
+        </ChromeHost>, { withModalProvider: true });
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        let agentInvocationNumber = 0;
+        // Agent ingress supplies its operation identity; the app mints one only for its own UI/voice/plugin origins.
+        const agentContext = (): ActionExecutorContext => ({ surface: 'agent', authority: 'account_automation',
+            expectedAccountId: 'target-account', actionRequestId: `browser-agent-${++agentInvocationNumber}` });
+        const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands ?? [];
+        const invoke = async (control: string, input?: { path?: string; value?: string; open?: boolean }) => {
+            const command = commands().find(candidate => {
+                try { return JSON.parse(candidate.description ?? '{}').control === `test.browser.${control}`; } catch { return false; }
+            });
+            expect(command, control).toBeTruthy();
+            let result: unknown;
+            await act(async () => { result = await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: command!.id, ...(input ? { input } : {}) }, agentContext()); });
+            return result;
+        };
+        expect(await invoke('confirm')).toMatchObject({ ok: false });
+        expect(picked).not.toHaveBeenCalled();
+        expect(await invoke('overflow', { open: true })).toMatchObject({ ok: true });
+        expect(await invoke('overflow')).toMatchObject({ ok: true, result: { open: true } });
+        expect(await invoke('overflow', { open: false })).toMatchObject({ ok: true });
+        await screen.pressByTestIdAsync(getPathBrowserToggleTestId('/'));
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users'));
+        expect(await invoke('disclosure', { path: '/Users' })).toMatchObject({ ok: true });
+        await waitForTestId(screen, getPathBrowserRowTestId('/Users/leeroy'));
+        expect(await invoke('activate', { path: '/Users/leeroy' })).toMatchObject({ ok: true });
+        expect(await invoke('activate')).toMatchObject({ ok: true, result: { selectedPath: '/Users/leeroy' } });
+        expect(await invoke('contextMenu', { path: '/Users/leeroy' })).toMatchObject({ ok: true });
+        expect(await invoke('closeContextMenu')).toMatchObject({ ok: true });
+        expect(screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID)?.props.disabled).toBe(false);
+        expect(await invoke('hidden')).toMatchObject({ ok: true });
+        expect(await invoke('search', { value: 'repo' })).toMatchObject({ ok: true });
+        expect(screen.findByTestId('path-browser-search')?.props.value).toBe('repo');
+        expect(await invoke('clearSearch')).toMatchObject({ ok: true });
+        expect(await invoke('activate', { path: '/not-rendered' })).toMatchObject({ ok: false });
+        expect(await invoke('confirm')).toMatchObject({ ok: true });
+        expect(picked).toHaveBeenCalledWith('/Users/leeroy');
+        const scope = await setFolderActionPolicy('allowed');
+        const settings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { 'daemon.filesystem.createDirectory': { disabledSurfaces: ['agent'] } },
+            approvalWaivedSurfaces: { ...Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(id => [id, ['ui', 'agent']])),
+                'daemon.filesystem.createDirectory': ['ui'] },
+        }) };
+        const version = (storage.getState().settingsVersion ?? 0) + 1;
+        storage.getState().applySettingsForScope(scope, settings, version);
+        homes.answer(scope.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version } });
+        await screen.pressByTestIdAsync(PATH_BROWSER_CREATE_FOLDER_TEST_ID);
+        await waitForTestId(screen, 'web-prompt-input');
+        const invokePrompt = async (title: string, input?: { value: string }) => {
+            const command = await vi.waitFor(() => {
+                const candidate = commands().find(command => command.title === title);
+                expect(candidate, title).toBeTruthy();
+                return candidate!;
+            });
+            await act(async () => { expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: command.id, ...(input ? { input } : {}) }, agentContext())).toMatchObject({ ok: true }); });
+        };
+        await invokePrompt('files.createFolderPromptTitle', { value: 'agent-folder' });
+        await invokePrompt('common.ok');
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(machineCreateDirectoryMock).not.toHaveBeenCalled();
+        expect(modalAlertMock).toHaveBeenCalled();
+        await waitForTestId(screen, 'web-modal-button-0');
+        await invokePrompt('common.ok');
+
+        const allowedSettings = { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+            v: 1, actions: {},
+            approvalWaivedSurfaces: { ...Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(id => [id, ['ui', 'agent']])),
+                'daemon.filesystem.createDirectory': ['ui', 'agent'] },
+        }) };
+        storage.getState().applySettingsForScope(scope, allowedSettings, version + 1);
+        homes.answer(scope.serverId, '/v2/account/settings', {
+            body: { content: { t: 'plain', v: allowedSettings }, version: version + 1 },
+        });
+        await screen.pressByTestIdAsync(PATH_BROWSER_CREATE_FOLDER_TEST_ID);
+        await waitForTestId(screen, 'web-prompt-input');
+        await invokePrompt('files.createFolderPromptTitle', { value: 'allowed-agent-folder' });
+        await invokePrompt('common.ok');
+        expect(confirmingContexts).toHaveLength(2);
+        expect(confirmingContexts.at(-1)).toMatchObject({ surface: 'agent', authority: 'account_automation',
+            expectedAccountId: 'target-account', actionRequestId: `browser-agent-${agentInvocationNumber}` });
+        expect(confirmingContexts.at(-1)?.signal?.aborted).not.toBe(true);
+        await act(async () => {
+            await vi.waitFor(() => {
+                expect(modalAlertMock.mock.calls.slice(1)).toEqual([]);
+                expect(folderActionRequests, JSON.stringify({ nativeRequests: machineRequests,
+                    alerts: modalAlertMock.mock.calls, confirmingActor: confirmingContexts.at(-1)?.surface,
+                    confirmingAuthority: confirmingContexts.at(-1)?.authority,
+                    hasOrdinaryChild: Boolean(confirmingContexts.at(-1)?.executeOrdinaryChildAction),
+                })).toContainEqual({ machineId: 'machine-1',
+                    input: expect.objectContaining({ path: '/Users/leeroy/allowed-agent-folder' }) });
+            });
+        });
+        expect(machineCreateDirectoryMock).toHaveBeenCalledWith('machine-1', '/Users/leeroy/allowed-agent-folder',
+            expect.objectContaining({ signal: expect.objectContaining({ aborted: false }) }));
     });
 
     it('shows a failed root-directory read as a retryable child error instead of an empty expanded root', async () => {
@@ -1068,6 +1318,7 @@ describe('MachinePathBrowserModal', () => {
 
         await screen.pressByTestIdAsync(PATH_BROWSER_CREATE_FOLDER_TEST_ID);
         await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(modalPromptMock).toHaveBeenCalledWith('files.createFolderPromptTitle', '/Users', expect.anything());
 
         if (mode === 'allowed') {
             await vi.waitFor(() => expect(folderActionRequests).toContainEqual(expect.objectContaining({
@@ -1146,7 +1397,7 @@ describe('MachinePathBrowserModal', () => {
         expect(confirmAfter?.props.disabled).toBe(true);
 
         await screen.pressByTestIdAsync('dropdown-option-create-folder');
-        // The real menu admits the action after its teardown frame, not after a fixed number of microtasks.
+        // Folder creation admits the menu command before it closes the current directory menu.
         await act(async () => {
             await vi.waitFor(() => expect(machineCreateDirectoryMock).toHaveBeenCalledWith(
                 'machine-1',

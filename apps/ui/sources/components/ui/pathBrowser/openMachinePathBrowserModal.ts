@@ -11,10 +11,14 @@ export async function openMachinePathBrowserModal(params: Readonly<{
     initialPath?: string | null;
     includeFiles?: boolean;
     selectionMode?: 'directory' | 'file';
+    currentUiContextCommandScope?: string;
+    callerContext?: import('@happier-dev/protocol/actions/executor/types').ActionExecutorContext;
+    commandBridge?: import('@/modal/types').BaseModalConfig['commandBridge'];
     webPortalTarget?: ModalPortalTarget;
 }>): Promise<string | null> {
     const deferred = createDeferredOnce<string | null>();
     Modal.show({
+        commandBridge: params.commandBridge,
         webPortalTarget: params.webPortalTarget ?? null,
         component: MachinePathBrowserModalEntry,
         props: {
@@ -24,6 +28,8 @@ export async function openMachinePathBrowserModal(params: Readonly<{
             initialPath: params.initialPath ?? null,
             includeFiles: params.includeFiles ?? false,
             selectionMode: params.selectionMode ?? 'directory',
+            currentUiContextCommandScope: params.currentUiContextCommandScope,
+            callerContext: params.callerContext,
             onResolve: deferred.resolve,
         },
         onRequestClose: () => deferred.resolve(null),

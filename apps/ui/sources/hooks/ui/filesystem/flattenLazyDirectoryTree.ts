@@ -63,21 +63,21 @@ export function flattenLazyDirectoryTree(input: {
                     visited: input.visited,
                 })
             );
-
-            if (input.directoryTruncationByPath.get(entry.path) === true) {
-                out.push({
-                    path: `${entry.path}#truncated`,
-                    name: '',
-                    type: 'info',
-                    depth: input.depth + 1,
-                    isExpanded: false,
-                    isLoadingChildren: false,
-                    parentDirectoryPath: entry.path,
-                    infoKind: 'truncated',
-                    entryCount: input.directoryEntriesByPath.get(entry.path)?.length ?? 0,
-                });
-            }
         }
+    }
+
+    if (input.directoryTruncationByPath.get(input.directoryPath) === true) {
+        out.push({
+            path: `${input.directoryPath}#truncated`,
+            name: '',
+            type: 'info',
+            depth: input.depth,
+            isExpanded: false,
+            isLoadingChildren: false,
+            parentDirectoryPath: input.directoryPath,
+            infoKind: 'truncated',
+            entryCount: entries.length,
+        });
     }
 
     return out;
