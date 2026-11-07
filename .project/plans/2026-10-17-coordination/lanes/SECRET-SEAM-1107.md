@@ -1,4 +1,4 @@
-IN PROGRESS — focused source gates GREEN, committing; live journey pending. Full CLI file has one foreign unregistered secrets.usedBy test failure.
+BLOCKED — live smoke refused agent_startup_invalid_state (undefined debug), before secret/card creation; daemon startup repair required. Focused implementation committed e0e9f478bf; full CLI file has one foreign secrets.usedBy failure.
 
 | Check | Verdict | Evidence |
 | --- | --- | --- |
@@ -16,9 +16,11 @@ IN PROGRESS — focused source gates GREEN, committing; live journey pending. Fu
 | Real masked card | Passed, 2/2; restored explicit Machine HTTP fixture ahead of empty bootstrap | `.project/tmp/SECRET-SEAM-1107/ui-green-2.log`; prior `ui-green.log` 2 failures; first invocation found no tests |
 | Entry-loads 7/7 | Passed on current source after helper delta | `.project/tmp/SECRET-SEAM-1107/entry-loads-2.log`, terminal exit 0 |
 | Adjacent declarations | Passed, 82/82 | `.project/tmp/SECRET-SEAM-1107/adjacent.log` |
-| Live Account A journey | Waiting for committed focused GREEN | Browser closed; no Session/secret created; loaded runtime predates changes |
+| Live Account A journey | BLOCKED before secret request: `agent_startup_invalid_state`, undefined `debug` | `.project/tmp/SECRET-SEAM-1107/live/result.txt`; Account A sign-in succeeded; Machine5ac7 online; own smoke Session archived; browser closed |
+| Loaded runtime | LIFTED sourceTime17:56:16Z; server `be5482e8166388b9` source17:55:59Z | Daemon selected `05f1708a3be84105`, loaded=null; Coordination confirmed running from run log/runtime; actual smoke is deciding failure |
+| Requested live model | Codex `gpt-6-luna` observed; low reasoning NOT independently confirmed | Composer displayed plan; no agent turn ran. Retry must confirm low reasoning |
 | Package typecheck | Not run by this lane | Coordination owns the integration-wave baseline/delta; no zero-delta claim |
-| Commit | Preparing fast-path commit | Focused gates and entry-loads passed; no push |
+| Commit | `e0e9f478bf268d6cc98a55482340b0d136e7d93f` | Private index + commit-tree/CAS; shared index untouched; no push; census assertion named in message |
 
 Observed ownership and consumers:
 
@@ -31,7 +33,7 @@ Observed ownership and consumers:
 - Managed identity uses `clientSecret`; WorkOS API keys belong to Home settings. Directory/WorkOS connection Actions select configured connections and carry no new credential operands.
 - Raw identity surface flags in the earlier audit were stale evidence: normalization already admits present-user consent requests. Preserve the authority floor.
 
-Authorization/credential deltas for the Opus batch (implementation underway):
+Authorization/credential deltas for the Opus batch (committed; independent security batch not run by this lane):
 
 1. Saved Secret create declares `value` as confidential when no source was selected; optional update values remain confidential without asking during metadata edits.
 2. Missing-only create validation is attributed to `value`; the complete executable schema still requires exactly one value/source and retains vault/passkey constraints.
@@ -42,6 +44,6 @@ Authorization/credential deltas for the Opus batch (implementation underway):
 7. Reproduced supplied-credential retention for provider create/replacement and Home settings; those Actions now use existing live-only custody and safe observation/review projections. Direct settings writes retain their confirmation policy; when approval is required, the invocation waits with its private operands.
 8. Decision/replay consumes the admitted `preview.confidentialInputs` question. A redacted live-only projection no longer becomes a second missing-secret question. Native secret-fill still always requires its private continuation.
 
-Net mechanism delta: one existing owner; +0/−0 states, error codes, timers, retries, policy modes and dependencies. +1 union branch in the existing missing-input classifier allows omitted Home secret leaves; −2 missing-input re-decisions at approval/replay consume the admission marker instead. New files are tests only. No new secret-request Action, card, credential store or coordination mechanism.
+Net mechanism delta: one existing owner; +0/−0 states, error codes, timers, retries, policy modes and dependencies. +1 union branch in the existing missing-input classifier allows omitted Home secret leaves; −2 missing-input re-decisions at approval/replay consume the admission marker instead. Commit touches 13 files, adding 2 test files and removing 0 files. No new secret-request Action, card, credential store or coordination mechanism.
 
-Residual risk: live runtime reload is required after the source is ready; no storage/transcript/live success is claimed while deciding checks are pending. Foreign manifest/lockfile drift blocked initial remote checks; Systemic owns dependency publication. The first remote protocol retry recovered after dependency refresh and produced the recorded RED.
+Residual risk: the loaded runtime refused agent startup; card capture, live secret storage, transcript non-disclosure and deletion were not reached. No live secret exists to delete. Own Session `cmw6qvfb2003gmcp31akjna4c` was archived (Unarchive control observed); browser controller reclaimed its temporary root. Coordination must repair startup, then retry the same journey with confirmed low reasoning. Full-package typecheck/security batch remain integration-owner checks. Foreign manifest/lockfile drift was left untouched; Systemic owns it.
