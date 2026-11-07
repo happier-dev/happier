@@ -1,9 +1,7 @@
-import { homedir } from 'node:os';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import type { RuntimeDescriptorV1, SessionHandoffPrepareTargetFailure, SessionHandoffPrepareTargetRequest, SessionHandoffPrepareTargetResultGetSuccessResponse, SessionHandoffResumePlan, SessionHandoffStatus } from '@happier-dev/protocol';
 
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
-import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
 import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
@@ -12,13 +10,12 @@ import {
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import {
   releaseSessionHandoffPrepareTargetJobLease,
-  startSessionHandoffPrepareTargetJobLeaseHeartbeat,
   tryAcquireSessionHandoffPrepareTargetJobLease,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
 import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import type { ImportedSessionHandoffBundle } from '../../../session/handoff/types';
 import { ensureSessionHandoffWorkspaceCwd } from '../../../session/handoff/paths/sessionHandoffWorkspaceCwd';
-import { expandHomeRelativePath, resolveSessionHandoffLocalHomeDir } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
+import { expandHomeDirPath } from '../../../utils/path/expandHomeDirPath';
 import { createManagedSessionDirectories } from '../../../session/creation/managedSessionDirectories';
 import type { ManagedSessionDirectoryPayloadPlacement } from '../../../session/creation/managedSessionDirectories';
 
@@ -41,7 +38,6 @@ import {
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
-type SessionHandoffTransportRouteCache = ReturnType<typeof createMachineTransferRouteCache>;
 
 export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   activeServerDir: string;
@@ -56,7 +52,6 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   prepareTargetJobLeaseOwnerId: string;
-  prepareTargetJobLeaseTtlMs: number;
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   resolveExistingSessionState?: (request: SessionHandoffPrepareTargetRequest, targetPath: string) => Promise<ImportedSessionHandoffBundle>;
@@ -71,12 +66,6 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     resume: SessionHandoffResumePlan;
   }>>;
-  getTransferRouteCache: (
-    machineTransferChannel: MachineTransferChannel | undefined,
-  ) => SessionHandoffTransportRouteCache;
-  invalidateDirectPeerRouteCacheForHandoffMachines: (
-    machineIds: readonly (string | undefined)[],
-  ) => void;
 }>;
 
 function resolveTypedImportFailure(error: unknown): SessionHandoffPrepareTargetFailure | null {
@@ -126,17 +115,13 @@ export async function runSessionHandoffPrepareTargetJob(
     prepareJobStore,
     sourceExportStore,
     prepareTargetJobLeaseOwnerId,
-    prepareTargetJobLeaseTtlMs,
     machineTransferChannel,
     directPeerTransfer,
     importSessionBundle,
-    getTransferRouteCache,
-    invalidateDirectPeerRouteCacheForHandoffMachines,
   } = params;
   const transferTimeoutMs = resolveSessionHandoffTransferTimeoutMs(params.runtimeConfig);
 
-  let leaseAcquired = false;
-  let leaseHeartbeat: Readonly<{ stop: () => Promise<void> }> | null = null;
+  let leaseId: string | undefined;
   let prepareTargetRequest: SessionHandoffPrepareTargetRequest | undefined = initialPrepareTargetRequest ?? request;
   let actualTransportStrategy = initialTransportStrategy;
   let agentBundle: SessionHandoffAgentBundle | null = null;
@@ -175,20 +160,12 @@ export async function runSessionHandoffPrepareTargetJob(
       jobId,
       ownerId: prepareTargetJobLeaseOwnerId,
       nowMs: Date.now(),
-      ttlMs: prepareTargetJobLeaseTtlMs,
     });
     if (!leaseAttempt.acquired) {
       return;
     }
 
-    leaseAcquired = true;
-    leaseHeartbeat = startSessionHandoffPrepareTargetJobLeaseHeartbeat({
-      activeServerDir,
-      jobId,
-      ownerId: prepareTargetJobLeaseOwnerId,
-      ttlMs: prepareTargetJobLeaseTtlMs,
-      nowMs: () => Date.now(),
-    });
+    leaseId = leaseAttempt.lease.leaseId;
 
     try {
       const wasCancelledBeforeImport = await prepareJobStore.read(jobId);
@@ -290,9 +267,7 @@ export async function runSessionHandoffPrepareTargetJob(
         handoffMetadataV2: requestResolvedHandoffMetadataV2,
         machineTransferChannel,
         directPeerTransfer,
-        transferRouteCache: getTransferRouteCache(machineTransferChannel),
         transferTimeoutMs,
-        invalidateDirectPeerRouteCacheForHandoffMachines,
         receivedAgentBundlePath: await sourceExportStore.prepareReceivedAgentBundleFilePath(handoffId),
         ...(localAgentBundle ? { existingAgentBundle: localAgentBundle } : {}),
         ...(reportAgentBundleTransferProgress ? { onProgress: reportAgentBundleTransferProgress } : {}),
@@ -340,20 +315,18 @@ export async function runSessionHandoffPrepareTargetJob(
       const targetPath = managedAllocation
         ? managedAllocation.directory
         : request.sourceMachineId === request.targetMachineId
-          ? expandHomeRelativePath({
-            path: request.targetPath,
-            homeDir: resolveSessionHandoffLocalHomeDir({ activeServerDir, fallbackHomeDir: homedir() }),
-          })
+          ? expandHomeDirPath(request.targetPath.trim())
           : request.targetPath;
       managedAllocationPrepared = managedIdentity !== null;
       if (managedIdentity && managedAllocation) {
+        const seed = await managedDirectories.prepareSeed(managedAllocation.allocationId);
         await materializePrepareManagedWorkspaceSeed({ request, targetPath, actualTransportStrategy,
           localSourceExport, machineTransferChannel, directPeerTransfer, transferTimeoutMs,
           assertCanContinue: assertPrepareJobNotCancelled,
-          prepareEntryAccess: await managedDirectories.prepareSeedEntryAccess(managedAllocation.allocationId),
+          prepareEntryAccess: seed.prepareEntryAccess,
         });
         // Seed promotion replaces the leaf; restore the admitted exact-UID ACL.
-        await managedDirectories.allocateForHandoff(managedIdentity);
+        await seed.restoreProtection();
       }
       if (!managedIdentity && request.workspaceRootPath !== undefined && request.workspaceSessionRelativeCwd !== undefined) {
         await ensureSessionHandoffWorkspaceCwd({
@@ -362,11 +335,7 @@ export async function runSessionHandoffPrepareTargetJob(
           targetPath,
         });
       }
-      const sessionStorageMode = request.targetSessionStorageMode === 'persisted'
-          ? 'persisted'
-          : request.sourceSessionStorageMode === 'persisted'
-            ? 'persisted'
-            : 'direct';
+      const sessionStorageMode = request.targetSessionStorageMode ?? request.sourceSessionStorageMode;
       const imported = request.stateTransfer === 'existing'
         ? await (() => {
             if (!params.resolveExistingSessionState) throw Object.assign(new Error('Existing native session resolver is unavailable'), { code: 'existing_session_state_unsupported' });
@@ -466,16 +435,16 @@ export async function runSessionHandoffPrepareTargetJob(
       }));
     }
   } finally {
-    if (managedIdentity && managedAllocationPrepared && !targetReady) {
-      await managedDirectories.abortHandoff(managedIdentity);
-    }
-    await leaseHeartbeat?.stop().catch(() => undefined);
-    if (leaseAcquired) {
-      await releaseSessionHandoffPrepareTargetJobLease({
-        activeServerDir,
-        jobId,
-        ownerId: prepareTargetJobLeaseOwnerId,
-      }).catch(() => undefined);
+    try {
+      if (managedIdentity && managedAllocationPrepared && !targetReady) {
+        await managedDirectories.abortHandoff(managedIdentity);
+      }
+    } finally {
+      if (leaseId) {
+        await releaseSessionHandoffPrepareTargetJobLease({
+          activeServerDir, jobId, ownerId: prepareTargetJobLeaseOwnerId, leaseId,
+        });
+      }
     }
     // Abort may have recorded cancellation after ready publication while our
     // writer lease prevented its cleanup. Once released, later aborts can

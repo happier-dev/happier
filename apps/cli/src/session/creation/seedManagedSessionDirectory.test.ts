@@ -28,7 +28,7 @@ describe('managed fork workspace seeding', () => {
       await owner.bind({ allocationId: source.allocationId, sessionId: 'source' });
       await writeFile(join(source.directory, 'notes.txt'), 'retained source files');
       const target = await owner.materializeForFreshSpawn({ sessionCreationTag: 'child' });
-      expect(await seedManagedSessionDirectory({ activeServerDir, sessionCreationTag: 'child', targetPath: target.directory,
+      expect(await seedManagedSessionDirectory({ activeServerDir, allocationId: target.allocationId,
         seed: { sourceSessionId: 'source', sourceSessionCreationTag: 'source', sourcePath: source.directory },
       })).toEqual({ ok: true });
       expect(await readFile(join(target.directory, 'notes.txt'), 'utf8')).toBe('retained source files');
@@ -45,7 +45,7 @@ describe('managed fork workspace seeding', () => {
       await writeFile(join(source.directory, 'notes.txt'), 'source files');
       const childTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'session.fork:source', creationKey: 'child' });
       const child = await owner.materializeForFreshSpawn({ sessionCreationTag: childTag });
-      expect(await seedManagedSessionDirectory({ activeServerDir, sessionCreationTag: childTag, targetPath: child.directory,
+      expect(await seedManagedSessionDirectory({ activeServerDir, allocationId: child.allocationId,
         seed: { sourceSessionId: 'source', sourceSessionCreationTag: 'source-tag', sourcePath: source.directory },
       })).toEqual({ ok: true });
       expect(child.directory).not.toBe(source.directory);
@@ -65,7 +65,7 @@ describe('managed fork workspace seeding', () => {
       const owner = createManagedSessionDirectories({ activeServerDir });
       const target = await owner.materializeForFreshSpawn({ sessionCreationTag: 'child-tag' });
       await writeFile(join(activeServerDir, 'private.txt'), 'not an allocation');
-      expect(await seedManagedSessionDirectory({ activeServerDir, sessionCreationTag: 'child-tag', targetPath: target.directory,
+      expect(await seedManagedSessionDirectory({ activeServerDir, allocationId: target.allocationId,
         seed: { sourceSessionId: 'unproven-session', sourcePath: activeServerDir },
       })).toEqual({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING' });
       expect(await readFile(join(activeServerDir, 'private.txt'), 'utf8')).toBe('not an allocation');

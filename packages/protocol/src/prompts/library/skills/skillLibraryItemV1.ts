@@ -115,8 +115,9 @@ export const SkillUnavailableItemV1Schema = lazyZodSchema(() => z.strictObject({
 export type SkillUnavailableItemV1 = z.infer<typeof SkillUnavailableItemV1Schema>;
 
 export const SKILL_NAME_PATTERN_V1 = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+export const SkillNameV1Schema = lazyZodSchema(() => z.string().check(z.regex(SKILL_NAME_PATTERN_V1)));
 const SkillFrontmatterV1Schema = lazyZodSchema(() => z.object({
-  name: z.optional(z.string().check(z.regex(SKILL_NAME_PATTERN_V1))),
+  name: z.optional(SkillNameV1Schema),
   description: z.optional(z.string()),
   'disable-model-invocation': z.optional(z.boolean()),
   'user-invocable': z.optional(z.boolean()),

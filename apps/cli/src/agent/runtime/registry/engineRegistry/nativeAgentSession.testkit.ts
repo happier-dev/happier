@@ -172,6 +172,7 @@ export function createSessionHostServiceOwners(): NativeAgentSessionHostServiceO
         features: Object.freeze({ isEnabled: () => false }),
         happierTools: Object.freeze({ readPluginToolCatalog: async () => Object.freeze([]) }),
         sessionHooks: Object.freeze({
+            observeSessionHook: async () => undefined,
             startServer: async () => Object.freeze({ port: 4312, stop: () => undefined, dispose: async () => undefined }),
             resolveForwarderAssets: async () => Object.freeze({ nodeExecutable: '/runtime/node', sessionForwarderScript: '/runtime/session-forwarder.cjs', permissionForwarderScript: '/runtime/permission-forwarder.cjs' }),
             createPluginDir: async () => '/tmp/plugin-dir', disposePluginDir: async () => undefined,

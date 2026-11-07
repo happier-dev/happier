@@ -468,10 +468,8 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         || deriveMachineSetupCombinedRunIdV1({ homeId: binding.serverIdentityId, accountId: binding.accountId,
             requestId: binding.requestId, reviewedChild: input.origin.reviewedChild }) !== input.origin.runId) return null;
     const captured = projectAcceptedDeploymentPrincipal(binding);
-    const principal = captured && projectExternalActionBoundPrincipal(binding, captured);
-    return principal ? { binding: { ...binding, admittedMachineRole: binding.admittedMachineRole },
-        principal: { ...principal, ...(captured?.authenticationEvidence ? { authenticationEvidence: captured.authenticationEvidence } : {}),
-            workflowActionOrigin: input.origin } } : null;
+    const principal = captured && projectExternalActionBoundPrincipal({ ...binding, workflowActionOrigin: input.origin }, captured);
+    return principal ? { binding: { ...binding, admittedMachineRole: binding.admittedMachineRole }, principal } : null;
 }
 
 /** Only a Home-verified native member root may spend its captured finite admission. */

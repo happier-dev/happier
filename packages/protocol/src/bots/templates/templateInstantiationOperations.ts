@@ -1,4 +1,5 @@
-import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '../../actions/executor/types.js';
+import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
+import { isDeferredApprovalResult } from '../../actions/executor/resultProjection.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
@@ -8,15 +9,15 @@ import { readSkillFrontmatterV1 } from '../../prompts/library/skills/skillLibrar
 import { decodeBase64 } from '../../crypto/base64.js';
 import { SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { readBotTemplateInstanceV1, type BotTemplateInstanceV1 } from './templateInstanceV1.js';
-import { projectBotTemplateArtifactHeaderV1, type BotTemplateRequesterAuthorshipV1 } from './botTemplateV1.js';
-import { BotTemplateInstantiateInputV1Schema, type BotTemplateInstantiateInputV1, type BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
+import { projectBotTemplateArtifactHeaderV1 } from './botTemplateV1.js';
+import { BotTemplateInstantiateInputV1Schema, type BotTemplatePreviewResultV1 } from './botTemplateActionsV1.js';
 import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { prepareBotTemplateSetupV1, applyBotTemplateMcpSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
-import type { MachineSetupV1 } from '../../machines/managed/machineSetupV1.js';
-import type { MachineSetupPlanInputV1 } from '../../machines/managed/actionsV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import type { BotTemplateAcceptedVersionReporterV1 } from './templateAcceptedVersionsV1.js';
-import type { BotTemplateUpdateApplyInputV1 } from './templateUpdateActionsV1.js';
+import { MachineSetupPlanResultV1Schema, MachineSetupApplyResultV1Schema, machineSetupApplyTargetFromPlanV1,
+  buildMachineSetupTargetApplyInput, waitForMachineSetupOperationV1 } from '../../machines/managed/actionsV1.js';
+import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
 
 export type BotTemplateRecipientPortV1 = BotTemplateAcceptedVersionReporterV1 & Readonly<{
   readSession(ref: Readonly<{ serverId: string; sessionId: string }>, context: ActionExecutorContext): Promise<Readonly<{
@@ -28,22 +29,9 @@ export type BotTemplateRecipientPortV1 = BotTemplateAcceptedVersionReporterV1 & 
     context: ActionExecutorContext): Promise<void>;
   updateInstance?(ref: Readonly<{ serverId: string; sessionId: string }>, instance: BotTemplateInstanceV1,
     expectedInstance: BotTemplateInstanceV1, context: ActionExecutorContext): Promise<void>;
-  /** Enrich the admitted root with source-owned authorship and resolved setup. */
-  prepareRequesterAdmission?(request: Readonly<{ input: BotTemplateInstantiateInputV1; context: ActionExecutorContext;
-    requesterAuthorship?: BotTemplateRequesterAuthorshipV1;
-    machineSetup?: MachineSetupV1; machineSetupPlanInput?: MachineSetupPlanInputV1 }>): Promise<ActionExecutorContext>;
-  /** The owned Session target admits the requester before any base/source/content read. */
-  prepareUpdateRequesterAdmission?(request: Readonly<{ input: BotTemplateUpdateApplyInputV1; context: ActionExecutorContext;
-    requesterAuthorship?: BotTemplateRequesterAuthorshipV1;
-    executionTarget?: Readonly<{ machineId: string; agentId: string }>;
-    machineSetup?: MachineSetupV1; machineSetupPlanInput?: MachineSetupPlanInputV1 }>): Promise<ActionExecutorContext>;
-  content?: Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute' | 'machineSetupPlan'>;
+  content?: Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute'>;
 }>;
 const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-/** The live link supplies one release without granting future reads of its source. */
-export type BotTemplateLiveCopyReleaseV1 = BotTemplatePreviewResultV1 & Readonly<{
-  follow: false; reportAcceptedVersion: false;
-}>;
 function failure(error: unknown): ActionExecuteFailure {
   const observed = readActionFailureEnvelope(error);
   if (observed) return observed;
@@ -54,17 +42,15 @@ function failure(error: unknown): ActionExecuteFailure {
 
 /** Invocation-local admitted release; only the existing reviewed-child owner dispatches effects. */
 export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperationPortV1,
-  request: Readonly<{ input: unknown; context: ActionExecutorContext }>,
-  resolve: () => Promise<BotTemplatePreviewResultV1 | BotTemplateLiveCopyReleaseV1>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure> {
+  request: HostReviewedChildrenPreparationRequestV1,
+  resolve: () => Promise<BotTemplatePreviewResultV1>): Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult> {
   try {
     const input = BotTemplateInstantiateInputV1Schema.parse(request.input);
     if (!port.recipient) return fail('unsupported_action');
     const recipient = port.recipient;
     const resolved = await resolve();
     if (!sameStrictJsonValue(input.source, resolved.source)) return fail('invalid_request');
-    const follow = 'follow' in resolved ? resolved.follow : true;
-    const reportAcceptedVersion = !('reportAcceptedVersion' in resolved) || resolved.reportAcceptedVersion;
-    if (resolved.release.version !== input.expectedVersion || input.source.kind === 'artifact' && !input.expectedRevision
+    if (resolved.release.version !== input.expectedVersion
       || input.expectedRevision && !sameStrictJsonValue(input.expectedRevision, resolved.revision)) return fail('version_mismatch');
     const { creation } = input;
     if (!creation.creationKey || creation.environmentVariables !== undefined || creation.initialInput || creation.initialTriggers?.length || creation.sourceContext
@@ -76,7 +62,18 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
     if (!serverId || request.context.serverId && !port.isSameServerId?.(request.context.serverId, serverId)
       && request.context.serverId !== serverId) return fail('server_scope_mismatch');
     const machineSetupPlanInput = setup.machineSetup ? buildBotTemplateMachineSetupPlanInputV1(
-      { homeId: serverId, machineId: creation.executionTarget.machineId }, setup.machineSetup) : undefined;
+      { homeId: request.context.serverIdentityId ?? serverId, machineId: creation.executionTarget.machineId }, setup.machineSetup) : undefined;
+    let softwarePlan: ReturnType<typeof MachineSetupPlanResultV1Schema.parse> | undefined;
+    if (machineSetupPlanInput) {
+      const invoke = request.invokeChild ?? fail('admission_unavailable');
+      const result = await invoke({ action: 'machines.setup.plan', role: 'template_setup_plan',
+        input: projectNativeJsonValueForTransport(machineSetupPlanInput) });
+      if (!result.ok || isDeferredApprovalResult(result)) return result;
+      softwarePlan = MachineSetupPlanResultV1Schema.parse(result.result);
+      if (!softwarePlan.recipePlans) return fail('invalid_action_output');
+    }
+    const setupApply = softwarePlan && machineSetupPlanInput ? buildMachineSetupTargetApplyInput(machineSetupApplyTargetFromPlanV1(
+      { homeId: machineSetupPlanInput.homeId, machineId: machineSetupPlanInput.machineId }, softwarePlan)) : undefined;
     // The parent settles after content and launch; a child-only early receipt cannot settle it.
     const { observeSessionCommit: _observeSessionCommit, ...creationSelection } = creation;
     const spawnInput = SessionSpawnNewActionInputV2Schema.parse({ ...creationSelection,
@@ -89,9 +86,9 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
       { action: 'session.instructions.set', role: 'attach_instructions' },
       ...content.memoryRules.map(rule => ({ action: 'memory.remember' as const, role: `memory:${rule.key}` })),
       ...content.skills.map(skill => ({ action: 'skills.create' as const, role: `skill:${skill.key}` })),
-      ...(setup.machineSetup ? [
-        { action: 'machines.setup.plan' as const, role: 'template_setup_plan' },
-        { action: 'machines.setup.apply' as const, role: 'template_setup_apply' },
+      ...(setupApply ? [
+        { action: 'machines.setup.apply' as const, role: BOT_TEMPLATE_SETUP_APPLY_ROLE_V1, input: projectNativeJsonValueForTransport(setupApply) },
+        { action: 'action.operations.get' as const, role: 'template_setup_wait' },
       ] : []),
       ...(setup.mcp.length ? [
         { action: 'mcp.servers.list' as const, role: 'template_mcp_catalog' },
@@ -99,11 +96,8 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
         ...setup.mcp.map(item => ({ action: 'session.capabilities.set' as const, role: `template_mcp:${item.key}` })),
       ] : []),
     ];
-    const prepareRequesterAdmission = recipient.prepareRequesterAdmission;
-    return { children, approvalPreview: projectNativeJsonValueForTransport(resolved),
-      ...(prepareRequesterAdmission ? { prepareExecutionContext: (context: ActionExecutorContext) => prepareRequesterAdmission({ input, context,
-        ...(resolved.requesterAuthorship ? { requesterAuthorship: resolved.requesterAuthorship } : {}),
-        ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}), ...(machineSetupPlanInput ? { machineSetupPlanInput } : {}) }) } : {}),
+    return { input: { ...input, ...(resolved.revision ? { expectedRevision: resolved.revision } : {}) },
+      children, approvalPreview: projectNativeJsonValueForTransport({ ...resolved, ...(softwarePlan ? { softwarePlan } : {}) }),
       executeAdmittedAction: async ({ context }) => {
         const execute = async (context: ActionExecutorContext): Promise<ActionExecuteResult> => {
         let knownSessionId: string | undefined;
@@ -123,9 +117,8 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
             return result.result;
           };
           const result = await invoke('session.spawn_new', 'create_bot', spawnInput, { sessionCreation: {
-            ...(setup.machineSetup ? { machineSetup: setup.machineSetup } : {}),
-            ...(machineSetupPlanInput ? { machineSetupPlanInput } : {}),
             hostOnboarding: { templateName: content.identity.name, templateVersion: resolved.release.version,
+              ...(resolved.presentation?.ownerDisplayName ? { authorDisplayName: resolved.presentation.ownerDisplayName } : {}),
               ...(content.firstTask === undefined ? {} : { firstTask: content.firstTask }) },
             beforeLaunch: async birth => {
               try {
@@ -172,13 +165,20 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
               const mcpServerIds = await applyBotTemplateMcpSetupV1({ mcp: setup.mcp, sessionId: birth.sessionId,
                 invoke, randomId: port.randomId, nowMs: port.nowMs ?? Date.now,
                 onCreated: ids => { resourceIds.push(...Object.values(ids)); } });
+              if (setupApply) {
+                context.operationProgress?.update({ phase: 'setup' });
+                const receipt = MachineSetupApplyResultV1Schema.parse(await invoke('machines.setup.apply', BOT_TEMPLATE_SETUP_APPLY_ROLE_V1, setupApply));
+                const setupFailure = await waitForMachineSetupOperationV1(receipt.operationId, request => invoke(
+                  'action.operations.get', 'template_setup_wait', { ...request, serverId, machineId: setupApply.machineId }));
+                if (setupFailure) throw setupFailure;
+              }
               const baseId = port.randomId();
               const envelope = { v: 1 as const, state: 'released' as const, release: resolved.release };
               await port.artifacts.create({ artifactId: baseId, header: projectBotTemplateArtifactHeaderV1(envelope),
                 body: JSON.stringify(envelope), savedBy: null, signal: context.signal });
               resourceIds.push(baseId);
               acceptedInstance = { v: 1, source: resolved.source, acceptedVersion: resolved.release.version,
-                acceptedBase: { serverId, artifactId: baseId }, skillIds, mcpServerIds, follow };
+                acceptedBase: { serverId, artifactId: baseId }, skillIds, mcpServerIds, follow: true };
               await recipient.writeInstance(ref, acceptedInstance, context);
               } catch (error) {
                 // Ordinary creation may project callback rejection to its spawn result; retain the content failure for this parent.
@@ -188,12 +188,12 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
             },
           } });
           if (contentFailure) throw contentFailure.error;
-          if (reportAcceptedVersion && readRecord(result).type === 'success' && readRecord(readRecord(result).initialInput).status === 'notRequested'
+          if (readRecord(result).type === 'success' && readRecord(readRecord(result).initialInput).status === 'notRequested'
             && knownSessionId && acceptedInstance)
             await bestEffortReportBotTemplateAcceptedVersionV1(recipient, { instance: acceptedInstance, copyId: knownSessionId }, context);
           return { ok: true, result };
         } catch (error) {
-          const refused = failure(error);
+          const refused = failure(contentFailure?.error ?? error);
           return { ...refused, ...(knownSessionId ? { details: { sessionId: knownSessionId, resourceIds } } : {}) };
         }
         };

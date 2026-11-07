@@ -1,4 +1,5 @@
-import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useOptionalSessionTranscriptSource, useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { sync } from '@/sync/sync';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import * as React from "react";
 import { useShallow } from 'zustand/react/shallow';
@@ -7,6 +8,8 @@ import { View, Pressable, Platform } from 'react-native';
 import { Modal } from '@/modal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { TranscriptPassageMarkdownView } from './messageSelection/TranscriptPassageMarkdownView';
+import { resolveTranscriptPassageSource } from './messageSelection/transcriptPassageSelection';
 import { TranscriptFindMessageProvider, useTranscriptFindActive, useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { t } from '@/text';
@@ -17,7 +20,7 @@ import { useLayoutMaxWidthStyle } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
 import { selectToolApprovalRequestsForMessages } from '@/components/tools/shell/views/toolApprovalPromptMatching';
-import { buildMessageRouteId, resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
+import { buildMessageRouteId } from "@happier-dev/session-core/messages";
 import { readUnsupportedContentMeta } from "@happier-dev/session-core/messages";
 import {
   resolveUnsupportedContentPresentation,
@@ -31,44 +34,54 @@ import { useOptionalTranscriptSelectionRow } from '@/components/sessions/transcr
 import {
   resolveSelectableMessageText,
 } from '@/components/sessions/transcript/messageSelection/resolveSelectableMessageText';
-import { prepareTranscriptMessageBody, readTranscriptAttachmentsMeta, resolveTranscriptMessageDisplayText } from '@/components/sessions/transcript/messageDisplayText';
+import { prepareTranscriptMessageBody, readableMessageText, readTranscriptAttachmentsMeta, resolveTranscriptMessageDisplayText } from '@/components/sessions/transcript/messageDisplayText';
 import { renderStructuredMessage } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
+import { hasToolCarriedStructuredResultCard } from '@/components/sessions/transcript/structured/structuredToolResultCards';
+import { ForgeEvidenceInputCard } from '@/components/sessions/transcript/forgeEvidence/ForgeEvidenceInputCard';
+import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Text } from '@/components/ui/text/Text';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { readSessionHostOnboardingPresentationV1 } from '@happier-dev/protocol/sessions';
 import { useMessageStructuredReferences } from '@/components/sessions/transcript/references/messageStructuredReferences';
 import { StructuredReferencesRow } from '@/components/sessions/transcript/references/StructuredReferencesRow';
 import { useMessageInlineReferences } from '@/components/sessions/transcript/references/useMessageInlineReferences';
 import { ComposerAttachmentFallbackRow } from '@/components/sessions/transcript/composerAttachments/ComposerAttachmentFallbackRow';
 import { useMessageComposerAttachments } from '@/components/sessions/transcript/composerAttachments/messageComposerAttachments';
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
-import { PeerMessageRow } from '@/components/sessions/transcript/peer/PeerMessageRow';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
-import { TranscriptEventRow, TranscriptHostWakeNotice } from '@/components/sessions/transcript/events/TranscriptEventRow';
+import { PeerMessageRow } from '@/components/sessions/transcript/peer/PeerMessageRow';
+import { TranscriptEventRow, TranscriptFollowSourceNotice, TranscriptHostWakeNotice } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { projectWorkerCardDelivery } from '@/components/sessions/transcript/events/followWorkerCardDelivery';
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
-import { isRuntimeIssueMessageMeta } from '@/components/sessions/transcript/events/runtimeIssueMessage';
-import { isHostAuthoredInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '@/components/sessions/transcript/events/runtimeIssueMessage';
+import { TeamCredentialDenialRecovery } from '@/components/sessions/transcript/events/TeamCredentialDenialRecovery';
+import { AgentAuthRequiredRecovery } from '@/components/sessions/transcript/events/AgentAuthRequiredRecovery';
+import { isHostAuthoredInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
-import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { AttachmentsInlineImages } from '@/components/sessions/attachments/messages/AttachmentsInlineImages';
-import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
 import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
 import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { TranscriptRollbackAction } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import { CommittedMessageActions } from '@/components/sessions/transcript/messageActions/CommittedMessageActions';
-import { presentDiscussionSecondOpinion } from '@/components/discussions/DiscussionSecondOpinionSheet';
+import { useOpenDiscussionSecondOpinion } from '@/components/discussions/useOpenDiscussionSecondOpinion';
+import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import type { DiscussionSecondOpinionSourceV1 } from '@happier-dev/protocol/discussions/secondOpinion';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
-import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useTranscriptRowTouchOpened } from '@/components/sessions/transcript/messageActions/transcriptRowTouchReveal';
 import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
 import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pins";
 import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { useStreamingTextSmoothing } from '@/components/sessions/transcript/streaming/useStreamingTextSmoothing';
+import { StreamingTextContent } from '@/components/sessions/transcript/streaming/StreamingTextContent';
 import { readStreamSegmentMetaV1 } from "@happier-dev/session-core/reducer";
 import { resolveTranscriptMessageServerId } from '@/components/sessions/transcript/source/resolveTranscriptMessageServerId';
 import { useTranscriptFileLinks } from '@/components/sessions/transcript/useTranscriptFileLinks';
@@ -78,6 +91,7 @@ import {
   type TranscriptMessageDisplayCommon,
   type TranscriptToolChromeCommon,
   type TranscriptMessageRouteCommon,
+  resolveTranscriptToolRouteMessageId,
   useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -91,12 +105,13 @@ import { UserMessageBubble, userMessageBubbleAlignerStyle } from './UserMessageB
 
 const EMPTY_FOLLOW_DELIVERY_BY_LOCAL_ID: ReadonlyMap<string, FollowDeliveryProjectionV1 | null> = new Map();
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
+import { buildToolCallMessageRouteId, isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
 import type { TranscriptEventEmphasis } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ReturnedAnswerQuote, readReturnedAnswer } from '@/components/sessions/transcript/returnedAnswer/ReturnedAnswerQuote';
+import { ReturnedAnswerQuote } from '@/components/sessions/transcript/returnedAnswer/ReturnedAnswerQuote';
+import { readReturnedAnswer } from '@/sync/domains/session/input/returnedAnswer';
 import { SessionAskRecord } from '@/components/sessions/transcript/askRecord/SessionAskRecord';
-import { isSessionMessageInvocationAnchor } from '@/components/sessions/transcript/references/readSessionMessageInvocation';
+import { isSessionMessageInvocationAnchor, presentsAsSessionAskRecord } from '@/components/sessions/transcript/references/readSessionMessageInvocation';
 import { Typography } from '@/constants/Typography';
 import { SessionMessageAccountByline } from './SessionMessageAccountByline';
 import type { ToolViewDisplaySettings } from '@/components/tools/shell/views/toolViewDisplaySettings';
@@ -195,7 +210,25 @@ function readPluginMessageAttributionLabel(
     : t('message.pluginAttributionExternal', { sender, pluginId: provenance.pluginId });
 }
 
-function MessageProvenanceAttributionLabel(props: Readonly<{ testID: string; label: string }>) {
+function MessageProvenanceAttributionLabel(props: Readonly<{
+  testID: string;
+  label: string;
+  /** A second origin on the same quiet line; each part truncates on its own so neither is lost at phone width. */
+  detail?: string;
+}>) {
+  if (props.detail !== undefined) {
+    return (
+      <View
+        testID={props.testID}
+        accessibilityRole="text"
+        accessibilityLabel={`${props.label} · ${props.detail}`}
+        style={styles.messageProvenanceAttributionRow}
+      >
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.messageProvenanceAttributionPart}>{props.label}</Text>
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.messageProvenanceAttributionPart}>{`\u00a0·\u00a0${props.detail}`}</Text>
+      </View>
+    );
+  }
   return (
     <Text
       testID={props.testID}
@@ -210,6 +243,36 @@ function MessageProvenanceAttributionLabel(props: Readonly<{ testID: string; lab
   );
 }
 
+// Senders already demanded by a mounted transcript, so every row a sender delivered shares one read.
+const demandedProvenanceSenders = new WeakMap<object, Set<string>>();
+
+/**
+ * The name of the Session that produced a message. An archived or never-opened sender is not held by
+ * a cold view, so the exact by-id owner is asked once per distinct sender for this transcript: no
+ * turns, no messages, and static/public transcripts never read.
+ */
+function useSessionProvenanceName(sourceSessionId: string, serverId?: string | null): string {
+  const transcript = useOptionalSessionTranscriptSource();
+  const source = useSessionDisplayNameSource(sourceSessionId, serverId);
+  const held = source !== null;
+  const homeServerId = serverId ?? transcript?.serverId ?? null;
+  React.useEffect(() => {
+    if (held || transcript?.kind !== 'app') return;
+    const demanded = demandedProvenanceSenders.get(transcript) ?? new Set<string>();
+    demandedProvenanceSenders.set(transcript, demanded);
+    const key = `${homeServerId ?? ''}\u0000${sourceSessionId}`;
+    if (demanded.has(key)) return;
+    demanded.add(key);
+    void sync.ensureSessionVisibleForMessageRoute(sourceSessionId, {
+      ...(homeServerId ? { serverId: homeServerId } : {}), hydrateMessages: false, includeTurnsProjection: false,
+    }).then((result) => {
+      // A transient failure may be asked again by a later row; an unreadable sender keeps the generic name.
+      if (result.kind === 'retryable_failure' || result.kind === 'awaiting_push') demanded.delete(key);
+    }, () => { demanded.delete(key); });
+  }, [held, homeServerId, sourceSessionId, transcript]);
+  return source ? getSessionName(source, serverId) : t('message.provenanceSession');
+}
+
 function SessionMessageProvenanceAttribution(props: Readonly<{
   messageId: string;
   sourceSessionId: string;
@@ -217,8 +280,7 @@ function SessionMessageProvenanceAttribution(props: Readonly<{
 }>) {
   // Only Session-produced messages subscribe, and only to the fields that can
   // change the source title. The transcript Home qualifies the source identity.
-  const source = useSessionDisplayNameSource(props.sourceSessionId, props.serverId);
-  const sourceName = source ? getSessionName(source, props.serverId) : t('message.provenanceSession');
+  const sourceName = useSessionProvenanceName(props.sourceSessionId, props.serverId);
   return (
     <MessageProvenanceAttributionLabel
       testID={`transcript-provenance-attribution:${props.messageId}`}
@@ -298,6 +360,59 @@ export function WorkflowMessageProvenanceAttribution(props: WorkflowMessageProve
     />;
 }
 
+type DiscussionMessageProvenanceProps = Readonly<{
+  messageId: string;
+  discussionId: string;
+  /** The Session that delivered it; absent when the viewer did, so the Discussion alone is named. */
+  senderSessionId?: string | null;
+  serverId?: string | null;
+}>;
+
+/** "From <Discussion>", or "From <sender> · <Discussion>" when another Session delivered it. */
+function DiscussionProvenanceByline(props: Readonly<{ testID: string; senderName: string | null; discussion: string }>) {
+  return props.senderName === null
+    ? <MessageProvenanceAttributionLabel testID={props.testID} label={t('message.provenanceFrom', { source: props.discussion })} />
+    : <MessageProvenanceAttributionLabel testID={props.testID}
+      label={t('message.provenanceFrom', { source: props.senderName })} detail={props.discussion} />;
+}
+
+function useDiscussionProvenanceTitle(discussionId: string, serverId?: string | null): string {
+  const transcriptSource = useSessionTranscriptSource();
+  const homeServerId = serverId ?? transcriptSource.serverId;
+  const address = React.useMemo(() => homeServerId ? { serverId: homeServerId } : null, [homeServerId]);
+  const discussionIds = React.useMemo(() => [discussionId], [discussionId]);
+  // The shared Discussion repository names it; an unknown title keeps the generic origin.
+  return useDiscussionTitles({ address, discussionIds }).get(discussionId) ?? t('message.provenanceDiscussion');
+}
+
+function AppDiscussionMessageProvenanceAttribution(props: DiscussionMessageProvenanceProps) {
+  const discussion = useDiscussionProvenanceTitle(props.discussionId, props.serverId);
+  return (
+    <DiscussionProvenanceByline testID={`transcript-provenance-attribution:${props.messageId}`} senderName={null} discussion={discussion} />
+  );
+}
+
+function AppSessionDiscussionMessageProvenanceAttribution(props: DiscussionMessageProvenanceProps & Readonly<{ senderSessionId: string }>) {
+  const sender = useSessionProvenanceName(props.senderSessionId, props.serverId);
+  const discussion = useDiscussionProvenanceTitle(props.discussionId, props.serverId);
+  return (
+    <DiscussionProvenanceByline testID={`transcript-provenance-attribution:${props.messageId}`} senderName={sender} discussion={discussion} />
+  );
+}
+
+/** A Discussion-delivered input always names the Discussion it came from. */
+function DiscussionMessageProvenanceAttribution(props: DiscussionMessageProvenanceProps) {
+  const source = useSessionTranscriptSource();
+  // Static/public transcripts never subscribe to private Account Discussions.
+  if (source.kind !== 'app') {
+    return <DiscussionProvenanceByline testID={`transcript-provenance-attribution:${props.messageId}`}
+      senderName={props.senderSessionId ? t('message.provenanceSession') : null} discussion={t('message.provenanceDiscussion')} />;
+  }
+  return props.senderSessionId
+    ? <AppSessionDiscussionMessageProvenanceAttribution {...props} senderSessionId={props.senderSessionId} />
+    : <AppDiscussionMessageProvenanceAttribution {...props} />;
+}
+
 function MessageProvenanceAttribution(props: Readonly<{ message: Message; serverId?: string | null }>) {
   const provenance = React.useMemo(() => props.message.kind === 'user-text'
     ? readSessionMessageProvenance(props.message.meta, 'stored')
@@ -306,6 +421,11 @@ function MessageProvenanceAttribution(props: Readonly<{ message: Message; server
   // independent: producer metadata never invents or suppresses a human actor.
   // Input the person typed (in the app, the CLI or by voice) or a host relayed carries no origin label;
   // only a producer that is not the person (a Workflow, an Automation, a Session, a plugin) is named.
+  const discussion = props.message.kind === 'user-text' ? readDiscussionInputOrigin(props.message.meta) : null;
+  if (discussion) {
+    return <DiscussionMessageProvenanceAttribution messageId={props.message.id}
+      discussionId={discussion.discussionId} senderSessionId={discussion.senderSessionId} serverId={props.serverId} />;
+  }
   if (!provenance || provenance.kind === 'host' || provenance.kind === 'happierApp'
     || provenance.kind === 'cli' || provenance.kind === 'voice') return null;
   if (provenance.kind === 'workflow_invocation') {
@@ -359,6 +479,22 @@ function buildMessageMarkdownRenderCacheKey(messageId: string, revision: number 
     ? Math.trunc(revision)
     : 'legacy';
   return `${messageId}:${normalizedRevision}`;
+}
+
+/**
+ * The quiet line under a message: its time, and for a spoken Voice turn what kind of turn it was
+ * ("Spoken · 10:12", "Spoken aloud"). A Voice turn keeps its marker at rest, even when times show
+ * only on hover.
+ */
+function resolveMessageMetaText(input: Readonly<{
+  showTimestamp: boolean;
+  createdAt: number;
+  voiceTurnRole: 'user' | 'assistant' | null;
+}>): string | null {
+  const time = input.showTimestamp ? formatTranscriptMessageTimestamp(input.createdAt) : null;
+  if (!input.voiceTurnRole) return time;
+  const marker = t(input.voiceTurnRole === 'user' ? 'voiceMoments.spokenTurn' : 'voiceMoments.spokenAloud');
+  return time ? `${marker} · ${time}` : marker;
 }
 
 function resolveMessageTimestampPresentation(input: {
@@ -462,15 +598,17 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
     props.messageDisplayCommon.debugInformationEnabled,
   ) === 'hidden') return null;
   const isHostFollowInput = props.message.kind === 'user-text' && isHostAuthoredInputMeta(props.message.meta);
-  // Follow's admitted model prompt remains in storage for the agent. Its exact
-  // delivery facts and cards own the person-visible notice, never prompt prose.
+  // An exact correlated card already presents this source. Otherwise keep the
+  // admitted source visible, even when historical acceptance is unknown.
   if (props.message.kind === 'user-text' && !returnedAnswer
-    && readHostFollowInputMeta(props.message.meta) && !props.hostWakeCount) return null;
+    && readHostFollowInputMeta(props.message.meta) && !props.hostWakeCount
+    && props.message.localId && props.toolRouteCommon.followWorkerCardsByInputLocalId?.has(props.message.localId)) return null;
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
       <View style={messageContentStyle}>
         <RecoveredHistoryIndicator message={props.message} />
-        {props.message.kind === 'user-text' && !isHostFollowInput && (
+        {/* A relayed Discussion message is written by the host's Account; its Discussion names the origin. */}
+        {props.message.kind === 'user-text' && !isHostFollowInput && !readHostDiscussionInputMeta(props.message.meta) && (
           <SessionMessageAccountByline
             messageId={props.message.id}
             actor={props.message.accountActor}
@@ -488,6 +626,7 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
           returnedAnswer={returnedAnswer}
           metadata={props.metadata}
           sessionId={props.sessionId}
+          serverId={resolveTranscriptMessageServerId(props.sessionId, props.serverId, props.forkCommon.sessionForkSupportSource?.serverId)}
           layoutContext={props.layoutContext ?? 'transcript'}
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           approvalRequests={props.approvalRequests}
@@ -515,6 +654,27 @@ export const MessageViewWithSessionCommon = React.memo(function MessageViewWithS
     </View>
   );
 });
+
+function HostOnboardingNotice(props: Readonly<{
+  message: UserTextMessage; sessionId: string; serverId?: string | null; canSendMessages: boolean;
+}>) {
+  const source = useSessionTranscriptSource();
+  const canSend = source.useInteraction().canSendMessages && props.canSendMessages && source.actions !== null;
+  const facts = readSessionHostOnboardingPresentationV1(props.message.meta);
+  const displayText = readableMessageText(props.message.text, props.message.meta);
+  return <View style={styles.hostOnboarding}>
+    <TranscriptTextNoticeRow message={props.message} sessionId={props.sessionId} serverId={props.serverId} displayText={displayText} />
+    {facts?.firstTask ? <View style={styles.hostOnboardingTask}>
+      <RoundButton testID="bot-template-first-task-chip" title={facts.firstTask} titleNumberOfLines="complete" style={styles.hostOnboardingTaskChip} size="small" display="secondary" disabled={!canSend}
+        onPress={() => {
+          if (!canSend || !source.actions || !facts.firstTask) return;
+          fireAndForget(source.actions.submitMessage(facts.firstTask, { callerSurface: 'message_option' })
+            .catch(error => { Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage')); }),
+          { tag: 'MessageView.firstTask' });
+        }} />
+    </View> : null}
+  </View>;
+}
 
 // RenderBlock function that dispatches to the correct component based on message kind
 function RenderBlock(props: {
@@ -551,8 +711,18 @@ function RenderBlock(props: {
   switch (props.message.kind) {
     case 'user-text':
       if (props.isHostFollowInput && !props.returnedAnswer) {
-        if (readHostFollowInputMeta(props.message.meta)) {
-          return props.hostWakeCount ? <TranscriptHostWakeNotice count={props.hostWakeCount} /> : null;
+        const provenance = readSessionMessageProvenance(props.message.meta, 'stored');
+        if (provenance?.kind === 'host' && provenance.producer === 'hostOnboarding') {
+          return <HostOnboardingNotice message={props.message} sessionId={props.sessionId} serverId={props.serverId}
+            canSendMessages={props.interaction.canSendMessages === true} />;
+        }
+        const followInput = readHostFollowInputMeta(props.message.meta);
+        if (followInput) {
+          return <>
+            {props.hostWakeCount ? <TranscriptHostWakeNotice count={props.hostWakeCount} /> : null}
+            <TranscriptFollowSourceNotice followInput={followInput} sessionId={props.sessionId}
+              serverId={props.serverId} messageId={props.message.id} createdAt={props.message.createdAt} />
+          </>;
         }
         return <TranscriptTextNoticeRow message={props.message} sessionId={props.sessionId} serverId={props.serverId} />;
       }
@@ -676,14 +846,23 @@ function TranscriptTextNoticeRow(props: Readonly<{
   sessionId: string;
   serverId?: string | null;
   tone?: 'failure';
+  displayText?: string;
 }>) {
   const transcriptSource = useSessionTranscriptSource();
   const find = useTranscriptFindRow(props.message.id);
   const findSourceRanges = find?.blocks.find((block) => block.id === 'text')?.sourceRanges;
-  const event = React.useMemo<AgentEvent>(() => ({ type: 'message', message: props.message.text }), [props.message.text]);
+  const displayText = props.displayText ?? (props.tone === 'failure'
+    ? resolveTranscriptMessageDisplayText(props.message).text ?? '' : props.message.text);
+  const event = React.useMemo<AgentEvent>(() => ({ type: 'message', message: displayText }), [displayText]);
+  const sessionAddress = transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null;
+  // A refused Team credential or a missing native Agent sign-in adds its recovery under the shared display text; Find and copy keep that text.
+  const runtimeIssue = props.tone === 'failure' && props.message.kind === 'agent-text' ? readRuntimeIssueMessageMeta(props.message.meta) : null;
+  const recovery = runtimeIssue?.source === 'team_credential'
+    ? <TeamCredentialDenialRecovery issue={runtimeIssue} address={sessionAddress} />
+    : runtimeIssue?.source === 'auth_error' ? <AgentAuthRequiredRecovery issue={runtimeIssue} /> : undefined;
   return (
     <TranscriptJumpAttention
-      sessionAddress={transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null}
+      sessionAddress={sessionAddress}
       routeMessageId={buildMessageRouteId(props.message)}
       seq={resolveTranscriptMessageSeq(props.message)}
       radius={TRANSCRIPT_EVENT_ROW_HIGHLIGHT_RADIUS}
@@ -697,6 +876,7 @@ function TranscriptTextNoticeRow(props: Readonly<{
         sessionId={props.sessionId}
         serverId={props.serverId}
         createdAt={props.message.createdAt}
+        footer={recovery}
       />
     </TranscriptJumpAttention>
   );
@@ -728,10 +908,13 @@ function UserTextBlock(props: {
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
+  const handleActionHoverIn = React.useCallback(() => setIsCopyButtonHovered(true), []);
+  const handleActionHoverOut = React.useCallback(() => setIsCopyButtonHovered(false), []);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
 	  const transcriptSource = useSessionTranscriptSource();
+  const writeClipboard = useClipboardWrite(props.serverId ?? transcriptSource.serverId);
   const sourceCanSendMessages = transcriptSource.useInteraction().canSendMessages;
 	  const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const { onJumpToAnchor: handleJumpToAnchor, onMarkdownLinkPress: handleMarkdownLinkPress, openPath: handleOpenAttachmentPath } = useTranscriptFileLinks({
@@ -748,23 +931,22 @@ function UserTextBlock(props: {
   // An answer another session returned here is quoted as information, not drawn as the person's bubble.
   const returnedAnswer = props.returnedAnswer;
 
+  // Outside evidence delivered to the agent (a PR update, a CI failure) is drawn from its structured metadata
+  // (D-I12), as a standalone card instead of the rendered prompt in a bubble.
+  const forgeEvidence = React.useMemo(() => readSessionInputForgeEvidenceV1(props.message.meta), [props.message.meta]);
   // Row-local hover/focus state must not re-admit the message's structured content.
-  const structuredNode = React.useMemo(() => renderStructuredMessage({
+  const structuredNode = React.useMemo(() => forgeEvidence !== null
+    ? <ForgeEvidenceInputCard evidence={forgeEvidence} testID={`transcript-forge-evidence:${props.message.id}`} sessionId={props.sessionId} serverId={props.serverId} />
+    : renderStructuredMessage({
 	    message: props.message,
 	    sessionId: props.sessionId,
         serverId: props.serverId,
         interaction: props.interaction,
 	    onJumpToAnchor: handleJumpToAnchor,
 	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
-	  }), [props.message, props.sessionId, props.serverId, props.interaction, handleJumpToAnchor,
+	  }), [forgeEvidence, props.message, props.sessionId, props.serverId, props.interaction, handleJumpToAnchor,
     props.messageDisplayCommon.debugInformationEnabled]);
-  const sessionMediaMeta = React.useMemo(() => {
-    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
-    const envelope = primaryEnvelope?.kind === 'session_media.v1'
-      ? primaryEnvelope
-      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
-    return parseSessionMediaMessageMeta(envelope);
-  }, [props.message.meta]);
+  const sessionMediaMeta = React.useMemo(() => readTranscriptSessionMediaMeta(props.message.meta), [props.message.meta]);
   const isStructuredOnly = structuredNode != null;
 
   const attachmentsMeta = React.useMemo(() => readTranscriptAttachmentsMeta(props.message.meta), [props.message.meta]);
@@ -783,12 +965,20 @@ function UserTextBlock(props: {
   const unsupportedContentText = messageDisplay.unsupportedContentText;
   const markdownText = messageDisplay.text;
   const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
+  const passageSource = React.useMemo(() => resolveTranscriptPassageSource({ message: props.message,
+    sessionId: props.sessionId, serverId: props.serverId ?? transcriptSource.serverId,
+    canSendMessages: transcriptSource.kind === 'app' && props.canSendMessages && sourceCanSendMessages,
+    historical: props.historical, discarded: isDiscarded, structured: isStructuredOnly || unsupportedContentMeta != null,
+    text: renderedMarkdownText,
+  }), [props.message, props.sessionId, props.serverId, transcriptSource.serverId, transcriptSource.kind,
+    props.canSendMessages, sourceCanSendMessages, props.historical, isDiscarded, isStructuredOnly, unsupportedContentMeta, renderedMarkdownText]);
 
   // One projection for both branches (D-6). Sessions come only from the envelope (INV-5);
   // files additionally keep the permanent text scan (D-5).
   const structuredReferenceProjection = useMessageStructuredReferences({
     meta: props.message.meta,
     text: renderedMarkdownText,
+    ownSessionId: props.sessionId,
   });
   const structuredReferences = structuredReferenceProjection.row;
   const composerAttachments = useMessageComposerAttachments(props.message.meta, isStructuredOnly ? undefined : structuredReferenceProjection.inline);
@@ -823,13 +1013,13 @@ function UserTextBlock(props: {
     })(), { tag: 'MessageView.handleOptionPress.userMessage' });
   }, [props.canSendMessages, props.sessionId, sourceCanSendMessages, transcriptSource.actions]);
   const handleOptionLongPress = React.useCallback<OptionLongPressHandler>(async (option) => {
-    const ok = await setClipboardStringSafe(option.title);
+    const ok = await writeClipboard(option.title);
     if (!ok) {
       Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
       return false;
     }
     return true;
-  }, []);
+  }, [writeClipboard]);
 
   const selectableMessage = React.useMemo(() => {
     if (isDiscarded) return null;
@@ -852,13 +1042,18 @@ function UserTextBlock(props: {
     pins: props.messagePins ?? [],
     pinActionEnabled: props.messageDisplayCommon.transcriptMessagePinActionEnabled,
   }), [props.message, props.messagePins, props.sessionId, props.messageDisplayCommon.transcriptMessagePinActionEnabled]);
+  const coarsePrimaryPointer = useCoarsePrimaryPointer();
+  // A touch host (native, coarse-pointer web) opens this message's timestamp and actions by tap or long-press.
+  const touchRevealKey = Platform.OS !== 'web' || coarsePrimaryPointer ? props.message.id : null;
+  const touchOpened = useTranscriptRowTouchOpened(props.message.id);
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
     isActionHovered: isCopyButtonHovered,
     isRowFocused: isActionRowFocused,
-    coarsePrimaryPointer: readCoarsePrimaryPointer(),
+    coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
+    touchOpened,
   } as const;
   const hasPinButton = props.onToggleMessagePin != null && messagePinAvailability.status === 'available';
   const showMessageActions = shouldShowTranscriptRowActions(rowActionVisibilityInput);
@@ -872,10 +1067,13 @@ function UserTextBlock(props: {
     isWeb,
     showActions: showMessageActions,
   });
+  const timestampText = resolveMessageMetaText({
+    showTimestamp: timestampPresentation.showTimestamp,
+    createdAt: props.message.createdAt,
+    voiceTurnRole: messageDisplay.isVoiceAgentTurn ? 'user' : null,
+  });
+  // A Voice turn's marker carries the Voice planet, as the conversation's other Voice lines do.
   const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;
-  const timestampText = timestampPresentation.showTimestamp
-    ? formatTranscriptMessageTimestamp(props.message.createdAt)
-    : null;
 
 
   if (isVoiceAgentTurn && (markdownText == null || markdownText.trim().length === 0)) {
@@ -895,9 +1093,10 @@ function UserTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
-      onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
+      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
+      touchRevealKey={touchRevealKey}
 >
       {(actionsRow) => (
         <View
@@ -997,7 +1196,11 @@ function UserTextBlock(props: {
   );
   const bubbleContent = (
           <>
-            <MarkdownView codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText} findActive={findActive} findSourceRanges={findSourceRanges} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)} onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress} selectable={true} profile="transcript" textStyle={styles.transcriptMarkdownText} inlineReferences={inlineReferences} />
+            <TranscriptPassageMarkdownView passageSource={passageSource} destinationSessionId={props.sessionId}
+                codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])} markdown={renderedMarkdownText}
+                findActive={findActive} findSourceRanges={findSourceRanges} renderCacheKey={buildMessageMarkdownRenderCacheKey(props.message.id, props.messageRevision)}
+                onOptionPress={handleOptionPress} onOptionLongPress={handleOptionLongPress} onLinkPress={handleMarkdownLinkPress}
+                selectable profile="transcript" textStyle={styles.transcriptMarkdownText} inlineReferences={inlineReferences} />
             {inlineComposition ? null : bubblePictures}
             {nonImageAttachments.length > 0 ? (
               <AttachmentsMessageRow
@@ -1035,9 +1238,10 @@ function UserTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
-      onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
+      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
+      touchRevealKey={touchRevealKey}
 >
       {(actionsRow) => (
       <View
@@ -1116,11 +1320,14 @@ function AgentTextBlock(props: {
   const { isHovered: isMessageHovered, hoverProps } = useRowActionHoverHost();
   const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const [isActionRowFocused, setIsActionRowFocused] = React.useState(false);
+  const handleActionHoverIn = React.useCallback(() => setIsCopyButtonHovered(true), []);
+  const handleActionHoverOut = React.useCallback(() => setIsCopyButtonHovered(false), []);
   const handleActionsFocus = React.useCallback(() => setIsActionRowFocused(true), []);
   const handleActionsBlur = React.useCallback(() => setIsActionRowFocused(false), []);
   const isWeb = Platform.OS === 'web';
   const fallbackTextSelectable = shouldEnableFallbackTextNativeSelection(Platform.OS);
 	  const transcriptSource = useSessionTranscriptSource();
+  const writeClipboard = useClipboardWrite(props.serverId ?? transcriptSource.serverId);
   const sourceCanSendMessages = transcriptSource.useInteraction().canSendMessages;
   const { onJumpToAnchor: handleJumpToAnchor, onMarkdownLinkPress: handleMarkdownLinkPress, openPath: handleOpenAgentSessionMediaPath } = useTranscriptFileLinks({
     sessionId: props.sessionId, serverId: props.serverId, canOpenFiles: props.canOpenFiles,
@@ -1198,13 +1405,13 @@ function AgentTextBlock(props: {
     })(), { tag: 'MessageView.handleOptionPress.agentMessage' });
   }, [props.canSendMessages, props.sessionId, sourceCanSendMessages, transcriptSource.actions]);
   const handleOptionLongPress = React.useCallback<OptionLongPressHandler>(async (option) => {
-    const ok = await setClipboardStringSafe(option.title);
+    const ok = await writeClipboard(option.title);
     if (!ok) {
       Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
       return false;
     }
     return true;
-  }, []);
+  }, [writeClipboard]);
 
   const selectionRow = useOptionalTranscriptSelectionRow(props.message.id);
   const selectionModeActionsVisible = selectionEnabled && selectionRow.isSelectionMode;
@@ -1218,13 +1425,18 @@ function AgentTextBlock(props: {
     pins: props.messagePins ?? [],
     pinActionEnabled: props.messageDisplayCommon.transcriptMessagePinActionEnabled,
   }), [props.message, props.messagePins, props.sessionId, props.messageDisplayCommon.transcriptMessagePinActionEnabled]);
+  const coarsePrimaryPointer = useCoarsePrimaryPointer();
+  // A touch host (native, coarse-pointer web) opens this message's timestamp and actions by tap or long-press.
+  const touchRevealKey = Platform.OS !== 'web' || coarsePrimaryPointer ? props.message.id : null;
+  const touchOpened = useTranscriptRowTouchOpened(props.message.id);
   const rowActionVisibilityInput = {
     platformOS: Platform.OS,
     isRowHovered: isMessageHovered,
     isActionHovered: isCopyButtonHovered,
     isRowFocused: isActionRowFocused,
-    coarsePrimaryPointer: readCoarsePrimaryPointer(),
+    coarsePrimaryPointer,
     selectionModeActive: selectionModeActionsVisible,
+    touchOpened,
   } as const;
   const hasPinButton = props.onToggleMessagePin != null && messagePinAvailability.status === 'available';
   const showMessageActions = shouldShowTranscriptRowActions(rowActionVisibilityInput);
@@ -1237,10 +1449,13 @@ function AgentTextBlock(props: {
     isWeb,
     showActions: showMessageActions,
   });
+  const timestampText = resolveMessageMetaText({
+    showTimestamp: timestampPresentation.showTimestamp,
+    createdAt: props.message.createdAt,
+    voiceTurnRole: messageDisplay.isVoiceAgentTurn ? 'assistant' : null,
+  });
+  // A Voice turn's marker carries the Voice planet, as the conversation's other Voice lines do.
   const timestampGlyph = messageDisplay.isVoiceAgentTurn ? 'planet' as const : undefined;
-  const timestampText = timestampPresentation.showTimestamp
-    ? formatTranscriptMessageTimestamp(props.message.createdAt)
-    : null;
 
   const renderThinkingAsToolCard = props.message.isThinking && sessionThinkingDisplayMode === 'tool';
   const renderThinkingInline = props.message.isThinking === true && !renderThinkingAsToolCard;
@@ -1298,23 +1513,25 @@ function AgentTextBlock(props: {
       isStructuredOnly !== true &&
       props.message.peer === undefined &&
       (streamSegmentMeta ? streamSegmentAssistantStreaming === true : true);
-  const streaming = useStreamingTextSmoothing({
-      enabled: streamingSmoothingEligible,
-      targetText: renderText,
-      settleDelayMs: transcriptStreamingSettleDelayMs,
-  });
-  const thinkingRenderMarkdown =
-      props.message.isThinking === true && streamingSmoothingEligible ? streaming.displayText : markdown;
-  const thinkingStreamingActive =
-      props.message.isThinking === true && streamingSmoothingEligible && streaming.isStreaming;
+  // Only the pacer's streaming transitions affect row accessibility and passage admission.
+  // Its changing text stays in StreamingTextContent, below the row's chrome.
+  const [streamingActive, setStreamingActive] = React.useState(false);
   const shouldRenderStreamingPlain =
-      shouldRenderActiveStreamSegmentPlain || (props.message.isThinking !== true && streaming.isStreaming);
+      shouldRenderActiveStreamSegmentPlain || (props.message.isThinking !== true && streamingActive);
   const shouldRenderStreamingMarkdown =
       shouldRenderStreamingPlain && transcriptStreamingMarkdownRenderingEnabled === true;
+  const passageDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
+  const passageSource = React.useMemo(() => resolveTranscriptPassageSource({ message: props.message,
+    sessionId: props.sessionId, serverId: props.serverId ?? transcriptSource.serverId,
+    canSendMessages: transcriptSource.kind === 'app' && props.canSendMessages && sourceCanSendMessages,
+    historical: props.historical, discarded: passageDiscarded, structured: isStructuredOnly || agentUnsupportedContentMeta != null,
+    streaming: shouldRenderStreamingPlain || streamSegmentAssistantStreaming, text: markdown,
+  }), [props.message, props.sessionId, props.serverId, transcriptSource.serverId, transcriptSource.kind,
+    props.canSendMessages, sourceCanSendMessages, props.historical, passageDiscarded, isStructuredOnly,
+    agentUnsupportedContentMeta, shouldRenderStreamingPlain, streamSegmentAssistantStreaming, markdown]);
   // The pacer already meters reveal frequency, so the streaming Markdown path
   // renders its output directly; the parse cache keeps per-frame cost bounded
   // to the changing tail block.
-  const streamingMarkdownText = streaming.displayText;
   const committedStreamingMarkdownMessageIdRef = React.useRef<string | null>(null);
   const staticRenderPlaceholderEnabled =
       shouldRenderStreamingMarkdown ||
@@ -1342,24 +1559,21 @@ function AgentTextBlock(props: {
   const structuredReferenceProjectionDeferred = useMessageStructuredReferences({
     meta: props.message.meta,
     text: markdown,
+    ownSessionId: props.sessionId,
     enabled: messageDisplay.text !== null && !shouldRenderStreamingPlain,
   });
   const structuredReferencesDeferred = structuredReferenceProjectionDeferred.row;
-  const agentSessionMediaMeta = React.useMemo(() => {
-    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
-    const envelope = primaryEnvelope?.kind === 'session_media.v1'
-      ? primaryEnvelope
-      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
-    return parseSessionMediaMessageMeta(envelope);
-  }, [props.message.meta]);
+  const agentSessionMediaMeta = React.useMemo(() => readTranscriptSessionMediaMeta(props.message.meta), [props.message.meta]);
 
   // L7: an interactive transcript (one that can navigate) offers Second opinion and Discuss… on a committed answer.
+  const discussionPaneScopeId = useDestinationPaneScopeId(createSessionPaneScopeId(props.sessionId, props.serverId ?? transcriptSource.serverId));
   const navigateFromTranscript = transcriptSource.navigate;
   const answerText = selectableMessage?.text ?? null;
+  const openSecondOpinion = useOpenDiscussionSecondOpinion(discussionPaneScopeId);
   const openDiscussionSource = React.useCallback((source: DiscussionSecondOpinionSourceV1, intent: 'second_opinion' | 'discuss') => {
     if (source.kind !== 'session' || answerText === null || !navigateFromTranscript) return;
-    presentDiscussionSecondOpinion({ source, intent, sourceText: answerText, onNavigate: navigateFromTranscript });
-  }, [answerText, navigateFromTranscript]);
+    openSecondOpinion({ source, intent, sourceText: answerText, onNavigate: navigateFromTranscript });
+  }, [answerText, navigateFromTranscript, openSecondOpinion]);
 
   // Hidden thinking and filtered text keep the mounted row's hook order stable.
   if (messageDisplay.text === null) return null;
@@ -1375,9 +1589,10 @@ function AgentTextBlock(props: {
       showActions={showMessageActions} showPinAction={showPinButton}
       timestampText={timestampText} timestampGlyph={timestampGlyph} invertTimestampAndActions={timestampPresentation.invertTimestampAndActions}
       onActionsFocus={handleActionsFocus} onActionsBlur={handleActionsBlur}
-      onActionHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
-      onActionHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+      onActionHoverIn={isWeb ? handleActionHoverIn : undefined}
+      onActionHoverOut={isWeb ? handleActionHoverOut : undefined}
       hoverProps={hoverProps}
+      touchRevealKey={touchRevealKey}
     >
       {(actionsRow) => (
       <TranscriptJumpAttention
@@ -1408,7 +1623,21 @@ function AgentTextBlock(props: {
         ) : null}
         {structuredNode}
         {isStructuredOnly ? null : (
-          renderThinkingAsToolCard ? (
+          <StreamingTextContent
+            enabled={streamingSmoothingEligible}
+            targetText={renderText}
+            settleDelayMs={transcriptStreamingSettleDelayMs}
+            onStreamingChange={setStreamingActive}
+          >
+          {(streaming) => {
+            const thinkingRenderMarkdown = props.message.isThinking === true && streamingSmoothingEligible
+              ? streaming.displayText : markdown;
+            const thinkingStreamingActive = props.message.isThinking === true && streamingSmoothingEligible && streaming.isStreaming;
+            const shouldRenderStreamingPlain = shouldRenderActiveStreamSegmentPlain
+              || (props.message.isThinking !== true && streaming.isStreaming);
+            const shouldRenderStreamingMarkdown = shouldRenderStreamingPlain && transcriptStreamingMarkdownRenderingEnabled === true;
+            const streamingMarkdownText = streaming.displayText;
+            return renderThinkingAsToolCard ? (
             <ToolView
               metadata={props.metadata}
               tool={{
@@ -1470,8 +1699,8 @@ function AgentTextBlock(props: {
                   summary={deriveThinkingSummary(markdown)}
                   revealRequestId={findRevealId}
                 >
-                  <MarkdownView
-                    markdown={markdown}
+                  <TranscriptPassageMarkdownView
+                    passageSource={passageSource} destinationSessionId={props.sessionId} markdown={markdown}
                     codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                     findActive={findActive} findSourceRanges={findSourceRanges}
                     agentTexMath
@@ -1485,8 +1714,8 @@ function AgentTextBlock(props: {
                   />
                 </PeerMessageRow>
               ) : shouldRenderStreamingMarkdown ? (
-                  <MarkdownView
-                      markdown={streamingMarkdownText}
+                  <TranscriptPassageMarkdownView
+                      passageSource={null} destinationSessionId={props.sessionId} markdown={streamingMarkdownText}
                       codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                       findActive={findActive} findSourceRanges={findSourceRanges}
                       agentTexMath
@@ -1510,8 +1739,8 @@ function AgentTextBlock(props: {
                       <FindHighlightedText text={streaming.displayText} ranges={findSourceRanges} selectable={fallbackTextSelectable} />
                   </Text>
               ) : (
-                  <MarkdownView
-                      markdown={markdown}
+                  <TranscriptPassageMarkdownView
+                      passageSource={passageSource} destinationSessionId={props.sessionId} markdown={markdown}
                       codeBlockStateKey={JSON.stringify([props.sessionId, props.message.id])}
                       findActive={findActive} findSourceRanges={findSourceRanges}
                       agentTexMath
@@ -1526,7 +1755,9 @@ function AgentTextBlock(props: {
                   />
               )
             )
-          )
+          );
+          }}
+          </StreamingTextContent>
         )}
         {structuredReferencesDeferred.length > 0 ? (
           <StructuredReferencesRow
@@ -1587,12 +1818,16 @@ function ToolCallBlock(props: {
   const structuredPinHost = useRowActionHoverHost();
   const toolRouteMessageId = 'messageRouteId' in props.toolRouteCommon
     ? props.toolRouteCommon.messageRouteId
-    : resolveMessageRouteIdForDisplay({ message: props.message, ...props.toolRouteCommon });
+    : resolveTranscriptToolRouteMessageId(props.message, props.toolRouteCommon);
   // Narrow after the live message and its displayed route are known. Doing this at the list
   // renderer would miss streaming inputs and repeat the route owner's reverse-index lookup.
   const approvalRequests = selectToolApprovalRequestsForMessages({ requests: props.approvalRequests,
     sessionId: props.sessionId, rowId: props.message.id, messages: [message], messageId: toolRouteMessageId });
   const toolSeq = resolveTranscriptMessageSeq(props.message);
+  const askRecordServerId = props.toolChromeCommon.serverId ?? null;
+  const presentsAskRecord = React.useMemo(() => askRecordServerId !== null
+    && presentsAsSessionAskRecord(props.message, { serverId: askRecordServerId, sessionId: props.sessionId }),
+  [askRecordServerId, props.message, props.sessionId]);
   const { onJumpToAnchor: handleJumpToAnchor, openPath: handleOpenToolSessionMediaPath } = useTranscriptFileLinks({
     sessionId: props.sessionId, serverId: props.toolChromeCommon.serverId,
     canOpenFiles: props.interaction.canOpenFiles === true,
@@ -1612,13 +1847,12 @@ function ToolCallBlock(props: {
 	    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
 	  }), [message, props.sessionId, props.toolChromeCommon.serverId, props.interaction, handleJumpToAnchor,
     props.messageDisplayCommon.debugInformationEnabled]);
-  const hasStructuredNode = structuredNode != null;
-  const { turnChanges, shouldRenderToolChrome } = React.useMemo(() => deriveToolMessageDisplay({
+  const structuredResultIsCard = hasToolCarriedStructuredResultCard(message);
+  const { turnChanges, shouldRenderToolChrome, sessionMedia: toolSessionMediaMeta } = React.useMemo(() => deriveToolMessageDisplay({
     tool: message.tool,
-    hasStructuredNode,
-    toolViewTimelineChromeMode,
-    permissionDisabledReason: props.interaction.permissionDisabledReason,
-  }), [message.tool, hasStructuredNode, toolViewTimelineChromeMode, props.interaction.permissionDisabledReason]);
+    meta: props.message.meta,
+    presentedAsAskRecord: presentsAskRecord,
+  }), [message.tool, props.message.meta, presentsAskRecord]);
   const toolPinAction = resolveToolRowPinAction({
     sessionId: props.sessionId,
     seq: toolSeq,
@@ -1630,13 +1864,16 @@ function ToolCallBlock(props: {
     onTogglePin: props.onToggleToolPin,
     testID: `transcript-tool-call-pin:${props.message.id}`,
   });
-  const toolSessionMediaMeta = React.useMemo(() => {
-    const primaryEnvelope = parseHappierMetaEnvelope(props.message.meta);
-    const envelope = primaryEnvelope?.kind === 'session_media.v1'
-      ? primaryEnvelope
-      : parseHappierMetaEnvelope(props.message.meta, 'happierMedia');
-    return parseSessionMediaMessageMeta(envelope);
-  }, [props.message.meta]);
+  const coarsePrimaryPointer = useCoarsePrimaryPointer();
+  const toolMedia = toolSessionMediaMeta ? (
+    <SessionMediaInlineImages
+      sessionId={props.sessionId}
+      media={toolSessionMediaMeta.inlineMedia}
+      onOpenPath={handleOpenToolSessionMediaPath}
+      fileOpenEnabled={props.interaction.canOpenFiles === true}
+      mediaPreviewEnabled={props.interaction.canPreviewMedia === true}
+    />
+  ) : null;
   const containerStyle = [
     styles.toolContainer,
     props.layoutContext === 'tool_calls_group' ? styles.toolContainerEmbedded : null,
@@ -1646,7 +1883,7 @@ function ToolCallBlock(props: {
   ];
   const containerContent = (
     <TranscriptFindMessageProvider messageId={props.message.id} routeMessageId={toolRouteMessageId}>
-      {structuredNode}
+      {!shouldRenderToolChrome ? structuredNode : null}
       {turnChanges ? (
         <TranscriptTurnChangesCard
           sessionId={props.sessionId}
@@ -1654,17 +1891,18 @@ function ToolCallBlock(props: {
           turnId={turnChanges.turnId}
           files={turnChanges.files}
           firstHunkAnchors={turnChanges.firstHunkAnchors}
+          repositoryRelative={turnChanges.repositoryRelative}
           messageId={toolRouteMessageId}
           fileOpenEnabled={props.interaction.canOpenFiles === true}
         />
       ) : null}
-      {!shouldRenderToolChrome && toolPinAction ? (
+      {!shouldRenderToolChrome && !presentsAskRecord && toolPinAction ? (
         <RowActionRevealSlot
           revealed={shouldShowTranscriptRowPinAction({
             platformOS: Platform.OS,
             isRowHovered: structuredPinHost.isHovered,
             isActionHovered: false,
-            coarsePrimaryPointer: readCoarsePrimaryPointer(),
+            coarsePrimaryPointer,
             pinned: toolPinAction.pinned,
           })}
           style={styles.structuredToolPinAction}
@@ -1687,7 +1925,10 @@ function ToolCallBlock(props: {
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
           displaySettings={props.toolChromeCommon.toolDisplaySettings}
-        />
+        >
+          {structuredResultIsCard ? null : structuredNode}
+          {toolMedia}
+        </ToolTimelineRow>
       ) : (
         <ToolView
           tool={message.tool}
@@ -1702,24 +1943,24 @@ function ToolCallBlock(props: {
           forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
           interaction={props.interaction}
           displaySettings={props.toolChromeCommon.toolDisplaySettings}
-        />
+        >
+          {structuredResultIsCard ? null : structuredNode}
+          {toolMedia}
+        </ToolView>
       )) : null}
-      {isSessionMessageInvocationAnchor(props.message) ? (
-        <SessionAskRecord message={props.message} sessionId={props.sessionId} serverId={props.toolChromeCommon.serverId ?? null} embedded />
-      ) : null}
-      {toolSessionMediaMeta ? (
-        <SessionMediaInlineImages
-          sessionId={props.sessionId}
-          media={toolSessionMediaMeta.inlineMedia}
-          onOpenPath={handleOpenToolSessionMediaPath}
-          fileOpenEnabled={props.interaction.canOpenFiles === true}
-          mediaPreviewEnabled={props.interaction.canPreviewMedia === true}
-        />
+      {shouldRenderToolChrome && structuredResultIsCard ? structuredNode : null}
+      {presentsAskRecord ? (
+        <SessionAskRecord message={props.message} sessionId={props.sessionId} serverId={askRecordServerId} embedded
+          details={{
+            routeMessageId: buildToolCallMessageRouteId({ toolId: typeof message.tool.id === 'string' ? message.tool.id : null, fallbackMessageId: toolRouteMessageId }),
+            revealed: shouldShowTranscriptRowActions({ platformOS: Platform.OS, isRowHovered: structuredPinHost.isHovered,
+              isActionHovered: false, coarsePrimaryPointer }),
+          }} />
       ) : null}
     </TranscriptFindMessageProvider>
   );
   // The tool chrome (ToolView / ToolTimelineRow) owns the jump-landing attention
-  // when it renders. A suppressed-chrome structured row has no chrome to own it,
+  // when it renders. A turn-changes or Ask record has no chrome to own it,
   // so the row container carries the same treatment — one highlight store, one
   // timing owner, one ring per landed row.
   if (!shouldRenderToolChrome) {
@@ -1744,6 +1985,11 @@ function ToolCallBlock(props: {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  // The offered first task stands apart from the greeting that follows it, not pressed against its first line.
+  hostOnboarding: { gap: theme.space.s8, paddingBottom: theme.space.s12 },
+  hostOnboardingTask: { alignItems: 'flex-start', paddingHorizontal: theme.space.s16 },
+  // A long example task wraps inside the column; it is offered whole, never clipped at a phone's edge.
+  hostOnboardingTaskChip: { maxWidth: '100%' },
   messageContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -1770,6 +2016,19 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.space.s4,
     color: theme.colors.text.secondary,
     textAlign: 'right',
+  },
+  messageProvenanceAttributionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignSelf: 'stretch',
+    marginHorizontal: theme.space.s16,
+    marginTop: theme.space.s12,
+    marginBottom: theme.space.s4,
+  },
+  messageProvenanceAttributionPart: {
+    ...Typography.variant('meta'),
+    flexShrink: 1,
+    color: theme.colors.text.secondary,
   },
   workflowProvenanceRow: {
     alignSelf: 'stretch',

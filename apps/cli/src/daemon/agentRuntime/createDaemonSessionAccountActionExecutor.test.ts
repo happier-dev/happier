@@ -2,6 +2,7 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -38,7 +39,7 @@ import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpec
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '../externalActions/daemonExternalActionTargetResolver';
@@ -46,8 +47,7 @@ import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/art
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import * as installationStore from '@/daemon/identity/store';
 import { RPC_METHODS, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
-import { sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { requiresExactDaemonApprovalReplay, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { logger } from '@/ui/logger';
 import { REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentPrincipalHeaderV1Schema, createReviewCommentPrincipalSigningInputV1 } from '@happier-dev/protocol/reviews/comments/actions';
@@ -77,6 +77,7 @@ import { fetchAccountProfile } from '@/api/accountProfile';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
 
 const processIdentityBoundary = vi.hoisted(() => vi.fn());
 // Process inspection is the OS boundary. Tests that do not configure the
@@ -122,6 +123,26 @@ function createHarness(prepareExternalActionAuthorization?: Parameters<typeof cr
 }
 
 describe('daemon Session Account authority', () => {
+  it('projects native input admission into the real Action executor context and preserves its effect currentness', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
+      data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
+    const harness = createHarness();
+    const admission = { admissionId: 'native-input', occurrenceId: 'realtime-occurrence', attemptId: 'attempt' };
+    const nativeOperation: Operation = { ...operation, witness: { ...operation.witness,
+      inputId: admission.admissionId, userMessageSeq: null, userMessageSeqs: [], nativeRealtimeAdmission: admission } };
+    let live = true;
+    expect(await harness.execute(nativeOperation, { sessionId: 'bob-session', isCurrent: async () => live }))
+      .toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
+    expect(harness.delivered).toEqual([expect.objectContaining({ context: expect.objectContaining({ nativeRealtimeInput: true }) })]);
+    expect(await harness.execute({ ...nativeOperation, actionId: 'approval.request.decide',
+      input: { artifactId: 'ordinary-approval', decision: 'approve' } }, { sessionId: 'bob-session', isCurrent: async () => live }))
+      .toEqual({ ok: false, errorCode: 'present_user_required', error: 'present_user_required' });
+    live = false;
+    expect(await harness.isCallerCurrent()).toBe(false);
+    expect(await harness.execute(nativeOperation, { sessionId: 'bob-session', isCurrent: async () => live }))
+      .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(harness.delivered).toHaveLength(1);
+  });
   it.each(['caller', 'authorization'] as const)('recovers a retryable %s Home read inside the accepted Action lifetime before delivering once', async phase => {
     if (phase === 'caller') {
       vi.useFakeTimers();
@@ -325,7 +346,8 @@ describe('daemon Session Account authority', () => {
     else expect(phases).toEqual([]);
   });
 
-  it('admits inherited Session spawn authoring to original Home proof preparation', async () => {
+  it.each(['session.spawn_new', 'template.instantiate'] as const)(
+    'admits inherited %s authoring to original Home proof preparation', async actionId => {
     const serverHttpBaseUrl = 'https://inherited-spawn.test';
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
       provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -339,13 +361,17 @@ describe('daemon Session Account authority', () => {
       produced = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       return { status: 401, data: { error: 'invalid_token' } };
     });
-    const input = { creationKey: 'inherited-child', directory: { kind: 'path', path: '/tmp' },
-      initialInput: { text: 'Reply READY, then idle.' } };
+    const creation = { creationKey: 'inherited-child', directory: { kind: 'path', path: '/tmp' } };
+    const input = actionId === 'session.spawn_new'
+      ? { ...creation, initialInput: { text: 'Reply READY, then idle.' } }
+      : { source: { kind: 'artifact', serverId: 'inherited-home', artifactId: '84a6bc9c-0418-44f6-a593-8a751bde13e0' },
+        expectedVersion: '1.0.0', creation };
     const execute = createDaemonSessionAccountActionExecutor({ serverId: 'inherited-home',
       serverHttpBaseUrl, token, machineId: 'machine',
       prepareExternalActionAuthorization: async ({ operation: action, sessionActionOrigin }) => {
-        const selected = resolveExternalActionMachineTarget({ actionId: action.actionId,
-          rawInput: action.input, fallbackMachineId: 'machine' });
+        const selected = resolveActionExecutionPlacementForInput(getActionSpec(action.actionId), action.input) === 'machine'
+          ? resolveExternalActionMachineTarget({ actionId: action.actionId, rawInput: action.input, fallbackMachineId: 'machine' })
+          : { kind: 'ready' as const, machineId: 'machine' };
         if (selected.kind === 'rejected') return null;
         const target = { kind: 'machine' as const, machineId: selected.machineId };
         const authorization = await prepareExternalActionRequesterAccountAuthorization({ ...action,
@@ -357,9 +383,10 @@ describe('daemon Session Account authority', () => {
       },
       createExecutor: () => createActionExecutor(createCliActionDeps({ token, sessionId: '', mode: 'plain', ctx: null })),
     });
-    expect(await execute({ ...operation, actionId: 'session.spawn_new', input },
+    expect(await execute({ ...operation, actionId, input },
       { sessionId: 'bob-session', isCurrent: async () => true }))
-      .toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } });
+      .toMatchObject({ ok: false, errorCode: 'action_forbidden', details: { reason: 'external_authorization_refused',
+        phase: 'session.authorization.preparation', requiredFact: 'session_authorization_preparation', remedy: expect.any(String) } });
     expect(produced?.envelope).toMatchObject({ v: 1, input });
   });
 
@@ -545,10 +572,10 @@ describe('daemon Session Account authority', () => {
         createCliApprovalsArtifactStore({ credentials }).approvalsGet({ artifactId, serverId: null }));
       expect(stored).toMatchObject({ preview: { pluginInstall: { permissionsDisclosure: 'daemonEvaluated',
         pendingReview: { pendingChangeId: 'pending-agent-install', review: { pluginId: 'happier.leads.fixture' } } } } });
-      expect(resolveApprovalRequestApproveAdmission(stored!)).toMatchObject({ status: 'available' });
+      if (!stored || stored.v !== 2) throw new Error('Missing plugin install approval');
+      expect(resolveApprovalRequestApproveAdmission(stored)).toMatchObject({ status: 'available' });
       expect(prepareExternalActionAuthorization).not.toHaveBeenCalled();
       expect(apply).not.toHaveBeenCalled();
-      if (!stored || stored.v !== 2) throw new Error('Missing plugin install approval');
 
       const staleRequest = StoredApprovalRequestSchema.parse({
         ...stored,
@@ -834,7 +861,7 @@ describe('daemon Session Account authority', () => {
     const deliveries: ReturnType<typeof UiActionDispatchRequestV1Schema.parse>[] = [];
     let completeClient!: () => void;
     const clientCompleted = new Promise<void>(resolve => { completeClient = resolve; });
-    const clientMethod = kind === 'find' ? sessionUiActionClientRpcMethod('bob-session') : RPC_METHODS.UI_ACTION_EXECUTE;
+    const clientMethod = RPC_METHODS.UI_ACTION_EXECUTE;
     const reverse = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: method => method === clientMethod,
       // Connected-client RPC is this slice's outer boundary. The paired UI test
@@ -1018,10 +1045,10 @@ describe('daemon Session Account authority', () => {
     if (mcp || kind === 'link') {
       expect(open.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
       expect(open.executionOriginV1.externalActionInputSignature).toBeUndefined();
-      expect(requiresExactDaemonApprovalReplay(open)).toBe(true);
+      expect(resolveApprovalExecutor(open).kind).toBe('daemon');
       expect(mintedRequests).toEqual([]);
     } else {
-      if (!runnerCarrier) expect(requiresExactDaemonApprovalReplay(open)).toBe(!(kind === 'client' || relation));
+      if (!runnerCarrier) expect(resolveApprovalExecutor(open).kind).toBe(kind === 'client' || relation ? 'app' : 'daemon');
       if (!open.executionOriginV1.externalActionInputSignature) throw new Error('Missing signed client approval origin');
       expect(open.executionOriginV1).toMatchObject({ accountId: 'source-account', requestId: invocationRequestId, target });
       expect(verifyExternalActionApprovalInputV1({ authorizationToken: 'source-home-proof', actionId, input: open.actionArgs, target,
@@ -1037,11 +1064,17 @@ describe('daemon Session Account authority', () => {
         surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: configuration.activeServerId,
         serverIdentityId: homeId, runtimeAccountId: 'source-account',
       });
-      // A blocking Action's live invocation owns completion after the decision;
-      // deferred link replay can complete in the decision invocation itself.
+      // Durable requests finish at creation; the approving app owns client
+      // execution through its generic UI dispatcher.
       expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true });
       expect(await pending).toMatchObject({ ok: true });
-      if (kind === 'find') expect(deliveries).toMatchObject([{ actionId: 'ui.find', input }]);
+      if (kind === 'find') {
+        expect(resolveApprovalExecutor(open)).toEqual({ kind: 'app', placement: 'client' });
+        expect(approved).toMatchObject({ ok: true, result: { status: 'executed', execution: {
+          ok: true, result: { status: 'results', current: 1, total: 1, coverage: 'loaded' },
+        } } });
+        expect(deliveries).toMatchObject([{ actionId: 'ui.find', input }]);
+      }
       if (kind === 'settings') {
         expect(mutations).toHaveLength(1);
         expect(AccountSettingsSchema.parse(accountContent).transcriptMessagePinActionEnabled).toBe(false);
@@ -1051,14 +1084,13 @@ describe('daemon Session Account authority', () => {
         .toMatchObject({ status: 'executed', execution: { ok: true } });
       return;
     }
-    if (kind === 'client') expect(settled).toBe(false);
-    else expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
+    expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
     // The approving device writes the strict approved Artifact, then calls the
     // actual public replay RPC with its authenticated human transport authority.
     expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsUpdate({ artifactId, serverId: null,
       request: { ...open, status: 'approved', updatedAtMs: open.updatedAtMs + 1,
         decision: { kind: 'approve', decidedAtMs: open.updatedAtMs + 1 } } }))).toEqual({ ok: true });
-    if (!requiresExactDaemonApprovalReplay(open)) {
+    if (resolveApprovalExecutor(open).kind !== 'daemon') {
       expect(deliveries).toEqual([]);
       expect(mutations).toEqual([]);
       return;
@@ -1071,6 +1103,14 @@ describe('daemon Session Account authority', () => {
     if (kind === 'unsigned-foreign-home') currentHomeId = 'srv_foreign-home';
     const replay = await rpc.handleRequest({ method: `${source.machineId}:${RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED}`,
       params: { artifactId }, callerAuthority: 'present_user' });
+    if (unsigned && kind !== 'unsigned-visual' && kind !== 'unsigned-server-error') {
+      expect(replay).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      expect(mutations).toEqual([]);
+      const retained = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsGet({ artifactId, serverId: null }));
+      expect(retained).toMatchObject({ status: 'approved' });
+      expect(retained).not.toHaveProperty('execution');
+      return;
+    }
     expect(replay).toMatchObject({ ok: true });
     if (kind === 'unsigned-server-error' || kind === 'relation-server-error') {
       const errorCode = relation ? 'action_failed' : 'server_error';
@@ -1078,13 +1118,6 @@ describe('daemon Session Account authority', () => {
       expect(mutations).toEqual([]);
       expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsGet({ artifactId, serverId: null })))
         .toMatchObject({ status: 'failed', execution: { ok: false, errorCode } });
-      return;
-    }
-    if (unsigned && kind !== 'unsigned-visual') {
-      expect(replay).toMatchObject({ result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
-      expect(mutations).toEqual([]);
-      expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsGet({ artifactId, serverId: null })))
-        .toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
       return;
     }
     if (kind !== 'client') {
@@ -1112,18 +1145,6 @@ describe('daemon Session Account authority', () => {
       expect(open.executionOriginV1.caller).toEqual(operation.witness.agentStartCaller);
       return;
     }
-    await vi.waitFor(async () => {
-      expect(settled ? await pending : null).toBeNull();
-      expect(deliveries).toHaveLength(1);
-    });
-    expect(deliveries[0]).toMatchObject({ actionId, input, context: { surface: 'agent', authority: 'account_automation',
-      defaultSessionId: 'bob-session', defaultSessionMachineId: source.machineId, actionRequestId: operation.requestId,
-      actionCaller: operation.witness.agentStartCaller, externalActionTarget: target } });
-    expect(settled).toBe(false);
-    completeClient();
-    expect(await pending).toEqual({ ok: true, result: { status: 'completed' } });
-    expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsGet({ artifactId, serverId: null })))
-      .toMatchObject({ status: 'executed', execution: { ok: true, result: { status: 'completed' } } });
   });
 
   it('binds a native client Home approval to the authenticated daemon Machine without public API authorization', async () => {
@@ -1153,7 +1174,7 @@ describe('daemon Session Account authority', () => {
         caller: operation.witness.agentStartCaller } });
     if (stored.v !== 2) throw new Error('Native approval must retain current execution origin');
     expect(stored.executionOriginV1.externalActionExecutionAuthorization).toBeUndefined();
-    expect(requiresExactDaemonApprovalReplay(stored)).toBe(false);
+    expect(resolveApprovalExecutor(stored)).toEqual({ kind: 'app', placement: 'client' });
     expect(delivered).toBe(0);
   });
   it('selects the reviewed managed controller before minting rather than the originating Session Machine', () => {
@@ -1161,7 +1182,7 @@ describe('daemon Session Account authority', () => {
     const common = { homeId: 'srv_source', controller, contribution: { pluginId: 'acme.compute', localId: 'vm' } };
     expect(resolveExternalActionMachineTarget({ actionId: 'machines.provisioners.check', rawInput: common,
       fallbackMachineId: 'source-machine' })).toEqual({ kind: 'ready', machineId: controller.machineId });
-    expect(resolveExternalActionMachineTarget({ actionId: 'machines.managed.acquire', rawInput: { selection: {
+    expect(resolveExternalActionMachineTarget({ actionId: 'machines.managed.acquire', rawInput: { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: {
       kind: 'one-off', homeId: common.homeId, controller,
       launch: { provider: common.contribution, schemaVersion: 1, name: 'guest', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -1215,7 +1236,7 @@ describe('daemon Session Account authority', () => {
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     const input = ManagedMachineActionInputSchemasV1[actionId].parse(actionId === 'machines.provisioners.check'
       ? { homeId, controller, contribution: machine.launch.provider }
-      : actionId === 'machines.managed.acquire' ? { selection: { kind: 'one-off', homeId, controller,
+      : actionId === 'machines.managed.acquire' ? { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off', homeId, controller,
         launch: machine.launch, retention: machine.retention, wakeOnAcceptedMessage: false } } : { homeId, managedId: machine.id });
     const target = { kind: 'machine' as const, machineId: controller.machineId };
     const proofRequests: unknown[] = [];
@@ -1223,18 +1244,25 @@ describe('daemon Session Account authority', () => {
     let storedApproval: Readonly<{ id: string; dataEncryptionKey: string; request: ReturnType<typeof StoredApprovalRequestSchema.parse> }> | undefined;
     // Only Home HTTP is substituted. The source owner, original proof signer,
     // shared Action policy, registry, custody and native invocation remain real.
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
-      const path = new URL(String(url)).pathname;
-      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-      if (storedApproval && path === `/v1/artifacts/${storedApproval.id}`) {
+    const readRejectedApproval = (artifactId: string) => {
+      if (storedApproval && artifactId === storedApproval.id) {
         const original = storedApproval.request;
         const rejected = StoredApprovalRequestSchema.parse({ ...original, status: 'rejected', updatedAtMs: original.updatedAtMs + 1,
           decision: { kind: 'reject', decidedAtMs: original.updatedAtMs + 1 } });
-        return { status: 200, data: { id: storedApproval.id, dataEncryptionKey: storedApproval.dataEncryptionKey,
+        return { id: storedApproval.id, dataEncryptionKey: storedApproval.dataEncryptionKey,
           ownerAccountId: 'source-account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
           headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: original.createdAtMs, updatedAt: rejected.updatedAtMs,
           header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(rejected, { legacyServerId: configuration.activeServerId })),
-          body: encodePlainArtifactStoredContent({ body: JSON.stringify(rejected) }) } };
+          body: encodePlainArtifactStoredContent({ body: JSON.stringify(rejected) }) };
+      }
+      return null;
+    };
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path.startsWith('/v1/artifacts/')) {
+        const artifact = readRejectedApproval(path.split('/').at(-1)!);
+        return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'not_found' } };
       }
       return String(url).endsWith('/v2/account/settings') ? { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } }
         : { status: 200, data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } };
@@ -1243,6 +1271,7 @@ describe('daemon Session Account authority', () => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected HTTP object body');
       const path = new URL(String(url)).pathname;
       paths.push(path);
+      if (path === '/v1/artifacts/read') return artifactReadResponse(body, readRejectedApproval);
       if (path.endsWith('/execution-authorization')) {
         expect(config?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
         const request = ExternalActionRequestEnvelopeV1Schema.parse(Reflect.get(body, 'envelope'));
@@ -1268,7 +1297,7 @@ describe('daemon Session Account authority', () => {
       if (path === '/v1/artifacts') {
         const content = decodePlainArtifactStoredContent(String(Reflect.get(body, 'body')));
         const request = StoredApprovalRequestSchema.parse(JSON.parse(String(content && typeof content === 'object' ? Reflect.get(content, 'body') : null)));
-        storedApproval = { id: String(Reflect.get(body, 'id')), dataEncryptionKey: String(Reflect.get(body, 'dataEncryptionKey')), request };
+        storedApproval = { id: String(Reflect.get(body, 'id')), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, request };
         return { status: 200, data: { id: storedApproval.id, headerVersion: 1, bodyVersion: 1 } };
       }
       if (path.endsWith('/admit')) return { status: 200, data: { machine, replayed: true } };
@@ -1344,7 +1373,8 @@ describe('daemon Session Account authority', () => {
       return;
     }
     if (actionId === 'machines.managed.acquire') {
-      expect(result).toEqual({ ok: true, result: { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' } });
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId,
+        artifactId: storedApproval?.id } });
       const approval = storedApproval?.request;
       if (!approval || approval.v !== 2 || !approval.executionOriginV1.externalActionInputSignature) throw new Error('Missing signed receiver approval');
       expect(approval.executionOriginV1).toMatchObject({ accountId: 'source-account', machineId: controller.machineId,
@@ -1426,7 +1456,7 @@ describe('daemon Session Account authority', () => {
       data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
     const network = vi.spyOn(axios, 'post');
     const admitted: string[] = [];
-    const acquire: Operation = { ...operation, actionId: 'machines.managed.acquire', input: { selection: {
+    const acquire: Operation = { ...operation, actionId: 'machines.managed.acquire', input: { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: {
       kind: 'one-off', homeId: 'srv_home', controller: { machineId: 'source-machine', installationId: 'installation' },
       launch: { provider: { pluginId: 'compute.example', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -1530,8 +1560,9 @@ describe('daemon Session Account authority', () => {
       machineIds: ['source-machine'], mode: 'indexed',
     } };
     expect(await execute(search, { sessionId: 'bob-session', isCurrent: async () => true }))
-      .toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { reason: 'external_authorization_refused' } });
-    expect(logged.mock.calls).toEqual([[expect.any(String), {
+      .toMatchObject({ ok: false, errorCode: 'action_forbidden', details: { reason: 'external_authorization_refused',
+        phase: 'session.authorization.preparation', requiredFact: 'session_authorization_preparation', remedy: expect.any(String) } });
+    expect(logged.mock.calls.filter(([message]) => message === '[Session Account Action] Refused')).toEqual([[expect.any(String), {
       actionId: search.actionId, sessionId: 'bob-session', requestId: search.requestId,
       turnId: operation.witness.turnId, reason: 'external_authorization_refused', elapsedSubphasesMs: {},
     }]]);
@@ -1539,17 +1570,36 @@ describe('daemon Session Account authority', () => {
     expect(network).toHaveBeenCalled();
   });
 
-  it('preserves owner execution and rechecks the exact Home owner after admission changes', async () => {
+  it('admits the Session owner once per Action and applies a changed owner at the next admission', async () => {
     const read = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
       data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
-    const harness = createHarness();
-    expect(await harness.execute(operation, { sessionId: 'bob-session', isCurrent: async () => true }))
+    const preparedCurrentness: boolean[] = [];
+    // The installed preparer consults caller currentness before and after its
+    // Home reads and again at the mint; none of these is a new admission.
+    const harness = createHarness(async ({ isCallerCurrent }) => {
+      preparedCurrentness.push(await isCallerCurrent(), await isCallerCurrent(), await isCallerCurrent());
+      return undefined;
+    });
+    let live = true;
+    const authority = { sessionId: 'bob-session', isCurrent: async () => live };
+    expect(await harness.execute(operation, authority))
       .toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
-    expect(harness.delivered).toHaveLength(1);
+    expect(read).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledWith('https://alice-home.test/v2/sessions/bob-session',
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer alice-daemon-token' }) }));
+    expect(preparedCurrentness).toEqual([true, true, true]);
+    // Within the admitted Action, currentness is local custody and cancellation.
     read.mockResolvedValue({ status: 404, data: {} });
+    expect(await harness.isCallerCurrent()).toBe(true);
+    live = false;
     expect(await harness.isCallerCurrent()).toBe(false);
+    expect(read).toHaveBeenCalledTimes(1);
+    // The withdrawn owner projection is refused at the next Action admission.
+    live = true;
+    expect(await harness.execute(operation, authority))
+      .toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { reason: 'session_owner_missing' } });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(harness.delivered).toHaveLength(1);
   });
 
   it('preserves each admitted requester at the real daemon Action effect while keeping owner credentials', async () => {

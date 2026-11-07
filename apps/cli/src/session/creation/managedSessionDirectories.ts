@@ -174,15 +174,21 @@ export function createManagedSessionDirectories(input: Readonly<{
     if (placement) await grantExactUidPathAccess({ path: target.directory, uid: placement.agentUid,
       access: 'rwx', directory: true, inherit: true });
   };
-  const prepareSeedEntryAccess = async (allocationId: string): Promise<WorkspaceMaterializedEntryAccess | undefined> => {
+  const prepareSeed = async (allocationId: string) => {
     const record = await readRecord(allocationId);
     if (!record) throw conflict();
+    const target = recordedAllocation(allocationId, record);
     const uid = record.payloadPlacement?.agentUid;
-    return uid === undefined ? undefined : async ({ path, directory, pinnedRoot }) => {
+    const prepareEntryAccess: WorkspaceMaterializedEntryAccess | undefined = uid === undefined ? undefined : async ({ path, directory, pinnedRoot }) => {
       const grant = pinnedRoot ? pinnedRoot.grantExactUidPathAccess : grantExactUidPathAccess;
       await grant({ path: pinnedRoot ? paths.relative(pinnedRoot.path, path) : path, uid, directory, access: 'owner', preservePermissions: true,
         ...(directory ? { inherit: true } : {}) });
     };
+    return { ...target, prepareEntryAccess, restoreProtection: async () => {
+      // Promotion replaces the leaf of this already admitted allocation.
+      await assertContained(target, record.payloadPlacement);
+      await protectPayload(target, record.payloadPlacement, false);
+    } };
   };
   const materializeForFreshSpawn = async (request: Readonly<{ sessionCreationTag: string }>) => {
     const prepared = prepareForCreation(request);
@@ -290,6 +296,7 @@ export function createManagedSessionDirectories(input: Readonly<{
       if (record) await writeRecord(allocationId, { ...record, pendingRemoval: true });
     } catch (recordError) {
       logger.warn('[MANAGED SESSION DIRECTORY] Could not persist pending removal', { allocationId, error: recordError });
+      throw recordError;
     }
   };
   const removeAllocation = async (allocationId: string, options: Readonly<{
@@ -303,12 +310,12 @@ export function createManagedSessionDirectories(input: Readonly<{
         const info = await lstat(record.inTrash.payloadPath);
         if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Managed allocation must be a directory, never a symlink');
       } else await assertContained(target, record.payloadPlacement);
-      // Node owns transient filesystem retries; prolonged locks remain durable pending removals.
+      // Filesystem locks remain durable pending removals for the cleanup owner to retry.
       await options.beforeEffect?.();
       const payloadPath = record.inTrash?.payloadPath ?? target.directory;
       if (record.payloadPlacement && platform === 'linux') await removeUnixPathTree(payloadPath);
       else if (options.removeDirectory) await options.removeDirectory();
-      else await rm(payloadPath, { recursive: true, force: true, maxRetries: 1 });
+      else await rm(payloadPath, { recursive: true, force: true });
       await removeProtectedLocalStateFile(recordPath(allocationId), protection);
     } catch (error) {
       // Storage has its own per-item receipt/re-check path; a rejected approval
@@ -333,12 +340,8 @@ export function createManagedSessionDirectories(input: Readonly<{
   const removeForSession = async ({ sessionId, stopSession }: Readonly<{ sessionId: string; stopSession: StopSession }>) => {
     let records: readonly ManagedSessionDirectoryEntry[];
     try { records = (await listRecords({ includeTrashed: true })).filter(record => record.sessionId === sessionId); }
-    catch (error) { logger.warn('[MANAGED SESSION DIRECTORY] Removal inventory unavailable', { sessionId, error }); return; }
+    catch (error) { logger.warn('[MANAGED SESSION DIRECTORY] Removal inventory unavailable', { sessionId, error }); throw error; }
     await removeSessionRecords(sessionId, records, stopSession);
-  };
-  const removeUnboundCreation = async ({ allocationId }: Readonly<{ allocationId: string }>) => {
-    const record = await readRecord(allocationId);
-    if (record?.origin === 'creation' && record.sessionId === null) await removeAllocation(allocationId);
   };
   const retryPendingRemovals = async ({ stopSession }: Readonly<{ stopSession: StopSession }>) => {
     const records = (await listRecords({ includeTrashed: true })).filter(record => record.pendingRemoval === true);
@@ -387,13 +390,20 @@ export function createManagedSessionDirectories(input: Readonly<{
     directory: string;
     sessionCreationTag?: string | null;
     existingSessionId?: string;
+    /** Stored correspondence from the daemon's resolved attach snapshot, never caller input. */
+    existingSessionCreationTag?: string | null;
     freshSessionCreation?: boolean;
     approvedNewDirectoryCreation?: boolean;
     resumeRequestId?: string;
   }>): Promise<ManagedSessionDirectoryResolution & { created?: boolean; directoryCreated?: boolean }> => {
     if (!request.existingSessionId || request.freshSessionCreation === true) {
       if (!request.sessionCreationTag) return missing();
+      if (request.existingSessionId && (!request.existingSessionCreationTag
+        || request.existingSessionCreationTag !== request.sessionCreationTag)) throw conflict();
       const target = await materializeForFreshSpawn({ sessionCreationTag: request.sessionCreationTag });
+      // A committed birth already owns this allocation even when the first
+      // runner is refused. Only an uncommitted creation may be rolled back.
+      if (request.existingSessionId) await bind({ allocationId: target.allocationId, sessionId: request.existingSessionId });
       return { ok: true, ...target, directoryCreated: target.created };
     }
     return await resolveForSession({
@@ -492,8 +502,8 @@ export function createManagedSessionDirectories(input: Readonly<{
     // rechecking the identity of a path that has already been removed.
     if (record) await removeProtectedLocalStateFile(recordPath(allocationId), protection);
   };
-  return { prepareForCreation, materializeForFreshSpawn, prepareSeedEntryAccess, bind, listRecords, resolveForSession, removeForSession, removeAllocation,
+  return { prepareForCreation, materializeForFreshSpawn, prepareSeed, bind, listRecords, resolveForSession, removeForSession, removeAllocation,
     retireToTrash, reinstateFromTrash, discardFromTrash,
-    removeUnboundCreation, retryPendingRemovals, allocateForHandoff, commitHandoff, abortHandoff, rollbackFreshSpawn, prepareForSpawn };
+    retryPendingRemovals, allocateForHandoff, commitHandoff, abortHandoff, rollbackFreshSpawn, prepareForSpawn };
 }
 export type ManagedSessionDirectories = ReturnType<typeof createManagedSessionDirectories>;

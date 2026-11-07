@@ -3,6 +3,8 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { normalizeVoiceAgentTurnTranscriptText } from '@happier-dev/agents';
 import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
 import { readSessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionHostOnboardingPresentationV1 } from '@happier-dev/protocol/sessions/creation/hostOnboardingPresentationV1';
+import { t } from '@/text';
 import {
     readUnsupportedContentMeta,
     resolveUnsupportedContentPresentation,
@@ -13,8 +15,13 @@ import { parseHappierMetaEnvelope, readTranscriptAttachmentsMeta } from './struc
 export { readTranscriptAttachmentsMeta } from './structured/happierMetaEnvelope';
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { readAgentStartupFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { resolveInlineMessageReference, resolveMessageStructuredReferences, type MessageStructuredReferences } from './references/messageStructuredReferences';
+import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
+import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
+import { presentSessionAgentAuthRequired } from '../presentation/sessionAgentAuthRequiredPresentation';
+import { presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
 
 export type TranscriptMessageDisplayOptions = Readonly<{
     debugInformationEnabled?: boolean;
@@ -61,8 +68,26 @@ export function prepareTranscriptMessageBody(
     const isVoiceAgentTurn = isLegacyVoiceAgentTurn
         || origin?.modality === 'voice'
         || (message.kind === 'user-text' && readSessionMessageProvenance(message.meta, 'stored')?.kind === 'voice');
+    const hostOnboarding = message.kind === 'user-text' ? readHostOnboardingDisplayText(message.meta) : null;
+    if (hostOnboarding !== null) return { text: hostOnboarding, isVoiceAgentTurn };
+    const runtimeIssue = message.kind === 'agent-text' && !message.isThinking
+        ? readRuntimeIssueMessageMeta(message.meta) : null;
+    const teamDenial = message.kind === 'agent-text' && !message.isThinking
+        ? presentSessionTeamCredentialDenial({ issue: runtimeIssue,
+            // History has no catalog-name projection; do not infer one from
+            // owner-private metadata or fetch a catalog per failure row.
+            resolveResourceDisplayName: () => null })
+        : null;
+    const agentAuth = message.kind === 'agent-text' && !message.isThinking
+        ? presentSessionAgentAuthRequired(runtimeIssue)
+        : null;
+    const runtimeFailure = runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
+        ? presentSessionRuntimeIssue(runtimeIssue).message : null;
     let text: string | null;
-    if (message.kind === 'user-text' && message.displayText !== undefined) text = message.displayText;
+    if (teamDenial) text = [teamDenial.title, teamDenial.body].filter(Boolean).join(' · ');
+    else if (agentAuth) text = agentAuth.message;
+    else if (runtimeFailure) text = runtimeFailure;
+    else if (message.kind === 'user-text' && message.displayText !== undefined) text = message.displayText;
     else if (isLegacyVoiceAgentTurn) text = normalizeVoiceAgentTurnTranscriptText(message.text);
     else if (message.kind === 'user-text' && (options.hasAttachmentBlockToStrip ?? readTranscriptAttachmentsMeta(message.meta) !== null)) {
         text = stripLegacyAttachmentsBlock(message.text);
@@ -76,8 +101,20 @@ export function prepareTranscriptMessageBody(
 
 /** Human readers never disclose token syntax; only typed message records supply markers. */
 export function readableMessageText(text: string, meta?: unknown): string {
+    const hostOnboarding = readHostOnboardingDisplayText(meta);
+    if (hostOnboarding !== null) return hostOnboarding;
     if (meta == null) return projectInlineReferenceLabelsV1(text);
     return readableMessageTextWithReferences(text, resolveMessageStructuredReferences({ text, meta }).inline);
+}
+
+function readHostOnboardingDisplayText(meta: unknown): string | null {
+    const provenance = readSessionMessageProvenance(meta, 'stored');
+    if (provenance?.kind !== 'host' || provenance.producer !== 'hostOnboarding') return null;
+    const facts = readSessionHostOnboardingPresentationV1(meta);
+    return facts
+        ? `${facts.authorDisplayName ? t('botTemplates.firstRunFromAuthor', { name: facts.authorDisplayName })
+            : t('botTemplates.firstRunFromTemplate', { name: facts.templateName })} · v${facts.templateVersion}`
+        : t('message.provenanceFrom', { source: 'Happier' });
 }
 
 /** Resource adapters supply typed bindings, never pretend their files are Session paths. */

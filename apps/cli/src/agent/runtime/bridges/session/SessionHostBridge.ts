@@ -22,28 +22,25 @@ import { buildRuntimePublicationFromEngineResolution } from '@/agent/runtime/ide
 import type {
   ProviderMessageMetaEnricher,
 } from '@happier-dev/agents';
-import {
+import type {
   evaluateCliSessionAttachEligibility,
-  type CliSessionAttachEligibility,
+  CliSessionAttachEligibility,
 } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import {
   resolveContinueWithReplayBackendTarget,
   type ContinueWithReplayBackendTargetResolution,
 } from '@/session/replay/resolveContinueWithReplayBackendTarget';
-import {
+import type {
   resolveSessionForkBackendTarget,
-  type SessionForkBackendTargetResolution,
+  SessionForkBackendTargetResolution,
 } from '@/session/fork/backendTarget';
-import {
+import type {
   resolveSessionHandoffEligibility,
-  type SessionHandoffEligibility,
+  SessionHandoffEligibility,
 } from '@/session/handoff/resolveSessionHandoffEligibility';
-import {
-  canonicalizeLinkedExternalSessionSource,
-  resolveExternalSessionLinkIdentity,
-  type CanonicalizedExternalSessionSourceResult,
+import type {
+  CanonicalizedExternalSessionSourceResult,
 } from './externalSessionSourceCanonicalization';
-import { emitBridgeLifecycleHookEventBestEffort } from '@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort';
 import type {
   CurrentCatalogAgentExecutionSurfaces,
   SessionHostBridgeContract,
@@ -68,6 +65,8 @@ import { logger } from '@/ui/logger';
 import { readSessionAttachFromEnv, readSessionAttachFromFile } from '@/agent/runtime/sessionAttach';
 
 type SessionHostRunOptions = Readonly<{
+  /** Private fact supplied by the direct CLI command composition, not params. */
+  localWorkflow?: boolean;
   beforeRuntimePlanCommit?: () => void | Promise<void>;
   agentRuntimeRunnerBootstrapFilePath?: string;
   agentRuntimeDaemonServiceAuthorityFilePath?: string;
@@ -337,6 +336,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       ...planWithSessionState,
       config: {
         ...planWithSessionState.config,
+        localWorkflow: hostOptions?.localWorkflow === true,
         publishHostRuntimeEvent,
         ...(hostOptions?.pluginRuntimeRegistryLease
           ? { pluginRuntimeRegistryLease: hostOptions.pluginRuntimeRegistryLease }
@@ -378,6 +378,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   async evaluateAttachEligibility(
     params: Omit<Parameters<typeof evaluateCliSessionAttachEligibility>[0], 'resolveExecutionSurfaces'>,
   ): Promise<CliSessionAttachEligibility> {
+    const { evaluateCliSessionAttachEligibility } = await import('@/session/attach/evaluateCliSessionAttachEligibility');
     return await evaluateCliSessionAttachEligibility({
       ...params,
       resolveExecutionSurfaces: (backendId) => this.resolveExecutionSurfaces(backendId),
@@ -390,6 +391,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
       'resolveCurrentExecutionSurfacesForAgent'
     >,
   ): Promise<SessionHandoffEligibility> {
+    const { resolveSessionHandoffEligibility } = await import('@/session/handoff/resolveSessionHandoffEligibility');
     return await resolveSessionHandoffEligibility({
       ...params,
       resolveCurrentExecutionSurfacesForAgent: (agentId) =>
@@ -407,6 +409,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   async resolveSessionForkBackendTarget(
     params: Parameters<typeof resolveSessionForkBackendTarget>[0],
   ): Promise<SessionForkBackendTargetResolution> {
+    const { resolveSessionForkBackendTarget } = await import('@/session/fork/backendTarget');
     return await resolveSessionForkBackendTarget(params);
   }
 
@@ -417,6 +420,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
   }>): Promise<ExternalSessionLinkIdentity> {
+    const { resolveExternalSessionLinkIdentity } = await import('./externalSessionSourceCanonicalization');
     return await resolveExternalSessionLinkIdentity(params);
   }
 
@@ -426,6 +430,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     remoteSessionId: string;
     source: ExternalSessionsSource;
   }>): Promise<CanonicalizedExternalSessionSourceResult> {
+    const { canonicalizeLinkedExternalSessionSource } = await import('./externalSessionSourceCanonicalization');
     return await canonicalizeLinkedExternalSessionSource(params);
   }
 
@@ -445,6 +450,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     timestampMs?: number;
     payload: Record<string, unknown>;
   }>): Promise<void> {
+    const { emitBridgeLifecycleHookEventBestEffort } = await import('@/agent/runtime/bridges/_shared/emitBridgeLifecycleHookEventBestEffort');
     await emitBridgeLifecycleHookEventBestEffort({
       happyHomeDir: params.happyHomeDir,
       event: {

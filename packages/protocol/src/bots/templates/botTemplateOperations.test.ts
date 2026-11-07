@@ -14,7 +14,7 @@ const content = { v: 1 as const, identity: { name: 'Helper', description: 'Reusa
 const draftId = '7e23f798-230a-42f3-931f-e38b20736333';
 const releaseId = '84a6bc9c-0418-44f6-a593-8a751bde13e0';
 function fixture(options?: { grant?: () => Promise<void>; signedInLink?: BotTemplateOperationPortV1['signedInLink']; ownerDisplayName?: string | null;
-  resolvePluginRelease?: BotTemplateOperationPortV1['resolvePluginRelease'] }) {
+  resolvePluginRelease?: BotTemplateOperationPortV1['resolvePluginRelease']; recipient?: BotTemplateOperationPortV1['recipient'] }) {
   const boundary = createWorkBoardArtifactBoundary();
   const events: string[] = [];
   let sourceRef: { serverId: string; artifactId: string } | null = null;
@@ -33,6 +33,7 @@ function fixture(options?: { grant?: () => Promise<void>; signedInLink?: BotTemp
     grant: async input => { events.push(`grant:${input.artifactId}:${input.accessLevel}`); await options?.grant?.(); },
     ...(options?.signedInLink ? { signedInLink: options.signedInLink } : {}),
     ...(options?.resolvePluginRelease ? { resolvePluginRelease: options.resolvePluginRelease } : {}),
+    ...(options?.recipient ? { recipient: options.recipient } : {}),
   });
   const executor = createActionExecutor({ botTemplateAction: args => execute(args), prepareBotTemplateRelease: execute.prepareRelease });
   const run = (id: BotTemplateActionIdV1, input: unknown) => executor.execute(id, input,
@@ -58,6 +59,18 @@ describe('template Actions through the executor', () => {
       .toMatchObject({ ok: true, result: { release: { content: { identity: { face: { shape: { mouth: [45, 46, 0.8] } } } } } } });
   });
 
+  it.each(['template.updates.diff', 'template.updates.skip', 'template.follow.stop'] as const)(
+    'preserves the missing-instance refusal for %s on an incomplete copy', async actionId => {
+      const f = fixture({ recipient: {
+        // The persisted Session boundary exposes a birth whose content setup did not finish.
+        readSession: async () => ({ metadata: { work: { bot: true, createdAsBot: true } }, revision: 0 }),
+        writeInstance: async () => { throw new Error('An update must not initialize the copy'); },
+      } });
+      expect(await f.run(actionId, { sessionRef: sourceSessionRef,
+        ...(actionId === 'template.updates.skip' ? { version: '1.1.0' } : {}) }))
+        .toMatchObject({ ok: false, errorCode: 'template_instance_unavailable' });
+      expect(f.boundary.rows.size).toBe(0);
+    });
   it('retains explicit UI snapshot CAS and refuses a different draft for the same Bot', async () => {
     const f = fixture();
     await f.run('template.draft', { sourceSessionRef, content });
@@ -145,13 +158,13 @@ describe('template Actions through the executor', () => {
       version: '1.2.3', changelog: '' });
     const reads = f.boundary.reads.length;
     const result = await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } });
-    expect(result).toMatchObject({ ok: true, result: { requesterAuthorship: 'requester', release: { version: '1.2.3' },
+    expect(result).toMatchObject({ ok: true, result: { release: { version: '1.2.3' },
       presentation: { shared: false, ...(ownerDisplayName === undefined ? {} : { ownerDisplayName }) } } });
     if (result.ok) expect(Reflect.get(result.result as object, 'presentation')).toEqual({ shared: false,
       ...(ownerDisplayName === undefined ? {} : { ownerDisplayName }) });
     expect(f.boundary.reads.slice(reads)).toEqual([releaseId]);
   });
-  it('keeps a granted other-author release confined even when its carried identity names the requester', async () => {
+  it('previews a granted release without deriving execution authority from carried identity', async () => {
     const f = fixture();
     await f.run('template.draft', { sourceSessionRef, content: { ...content,
       identity: { ...content.identity, name: 'author', madeFromName: 'author' } } });
@@ -159,8 +172,9 @@ describe('template Actions through the executor', () => {
       version: '1.0.0', changelog: '' });
     f.boundary.rows.set(releaseId, { ...f.boundary.rows.get(releaseId)!, ownerAccountId: 'other', access: 'view' });
     const reads = f.boundary.reads.length;
-    expect(await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } }))
-      .toMatchObject({ ok: true, result: { requesterAuthorship: 'other' } });
+    const result = await f.run('template.preview', { source: { kind: 'artifact', serverId: 'home', artifactId: releaseId } });
+    expect(result).toMatchObject({ ok: true, result: { release: { version: '1.0.0' } } });
+    if (result.ok) expect(result.result).not.toHaveProperty('requesterAuthorship');
     expect(f.boundary.reads.slice(reads)).toEqual([releaseId]);
   });
   it('downloads the exact binary companion without creating recipient content', async () => {
@@ -239,12 +253,12 @@ describe('template Actions through the executor', () => {
     expect(f.events.at(-1)).toBe(`grant:${releaseId}:view`);
   });
 
-  it('refuses a grant-reachable incumbent returned by same-id draft creation', async () => {
+  it('refuses a non-owner incumbent returned by same-id draft creation', async () => {
     const f = fixture();
     const draft = { v: 1 as const, state: 'draft' as const, sourceSessionRef, releaseArtifactId: releaseId,
       content, candidates: { memoryRules: [], skills: [] } };
     f.boundary.rows.set(draftId, { artifactId: draftId, header: projectBotTemplateArtifactHeaderV1(draft),
-      body: JSON.stringify(draft), revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: true });
+      body: JSON.stringify(draft), revision: { headerVersion: 1, bodyVersion: 1 }, access: 'view', shared: false });
     expect(await f.run('template.draft', { sourceSessionRef, content }))
       .toMatchObject({ ok: false, errorCode: 'artifact_access_forbidden' });
   });

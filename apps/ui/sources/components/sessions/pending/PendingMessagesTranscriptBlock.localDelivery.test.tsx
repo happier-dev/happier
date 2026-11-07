@@ -1,8 +1,12 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { IDBFactory } from 'fake-indexeddb';
 import { PendingRequestedActionV1Schema, PendingResetStartSetResultV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 import { createDeferred, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -28,6 +32,7 @@ import { resolvePendingMessagesPresentation } from './pendingMessageVisualState'
 import { TranscriptRowLayoutMutationProvider } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 import { estimateTranscriptRowHeightFromContent } from '@/components/sessions/transcript/measurement/estimateTranscriptRowHeightFromCache';
 import { PENDING_QUEUE_TOP_INSET_PX } from './pendingQueueContentClipping';
+import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
 
 // Native presentation and confirmation are the only replaced UI boundaries.
 // The real store, transcript projection, action handlers and Sync submit owner run below them.
@@ -46,15 +51,17 @@ let actionRequests: string[] = [];
 let durableLocalIds = new Set<string>();
 
 beforeEach(async () => {
+    await selectActiveTestHomeForTests();
     resetServerFeaturesClientForTests();
     vi.stubGlobal('indexedDB', new IDBFactory());
     const activeTarget = getActiveServerSnapshot();
     const scope = { serverId: activeTarget.serverId, accountId: 'local-direct-account' };
     const token = `e30.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`;
-    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token, secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
     storage.getState().activateProfileScope(scope);
     storage.getState().applySessions([createSessionFixture({
         id: sessionId,
+        serverId: scope.serverId,
         encryptionMode: 'plain',
         active: true,
         activeAt: Date.now(),
@@ -70,8 +77,17 @@ beforeEach(async () => {
         session: { ...createRootLayoutFeaturesResponse().capabilities.session, pendingInput: { protocolVersion: 3 } },
     } });
     const respond = (path: string, init?: RequestInit): Response => {
+        if (path === `/v2/sessions/${sessionId}`) return Response.json(
+            createPlainSessionByIdResponseFixture(storage.getState().sessions[sessionId]!),
+        );
+        if (path === `/v1/sessions/${sessionId}/turns`) return Response.json({
+            v: 1, sessionId, updatedAt: 1, turns: [],
+        });
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
+            content: { t: 'plain', v: {} }, version: 1,
+        }));
         if (init?.method === 'PATCH' && path.endsWith('/action')) {
             actionRequests.push(path);
             const localId = path.split('/').at(-2)!;
@@ -82,12 +98,15 @@ beforeEach(async () => {
                 ? Response.json(PendingResetStartSetResultV1Schema.parse({ didUpdate: true, requestedAction }))
                 : Response.json({ error: 'not-found' }, { status: 404 });
         }
-        return path === '/v1/features'
+        return path === '/v1/features' || path === '/v1/features/authenticated'
             ? Response.json(features)
             : Response.json({ ok: true });
     };
-    setRuntimeFetch(async (input, init) => respond(new URL(String(input)).pathname, init));
-    vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) => respond(path, init));
+    const fetchBoundary = createSessionReadBatchFetchBoundary(async (input, init) =>
+        respond(new URL(String(input)).pathname, init));
+    setRuntimeFetch(fetchBoundary);
+    vi.spyOn(apiSocket, 'request').mockImplementation(async (path, init) =>
+        fetchBoundary(new URL(path, activeTarget.serverUrl).href, init));
 });
 
 afterEach(() => {
@@ -101,6 +120,40 @@ afterEach(() => {
 });
 
 describe('pending transcript local delivery custody', () => {
+    it.each([false, true])('presents queued host onboarding without exposing its model prompt or hiding person input (display facts: %s)', async displayFacts => {
+        const onboarding = buildSessionHostOnboardingInputV1({ templateName: 'Garden', templateVersion: '1.2.3',
+            authorDisplayName: 'Ana', firstTask: 'Review my change' });
+        const meta = {
+            ...(displayFacts ? onboarding.meta : {}),
+            happierProvenanceV1: onboarding.inputAdmission.provenance,
+            happierInputAuthorityV1: { ...onboarding.inputAdmission.request,
+                permission: { admittedPermissionCeiling: 'read-only' } },
+        };
+        const host: PendingMessage = { id: 'onboarding', localId: 'onboarding', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', pendingDeliveryStatus: 'server_queued', text: onboarding.initialInput.text,
+            rawRecord: { role: 'user', content: { type: 'text', text: onboarding.initialInput.text }, meta } };
+        // Identical words and non-authoritative display facts must never hide a person's actual input.
+        const person: PendingMessage = { ...host, id: 'person', localId: 'person', createdAt: 2,
+            rawRecord: { ...host.rawRecord, meta: { ...onboarding.meta,
+                happierProvenanceV1: { v: 1, kind: 'cli' } } } };
+        const serverId = getActiveServerSnapshot().serverId;
+        const screen = await renderScreen(<AppSessionTranscriptSourceProvider sessionId={sessionId} serverId={serverId}>
+            <PendingMessagesTranscriptBlock sessionId={sessionId} serverId={serverId}
+                pendingMessages={[host, person]} discardedMessages={[]} />
+        </AppSessionTranscriptSourceProvider>);
+        const hostRow = screen.findHostByTestId('pendingMessages.message:onboarding');
+        const personRow = screen.findHostByTestId('pendingMessages.message:person');
+        expect(hostRow).not.toBeNull();
+        const hostText = hostRow?.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
+        expect(hostText).not.toContain('host-owned onboarding kickoff');
+        expect(hostText).toContain(displayFacts ? 'Ana' : 'Happier');
+        expect(hostRow?.props.accessibilityLabel).not.toContain(onboarding.initialInput.text);
+        expect(hostRow?.props.accessibilityLabel).toContain(displayFacts ? 'Ana' : 'Happier');
+        expect(personRow?.props.accessibilityLabel).toBe(onboarding.initialInput.text);
+        expect(host.text).toBe(onboarding.initialInput.text);
+        expect(actionRequests).toEqual([]);
+    });
     it('makes counted Follow notices read-only through the real body reorder binding and presenter', async () => {
         const message = (id: string, sourceSessionId: string): PendingMessage => ({
             id, localId: id, createdAt: 1, updatedAt: 1, source: 'server_pending', pendingDeliveryStatus: 'server_queued',
@@ -219,6 +272,7 @@ describe('pending transcript local delivery custody', () => {
         });
         const screen = await renderScreen(<PendingMessagesTranscriptBlock
             sessionId={sessionId}
+            serverId={getActiveServerSnapshot().serverId}
             recipient={recipient}
             pendingMessages={storage.getState().sessionPending[sessionId]!.messages}
             discardedMessages={[]}
@@ -235,3 +289,4 @@ describe('pending transcript local delivery custody', () => {
     });
 
 });
+

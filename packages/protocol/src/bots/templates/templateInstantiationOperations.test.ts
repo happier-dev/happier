@@ -4,6 +4,7 @@ import { createWorkBoardArtifactBoundary } from '../../boards/workBoardArtifactV
 import { createPromptDocInLibrary, type PromptLibraryArtifactStore, type PromptLibraryStoredArtifact } from '../../prompts/library/promptLibraryActionOperations.js';
 import { writeSessionContextIntentV1ToMetadata } from '../../sessions/context/sessionContextV1.js';
 import { createBotTemplateActionExecuteV1 } from './botTemplateOperations.js';
+import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
 import { projectBotTemplateArtifactHeaderV1, type BotTemplateReleaseV1 } from './botTemplateV1.js';
 import { createSkillActionExecuteV1 } from '../../prompts/library/skills/skillActionOperations.js';
 import type { SkillRulesActionPortV1 } from '../../prompts/library/skillRulesActionsV1.js';
@@ -20,6 +21,8 @@ import { createMcpServerActionExecuteV1 } from '../../mcp/servers/serverActionsV
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '../../mcp/servers/serverCatalogV1.js';
 import type { McpServerCatalogV1 } from '../../mcp/servers/serverRowsV1.js';
 import type { SessionBotFaceV1 } from '../../sessions/identity/sessionBotFaceV1.js';
+import { ActionOperationGetV1ResponseSchema } from '../../actions/operations/v1.js';
+import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 
 const releaseId = '84a6bc9c-0418-44f6-a593-8a751bde13e0';
 const baseId = '7e23f798-230a-42f3-931f-e38b20736333';
@@ -29,8 +32,10 @@ const release: BotTemplateReleaseV1 = { v: 1, version: '1.0.0', changelog: '', r
     memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] }, firstTask: 'Review my change' } };
 
 function fixture(carried = false, operations = false, observeCommit = false, failSkillWrite = false, setup = false, report = false, awaiting = false,
-  transient?: 'matching' | 'mismatched', requesterAdmission = false,
-  copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string }) {
+  executionContext: Partial<ActionExecutorContext> = {},
+  copy?: { catalog: { value: McpServerCatalogV1; revision: number }; baseId: string; sessionId: string },
+  softwareAuthorizationUnavailable = false,
+  softwareBoundary: Pick<ActionExecutorDeps, 'machineSetupApply' | 'actionOperationAction'> = {}) {
   const instanceBaseId = copy?.baseId ?? baseId;
   const instanceSessionId = copy?.sessionId ?? sessionId;
   let selectedRelease: BotTemplateReleaseV1 = carried ? { ...release, content: { ...release.content,
@@ -58,8 +63,16 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   let revision = 0;
   let births = 0;
   let launches = 0;
+  let spawnContext: ActionExecutorContext | undefined;
   const catalogState = copy?.catalog ?? { value: { v: 1 as const, servers: [], bindings: [] } satisfies McpServerCatalogV1, revision: 0 };
   const events: string[] = [];
+  const machineSetupPlan: NonNullable<ActionExecutorDeps['machineSetupPlan']> = async ({ input }) => {
+    if (softwareAuthorizationUnavailable) return { ok: false, errorCode: 'software_setup_transport_unavailable', error: 'Setup Plan transport unavailable' };
+    events.push('software-plan');
+    const source = { kind: 'direct' as const, setup: { items: [{ kind: 'softwareRecipe' as const,
+      selection: { ref: { pluginId: 'test.tools', recipeId: 'git', revision: '1' }, inputs: {} } }] } };
+    return { desiredRevision: 0, sources: input.sources ?? [source], exclusions: [], support: [], recipePlans: [] };
+  };
   let approval: ApprovalRequest | null = null;
   const store: PromptLibraryArtifactStore = {
     read: async id => docs.get(id) ?? null,
@@ -76,18 +89,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
   };
   const execute = createBotTemplateActionExecuteV1({ artifacts: boundary.forAccount('recipient'),
     randomId: () => instanceBaseId, readSourceDraftRef: async () => null, writeSourceDraftRef: async () => {}, grant: async () => {},
-    ...(transient ? { resolveInstantiationRelease: async () => ({
-      source: { kind: 'artifact' as const, serverId: 'home', artifactId: transient === 'matching' ? releaseId : 'other-source' },
-      release: selectedRelease, revision: { headerVersion: 1, bodyVersion: 1 }, follow: false as const, reportAcceptedVersion: false as const,
-    }) } : {}),
     recipient: {
-      ...(requesterAdmission ? { prepareRequesterAdmission: async (request: { input: unknown; context: import('../../actions/executor/types.js').ActionExecutorContext;
-        machineSetup?: import('../../machines/managed/machineSetupV1.js').MachineSetupV1 }) => {
-        expect(request.machineSetup).toMatchObject({ items: [{ kind: 'softwareRecipe', selection: { ref: { pluginId: 'test.tools', recipeId: 'git', revision: '1' } } }] });
-        events.push('requester-admitted');
-        const stopped = new AbortController(); stopped.abort();
-        return { ...request.context, signal: stopped.signal };
-      } } : {}),
       readSession: async () => ({ metadata, revision }),
       writeInstance: async (_ref, instance) => { metadata = { ...metadata, work: { ...metadata.work as object, templateInstance: instance } }; revision++; events.push('instance-written'); },
       ...(report ? { reportAcceptedVersion: async (input: { artifactId: string; copyId: string; acceptedVersion: string }) => {
@@ -124,6 +126,17 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       events.push(`operation:${request.actionId}`); return request.execute(request.context);
     } } : {}),
     prepareBotTemplateInstantiation: request => execute.prepareInstantiation(request),
+    machineSetupPlan,
+    machineSetupApply: async () => { events.push('software-apply'); return { operationId: 'install-git' }; },
+    actionOperationAction: async () => {
+      events.push('software-completed');
+      return ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: {
+        version: 1, operationId: 'install-git', revision: 2, actionId: 'machines.setup.apply', state: 'succeeded',
+        scope: { accountId: 'recipient', machineId: 'machine' }, title: 'Install Git', createdAt: 1, startedAt: 1,
+        settledAt: 2, cancellation: 'supported',
+      } });
+    },
+    ...softwareBoundary,
     promptDocCreate: input => createPromptDocInLibrary({ store, request: input }),
     memoryLibrary: { serverId: 'home', store, randomId: () => 'seed-fact',
       readSession: async () => ({ metadata, revision }),
@@ -131,7 +144,6 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
     },
     skillActionExecute: ({ actionId, input, context }) => createSkillActionExecuteV1({ store, skillRules,
       randomId: () => 'rule', savedBy: artifactSavedByFromActionContextV1(context),
-      creationSessionId: context.invocationServices?.templateSkillSessionId,
       includeInSession: (sid, id) => setSessionCapabilityV1({ request: { sessionId: sid, kind: 'skill', id, state: 'on' }, context,
         port: { readSession: async () => ({ metadata, sessionRunning: false,
           agent: { vendorResume: 'supported', skillsLiveReload: 'supported' }, launchRestart: 'automatic' }),
@@ -139,24 +151,27 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
             if (failSkillWrite) throw new Error('Session persistence unavailable');
             metadata = readRecord(update(metadata)); revision++; return 'updated';
           } } }),
-    })(actionId, input, { surface: context.surface ?? null }, context.signal),
+    })(actionId, input, { surface: context.surface ?? null, invocationServices: context.invocationServices }, context.signal),
     sessionStateFieldSet: async write => { if (write.fieldId !== 'intent.context') throw new Error('Unexpected field');
       if (write.expectedMetadataRevision !== revision) return { ok: false, errorCode: 'revision_conflict', error: 'revision_conflict' };
       metadata = writeSessionContextIntentV1ToMetadata(metadata, write.value); revision++; events.push('instructions-attached'); return { ok: true, version: revision }; },
     sessionSpawnNew: async (input, continuation) => {
+      spawnContext = input.context;
       if (setup) {
-        expect(continuation?.machineSetup).toMatchObject({ items: [{ kind: 'softwareRecipe', selection: {
-          ref: { pluginId: 'test.tools', recipeId: 'git', revision: '1' }, inputs: {},
-        } }] });
+        expect(continuation?.machineSetup).toBeUndefined();
+        expect(continuation?.machineSetupPlanInput).toBeUndefined();
         expect(input.connectedServices).toMatchObject({ v: 2, bindingsByServiceId: {
           'happier.scm.forge.github/github-account': { source: 'connected', profileId: 'recipient-profile' },
         } });
       }
-      births++;
-      metadata = { bot: input.identity?.bot, createdAsBot: input.identity?.createdAsBot,
-        ...(input.identity?.botFace ? { botFace: input.identity.botFace } : {}), summary: { text: input.title } };
-      events.push('birth');
-      try { await continuation?.beforeLaunch({ sessionId: instanceSessionId, disposition: 'created', metadataRevision: revision }); }
+      const disposition = births ? 'rejoined' as const : 'created' as const;
+      if (!births) {
+        births++;
+        metadata = { bot: input.identity?.bot, createdAsBot: input.identity?.createdAsBot,
+          ...(input.identity?.botFace ? { botFace: input.identity.botFace } : {}), summary: { text: input.title } };
+        events.push('birth');
+      }
+      try { await continuation?.beforeLaunch({ sessionId: instanceSessionId, disposition, metadataRevision: revision }); }
       catch (error) {
         if (!failSkillWrite) throw error;
         // The ordinary creation adapter projects a failed callback to a typed launch result.
@@ -168,7 +183,7 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       expect(input.permissionMode).toBe('default');
       if (observeCommit) expect(input.observeSessionCommit).toBeUndefined();
       if (!awaiting) { launches++; events.push('launch'); }
-      return { type: 'success', disposition: 'created', sessionId: instanceSessionId, executionTarget: input.executionTarget,
+      return { type: 'success', disposition, sessionId: instanceSessionId, executionTarget: input.executionTarget,
         organizationPlacement: { folderId: null, tagIds: [] }, initialInput: awaiting ? { status: 'accepted', localId: 'host-onboarding' } : { status: 'notRequested' } };
     },
   });
@@ -181,21 +196,105 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, permissionMode: 'default' } };
   // The designed Create dispatch records the exact completed native confirmation.
-  const run = (confirmed = true) => executor.execute('template.instantiate', input, { surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'recipient',
+  const executionContextFor = (confirmed = true) => ({ surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'recipient',
     actionCaller: { kind: 'host' }, actionRequestId: 'copy-request', ...(confirmed ? { presentUserConfirmation: {
       actionId: 'template.instantiate', inputDigest: computeActionInputApprovalDigestV1('template.instantiate', input),
       accountId: 'recipient', serverId: 'home', requestId: 'copy-request', target: null,
     } } : {}),
     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-      ...(!confirmed ? { actions: { 'template.instantiate': { approvalRequiredSurfaces: ['ui'] } } } : {}) }) });
-  const reject = () => executor.execute('approval.request.decide', { artifactId: 'copy-approval', decision: 'reject' }, {
+      ...(!confirmed ? { actions: { 'template.instantiate': { approvalRequiredSurfaces: ['ui'] } } } : {}) }), ...executionContext } satisfies ActionExecutorContext);
+  const run = (confirmed = true, prepared = false) => {
+    const context = executionContextFor(confirmed);
+    return prepared ? executor.prepare('template.instantiate', input, context).then(result => result.kind === 'ready'
+      ? result.invocation.run() : result.result) : executor.execute('template.instantiate', input, context);
+  };
+  const decide = (decision: 'approve' | 'reject') => executor.execute('approval.request.decide', { artifactId: 'copy-approval', decision }, {
     surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
     runtimeAccountId: 'recipient', actionRequestId: 'reject-copy', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
   });
-  return { run, reject, approval: () => approval, selectedRelease, input, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }) };
+  return { run, prepare: () => execute.prepareInstantiation({ input, context: executionContextFor(),
+    invokeChild: child => {
+      if (typeof child.action !== 'string') throw new Error('Unexpected contributed preparation');
+      return executor.execute(child.action, child.input, executionContextFor());
+    } }), reject: () => decide('reject'), approve: () => decide('approve'),
+    approval: () => approval, selectedRelease, input, events, docs, boundary, catalog: () => catalogState.value, metadata: () => metadata, counts: () => ({ births, launches }), spawnContext: () => spawnContext };
 }
 
 describe('template instantiation through ordinary creation', () => {
+  it('approves an unchanged received release after the host binds its omitted revision', async () => {
+    const f = fixture();
+    Reflect.deleteProperty(f.input, 'expectedRevision');
+    expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    await f.approve();
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+    expect(f.approval()).toMatchObject({ actionArgs: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
+      execution: { ok: true } });
+  });
+  it('binds an omitted recipient revision before approval so a changed shared release cannot replace reviewed content', async () => {
+    const f = fixture();
+    Reflect.deleteProperty(f.input, 'expectedRevision');
+    expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const stored = f.boundary.rows.get(releaseId)!;
+    f.boundary.rows.set(releaseId, { ...stored, revision: { headerVersion: 2, bodyVersion: 2 },
+      body: JSON.stringify({ v: 1, state: 'released', release: { ...f.selectedRelease,
+        content: { ...f.selectedRelease.content, instructions: { markdown: 'Changed after review.' } } } }) });
+    await f.approve();
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+    expect(f.events).toEqual([]);
+    expect(f.approval()).toMatchObject({ actionArgs: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
+      execution: { ok: false } });
+  });
+  it('returns an ordinary required Plan review before native planning or Copy effects', async () => {
+    const f = fixture(false, false, false, false, true, false, false, {
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'machines.setup.plan': { approvalRequiredSurfaces: ['ui'] } } }),
+    });
+    expect(await f.run()).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.approval()?.actionId).toBe('machines.setup.plan');
+    expect(f.events).toEqual([]);
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+  });
+  it.each(['machines.setup.plan', 'machines.setup.apply'] as const)('refuses software Copy before parent effects when its token lacks %s', async missing => {
+    const f = fixture(false, false, false, false, true, false, false, {
+      externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids:
+          ['template.instantiate', 'machines.setup.plan', 'machines.setup.apply'].filter(id => id !== missing) } } },
+    });
+    expect(await f.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied',
+      details: { reason: 'action_not_granted', actionId: missing } });
+    expect(f.events).toEqual(missing === 'machines.setup.plan' ? [] : ['software-plan']);
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+    expect(f.docs.size).toBe(0);
+    expect(f.approval()).toBeNull();
+  });
+  it.each(['account', 'full-token', 'scoped-token'] as const)('retains software Copy preparation for %s', async credential => {
+    const f = fixture(false, false, false, false, true, false, false, credential === 'account' ? {} : {
+      externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential', grant: credential === 'full-token' ? API_TOKEN_FULL_GRANT_V1
+          : { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.instantiate', 'machines.setup.plan', 'machines.setup.apply'] } } },
+    });
+    expect(await f.prepare()).toMatchObject({ approvalPreview: { softwarePlan: { recipePlans: [] } } });
+    expect(f.events).toEqual(['software-plan']);
+    expect(f.counts()).toEqual({ births: 0, launches: 0 });
+  });
+  it('retains scoped Copy preparation without software', async () => {
+    const f = fixture(false, false, false, false, false, false, false, {
+      externalActionCredential: { accountId: 'recipient', principalId: 'pat', credentialId: 'credential',
+        grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.instantiate'] } } },
+    });
+    expect(await f.prepare()).toMatchObject({ approvalPreview: { release: { version: '1.0.0' } } });
+    expect(f.events).toEqual([]);
+  });
+  it.each([false, true])('retains the ordinary host context and completed parent review for birth children (prepared=%s)', async prepared => {
+    const signal = new AbortController().signal;
+    const f = fixture(false, false, false, false, false, false, false,
+      { signal, externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+    expect(await f.run(true, prepared)).toMatchObject({ ok: true });
+    expect(f.spawnContext()?.externalActionTarget).toEqual({ kind: 'machine', machineId: 'machine' });
+    expect(f.spawnContext()?.signal).toBe(signal);
+    expect(f.approval()).toBeNull();
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+    expect(f.spawnContext()?.runtimeAccountId).toBe('recipient');
+  });
   it.each([true, false])('rejects invalid %s override/released art before the ordinary birth', async override => {
     const f = fixture();
     const face = { shape: { v: 1, fill: ['M0 0 H90 V90 Z'], mouth: [45, 46, 0.8] } };
@@ -244,10 +343,10 @@ describe('template instantiation through ordinary creation', () => {
 
   it('makes a second independent Bot copy in the same recipient MCP catalog', async () => {
     const catalog: { value: McpServerCatalogV1; revision: number } = { value: { v: 1, servers: [], bindings: [] }, revision: 0 };
-    const first = fixture(false, false, false, false, true, false, false, undefined, false,
+    const first = fixture(false, false, false, false, true, false, false, {},
       { catalog, baseId, sessionId });
     const secondId = 'ae23f798-230a-42f3-931f-e38b20736333';
-    const second = fixture(false, false, false, false, true, false, false, undefined, false,
+    const second = fixture(false, false, false, false, true, false, false, {},
       { catalog, baseId: secondId, sessionId: 'cm00000000000000000000002' });
     expect(await first.run()).toMatchObject({ ok: true });
     const copied = await second.run();
@@ -258,28 +357,12 @@ describe('template instantiation through ordinary creation', () => {
     expect(readSessionCapabilitySelectionFromMetadataV1(first.metadata()).mcp?.forceIncludeServerIds).toEqual([baseId]);
     expect(readSessionCapabilitySelectionFromMetadataV1(second.metadata()).mcp?.forceIncludeServerIds).toEqual([secondId]);
   });
-  it('uses the enriched requester context before the first birth or content effect', async () => {
-    const f = fixture(false, false, false, false, true, false, false, undefined, true);
+  it('respects the ordinary host cancellation before the first birth or content effect', async () => {
+    const stopped = new AbortController(); stopped.abort();
+    const f = fixture(false, false, false, false, true, false, false, { signal: stopped.signal });
     expect(await f.run()).toMatchObject({ ok: false });
-    expect(f.events).toEqual(['requester-admitted']);
+    expect(f.events).toEqual([]);
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
-    expect(f.docs.size).toBe(0);
-  });
-  it('copies an admitted live link without a grant, follows nothing and reports no adoption', async () => {
-    const f = fixture(true, false, false, false, false, true, false, 'matching');
-    f.boundary.rows.delete(releaseId);
-    expect(await f.run()).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
-    expect(f.counts()).toEqual({ births: 1, launches: 1 });
-    expect(f.metadata()).toMatchObject({ work: { templateInstance: { source: f.input.source,
-      acceptedVersion: '1.0.0', acceptedBase: { serverId: 'home', artifactId: baseId }, follow: false } } });
-    expect(f.events).not.toContain('reported');
-    expect(f.boundary.rows.get(baseId)?.body).toBe(JSON.stringify({ v: 1, state: 'released', release: f.selectedRelease }));
-  });
-  it('refuses a transient admission for another source before creating recipient resources', async () => {
-    const f = fixture(false, false, false, false, false, true, false, 'mismatched');
-    expect(await f.run()).toMatchObject({ ok: false });
-    expect(f.counts()).toEqual({ births: 0, launches: 0 });
-    expect(f.events).not.toContain('reported');
     expect(f.docs.size).toBe(0);
   });
   it('reports accepted version only after successful launch and ignores status transport failure', async () => {
@@ -296,7 +379,59 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.counts()).toEqual({ births: 1, launches: 0 });
     expect(f.events).not.toContain('reported');
   });
-  it('carries one merged software setup and recipient Connect selection through ordinary creation', async () => {
+  it.each(['failed', 'succeeded'] as const)('runs ordinary software setup after birth and content before instance settlement and Agent launch (%s)', async outcome => {
+    let settle: ((state: 'failed' | 'succeeded') => void) | undefined;
+    let enter: (() => void) | undefined;
+    let entered = new Promise<void>(resolve => { enter = resolve; });
+    let terminal = new Promise<'failed' | 'succeeded'>(resolve => { settle = resolve; });
+    const f = fixture(false, false, false, false, true, false, false, {}, undefined, false, {
+      actionOperationAction: async () => {
+        enter!();
+        const state = await terminal;
+        return ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: {
+          version: 1, operationId: 'install-git', revision: 2, actionId: 'machines.setup.apply', state,
+          scope: { accountId: 'recipient', machineId: 'machine' }, title: 'Install Git', createdAt: 1, startedAt: 1,
+          settledAt: 2, cancellation: 'supported',
+          ...(state === 'failed' ? { error: { errorCode: 'package_install_failed', error: 'Package install failed' } } : {}),
+        } });
+      },
+    });
+    // Isolate the native software retry from the separately covered MCP import.
+    const row = f.boundary.rows.get(releaseId)!;
+    const softwareRelease = { ...f.selectedRelease, content: { ...f.selectedRelease.content,
+      needs: { ...f.selectedRelease.content.needs, mcpServers: [] } } };
+    const envelope = { v: 1 as const, state: 'released' as const, release: softwareRelease };
+    f.boundary.rows.set(releaseId, { ...row, header: projectBotTemplateArtifactHeaderV1(envelope), body: JSON.stringify(envelope) });
+    f.input.setup!.mcpServers = [];
+    const pending = f.run();
+    await Promise.race([entered, pending.then(result => { throw new Error(`Copy settled before setup: ${JSON.stringify(result)}`); })]);
+    expect(f.counts()).toEqual({ births: 1, launches: 0 });
+    expect(f.docs.size).toBe(1);
+    expect(f.metadata()).not.toHaveProperty('work.templateInstance');
+    expect(f.boundary.rows.has(baseId)).toBe(false);
+    settle!(outcome);
+    if (outcome === 'failed') {
+      expect(await pending).toMatchObject({ ok: false, errorCode: 'package_install_failed', details: { sessionId } });
+      expect(f.counts()).toEqual({ births: 1, launches: 0 });
+      expect(f.metadata()).not.toHaveProperty('work.templateInstance');
+      expect(f.boundary.rows.has(baseId)).toBe(false);
+      entered = new Promise(resolve => { enter = resolve; });
+      terminal = new Promise(resolve => { settle = resolve; });
+      const retry = f.run();
+      await Promise.race([entered, retry.then(result => { throw new Error(`Retry skipped setup: ${JSON.stringify(result)}`); })]);
+      expect(f.counts()).toEqual({ births: 1, launches: 0 });
+      expect(f.metadata()).not.toHaveProperty('work.templateInstance');
+      settle!('succeeded');
+      expect(await retry).toMatchObject({ ok: true, result: { type: 'success', disposition: 'rejoined', sessionId } });
+      expect(f.counts()).toEqual({ births: 1, launches: 1 });
+      return;
+    }
+    expect(await pending).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+    expect(f.events.indexOf('software-apply')).toBeGreaterThan(f.events.indexOf('instructions-attached'));
+    expect(f.events.indexOf('software-apply')).toBeLessThan(f.events.indexOf('instance-written'));
+  });
+  it('carries the recipient Connect selection through ordinary creation', async () => {
     const f = fixture(false, false, false, false, true);
     const result = await f.run();
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
@@ -304,6 +439,13 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.catalog()).toMatchObject({ bindings: [], servers: [{ remote: { headers: { Authorization: { t: 'savedSecret', secretId: 'recipient-secret' } } } }] });
     expect(readSessionCapabilitySelectionFromMetadataV1(f.metadata()).mcp?.forceIncludeServerIds).toEqual([baseId]);
     expect(f.metadata()).toMatchObject({ work: { templateInstance: { mcpServerIds: { docs: baseId } } } });
+  });
+  it.each([true, false])('settles ordinary software Plan transport failure before birth only for software copies (software=%s)', async software => {
+    const f = fixture(false, false, false, false, software, false, false, {}, undefined, true);
+    expect(await f.run()).toMatchObject(software
+      ? { ok: false, errorCode: 'software_setup_transport_unavailable' }
+      : { ok: true });
+    expect(f.counts()).toEqual(software ? { births: 0, launches: 0 } : { births: 1, launches: 1 });
   });
   it('seeds real Bot memory and binary skill content with recipient inclusion and instantiator attribution before launch', async () => {
     const f = fixture(true);
@@ -359,17 +501,22 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
     expect(f.events).toEqual([]);
   });
-  it('reviews the complete release once and declining creates no Bot or recipient content', async () => {
+  it.each([false, true])('reviews the complete release and ordinary software plan before declining without birth (software=%s)', async software => {
     expect(isApprovalRequiredByActionsSettings('template.instantiate', ActionsSettingsV1Schema.parse({ v: 1 }),
       { surface: 'agent', authority: 'account_automation' })).toBe(true);
-    const f = fixture(true);
+    const f = fixture(true, false, false, false, software);
     expect(await f.run(false)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'copy-approval' } });
     expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { release: f.selectedRelease } } });
+    if (software) expect(f.approval()).toMatchObject({ preview: { hostReviewedContent: { softwarePlan: {
+      desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+        ref: { pluginId: 'test.tools', recipeId: 'git', revision: '1' }, inputs: {},
+      } }] } }], recipePlans: [],
+    } } } });
     expect(await f.reject()).toMatchObject({ ok: true });
     expect(f.approval()).toMatchObject({ status: 'rejected' });
     expect(f.counts()).toEqual({ births: 0, launches: 0 });
     expect(f.docs.size).toBe(0);
-    expect(f.events).toEqual([]);
+    expect(f.events).toEqual(software ? ['software-plan'] : []);
     expect(f.boundary.rows.has(baseId)).toBe(false);
     expect(f.boundary.reads).toEqual([releaseId]);
   });

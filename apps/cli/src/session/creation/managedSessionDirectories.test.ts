@@ -282,11 +282,16 @@ describe('managed session directory ownership', () => {
   it('admits fresh replay creation but cannot silently recreate a bound Session on retry', async () => {
     const { owner } = await fixture();
     const prepared = owner.prepareForCreation({ sessionCreationTag: 'replay-tag' });
-    const request = { directory: prepared.directory, sessionCreationTag: 'replay-tag', existingSessionId: 'replay-session' };
+    const request = { directory: prepared.directory, sessionCreationTag: 'replay-tag', existingSessionId: 'replay-session',
+      existingSessionCreationTag: 'replay-tag' };
     const admitted = await owner.prepareForSpawn({ ...request, freshSessionCreation: true });
     expect(admitted).toMatchObject({ ok: true, directory: prepared.directory, created: true });
     if (!admitted.ok) throw new Error('Fresh replay creation was not admitted');
-    await owner.bind({ allocationId: admitted.allocationId, sessionId: 'replay-session' });
+    // Home already committed this Session. A later pool refusal must retain
+    // its workspace, just as it retains the committed Session itself.
+    await owner.rollbackFreshSpawn({ allocationId: admitted.allocationId, created: true, sessionId: 'replay-session' });
+    await expect(access(admitted.directory)).resolves.toBeUndefined();
+    expect(await owner.listRecords()).toMatchObject([{ sessionId: 'replay-session' }]);
     await rm(admitted.directory, { recursive: true });
     expect(await owner.prepareForSpawn(request)).toEqual({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING' });
     await expect(access(admitted.directory)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -375,37 +380,28 @@ describe('managed session directory ownership', () => {
     expect(await owner.listRecords()).toMatchObject([{ pendingRemoval: true }]);
   });
 
-  it('retains pending removal on persistent Windows locks without rejecting the cursor, and retries later', async () => {
-    const { owner } = await fixture();
+  it('retains locked removals without a local retry policy and recovers through the next owner attempt', async () => {
+    const { activeServerDir, owner } = await fixture();
     const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'tag' });
     await owner.bind({ allocationId: allocation.allocationId, sessionId: 'a' });
+    await writeFile(join(allocation.directory, 'keep'), 'locked-session-data');
     const originalRm = (await vi.importActual<typeof fs>('node:fs/promises')).rm;
+    const removalOptions: Parameters<typeof fs.rm>[1][] = [];
     vi.mocked(fs.rm).mockImplementation(async (path, options) => {
-      if (path === allocation.directory) throw Object.assign(new Error('locked'), { code: 'EBUSY' });
-      return originalRm(path, options);
-    });
-    await expect(owner.removeForSession({ sessionId: 'a', stopSession: async () => ({ status: 'stopped' }) })).resolves.toBeUndefined();
-    expect(await owner.listRecords()).toMatchObject([{ pendingRemoval: true }]);
-    vi.mocked(fs.rm).mockReset();
-    await owner.retryPendingRemovals({ stopSession: async () => ({ status: 'not_found' }) });
-    expect(await owner.listRecords()).toEqual([]);
-    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('uses the native recursive-removal retry contract for a transient Windows lock', async () => {
-    const { owner } = await fixture();
-    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'transient' });
-    await owner.bind({ allocationId: allocation.allocationId, sessionId: 'a' });
-    const originalRm = (await vi.importActual<typeof fs>('node:fs/promises')).rm;
-    vi.mocked(fs.rm).mockImplementation(async (path, options) => {
-      // Node's OS boundary retries EBUSY only with recursive + positive maxRetries.
-      if (path === allocation.directory && !(options?.recursive && (options.maxRetries ?? 0) > 0)) {
-        throw Object.assign(new Error('transient lock'), { code: 'EBUSY' });
+      if (path === allocation.directory) {
+        removalOptions.push(options);
+        throw Object.assign(new Error('locked'), { code: 'EBUSY' });
       }
       return originalRm(path, options);
     });
-    await owner.removeForSession({ sessionId: 'a', stopSession: async () => ({ status: 'stopped' }) });
-    expect(await owner.listRecords()).toEqual([]);
+    await expect(owner.removeForSession({ sessionId: 'a', stopSession: async () => ({ status: 'stopped' }) })).resolves.toBeUndefined();
+    expect(removalOptions).toEqual([{ recursive: true, force: true }]);
+    expect(await owner.listRecords()).toMatchObject([{ pendingRemoval: true }]);
+    expect(await readFile(join(allocation.directory, 'keep'), 'utf8')).toBe('locked-session-data');
+    vi.mocked(fs.rm).mockReset();
+    const restarted = createManagedSessionDirectories({ activeServerDir });
+    await restarted.retryPendingRemovals({ stopSession: async () => ({ status: 'not_found' }) });
+    expect(await restarted.listRecords()).toEqual([]);
     await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
@@ -414,6 +410,8 @@ describe('managed session directory ownership', () => {
     const old = await owner.materializeForFreshSpawn({ sessionCreationTag: 'old' });
     await owner.bind({ allocationId: old.allocationId, sessionId: 'a' });
     await owner.removeForSession({ sessionId: 'a', stopSession: async () => { throw new Error('stop incomplete'); } });
+    await expect(access(old.directory)).resolves.toBeUndefined();
+    expect(await owner.listRecords()).toMatchObject([{ allocationId: old.allocationId, pendingRemoval: true }]);
     const current = await owner.allocateForHandoff({ operationId: 'access-restored', sessionId: 'a' });
     await owner.commitHandoff({ operationId: 'access-restored', sessionId: 'a' });
     await writeFile(join(current.directory, 'keep'), 'current-session-data');
@@ -421,6 +419,27 @@ describe('managed session directory ownership', () => {
     expect(await readFile(join(current.directory, 'keep'), 'utf8')).toBe('current-session-data');
     expect(await owner.listRecords()).toMatchObject([{ allocationId: current.allocationId }]);
     await expect(access(old.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not settle removal when pending cleanup cannot be recorded', async () => {
+    const { activeServerDir, owner } = await fixture();
+    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'unrecorded-cleanup' });
+    await owner.bind({ allocationId: allocation.allocationId, sessionId: 'a' });
+    await writeFile(join(allocation.directory, 'keep'), 'retained-session-data');
+    const owners = join(activeServerDir, 'session-directories', '.owners');
+    const unavailableOwners = `${owners}-unavailable`;
+    await expect(owner.removeForSession({ sessionId: 'a', stopSession: async () => {
+      // The ownership inventory was readable at admission; storage fails before
+      // this removal can persist the work it still owes.
+      await rename(owners, unavailableOwners);
+      await writeFile(owners, 'temporarily unavailable');
+      throw new Error('stop incomplete');
+    } })).rejects.toMatchObject({ code: 'ENOTDIR' });
+    expect(await readFile(join(allocation.directory, 'keep'), 'utf8')).toBe('retained-session-data');
+    await rm(owners);
+    await rename(unavailableOwners, owners);
+    await owner.removeForSession({ sessionId: 'a', stopSession: async () => ({ status: 'not_found' }) });
+    expect(await owner.listRecords()).toEqual([]);
   });
 
   it('aborts only its own uncommitted handoff and proves the current path after returning to a machine', async () => {

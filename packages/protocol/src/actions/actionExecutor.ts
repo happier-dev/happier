@@ -3233,7 +3233,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               // Re-enter current authority and domain admission with the existing
               // exact-Action confirmation fact, never an approval bypass.
               return await executeCoreTerminal(actionId, discussionParticipantLaunch ? parsed.data : confirmationInput,
-                confirmedContext, true, legacyMetadataLabel);
+                { ...confirmedContext, ...(ctx.actionRequestId ? {
+                  presentUserApproval: recordPresentUserApprovalV1({ actionId, input: confirmationInput,
+                    requestId: ctx.actionRequestId, requestSurface: ctx.surface,
+                    ...(ctx.runtimeAccountId ? { decidingAccountId: ctx.runtimeAccountId } : {}) }),
+                } : {}) }, true, legacyMetadataLabel);
             });
           }
         }

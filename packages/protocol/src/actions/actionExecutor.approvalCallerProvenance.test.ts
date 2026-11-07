@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import {
   ApprovalRequestV1Schema,
   ApprovalRequestV2Schema,
+  StoredApprovalRequestSchema,
   ApprovalExecutionOriginV1Schema,
   type ApprovalRequest,
   type ApprovalRequestV1,
@@ -18,6 +19,7 @@ import type { ExternalActionExecutionAuthorizationV1, ExternalActionTargetV1 } f
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
 import { SessionAgentSpawnPolicyV1Schema } from '../account/settings/accountSettings.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { materializeActionRequestAttributionV1 } from './actionRequestAttributionV1.js';
 import type { AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 import {
   signExternalActionApprovalInputV1,
@@ -28,7 +30,7 @@ const sessionSpawnInput = {
   creationKey: 'plugin-approval-1',
   executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
   directory: { kind: 'path', path: '/workspace/project' },
-  organizationPlacement: { folderId: null, tagIds: [] },
+  organizationPlacement: { sectionId: null, tagIds: [] },
   agentTarget: {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -36,10 +38,20 @@ const sessionSpawnInput = {
   initialInput: { text: 'Inspect this repository.' },
 } as const;
 
+// The Workflow host binds an admitted starter to the actual origin Session.
+// Run identity and accepted execution authorization alone do not identify a person.
+const workflowRequesterAttribution = materializeActionRequestAttributionV1({
+  requestRef: 'workflow-person-request',
+  requester: { serverId: 'server-1', accountId: 'account-1' },
+  persona: { serverId: 'server-1', sessionId: 'session-1' },
+  origin: null,
+});
+
 describe('createActionExecutor (durable plugin approval caller provenance)', () => {
   it('replays an omitted Session operand against the approval origin on another focused device', async () => {
     let stored: ApprovalRequest | null = null;
     const renamedSessions: string[] = [];
+    const deliveries: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0][] = [];
     // Artifact persistence, current-origin authorization and the Session write
     // adapter are boundaries; proposal admission and replay remain real.
     const executor = createActionExecutor({
@@ -51,6 +63,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
       sessionStateFieldSet: async ({ sessionId }) => { renamedSessions.push(sessionId); return { ok: true }; },
+      sessionSendMessage: async input => { deliveries.push(input); return { status: 'accepted', localId: input.localId }; },
     });
     expect(await executor.execute('session.title.set', { title: 'Review the API' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'creator-profile',
@@ -67,8 +80,23 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(await executor.execute('approval.request.decide', {
       artifactId: 'origin-session-proposal', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'approver-profile',
-      serverIdentityId: 'same-home', runtimeAccountId: 'account', defaultSessionId: 'other-focused-session' }))
+      serverIdentityId: 'same-home', runtimeAccountId: 'account', defaultSessionId: 'other-focused-session',
+      callerPermissionMode: 'yolo' }))
       .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(renamedSessions).toEqual(['origin-session']);
+    expect(deliveries).toMatchObject([{ sessionId: 'origin-session', localId: 'approval-result:origin-session-proposal',
+      callerSurface: 'mcp', actionCaller: { kind: 'host' }, reply: 'none', context: { authority: 'account_automation' } }]);
+    expect(deliveries[0].context).not.toHaveProperty('callerPermissionMode');
+    expect(deliveries[0].context).not.toHaveProperty('defaultSessionId');
+    for (const current of [
+      { runtimeAccountId: 'another-account', serverIdentityId: 'same-home' },
+      { runtimeAccountId: 'account', serverIdentityId: 'another-home' },
+    ]) {
+      expect(await executor.execute('approval.request.decide', { artifactId: 'origin-session-proposal', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: 'approver-profile', ...current,
+      })).toMatchObject({ ok: false, errorCode: 'approval_context_unavailable' });
+    }
+    expect(deliveries).toHaveLength(1);
     expect(renamedSessions).toEqual(['origin-session']);
   });
 
@@ -122,7 +150,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(executed).toEqual([{ authority: 'present_user', input }]);
   });
 
-  it.each(['api', 'cli', 'agent'] as const)('retains %s invocation custody for Account Plugin Settings without changing the storage target', surface => {
+  it.each(['api', 'cli', 'agent', 'mcp'] as const)('retains %s invocation custody for Account Plugin Settings without changing the storage target', surface => {
     const actionId = 'plugins.settings.set' as const;
     const input = { pluginId: 'happier.agent.claude', localId: 'claudeUnifiedTerminalEnabled',
       scope: { kind: 'account' }, target: { kind: 'account' }, value: true, expectedRevision: '7' };
@@ -153,6 +181,23 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       targetSessionId: surface === 'agent' ? 'session-1' : null });
     expect(origin).toMatchObject({ machineId: 'machine-1', actionId });
     expect(ApprovalExecutionOriginV1Schema.safeParse(origin).success).toBe(true);
+    if (surface === 'mcp') {
+      const request = { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface }, requestedSurface: surface, approval: { flow: 'blocking', result: 'required' },
+        actionId, actionArgs: input, summary: 'Review the Settings change', executionOriginV1: origin };
+      const stored = StoredApprovalRequestSchema.parse(JSON.parse(JSON.stringify(request)));
+      expect(stored).toMatchObject({ requestedSurface: 'mcp', createdBy: { surface: 'mcp' },
+        executionOriginV1: { authority: 'account_automation', surface: 'ui', caller: { kind: 'host' },
+          externalActionExecutionAuthorization: context.externalActionExecutionAuthorization } });
+      // A descriptive nested caller is not a way to relabel an unsigned or
+      // present-user invocation, or to substitute the Home-admitted target.
+      expect(StoredApprovalRequestSchema.safeParse({ ...request,
+        executionOriginV1: { ...origin, externalActionExecutionAuthorization: undefined, externalActionInputSignature: undefined } }).success).toBe(false);
+      expect(StoredApprovalRequestSchema.safeParse({ ...request,
+        executionOriginV1: { ...origin, authority: 'present_user' } }).success).toBe(false);
+      expect(StoredApprovalRequestSchema.safeParse({ ...request,
+        executionOriginV1: { ...origin, target: { kind: 'machine', machineId: 'another-machine' } } }).success).toBe(false);
+    }
     const accountOnly = buildApprovalExecutionOriginV1({ actionId, input, targetSessionId: null,
       context: { surface: 'ui', authority: 'present_user', serverId: 'profile-1', actionRequestId: 'account-only' },
     });
@@ -184,14 +229,18 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     { homeCurrent: true, surface: 'cli' }, { homeCurrent: false, surface: 'cli' },
   ] as const)('routes unsigned Account replay through the deciding profile only after Home verification ($surface/$homeCurrent)', async ({ homeCurrent, surface }) => {
     let stored: ApprovalRequest | null = null;
+    const updates: ApprovalRequest[] = [];
     const contexts: ActionExecutorContext[] = [];
     const deps = {
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'relation-approval' }; },
       approvalsGet: async () => stored,
-      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); updates.push(stored); return { ok: true }; },
       isActionApprovalRequired: actionId => actionId === 'session.manager.set',
       // Home/Account authentication and the relation HTTP writer are system boundaries.
-      isApprovalExecutionOriginCurrent: async () => homeCurrent,
+      isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
+        if (!homeCurrent) reportStale?.('home_changed');
+        return homeCurrent;
+      },
       sessionManagerSet: async ({ context, sessionId, managerSessionId }) => {
         contexts.push(context);
         return context.serverId === 'app-profile'
@@ -206,13 +255,21 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     }, { surface: 'cli', authority: 'account_automation', serverId: 'cli-profile',
       serverIdentityId: 'srv_same_home', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
       actionRequestId: 'attach-request' })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(await executor.execute('approval.request.decide', { artifactId: 'relation-approval', decision: 'approve' }, {
+    const result = await executor.execute('approval.request.decide', { artifactId: 'relation-approval', decision: 'approve' }, {
       surface, authority: 'present_user', serverId: 'app-profile',
       serverIdentityId: 'srv_same_home', runtimeAccountId: 'account',
-    })).toMatchObject({ ok: true, result: { status: homeCurrent ? 'executed' : 'failed',
-      execution: homeCurrent ? { ok: true } : { ok: false, errorCode: 'approval_stale' } } });
+    });
+    expect(result).toMatchObject(homeCurrent
+      ? { ok: true, result: { status: 'executed', execution: { ok: true } } }
+      : { ok: false, errorCode: 'approval_stale', effectAttempted: false, details: { reason: 'home_changed' } });
     expect(contexts).toMatchObject(homeCurrent ? [{ serverId: 'app-profile', surface, authority: 'present_user', actionCaller: { kind: 'host' } }] : []);
-    expect(stored).toMatchObject({ executionOriginV1: { serverId: 'cli-profile', requestId: 'attach-request' } });
+    expect(stored).toMatchObject({ status: homeCurrent ? 'executed' : 'approved',
+      executionOriginV1: { serverId: 'cli-profile', requestId: 'attach-request' } });
+    if (!homeCurrent) {
+      // A pre-claim refusal cannot settle consent owned by another executor.
+      expect(updates.map(request => request.status)).toEqual(['approved']);
+      expect(stored).toEqual(updates[0]);
+    }
   });
 
   it('persists the complete authenticated Session caller for an approved Account mutation', async () => {
@@ -236,7 +293,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const caller = { kind: 'session', sessionId: 'parent-1', starterDepth: 2, turnDepth: 3 } as const;
     let current: AgentStartContextV1 = { caller, baseline: { machineId: 'machine-1', directory: '/workspace/project' },
       ledSubtreeSessionIds: [], workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' };
-    const createdSessions: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0][] = [];
+    const createdSessions: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0][] = [];
     const deps = {
       approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'session-start' }; },
       approvalsGet: async () => stored,
@@ -247,8 +304,9 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       sessionSpawnNew: async (args) => { createdSessions.push(args); return { type: 'success', disposition: 'created', sessionId: 'child-1',
         executionTarget: sessionSpawnInput.executionTarget, organizationPlacement: sessionSpawnInput.organizationPlacement,
         initialInput: { status: 'accepted', localId: 'initial-1' } }; },
+      sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsGet' | 'approvalsUpdate'
-      | 'isApprovalExecutionOriginCurrent' | 'isActionApprovalRequired' | 'resolveAgentStartContext' | 'sessionSpawnNew'>;
+      | 'isApprovalExecutionOriginCurrent' | 'isActionApprovalRequired' | 'resolveAgentStartContext' | 'sessionSpawnNew' | 'sessionSendMessage'>;
     const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
     expect(await executor.execute('session.spawn_new', sessionSpawnInput, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
@@ -290,6 +348,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     let acceptedEnvelope: string | undefined;
     let storedRequest: ApprovalRequest | null = null;
     const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state: 'queued', revision: 0,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -842,7 +901,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     let storedRequest: ApprovalRequest | null = null;
     const policy = SessionAgentSpawnPolicyV1Schema.parse({ permissionCeiling: 'read-only' });
     const caller = { kind: 'session', sessionId: 'parent-1', starterDepth: 0, turnDepth: 0 } as const;
-    const sessionSpawnNew = vi.fn(async (_input: Parameters<ActionExecutorDeps['sessionSpawnNew']>[0]) => ({
+    const sessionSpawnNew = vi.fn(async (_input: Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0]) => ({
       type: 'success', disposition: 'created', sessionId: 'child-1',
       executionTarget: sessionSpawnInput.executionTarget,
       organizationPlacement: sessionSpawnInput.organizationPlacement,
@@ -860,6 +919,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         ledSubtreeSessionIds: [], workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'safe-yolo',
       }),
       sessionSpawnNew,
+      sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('session.spawn_new', { ...sessionSpawnInput, permissionMode: 'read-only' }, {
       surface: 'agent', authority: 'account_automation', serverId: 'server-1',
@@ -872,7 +932,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const approvedSpawn = await executor.execute('approval.request.decide', {
       artifactId: 'spawn-approval', decision: 'approve',
     }, {
-      surface: 'ui', authority: 'present_user', serverId: 'server-1',
+      surface: 'ui', authority: 'present_user', serverId: 'server-1', runtimeAccountId: 'account-1',
       sessionAgentSpawnPolicyV1: { permissionCeiling: 'yolo' },
     });
     expect(approvedSpawn, JSON.stringify(approvedSpawn)).toMatchObject({ ok: true, result: { status: 'executed' } });
@@ -1649,7 +1709,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
   it('persists the exact Workflow Run caller in a durable approval origin', async () => {
-    const approvalsCreate = vi.fn(async () => ({ artifactId: 'workflow-approval-1' }));
+    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
+      ApprovalRequestV2Schema.parse(JSON.parse(JSON.stringify(request)));
+      return { artifactId: 'workflow-approval-1' };
+    });
     const executor = createActionExecutor({
       approvalsCreate,
       isActionApprovalRequired: () => true,
@@ -1669,6 +1732,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       authority: 'account_automation',
       serverId: 'server-1',
       actionRequestId: 'request-workflow-1',
+      runtimeAccountId: 'account-1',
+      actionRequestAttributionV1: workflowRequesterAttribution,
       actionCaller: { kind: 'workflowRun', runId: 'run-1', authorization },
     })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'workflow-approval-1' } });
 
@@ -1676,6 +1741,8 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       request: expect.objectContaining({
         executionOriginV1: expect.objectContaining({
           caller: { kind: 'workflowRun', runId: 'run-1', authorization },
+          authority: 'account_automation',
+          actionRequestAttributionV1: workflowRequesterAttribution,
         }),
       }),
     }));
@@ -1693,12 +1760,32 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       authority: 'account_automation',
       serverId: 'server-1',
       actionRequestId: 'request-workflow-2',
+      runtimeAccountId: 'account-1',
+      actionRequestAttributionV1: workflowRequesterAttribution,
       actionCaller: {
         kind: 'workflowRun',
         runId: 'run-2',
         authorization: { admittedPermissionCeiling: 'default' } as never,
       },
     })).resolves.toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Workflow approval with accepted authorization but no identified requester', async () => {
+    const approvalsCreate = vi.fn();
+    const executor = createActionExecutor({ approvalsCreate, isActionApprovalRequired: () => true });
+
+    await expect(executor.execute('agents.backends.list', {}, {
+      surface: 'cli',
+      authority: 'account_automation',
+      serverId: 'server-1',
+      actionRequestId: 'request-workflow-unknown',
+      runtimeAccountId: 'account-1',
+      actionCaller: { kind: 'workflowRun', runId: 'run-unknown', authorization: {
+        admittedPermissionCeiling: 'default',
+        principal: { kind: 'api', accountId: 'account-1', principalId: 'principal-1', credentialId: 'credential-1' },
+      } },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
 });

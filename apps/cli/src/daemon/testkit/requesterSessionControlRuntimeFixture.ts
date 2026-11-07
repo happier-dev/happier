@@ -25,6 +25,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
   trackedSessions: Map<number, TrackedSession>;
   getRequester(): RequesterSessionRuntimeContext | null;
   resolveRequesterSessionRuntimeContext?: Parameters<typeof startDaemonSessionControlRuntime>[0]['resolveRequesterSessionRuntimeContext'];
+  releaseRequesterSessionRuntimeContext?: Parameters<typeof startDaemonSessionControlRuntime>[0]['releaseRequesterSessionRuntimeContext'];
   resolveQualifiedConnectedAccountV4Support: NonNullable<Parameters<typeof startDaemonSessionControlRuntime>[0]['resolveQualifiedConnectedAccountV4Support']>;
   getApiMachineForSessions?: Parameters<typeof startDaemonSessionControlRuntime>[0]['getApiMachineForSessions'];
   pidToAwaiter?: Parameters<typeof startDaemonSessionControlRuntime>[0]['pidToAwaiter'];
@@ -35,7 +36,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0],
       'deviceLocalSecretStorage' | 'onHappySessionWebhook' | 'createRequesterSessionRuntimeContext'
       | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'onMachineAccessLossReceiverReady' | 'workflowAcceptedAuthorizationCurrentness'
-      | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'resolveServerFeaturesSnapshot'>>;
+      | 'runtimeActionExecute' | 'pluginRuntimeController' | 'projectProviderModelsForAccount' | 'readProviderForAccount' | 'resolveServerFeaturesSnapshot'>>;
 }>) {
   const previousConfiguration = {
     happyHomeDir: configuration.happyHomeDir,
@@ -78,6 +79,15 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
     const api = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => ApiClient.create(input.credentials));
     runtime = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => startDaemonSessionControlRuntime({
       ...input.startup,
+      // Mirror startDaemon's real runtime producer so requester Actions reach
+      // the same native runtime composition as the installed daemon.
+      runtimeActionExecute: input.startup?.runtimeActionExecute ?? api.createBrowserRuntimeActionExecutor({
+        observeExecution: request => {
+          const machine = input.getApiMachineForSessions?.();
+          return machine ? machine.observeActionExecution(request)
+            : Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
+        },
+      }),
       machineId: input.machineId,
       credentials: input.credentials,
       api,
@@ -102,7 +112,7 @@ export async function createRequesterSessionControlRuntimeFixture(input: Readonl
         return requester?.bootstrap.getBoundSessionId() === sessionId ? requester : null;
       }),
       // getRequester lends the caller's context; its enclosing fixture owns teardown.
-      releaseRequesterSessionRuntimeContext: async () => {},
+      releaseRequesterSessionRuntimeContext: input.releaseRequesterSessionRuntimeContext ?? (async () => {}),
       resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
       // Physical launch and whole-daemon shutdown are OS/lifetime boundaries.
       beforeShutdown: async () => {},

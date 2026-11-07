@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { decodeBase64, encodeBase64 } from '../../../crypto/base64.js';
 import type { PromptLibraryArtifactStore, PromptLibraryStoredArtifact } from '../promptLibraryActionOperations.js';
 import type { SkillRulesActionPortV1 } from '../skillRulesActionsV1.js';
@@ -22,12 +22,11 @@ import { readSkillLibraryCatalog } from './readSkillLibraryCatalog.js';
 import { listArtifactHeadersV1 } from '../../../artifacts/artifactListSelectionV1.js';
 import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from '../../../actions/actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../../approvals/approvalRequestV1.js';
-import { createBlockingApprovalCoordinator } from '../../../actions/blockingApprovalCoordinator.js';
 import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } from '../../../artifacts/artifactHeaderRestorationV1.js';
 
 const markdown = '---\nname: sample\ndescription: A useful skill\n---\nInstructions';
-const included = { ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } } as const;
 const files = [{ path: 'SKILL.md', contentBase64: encodeBase64(new TextEncoder().encode(markdown), 'base64'), contentKind: 'utf8' as const }];
+const included = { ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } } as const;
 type RegistryPorts = Pick<ReturnType<typeof createRegistryHostV1>, 'readRegistryItem' | 'readRegistrySource' | 'filesForPointer' | 'readLinkSkills' | 'fetchLinkSkillFiles'>;
 function gitRegistryHarness() {
   const initial = '1'.repeat(40), latest = '2'.repeat(40); let head = initial;
@@ -79,7 +78,7 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     ...(foundReader ? { readFoundSkillBundle: foundReader } : {}),
     ...(registry ? { readRegistryItem: registry.readRegistryItem, readRegistrySource: registry.readRegistrySource,
       fetchRegistrySkillFiles: registry.filesForPointer, readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles } : {}),
-    includeInSession: async (sessionId, id) => { if (failSession) return { ok: false }; includes.set(sessionId, [...(includes.get(sessionId) ?? []), id]); order.push('session'); return { ok: true }; },
+    includeInSession: async (sessionId, id) => { if (failSession) return { ok: false, code: 'session_unavailable' }; includes.set(sessionId, [...(includes.get(sessionId) ?? []), id]); order.push('session'); return included; },
   });
   return { execute, store, skillRules, artifacts, includes, order, rules: () => rules, setRules: (value: SkillRuleV1[]) => { rules = value; }, creates: () => creates, usage: (value: Record<string, number>) => { usage = value; },
     usageUnavailable: () => { usageUnavailable = true; },
@@ -89,6 +88,84 @@ function harness(registry?: RegistryPorts, foundReader?: (machineId: string, pat
     failRules: (value: boolean) => { failRules = value; }, failSession: (value: boolean) => { failSession = value; } };
 }
 describe('skill library Actions', () => {
+  it.each(['skills.create', 'skills.update'] as const)('rejects an invalid %s name before approval and saves the corrected name after approval', async actionId => {
+    const h = harness();
+    if (actionId === 'skills.update') await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' });
+    let approval: ApprovalRequest | null = null;
+    const deps: ActionExecutorDeps = {
+      // Artifact/approval persistence and Session delivery are system boundaries;
+      // Action admission, approval replay and the skill writer remain real.
+      sessionSendMessage: async () => ({ status: 'accepted', localId: 'skill-approval' }),
+      approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'approval' }; },
+      approvalsGet: async () => approval,
+      approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      skillActionExecute: ({ actionId, input, context }) => h.execute(actionId, input, {
+        ...context, surface: context.surface ?? null,
+        ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
+      }, context.signal),
+    };
+    const executor = createActionExecutor(deps);
+    const input = actionId === 'skills.create' ? { files } : {
+      skillId: 'skill-1', expectedRevision: '1:1',
+    };
+    const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      serverIdentityId: 'srv_01234567890123456789012345678901', runtimeAccountId: 'account',
+      defaultSessionId: 'creating-session', actionRequestId: 'create-skill',
+      actionCaller: { kind: 'session', sessionId: 'creating-session', starterDepth: 0, turnDepth: 0 } };
+    const before = [...h.artifacts.values()];
+    expect(await executor.execute(actionId, { ...input, name: 'FINAL-QA-R19B-MAIN-Review-20261106' }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(approval).toBeNull();
+    expect([...h.artifacts.values()]).toEqual(before);
+    expect(await executor.execute(actionId, { ...input, name: 'final-qa-r19b-main-review-20261106' }, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+    expect([...h.artifacts.values()]).toEqual(before);
+    const decided = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home',
+      serverIdentityId: 'srv_01234567890123456789012345678901', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+    });
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(h.artifacts.get('skill-1')?.header).toMatchObject({ title: 'final-qa-r19b-main-review-20261106' });
+    const saved = JSON.parse(h.artifacts.get('skill-1')!.body!);
+    expect(readSkillFrontmatterV1(new TextDecoder().decode(decodeBase64(saved.entries[0].contentBase64))).name)
+      .toBe('final-qa-r19b-main-review-20261106');
+  });
+  it.each([
+    { surface: 'ui' as const, admitted: true }, { surface: 'agent' as const, admitted: true },
+    { surface: 'ui' as const, admitted: false }, { surface: 'agent' as const, admitted: false },
+  ])('creates with admitted recipient reach and original creator: $surface, admitted=$admitted', async ({ surface, admitted }) => {
+    const h = harness();
+    const savedBy = surface === 'ui'
+      ? { kind: 'person' as const, accountId: 'owner' }
+      : { kind: 'agent' as const, accountId: 'owner', sessionId: 'origin-session' };
+    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, savedBy,
+      randomId: () => 'rule', nowMs: () => 1,
+      includeInSession: async (sessionId, skillId) => { h.includes.set(sessionId, [skillId]); return included; } });
+    const result = await execute('skills.create', { name: 'sample', files }, { surface, sessionId: 'origin-session',
+      ...(admitted ? { invocationServices: { templateSkillSessionId: 'recipient-bot' } } : {}) });
+    const target = admitted ? 'recipient-bot' : surface === 'agent' ? 'origin-session' : null;
+    expect(result).toMatchObject({ ok: true, skillId: 'skill-1', includedInSessionId: target,
+      summary: { name: 'sample', creator: savedBy } });
+    expect(h.includes).toEqual(target ? new Map([[target, ['skill-1']]]) : new Map());
+    if (admitted || surface === 'agent') expect(h.rules()).toEqual([]);
+    else expect(h.rules()).toMatchObject([{ target: { t: 'allMachines' }, enabled: true }]);
+    expect(h.artifacts.get('skill-1')).toMatchObject({ savedBy });
+  });
+  it('returns acknowledged saved identity and admitted creator when inclusion refuses, with no reread or second save', async () => {
+    const h = harness();
+    const savedBy = { kind: 'agent', accountId: 'owner', sessionId: 'origin-session' } as const;
+    let creates = 0, reads = 0, includes = 0;
+    const execute = createSkillActionExecuteV1({ store: { ...h.store,
+      create: async () => { creates++; return { artifactId: 'saved', revision: { headerVersion: 1, bodyVersion: 1 } }; },
+      read: async () => { reads++; throw new Error('must use acknowledged identity'); },
+    }, skillRules: h.skillRules, savedBy, randomId: () => 'rule',
+      includeInSession: async () => { includes++; return { ok: false, code: 'session_unavailable' }; } });
+    const result = await execute('skills.create', { name: 'sample', files }, { surface: 'agent', sessionId: 'origin-session' });
+    expect(result).toMatchObject({ ok: true, skillId: 'saved', includedInSessionId: null, incomplete: 'session_include',
+      summary: { name: 'sample', description: 'A useful skill', creator: savedBy }, inclusion: { ok: false, code: 'session_unavailable' } });
+    expect({ creates, reads, includes }).toEqual({ creates: 1, reads: 0, includes: 1 });
+  });
   it('lists selected summarized skills without reading bundle bodies or unrelated headers', async () => {
     const h = harness();
     const header = { v: 1, kind: 'prompt_bundle.v2', title: 'sample', bundleSchemaId: 'skills.skill_md_v1' };
@@ -157,6 +234,43 @@ describe('skill library Actions', () => {
     expect(restored.skillListSummary).toEqual(written.skillListSummary);
     expect(JSON.stringify(written)).not.toContain('skillCreator');
   });
+  it('imports a skill selected through a skill-capable Happier catalog', async () => {
+    const upstream = gitRegistryHarness();
+    // A curated source resolves its selected skill to the pinned upstream
+    // reader; only its independently stored source descriptor differs here.
+    const h = harness({ ...upstream.registry, readRegistrySource: async () => ({
+      ...upstream.source, format: 'happier-catalog', kinds: ['skill'],
+    }) });
+    expect(await h.execute('skills.install', { source: { kind: 'registry',
+      sourceId: upstream.source.id, itemId: '', version: upstream.initial } }, { surface: 'ui' }))
+      .toMatchObject({ skillIds: ['skill-1'] });
+    expect(h.artifacts.size).toBe(1);
+  });
+  it.each(['mcp-registry', 'acp-registry', 'happier-npm', 'coolify-templates', 'dokploy-templates', 'happier-catalog'] as const)(
+    'rejects a non-skill registry format before importing or delegating: %s', async format => {
+      const upstream = gitRegistryHarness();
+      for (const privateSource of [false, true]) {
+        const h = harness();
+        // The independently stored source descriptor is the boundary. Even if an
+        // item reader returns skill bytes, an app-only source cannot import them.
+        const source: RegistrySourceDescriptorV1 = { ...upstream.source, format,
+          kinds: format === 'mcp-registry' ? ['mcpServer'] : format === 'acp-registry' ? ['agent']
+            : format === 'happier-npm' ? ['plugin'] : ['app'],
+          ...(privateSource ? { token: { secretRef: 'source-key' } } : {}) };
+        const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules,
+          randomId: () => 'rule', includeInSession: async () => included,
+          readRegistrySource: async () => source,
+          readRegistryItem: upstream.registry.readRegistryItem,
+          fetchRegistrySkillFiles: upstream.registry.filesForPointer,
+          executeRegistryInstall: async () => { throw new Error('Non-skill source reached delegated import'); },
+        });
+        expect(await execute('skills.install', { source: { kind: 'registry', sourceId: source.id,
+          itemId: '', version: upstream.initial } }, { surface: 'ui' }))
+        .toMatchObject({ ok: false, code: 'invalid_source' });
+        expect(h.artifacts.size).toBe(0);
+        expect(h.rules()).toEqual([]);
+      }
+    });
   it.each(['default', 'explicit', 'partial', 'include_failure'] as const)('keeps private registry install intent across the source transport: %s', async mode => {
     const upstream = gitRegistryHarness(), h = harness(upstream.registry);
     const input = { source: { kind: 'registry' as const, sourceId: upstream.source.id, itemId: '', version: upstream.initial },
@@ -178,8 +292,8 @@ describe('skill library Actions', () => {
           : { ok: true as const, result };
       },
       includeInSession: async (sessionId, skillId) => {
-        if (mode === 'include_failure') return { ok: false };
-        h.includes.set(sessionId, [...h.includes.get(sessionId) ?? [], skillId]); return { ok: true };
+        if (mode === 'include_failure') return { ok: false, code: 'session_unavailable' };
+        h.includes.set(sessionId, [...h.includes.get(sessionId) ?? [], skillId]); return included;
       },
     });
     const output = await local('skills.install', input, { surface: 'ui', sessionId: 'focused-session',
@@ -194,18 +308,14 @@ describe('skill library Actions', () => {
   });
   it.each(['approved', 'waived', 'explicit', 'held'] as const)('keeps Session-created skills scoped through %s execution', async mode => {
     const h = harness();
-    const coordinator = createBlockingApprovalCoordinator();
-    onTestFinished(() => coordinator.dispose());
-    let waiterReady!: () => void;
-    const ready = new Promise<void>(resolve => { waiterReady = resolve; });
     let approval: ApprovalRequest | null = null;
     const contexts: ActionExecutorContext[] = [];
     const deps: ActionExecutorDeps = {
       // Independently committed Artifact/row/Session persistence are the boundaries.
+      sessionSendMessage: async () => ({ status: 'accepted', localId: 'skill-approval' }),
       approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'approval' }; },
       approvalsGet: async () => approval,
-      approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request);
-        coordinator.notifyApprovalUpdated({ artifactId: 'approval', request: approval }); return { ok: true }; },
+      approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
       ...(mode === 'waived' ? { isActionApprovalRequired: () => false } : {}),
       skillActionExecute: async ({ actionId, input, context }) => {
@@ -214,11 +324,7 @@ describe('skill library Actions', () => {
           ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}) }, context.signal);
       },
     };
-    const executor = createActionExecutor({ ...deps, approvalsWaitForDecision: async args => {
-      const pending = coordinator.waitForDecision(args); waiterReady();
-      const decision = await pending;
-      return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
-    } });
+    const executor = createActionExecutor(deps);
     const source = { kind: 'upload', files };
     if (mode === 'held') await h.execute('skills.install', { source }, { surface: 'ui' });
     const pending = executor.execute('skills.install', { source,
@@ -226,10 +332,8 @@ describe('skill library Actions', () => {
     }, { surface: 'mcp', authority: 'account_automation', serverId: 'home', serverIdentityId: 'srv_01234567890123456789012345678901', runtimeAccountId: 'account',
       defaultSessionId: 'creating-session', actionRequestId: 'create-skill',
       actionCaller: { kind: 'session', sessionId: 'creating-session', starterDepth: 0, turnDepth: 0 } });
-    void pending.catch(() => {});
     if (mode !== 'waived') {
-      const admission = await Promise.race([ready.then(() => 'waiting' as const), pending.then(result => result.ok ? 'completed' : result.errorCode)]);
-      expect(admission).toBe('waiting');
+      expect(await pending).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
       expect(ApprovalRequestV2Schema.parse(approval).executionOriginV1).toMatchObject({
         caller: { kind: 'session', sessionId: 'creating-session' }, surface: 'agent',
       });
@@ -241,7 +345,6 @@ describe('skill library Actions', () => {
       expect(decided, decided.ok ? undefined : decided.errorCode).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
       // The approving person still owns execution; creation provenance grants no authority.
       expect(contexts.at(-1)).toMatchObject({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'other-device-profile' });
-      await pending;
     } else expect(await pending).toMatchObject({ ok: true, result: { skillIds: ['skill-1'], includedInSessionId: 'creating-session' } });
     if (mode === 'explicit') {
       expect(h.rules()).toEqual([expect.objectContaining({ skillId: 'skill-1', enabled: true, target: { t: 'machine', machineId: 'chosen' } })]);
@@ -264,7 +367,7 @@ describe('skill library Actions', () => {
       readMany: async (ids: readonly string[]) => Promise.allSettled(ids.map(async id => id === 'removed' ? null : h.artifacts.get(id) ?? null)),
       read: async () => { throw new Error('Unexpected per-item transport'); },
     };
-    const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => ({ ok: true }) });
+    const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => included });
     const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute('skills.list', {}, { surface: 'ui' }));
     expect(result.items.find(item => item.skillId === created.skillId)).toMatchObject({ name: 'sample', description: 'A useful skill', userInvocable: true });
     expect(result.unavailableItems).toEqual([
@@ -291,7 +394,7 @@ describe('skill library Actions', () => {
       const page = await list(options);
       return { ...page, items: page.items.map(row => ({ id: row.artifactId, header: row.header, updatedAtMs: row.updatedAt })) };
     } };
-    const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => ({ ok: true }) });
+    const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => included });
     const result = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute('skills.list', {}, { surface: 'ui' }));
     expect(result.items.find(item => item.skillId === created.skillId)?.name).toBe('sample');
     expect(result.items.some(item => item.skillId === unrelated.artifactId)).toBe(false);
@@ -317,7 +420,7 @@ describe('skill library Actions', () => {
     let active = true;
     const readPluginSkills = async () => active ? [plugin] : [];
     const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules, randomId: () => 'rule',
-      includeInSession: async () => ({ ok: true }), readPluginSkills });
+      includeInSession: async () => included, readPluginSkills });
     const list = async () => SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await execute('skills.list', {}, { surface: 'ui' }));
     const item = (await list()).items.find(item => item.skillId === plugin.skillId);
     expect(item).toMatchObject({ name: 'sample', provenance: plugin.provenance, folderId: null, modified: false, userInvocable: false, trust: 'runs_scripts' });
@@ -348,7 +451,7 @@ describe('skill library Actions', () => {
     expect(await readSkillInLibrary({ store: unavailableStore, pluginSkills: [], request: { skillId: plugin.skillId } }))
       .toMatchObject({ ok: false, errorCode: 'not_found' });
     const retiredExecute = createSkillActionExecuteV1({ store: unavailableStore, skillRules: h.skillRules,
-      randomId: () => 'unused', includeInSession: async () => ({ ok: true }), readPluginSkills });
+      randomId: () => 'unused', includeInSession: async () => included, readPluginSkills });
     expect(await retiredExecute('skills.duplicate', { skillId: plugin.skillId }, { surface: 'ui' }))
       .toMatchObject({ ok: false, code: 'not_found' });
     expect(await readSkillLibraryCatalog({ list: async () => ({ items: [], coverage: 'complete' as const }),
@@ -370,7 +473,7 @@ describe('skill library Actions', () => {
       contentStarted = true; return h.store.read(...args);
     } }, skillRules: { ...h.skillRules, readCatalog: async (...args) => {
       await catalogReady; return h.skillRules.readCatalog(...args);
-    } }, randomId: () => 'unused', includeInSession: async () => ({ ok: true }) });
+    } }, randomId: () => 'unused', includeInSession: async () => included });
     const pending = execute('skills.list', {}, { surface: 'ui' });
     try {
       expect(inventoryStarted).toBe(true);
@@ -406,7 +509,7 @@ describe('skill library Actions', () => {
           if (id === second.id) { secondOpened = true; return second; }
           return null;
         },
-      }, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => ({ ok: true }),
+      }, skillRules: h.skillRules, randomId: () => 'unused', includeInSession: async () => included,
     });
     const pending = execute('skills.list', {}, { surface: 'ui' });
     try {
@@ -465,7 +568,7 @@ describe('skill library Actions', () => {
     expect(listed.items.some(item => item.skillId === 'broken')).toBe(false);
     expect(listed.unavailableItems).toEqual([{ skillId: 'broken', title: 'sample', reason: 'skill_content_unavailable' }]);
     const execute = createSkillActionExecuteV1({ store: { ...h.store, list: async () => ({ coverage: 'unavailable', items: [] }) },
-      skillRules: h.skillRules, includeInSession: async () => ({ ok: true }), randomId: () => 'rule' });
+      skillRules: h.skillRules, includeInSession: async () => included, randomId: () => 'rule' });
     expect(await execute('skills.list', {}, { surface: 'ui' })).toMatchObject({ ok: false, code: 'library_unavailable' });
   });
   it('creates and updates decoded YAML fields without corrupting block scalars or nested metadata', async () => {
@@ -502,7 +605,7 @@ describe('skill library Actions', () => {
       read: async () => { throw new Error('Creation receipt must not await readback'); },
     };
     const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules, randomId: () => 'rule', nowMs: () => 1,
-      includeInSession: async () => ({ ok: true }) });
+      includeInSession: async () => included });
     const output = await execute('skills.duplicate', { skillId: FIRST_PARTY_SKILLS_V1[0]!.skillId }, { surface: 'ui' });
     expect(output).toEqual({ ok: true, skillId: 'skill-1', revision: '3:7', includedInSessionId: null,
       summary: { name: 'happier', description: 'Use Happier from this session' },
@@ -634,6 +737,93 @@ describe('skill library Actions', () => {
       ok: false, errorCode: 'updated_skill_unreadable', details: { skillIds: ['skill-1'] },
     });
     expect(h.artifacts.get('skill-1')!.revision).toEqual({ headerVersion: 2, bodyVersion: 2 });
+  });
+  it.each([
+    { choice: 'mine', via: 'hunk' }, { choice: 'theirs', via: 'hunk' }, { choice: 'both', via: 'hunk' },
+    { choice: 'both', via: 'file' }, { choice: 'mine', via: 'default' },
+  ] as const)('merges template skill candidates with $choice overlap choices via $via without changing provenance', async ({ choice, via }) => {
+    const h = harness();
+    const file = (path: string, content: string) => ({ path, contentKind: 'utf8' as const, contentBase64: encodeBase64(new TextEncoder().encode(content), 'base64') });
+    const base = file('SKILL.md', markdown + '\nshared\nanchor one\nlocal slot\nanchor two\nauthor slot\n');
+    const mine = file('SKILL.md', markdown + '\nmy overlap\nanchor one\nlocal edit\nanchor two\nauthor slot\n');
+    const theirs = file('SKILL.md', markdown + '\nauthor overlap\nanchor one\nlocal slot\nanchor two\nauthor edit\n');
+    await h.execute('skills.create', { name: 'sample', files: [mine] }, { surface: 'ui' });
+    const originalLock = readSkillLockV1(h.artifacts.get('skill-1')!.header);
+    const candidate = { baseFiles: [base], files: [theirs] };
+    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
+    expect(diff).toMatchObject({ revision: '1:1', files: [{ base, mine, theirs, comparison: { segments: expect.any(Array) } }] });
+    const parsed = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
+    const overlap = parsed.files[0]!.comparison!.segments.find(segment => segment.kind === 'conflict')!;
+    expect(overlap).toBeDefined();
+    const applied = await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      ...(via === 'hunk' ? { hunkChoices: { 'SKILL.md': { [overlap.index]: choice } } } : via === 'file' ? { choices: { 'SKILL.md': choice } } : {}) }, { surface: 'ui' });
+    expect(applied).toMatchObject({ revision: '2:2', provenance: originalLock.provenance });
+    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries[0];
+    const expectedOverlap = choice === 'mine' ? 'my overlap\n' : choice === 'theirs' ? 'author overlap\n' : 'my overlap\nauthor overlap\n';
+    expect(new TextDecoder().decode(decodeBase64(result.contentBase64, 'base64'))).toBe(markdown + '\n' + expectedOverlap + 'anchor one\nlocal edit\nanchor two\nauthor edit\n');
+    expect(readSkillLockV1(h.artifacts.get('skill-1')!.header)).toEqual(originalLock);
+  });
+  it.each(['skills.updates.diff', 'skills.updates.apply'] as const)('runs inline template %s without reading global catalogs', async actionId => {
+    const h = harness();
+    await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' });
+    // Catalog persistence is a separate boundary; inline release bytes need only the addressed Artifact.
+    h.skillRules.readCatalog = async () => { throw new Error('Global rules catalog must not be read'); };
+    const readPluginSkills = vi.fn(async () => []);
+    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules,
+      readPluginSkills,
+      includeInSession: async () => included });
+    const next = { ...files[0]!, contentBase64: encodeBase64(new TextEncoder().encode(markdown + '\nRelease update'), 'base64') };
+    const input = { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: files, files: [next] } };
+    if (actionId === 'skills.updates.diff') {
+      expect(await execute(actionId, { skillId: input.skillId, candidate: input.candidate }, { surface: 'ui' }))
+        .toMatchObject({ revision: '1:1', files: [{ mine: files[0], theirs: next, changed: true }] });
+    } else {
+      expect(await execute(actionId, input, { surface: 'ui' })).toMatchObject({ revision: '2:2' });
+      expect(await execute(actionId, input, { surface: 'ui' })).toEqual({ ok: false, code: 'revision_conflict' });
+    }
+    expect(readPluginSkills).not.toHaveBeenCalled();
+  });
+  it('reviews every file of a removed template skill without allowing an empty skill write', async () => {
+    const h = harness();
+    const baseFiles = [...files, { path: 'asset.bin', contentKind: 'binary' as const, contentBase64: encodeBase64(new Uint8Array([0, 255, 1]), 'base64') }];
+    await h.execute('skills.create', { name: 'sample', files: baseFiles }, { surface: 'ui' });
+    const stored = h.artifacts.get('skill-1');
+    const candidate = { baseFiles, files: [] };
+    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
+    expect(diff).toMatchObject({ revision: '1:1', costDelta: { theirs: { descriptionTokens: 0, bodyTokens: 0 } },
+      files: baseFiles.map(file => ({ path: file.path, base: file, mine: file, theirs: null, changed: true })) });
+    SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      choices: { 'SKILL.md': 'theirs', 'asset.bin': 'theirs' } }, { surface: 'ui' }))
+      .toMatchObject({ ok: false, code: 'missing_required_entry' });
+    expect(h.artifacts.get('skill-1')).toBe(stored);
+  });
+  it('keeps the current revision and performs zero content writes for an unchanged template candidate', async () => {
+    const h = harness();
+    const currentFiles = [...files, { path: 'notes.txt', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('\ufeffNotes\r\n'), 'base64') }];
+    await h.execute('skills.create', { name: 'sample', files: currentFiles }, { surface: 'ui' });
+    const update = vi.spyOn(h.store, 'update');
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: currentFiles, files: currentFiles } }, { surface: 'ui' }))
+      .toMatchObject({ revision: '1:1' });
+    expect(update).not.toHaveBeenCalled();
+  });
+  it('preserves template local deletions and additions, selects binary/removal bytes, and refuses stale review revisions', async () => {
+    const h = harness();
+    const file = (path: string, value: string, contentKind: 'utf8' | 'binary' = 'utf8') => ({ path, contentKind, contentBase64: encodeBase64(new TextEncoder().encode(value), 'base64') });
+    const base = [files[0]!, file('local-delete.txt', 'base'), file('removed.txt', 'base'), file('asset.bin', 'base', 'binary')];
+    const mine = [files[0]!, file('removed.txt', 'local'), file('asset.bin', 'mine', 'binary'), file('local.txt', 'local only')];
+    const candidate = { baseFiles: base, files: [files[0]!, file('local-delete.txt', 'author changed'), file('asset.bin', 'theirs', 'binary'), file('new.txt', 'author added')] };
+    await h.execute('skills.create', { name: 'sample', files: mine }, { surface: 'ui' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
+      choices: { 'asset.bin': 'both' } }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'invalid_update_choice' });
+    expect(h.artifacts.get('skill-1')!.revision.bodyVersion).toBe(1);
+    await h.execute('skills.update', { skillId: 'skill-1', expectedRevision: '1:1', files: [{ kind: 'upsert', file: file('other.txt', 'another writer') }] }, { surface: 'ui' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'revision_conflict' });
+    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '2:2', candidate,
+      choices: { 'asset.bin': 'theirs', 'removed.txt': 'theirs' } }, { surface: 'ui' })).toMatchObject({ revision: '3:3' });
+    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries;
+    expect(result).toEqual(expect.arrayContaining([files[0]!, file('asset.bin', 'theirs', 'binary'), file('local.txt', 'local only'), file('new.txt', 'author added'), file('other.txt', 'another writer')]));
+    expect(result.map((entry: { path: string }) => entry.path).sort()).toEqual(['SKILL.md', 'asset.bin', 'local.txt', 'new.txt', 'other.txt']);
   });
   it('consumes a real root GitHub producer, pins install bytes and preserves Modified edits through link choices', async () => {
     const { initial, latest, source, registry, setHead } = gitRegistryHarness();
@@ -777,93 +967,37 @@ describe('skill library Actions', () => {
     expect(await h.execute('skills.install', { source, where: { kind: 'replace', rules: [] } }, { surface: 'ui' })).toMatchObject({ skillIds: ['skill-1'] }); expect(h.rules()).toEqual([]);
     expect(readSkillLockV1(h.artifacts.get('skill-1')!.header)).not.toHaveProperty('sourceFolderName');
   });
-
-  it.each([
-    { choice: 'mine', via: 'hunk' }, { choice: 'theirs', via: 'hunk' }, { choice: 'both', via: 'hunk' },
-    { choice: 'both', via: 'file' }, { choice: 'mine', via: 'default' },
-  ] as const)('merges template skill candidates with $choice overlap choices via $via without changing provenance', async ({ choice, via }) => {
-    const h = harness();
-    const file = (path: string, content: string) => ({ path, contentKind: 'utf8' as const, contentBase64: encodeBase64(new TextEncoder().encode(content), 'base64') });
-    const base = file('SKILL.md', markdown + '\nshared\nanchor one\nlocal slot\nanchor two\nauthor slot\n');
-    const mine = file('SKILL.md', markdown + '\nmy overlap\nanchor one\nlocal edit\nanchor two\nauthor slot\n');
-    const theirs = file('SKILL.md', markdown + '\nauthor overlap\nanchor one\nlocal slot\nanchor two\nauthor edit\n');
-    await h.execute('skills.create', { name: 'sample', files: [mine] }, { surface: 'ui' });
-    const originalLock = readSkillLockV1(h.artifacts.get('skill-1')!.header);
-    const candidate = { baseFiles: [base], files: [theirs] };
-    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
-    expect(diff).toMatchObject({ revision: '1:1', files: [{ base, mine, theirs, comparison: { segments: expect.any(Array) } }] });
-    const parsed = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
-    const overlap = parsed.files[0]!.comparison!.segments.find(segment => segment.kind === 'conflict')!;
-    expect(overlap).toBeDefined();
-    const applied = await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
-      ...(via === 'hunk' ? { hunkChoices: { 'SKILL.md': { [overlap.index]: choice } } } : via === 'file' ? { choices: { 'SKILL.md': choice } } : {}) }, { surface: 'ui' });
-    expect(applied).toMatchObject({ revision: '2:2', provenance: originalLock.provenance });
-    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries[0];
-    const expectedOverlap = choice === 'mine' ? 'my overlap\n' : choice === 'theirs' ? 'author overlap\n' : 'my overlap\nauthor overlap\n';
-    expect(new TextDecoder().decode(decodeBase64(result.contentBase64, 'base64'))).toBe(markdown + '\n' + expectedOverlap + 'anchor one\nlocal edit\nanchor two\nauthor edit\n');
-    expect(readSkillLockV1(h.artifacts.get('skill-1')!.header)).toEqual(originalLock);
-  });
-  it.each(['skills.updates.diff', 'skills.updates.apply'] as const)('runs inline template %s without reading global catalogs', async actionId => {
+  it('batches current-content identity reads across a large library for a two-file upload preview', async () => {
     const h = harness();
     await h.execute('skills.create', { name: 'sample', files }, { surface: 'ui' });
-    // Catalog persistence is a separate boundary; inline release bytes need only the addressed Artifact.
-    h.skillRules.readCatalog = async () => { throw new Error('Global rules catalog must not be read'); };
-    const readPluginSkills = vi.fn(async () => []);
-    const execute = createSkillActionExecuteV1({ store: h.store, skillRules: h.skillRules,
-      readPluginSkills,
-      includeInSession: async () => included });
-    const next = { ...files[0]!, contentBase64: encodeBase64(new TextEncoder().encode(markdown + '\nRelease update'), 'base64') };
-    const input = { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: files, files: [next] } };
-    if (actionId === 'skills.updates.diff') {
-      expect(await execute(actionId, { skillId: input.skillId, candidate: input.candidate }, { surface: 'ui' }))
-        .toMatchObject({ revision: '1:1', files: [{ mine: files[0], theirs: next, changed: true }] });
-    } else {
-      expect(await execute(actionId, input, { surface: 'ui' })).toMatchObject({ revision: '2:2' });
-      expect(await execute(actionId, input, { surface: 'ui' })).toEqual({ ok: false, code: 'revision_conflict' });
+    const original = h.artifacts.get('skill-1')!;
+    for (let index = 2; index <= 1001; index++) {
+      const id = `skill-${index}`;
+      h.artifacts.set(id, { ...original, id });
     }
-    expect(readPluginSkills).not.toHaveBeenCalled();
-  });
-  it('reviews every file of a removed template skill without allowing an empty skill write', async () => {
-    const h = harness();
-    const baseFiles = [...files, { path: 'asset.bin', contentKind: 'binary' as const, contentBase64: encodeBase64(new Uint8Array([0, 255, 1]), 'base64') }];
-    await h.execute('skills.create', { name: 'sample', files: baseFiles }, { surface: 'ui' });
-    const stored = h.artifacts.get('skill-1');
-    const candidate = { baseFiles, files: [] };
-    const diff = await h.execute('skills.updates.diff', { skillId: 'skill-1', candidate }, { surface: 'ui' });
-    expect(diff).toMatchObject({ revision: '1:1', costDelta: { theirs: { descriptionTokens: 0, bodyTokens: 0 } },
-      files: baseFiles.map(file => ({ path: file.path, base: file, mine: file, theirs: null, changed: true })) });
-    SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.updates.diff'].parse(diff);
-    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
-      choices: { 'SKILL.md': 'theirs', 'asset.bin': 'theirs' } }, { surface: 'ui' }))
-      .toMatchObject({ ok: false, code: 'missing_required_entry' });
-    expect(h.artifacts.get('skill-1')).toBe(stored);
-  });
-  it('keeps the current revision and performs zero content writes for an unchanged template candidate', async () => {
-    const h = harness();
-    const currentFiles = [...files, { path: 'notes.txt', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode('\ufeffNotes\r\n'), 'base64') }];
-    await h.execute('skills.create', { name: 'sample', files: currentFiles }, { surface: 'ui' });
-    const update = vi.spyOn(h.store, 'update');
-    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate: { baseFiles: currentFiles, files: currentFiles } }, { surface: 'ui' }))
-      .toMatchObject({ revision: '1:1' });
-    expect(update).not.toHaveBeenCalled();
-  });
-  it('preserves template local deletions and additions, selects binary/removal bytes, and refuses stale review revisions', async () => {
-    const h = harness();
-    const file = (path: string, value: string, contentKind: 'utf8' | 'binary' = 'utf8') => ({ path, contentKind, contentBase64: encodeBase64(new TextEncoder().encode(value), 'base64') });
-    const base = [files[0]!, file('local-delete.txt', 'base'), file('removed.txt', 'base'), file('asset.bin', 'base', 'binary')];
-    const mine = [files[0]!, file('removed.txt', 'local'), file('asset.bin', 'mine', 'binary'), file('local.txt', 'local only')];
-    const candidate = { baseFiles: base, files: [files[0]!, file('local-delete.txt', 'author changed'), file('asset.bin', 'theirs', 'binary'), file('new.txt', 'author added')] };
-    await h.execute('skills.create', { name: 'sample', files: mine }, { surface: 'ui' });
-    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate,
-      choices: { 'asset.bin': 'both' } }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'invalid_update_choice' });
-    expect(h.artifacts.get('skill-1')!.revision.bodyVersion).toBe(1);
-    await h.execute('skills.update', { skillId: 'skill-1', expectedRevision: '1:1', files: [{ kind: 'upsert', file: file('other.txt', 'another writer') }] }, { surface: 'ui' });
-    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '1:1', candidate }, { surface: 'ui' })).toMatchObject({ ok: false, code: 'revision_conflict' });
-    expect(await h.execute('skills.updates.apply', { skillId: 'skill-1', expectedRevision: '2:2', candidate,
-      choices: { 'asset.bin': 'theirs', 'removed.txt': 'theirs' } }, { surface: 'ui' })).toMatchObject({ revision: '3:3' });
-    const result = JSON.parse(h.artifacts.get('skill-1')!.body!).entries;
-    expect(result).toEqual(expect.arrayContaining([files[0]!, file('asset.bin', 'theirs', 'binary'), file('local.txt', 'local only'), file('new.txt', 'author added'), file('other.txt', 'another writer')]));
-    expect(result.map((entry: { path: string }) => entry.path).sort()).toEqual(['SKILL.md', 'asset.bin', 'local.txt', 'new.txt', 'other.txt']);
+    let singletonReads = 0;
+    const batches: number[] = [];
+    const store: PromptLibraryArtifactStore = {
+      ...h.store,
+      list: async options => {
+        const offset = Number(options?.cursor ?? 0);
+        const all = [...h.artifacts.values()];
+        const selected = all.slice(offset, offset + 500);
+        return { coverage: 'complete', items: selected.map(item => ({ id: item.id, header: item.header, updatedAtMs: 1, owned: true })),
+          ...(offset + selected.length < all.length ? { nextCursor: String(offset + selected.length) } : {}) };
+      },
+      read: async id => { singletonReads++; return h.artifacts.get(id) ?? null; },
+      readMany: async ids => {
+        batches.push(ids.length);
+        return ids.map(id => ({ status: 'fulfilled' as const, value: h.artifacts.get(id) ?? null }));
+      },
+    };
+    const execute = createSkillActionExecuteV1({ store, skillRules: h.skillRules,
+      randomId: () => 'rule', includeInSession: async () => included });
+    const result = await execute('skills.install', { source: { kind: 'upload', files: [...files,
+      { path: 'notes.md', contentBase64: 'eA==', contentKind: 'utf8' }] }, dryRun: true }, { surface: 'ui' });
+    expect(result).toMatchObject({ items: [{ name: 'sample' }] });
+    expect({ singletonReads, batches }).toEqual({ singletonReads: 0, batches: [500, 500, 1] });
   });
 });
 
@@ -928,6 +1062,10 @@ describe('skills that refer to a sibling skill in the same source tree', () => {
     const relocated = { kind: 'upload', files: [utf8('other-root/SKILL.md', skillMd('b'))] };
     expect(await h.execute('skills.install', { source: relocated }, caller)).toMatchObject({ skillIds: ['skill-1'] });
     const changed = { kind: 'upload', files: [utf8('b/SKILL.md', skillMd('b', 'Different instructions.'))] };
+    const preview = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.install'].parse(
+      await h.execute('skills.install', { source: changed, dryRun: true }, caller));
+    expect(preview).toMatchObject({ items: [{ name: 'b', sameNameInLibrary: true }] });
+    expect(preview).not.toHaveProperty('items.0.inLibrary');
     expect(await h.execute('skills.install', { source: changed }, caller)).toMatchObject({ skillIds: ['skill-3'] });
     expect(h.creates()).toBe(3);
     expect(h.artifacts.get('skill-1')?.body).not.toEqual(h.artifacts.get('skill-3')?.body);

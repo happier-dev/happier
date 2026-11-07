@@ -1,4 +1,3 @@
-import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -9,6 +8,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import {
     SessionTeamCredentialLaunchUnavailableError, type NormalizedSessionTeamCredentialLaunch } from '@/session/services/sessionTeamCredentialLaunch';
+import type { TeamCredentialLaunchFailureCode, TeamCredentialLaunchFailurePhase } from '@/session/services/sessionTeamCredentialLaunchError';
 import { prepareSessionTeamCredentialLaunch } from './prepareSessionTeamCredentialLaunch';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
@@ -44,6 +44,7 @@ import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/re
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
 import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { seedManagedSessionDirectory } from '@/session/creation/seedManagedSessionDirectory';
 import { prepareDaemonAgentIsolationIdentity } from '../spawn/prepareDaemonAgentIsolationIdentity';
 import { isDefiniteSpawnPreAdmissionRejection } from '@/session/services/spawnPreAdmissionRejection';
@@ -110,12 +111,12 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { resolveSpawnLaunchProfileDefaults } from '../spawn/resolveSpawnLaunchProfileDefaults';
+import { refuseSpawnLaunchProfile, resolveSpawnLaunchProfileDefaults } from '../spawn/resolveSpawnLaunchProfileDefaults';
 import { readProfileSettingsFromAccountSnapshot,
     readAccountLaunchProfiles, ProfileCatalogUnavailableError } from '@/settings/profiles/readProfilesFromAccountSettings';
 import {
     LaunchSecretReferenceOverlayError,
-    readLaunchSecretReferenceOverlayProviderErrorCodeV1,
+    createLaunchSecretReferenceOverlayProviderErrorV1,
     resolveLaunchProfileSavedSecretEnvironment,
 } from '../agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
@@ -141,7 +142,6 @@ type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthF
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     prepareAgentIsolationMember?: import('../spawn/prepareDaemonConnectedServices').PrepareAgentIsolationMember;
     readAgentIsolationEnabled?: () => boolean;
-    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     prepareNativeTeamCredentialBinding?: (input: Readonly<{
         sessionId: string;
         created: boolean;
@@ -153,13 +153,12 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
         signal?: AbortSignal;
     }>) => Promise<() => Promise<void>>;
     readInstalledTeamCredentialProviderModel?: import('@/providers/broker/sessionTeamCredentialNativeBinding').SessionTeamCredentialInstalledModelRead;
-
+    agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     signal?: AbortSignal;
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
     checkRegistryUpdates?: () => Promise<void>;
     options: SpawnSessionOptions;
-    applyMachineSetupBeforeAgent?: (options: SpawnSessionOptions) => Promise<import('@happier-dev/protocol').ActionExecuteFailure | null>;
     requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     retainedTerminalRecovery?: 'adopt';
     persistedTakeoverAdmissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>;
@@ -224,12 +223,15 @@ export async function executeSpawnSessionRequest(
     let diagnosticSessionId = params.options.sessionId ?? params.options.existingSessionId
         ?? params.options.requesterSessionBootstrap?.preparedSessionId;
     const diagnosticOperationId = params.options.projectSetupOperation?.operationAcceptance?.operationId;
-    const recordPreparationPhase = (phase: string): void => {
+    const recordPreparationPhase = (phase: string, refusal?: Readonly<{
+        code: TeamCredentialLaunchFailureCode; phase: TeamCredentialLaunchFailurePhase;
+    }>): void => {
         const now = performance.now();
         logger.infoFile('[DAEMON RUN] Spawn preparation phase', {
             ...(diagnosticSessionId ? { sessionId: diagnosticSessionId } : {}),
             ...(diagnosticOperationId ? { operationId: diagnosticOperationId } : {}),
             phase, durationMs: Math.round(now - phaseStartedAt), elapsedMs: Math.round(now - startedAt),
+            ...(refusal ? { operation: 'spawn_session', outcome: 'refused', failurePhase: refusal.phase, code: refusal.code } : {}),
         });
         phaseStartedAt = now;
     };
@@ -255,7 +257,15 @@ export async function executeSpawnSessionRequest(
             activatePurposeBindings: requesterRuntime.activatePurposeBindings };
     }
     const requesterAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
-    if (requesterAdmissionFailure) return requesterAdmissionFailure;
+    if (requesterAdmissionFailure) {
+        logger.infoFile('[DAEMON RUN] Spawn launch admission refused', {
+            cause: requesterAdmissionFailure.errorDetail?.kind === 'requester_home_unavailable'
+                ? 'requester_home_unavailable' : 'requester_machine_admission_unavailable',
+            ...(diagnosticSessionId ? { sessionId: diagnosticSessionId } : {}),
+            elapsedMs: Math.round(performance.now() - startedAt),
+        });
+        return requesterAdmissionFailure;
+    }
     let takeoverAdmission: ReturnType<PersistedTakeoverAdmissionWaiter['getRegistration']> = null;
     try {
         takeoverAdmission = options.persistedTakeoverAdmission
@@ -283,37 +293,7 @@ export async function executeSpawnSessionRequest(
         } else await refreshAccountSettingsForSpawn(params);
         recordPreparationPhase('account_settings');
 
-        if (options.machineSetupPlanInput || options.machineSetupExecution) {
-            const failure = params.applyMachineSetupBeforeAgent
-                ? await params.applyMachineSetupBeforeAgent(options)
-                : { errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
-            if (failure) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: failure.error, errorDetail: { kind: 'launch_error', code: failure.errorCode,
-                    message: failure.error } };
-            recordPreparationPhase('machine_setup');
-        }
-
         let activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
-        let profilesSnapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>> | undefined;
-        if (options.profileId) {
-            try {
-                // The daemon resolves a selected stable Launch Profile id from
-                // its current catalog; callers never supply the profile overlay.
-                if (requesterRuntime && !await readRequesterHomeWithinActionLifetime(
-                    () => requesterRuntime.refreshAccountSettings(options.accountSettingsVersionHint, preparationSignal), preparationSignal)) {
-                    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                        errorMessage: 'Requester Account settings unavailable' };
-                }
-                profilesSnapshot = requesterRuntime ? await requesterRuntime.readAccountLaunchProfiles()
-                    : await readAccountLaunchProfiles(activeAccountSettingsSnapshot?.settings, params.credentials);
-            } catch (error) {
-                if (!(error instanceof ProfileCatalogUnavailableError)) throw error;
-                return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: error.message };
-            }
-            activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
-        }
-        const profileSettings = readProfileSettingsFromAccountSnapshot(activeAccountSettingsSnapshot);
-        const launchProfileArtifacts = profilesSnapshot?.artifactsById;
         const acpOperationContext = requesterRuntime?.bootstrap.savedSecretOperationContext;
         void params.checkRegistryUpdates?.()
             .catch(error => logger.warn('[DAEMON RUN] Registry update check failed before spawn', error));
@@ -350,11 +330,35 @@ export async function executeSpawnSessionRequest(
                 ...(acpOperationContext ? { operationContext: acpOperationContext } : {}),
             },
             validateEnvVarRecordStrict,
+            onTeamCredentialRefusal: refusal => recordPreparationPhase('team_credential', refusal),
         });
         recordPreparationPhase('request_admission');
         if ('type' in prepared) {
             return prepared;
         }
+
+        options = { ...options, profileId: prepared.profileId };
+        let profilesSnapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>> | undefined;
+        if (options.profileId) {
+            try {
+                // The daemon resolves a selected stable Launch Profile id from
+                // its current catalog; callers never supply the profile overlay.
+                if (requesterRuntime && !await readRequesterHomeWithinActionLifetime(
+                    () => requesterRuntime.refreshAccountSettings(options.accountSettingsVersionHint, preparationSignal), preparationSignal)) {
+                    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
+                        errorMessage: 'Requester Account settings unavailable' };
+                }
+                profilesSnapshot = requesterRuntime ? await requesterRuntime.readAccountLaunchProfiles()
+                    : await readAccountLaunchProfiles(activeAccountSettingsSnapshot?.settings, params.credentials);
+            } catch (error) {
+                if (!(error instanceof ProfileCatalogUnavailableError)) throw error;
+                return refuseSpawnLaunchProfile({ profileId: options.profileId,
+                    reason: error.code, catalogStatus: error.status }, error.message);
+            }
+            activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
+        }
+        const profileSettings = readProfileSettingsFromAccountSnapshot(activeAccountSettingsSnapshot);
+        const launchProfileArtifacts = profilesSnapshot?.artifactsById;
 
         // Recheck through the same admission owner now that persisted native
         // identity is resolved; an earlier per-Happier-id probe cannot see aliases.
@@ -512,10 +516,8 @@ export async function executeSpawnSessionRequest(
                         throw error;
                     }
                     await launchResourceScope.retire();
-                    return buildProviderSpawnErrorResult(createProviderErrorV1(
-                        readLaunchSecretReferenceOverlayProviderErrorCodeV1(
-                            error.reason,
-                        ),
+                    return buildProviderSpawnErrorResult(createLaunchSecretReferenceOverlayProviderErrorV1(
+                        error.reason,
                         { sourceProfileId: options.profileId },
                     ));
                 }
@@ -630,6 +632,7 @@ export async function executeSpawnSessionRequest(
                     teamModelRow = normalized.teamModelRow;
                 } catch (error) {
                     if (!(error instanceof SessionTeamCredentialLaunchUnavailableError)) throw error;
+                    recordPreparationPhase('team_credential', error);
                     return await refuseSpawn(projectSessionRunnerLaunchAdmissionFailure({
                         kind: 'launch_error', code: error.code, message: error.code,
                     })!);
@@ -719,6 +722,7 @@ export async function executeSpawnSessionRequest(
                     directory,
                     sessionCreationTag: options.sessionCreationTag,
                     existingSessionId: normalizedExistingSessionId,
+                    existingSessionCreationTag: sessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.sessionCreationTag,
                     freshSessionCreation: options.freshSessionCreation,
                     approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
                     resumeRequestId: options.executionAuthorization?.requestId,
@@ -758,15 +762,14 @@ export async function executeSpawnSessionRequest(
                 return await refuseSpawn(ensuredDirectory.response);
             }
             const directoryCreated = ensuredDirectory.directoryCreated;
-            if (managedDirectoryOwner && options.managedDirectorySeed) {
-                if (!options.sessionCreationTag || (normalizedExistingSessionId && !options.freshSessionCreation)) {
+            if (managedDirectory?.ok && options.managedDirectorySeed) {
+                if (normalizedExistingSessionId && !options.freshSessionCreation) {
                     return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
                         errorMessage: 'Managed directory seeding requires a fresh creation allocation' });
                 }
                 const seeded = await seedManagedSessionDirectory({
                     activeServerDir: configuration.activeServerDir,
-                    sessionCreationTag: options.sessionCreationTag,
-                    targetPath: directory,
+                    allocationId: managedDirectory.allocationId,
                     seed: options.managedDirectorySeed,
                 });
                 if (!seeded.ok) {
@@ -883,8 +886,6 @@ export async function executeSpawnSessionRequest(
             let launchSessionAttachPayload = sessionAttachPayload;
             let launchOptions: SpawnSessionOptions = optionsWithProviderIsolation;
             let committedLaunchSession: CommittedDaemonLaunchSession | null = null;
-            const requesterCommitAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
-            if (requesterCommitAdmissionFailure) return await refuseSpawn(requesterCommitAdmissionFailure);
             if (
                 !normalizedExistingSessionId
                 && daemonLaunchRequiresCommittedSession(optionsWithProviderIsolation)
@@ -936,7 +937,7 @@ export async function executeSpawnSessionRequest(
                     const committedSessionId = committed.session.sessionId;
                     launchResourceScope.register({
                         // Archive this launch's new row on pre-runner refusal;
-                        // once submitted, the runner owns it.
+                        // once registered, the runner owns it.
                         onFailure: async () => {
                             if (childLaunchSubmitted) return;
                             await committed.session.releaseNativeBindingOnLaunchFailure?.();
@@ -955,7 +956,8 @@ export async function executeSpawnSessionRequest(
             if (acceptedTeamBinding?.slot.kind === 'provider_model' && acceptedTeamBinding.resourceId !== null) {
                 logger.infoFile('[DAEMON RUN] Team credential launch binding', {
                     stage: 'session_commit',
-                    code: acceptedTeamBinding.deliveryMode === 'brokered' ? 'accepted_brokered_provider_model' : 'accepted_direct_provider_model',
+                    code: acceptedTeamBinding.deliveryMode === 'brokered' ? 'accepted_brokered_provider_model'
+                        : acceptedTeamBinding.deliveryMode === 'vendor-native' ? 'accepted_vendor_native_provider_model' : 'accepted_direct_provider_model',
                     ...(diagnosticOperationId ? { operationId: diagnosticOperationId } : {}),
                     ...(launchExistingSessionId ? { sessionId: launchExistingSessionId } : {}),
                     resourceId: acceptedTeamBinding.resourceId,
@@ -1323,14 +1325,6 @@ export async function executeSpawnSessionRequest(
                     activateConnectedAccountSessionBindingOnCanonicalSession =
                         activateConnectedAccountSessionBinding;
                 }
-            } else if (requestAuthPurposeBindings.length > 0) {
-                return await refuseSpawn({
-                    type: 'error',
-                    errorCode:
-                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage:
-                        'connected_account_request_auth_unavailable',
-                });
             }
             // Existing Sessions already own their birth context. Keep it for
             // daemon preparation and protected attach, never fresh runner creation.
@@ -1340,9 +1334,13 @@ export async function executeSpawnSessionRequest(
                 : await createSessionInitialAccessFile(configuration.happyHomeDir, effectiveOptionsForSpawn.initialAccess);
             if (initialAccessFile) launchResourceScope.register(initialAccessFile.cleanup);
             const spawnLifecycle = await prepareDaemonSpawnLifecycle({
+                ...(connectedServices.agentLaunchMaterials ? { agentLaunchMaterials: connectedServices.agentLaunchMaterials } : {}),
                 ...(effectiveOptionsForSpawn.projectSetupOperation ? { projectSetupOperation: effectiveOptionsForSpawn.projectSetupOperation } : {}),
                 ...(requesterRuntime ? { requesterSessionRuntimeContext: requesterRuntime } : {}),
-                onTrackedSessionRegistered: params.onTrackedSessionRegistered,
+                onTrackedSessionRegistered: () => {
+                    childLaunchSubmitted = true;
+                    params.onTrackedSessionRegistered?.();
+                },
                 runnerAgentSessionBootstrap,
                 normalizedExistingSessionId: launchExistingSessionId,
                 spawnNonce: effectiveOptionsForSpawn.spawnNonce,
@@ -1407,25 +1405,19 @@ export async function executeSpawnSessionRequest(
                 : undefined;
 
             const revalidateLaunchAdmission = async (): Promise<SpawnSessionResult | null> => {
-                const requesterFailure = await resolveRequesterLaunchAdmissionFailure(options);
-                const cause = requesterFailure
-                    ? requesterFailure.errorDetail?.kind === 'requester_home_unavailable'
-                        ? 'requester_home_unavailable' : 'requester_machine_admission_unavailable'
-                    : options.beforeSessionRunnerLaunch && !await options.beforeSessionRunnerLaunch()
-                        ? 'session_handoff_launch_custody_unavailable'
-                        : null;
-                if (!cause) return null;
+                preparationSignal?.throwIfAborted();
+                const refusal = projectSessionRunnerLaunchAdmissionFailure(options.beforeSessionRunnerLaunch
+                    ? await options.beforeSessionRunnerLaunch() : true);
+                if (!refusal) return null;
+                const cause = refusal.errorDetail?.kind === 'launch_error'
+                    ? refusal.errorDetail.code : 'session_handoff_launch_custody_unavailable';
                 logger.infoFile('[DAEMON RUN] Spawn launch admission refused', {
                     cause, sessionId, elapsedMs: Math.round(performance.now() - startedAt),
                 });
-                return await refuseSpawn(requesterFailure ?? {
-                    type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE,
-                    errorMessage: 'Session handoff launch custody unavailable',
-                });
+                return await refuseSpawn(refusal);
             };
             const launchAdmissionRefusal = await revalidateLaunchAdmission();
             if (launchAdmissionRefusal) return launchAdmissionRefusal;
-            childLaunchSubmitted = true;
             recordPreparationPhase('runner_launch');
             const launchResources = params.readMachineResourcesPolicy?.();
             let spawnResult = await routeSpawnModeAndWaitForWebhook({

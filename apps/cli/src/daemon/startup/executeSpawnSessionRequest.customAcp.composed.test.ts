@@ -4,7 +4,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs
 import axios, { AxiosHeaders, type AxiosResponse } from 'axios';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { ChildProcess } from 'node:child_process';
+import { ChildProcess, execFileSync } from 'node:child_process';
 import { accountSettingsParse, FeaturesResponseSchema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, ExecutionRunListResponseSchema,
   verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -18,6 +18,7 @@ import { ApiClient } from '@/api/api';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createDeferred } from '@/testkit/async/deferred';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
@@ -125,6 +126,8 @@ import { createPersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persisted
 import { resolveExternalSessionOperationAccountScope } from '@/session/actions/externalSessions/operationRecordStore';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
+import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
+import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 
 const preflightHome = vi.hoisted(() => ({ database: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary> | null }));
 // Only persistence is substituted. The UI CALL handler produces admission
@@ -148,7 +151,7 @@ const storage = vi.hoisted(() => ({ home: '', persistedToken: 'df38-owner-token'
   runnerWrapperStartTimeMs: 2,
   procfsRoot: '',
   runnerLaunches: [] as Array<{ command: string; args: string[] }>,
-  runnerSpawn: null as ((args: string[], env: NodeJS.ProcessEnv) => import('node:child_process').ChildProcess) | null,
+  runnerSpawn: null as ((args: string[], env: NodeJS.ProcessEnv, cwd?: string) => import('node:child_process').ChildProcess) | null,
   daemonPort: 0, daemonControlToken: '' }));
 vi.mock('socket.io-client', () => ({ io: storage.io }));
 vi.mock('node:fs/promises', async importOriginal => {
@@ -205,7 +208,7 @@ vi.mock('node:child_process', async importOriginal => {
       storage.runnerCommand = [command, ...argv].join(' ');
       const runChild = storage.runnerSpawn;
       storage.runnerSpawn = null;
-      return runChild(argv.slice(startupFlagIndex - 1), options.env);
+      return runChild(argv.slice(startupFlagIndex - 1), options.env, options.cwd === undefined ? undefined : String(options.cwd));
     }
     return actual.spawn(...args);
   } };
@@ -270,11 +273,12 @@ beforeAll(async () => {
   runtimeHome = storage.home;
   installFixturePluginAvailabilityBoundary();
   runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
-    controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.custom-acp', 'happier.agent.claude', 'happier.agent.opencode'] } });
+    controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.custom-acp', 'happier.agent.claude', 'happier.agent.opencode', 'happier.scm.backend.git'] } });
   await runtime.registry.activateContributionsOnDemand([
     { pluginId: 'happier.agent.custom-acp', family: 'agents', localId: 'custom-acp' },
     { pluginId: 'happier.agent.claude', family: 'agents', localId: 'claude' },
     { pluginId: 'happier.agent.opencode', family: 'agents', localId: 'opencode' },
+    { pluginId: 'happier.scm.backend.git', family: 'scmBackends', localId: 'git' },
   ]);
   api = await ApiClient.create(storage.credentials);
 });
@@ -374,6 +378,182 @@ function readFixtureCatalogResponse(path: string) {
 }
 
 describe('Custom ACP fresh daemon launch composition', () => {
+  it('seeds an already committed managed replay-fork before entering its runner launch', async () => {
+    const directories = createManagedSessionDirectories();
+    const source = await directories.materializeForFreshSpawn({ sessionCreationTag: 'replay-source' });
+    await directories.bind({ allocationId: source.allocationId, sessionId: 'replay-source' });
+    await writeFile(join(source.directory, 'retained.txt'), 'fork workspace contents');
+    const sessionId = 'creplayseed000000000000001';
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'session.fork:replay-source', creationKey: 'seeded-child' });
+    const target = directories.prepareForCreation({ sessionCreationTag });
+    let reachedRunnerLaunch = false;
+    const prepared = params('alpha', async () => {
+      expect(await readFile(join(target.directory, 'retained.txt'), 'utf8')).toBe('fork workspace contents');
+      reachedRunnerLaunch = true;
+      // The process boundary refuses launch; committed birth and seeded files
+      // must survive this ordinary pre-launch refusal.
+      return false;
+    });
+    const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag,
+      recipe: { execution: { machineId: 'df38-machine', directory: { kind: 'managed' } },
+        organization: { folderId: null, tagIds: [] }, agentTarget: prepared.options.agentTarget,
+        modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null,
+        configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
+        terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null },
+    });
+    const fields = buildSessionMetadataEnvelopeFields({ credentials: storage.credentials, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', agentState: null, metadata: { path: target.directory, machineId: 'df38-machine',
+        sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence } });
+    const row = V2SessionByIdResponseSchema.parse({ session: { ...createSessionNotificationContextFixture(sessionId),
+      encryptionMode: 'plain', metadataLayoutVersion: 1, machineId: 'df38-machine', share: null,
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState } }).session;
+    const originalGet = vi.mocked(axios.get).getMockImplementation();
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+      if (new URL(String(url)).pathname === `/v2/sessions/${sessionId}`) return homeResponse({ session: row });
+      if (originalGet) return await originalGet(url, options);
+      throw new Error('Missing replay-fork Home read boundary');
+    });
+    try {
+      const result = await executeSpawnSessionRequest({ ...prepared, options: { ...prepared.options,
+        directory: target.directory, directoryKind: 'managed', existingSessionId: sessionId,
+        sessionCreationTag, freshSessionCreation: true,
+        managedDirectorySeed: { sourceSessionId: 'replay-source', sourceSessionCreationTag: 'replay-source', sourcePath: source.directory },
+      } });
+      expect(await directories.listRecords()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ allocationId: target.allocationId, sessionId, sessionCreationTag }),
+      ]));
+      expect(reachedRunnerLaunch, result.type === 'error' ? result.errorMessage : result.type).toBe(true);
+      expect(result).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE' });
+      expect(await readFile(join(target.directory, 'retained.txt'), 'utf8')).toBe('fork workspace contents');
+      expect(await readFile(join(source.directory, 'retained.txt'), 'utf8')).toBe('fork workspace contents');
+    } finally { reads.mockRestore(); }
+  });
+
+  it.each([true, false])('retires only its newly created Session when source-runtime preflight refuses before a child exists (created: %s)', async created => {
+    const sourceRoot = join(storage.home, 'source-bundle');
+    const sourceEntrypoint = join(sourceRoot, 'apps/cli/src/index.mjs');
+    const markerPath = join(storage.home, 'installed-dependencies');
+    await mkdir(join(sourceRoot, 'apps/cli/src'), { recursive: true });
+    await writeFile(sourceEntrypoint, 'import "./removed-dependency.mjs";');
+    await writeFile(markerPath, JSON.stringify({ identity: 'after-refresh' }));
+    await writeFile(join(sourceRoot, 'source-bundle.json'), JSON.stringify({
+      identity: 'refused-spawn-source-fixture', entrypoint: sourceEntrypoint,
+      dependencyPublication: { identity: 'before-refresh', generation: null, writerActive: false,
+        markerPath, generationPath: join(storage.home, 'dependency-generation') },
+    }));
+    const sourceEnv = {
+      HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: sourceEntrypoint,
+      HAPPIER_STACK_CLI_ROOT_DIR: join(sourceRoot, 'apps/cli'),
+      HAPPIER_CLI_ROOT_DIR: join(sourceRoot, 'apps/cli'),
+      HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '0',
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: undefined,
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: undefined,
+      HAPPIER_MANAGED_NODE_BIN: process.execPath,
+    };
+    const env = createEnvKeyScope(Object.keys(sourceEnv));
+    const sessionId = 'crefusedsource000000000001';
+    let row: V2SessionByIdResponse['session'] | undefined;
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {
+        encryption: { storagePolicy: 'plaintext_only', allowAccountOptOut: false, defaultAccountMode: 'plain' },
+      } }));
+      if (path === '/v1/account/profile') return Response.json({ id: 'df38-owner' });
+      throw new Error(`Unexpected refused-spawn Home fetch ${path}`);
+    });
+    const originalSocket = storage.io.getMockImplementation();
+    storage.io.mockReturnValue(createApiSessionSocketStub({ connected: true }));
+    const originalGet = vi.mocked(axios.get).getMockImplementation();
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+      if (new URL(String(url)).pathname === `/v2/sessions/${sessionId}` && row) return homeResponse({ session: row });
+      if (originalGet) return await originalGet(url, options);
+      throw new Error('Missing fixture Account read boundary');
+    });
+    const writes = vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      const path = new URL(String(url)).pathname;
+      const availability = readBundledPluginAvailabilityHttpFixture(path, body);
+      if (availability) return homeResponse(availability);
+      if (path === '/v2/sessions/lookup-by-tags') return homeResponse({ sessions: [] });
+      if (path === '/v1/sessions') {
+        row = createFixturePlainSession(body, sessionId);
+        return homeResponse({ session: row, created, organizationPlacement: { folderId: null, tagIds: [] } });
+      }
+      if (path === `/v2/sessions/${sessionId}/archive` && row) {
+        row = { ...row, archivedAt: 123 };
+        return homeResponse({ success: true, archivedAt: row.archivedAt });
+      }
+      throw new Error(`Unexpected refused-spawn Home POST ${path}`);
+    });
+    try {
+      env.patch(sourceEnv);
+      const input = params('alpha', async () => true);
+      const result = await executeSpawnSessionRequest({ ...input, processEnv: { ...process.env },
+        options: { ...input.options, approvalProfileId: 'builtin:read-propose' } });
+      expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_FAILED',
+        errorDetail: { kind: 'launch_error', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' } });
+      expect(row, JSON.stringify(result)).toBeDefined();
+      expect(row?.archivedAt).toBe(created ? 123 : null);
+      expect(input.pidToTrackedSession.size).toBe(0);
+      expect(input.pidToSpawnWebhookTimeout.size).toBe(0);
+    } finally {
+      env.restore(); reads.mockRestore(); writes.mockRestore();
+      vi.stubGlobal('fetch', originalFetch);
+      storage.io.mockReset();
+      if (originalSocket) storage.io.mockImplementation(originalSocket);
+    }
+  });
+
+  it('refuses an unavailable recovered checkout before entering the runner launch', async () => {
+    let enteredRunner = false;
+    const prepared = params('alpha', async () => { enteredRunner = true; return false; });
+    const result = await executeSpawnSessionRequest({ ...prepared, options: { ...prepared.options,
+      checkoutCreationDraft: { kind: 'git_worktree', displayName: 'missing-source', baseRef: null, branchMode: 'new' },
+    } });
+    expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'checkout_unavailable' });
+    expect(enteredRunner).toBe(false);
+  });
+
+  it('realizes a recovered checkout draft before launching the runner in its nested directory', async () => {
+    const repository = join(storage.home, 'repository');
+    const sourceDirectory = join(repository, 'packages', 'app');
+    await mkdir(sourceDirectory, { recursive: true });
+    await writeFile(join(sourceDirectory, 'tracked.txt'), 'retained checkout source');
+    // Git acts only on this isolated test repository; the shared checkout is untouched.
+    const git = (...args: string[]) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8' });
+    git('init', '--initial-branch=main');
+    git('add', 'packages/app/tracked.txt');
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-m', 'fixture');
+    let runnerDirectory: string | undefined;
+    const prepared = params('alpha', async () => {
+      const bootstrapDirectory = join(storage.home, 'tmp', 'runner-agent-session-bootstraps');
+      const [file] = await readdir(bootstrapDirectory);
+      storage.runnerBootstrapPath = join(bootstrapDirectory, file!);
+      storage.sourceChecks = [];
+      storage.runnerSpawn = (_args, _env, cwd) => {
+        runnerDirectory = cwd;
+        throw new Error('Observed checkout runner launch boundary');
+      };
+      return true;
+    });
+    try {
+      const result = await executeSpawnSessionRequest({ ...prepared, options: { ...prepared.options,
+        directory: sourceDirectory,
+        checkoutCreationDraft: { kind: 'git_worktree', displayName: 'bot-checkout', baseRef: 'main', branchMode: 'new' },
+      } });
+      const listed = git('worktree', 'list', '--porcelain');
+      const checkout = listed.split('\n').find(line => line.startsWith('worktree ') && line !== `worktree ${repository}`)?.slice('worktree '.length);
+      expect(checkout, JSON.stringify(result)).toBeDefined();
+      expect(runnerDirectory, JSON.stringify(result)).toBe(join(checkout!, 'packages', 'app'));
+      expect(await readFile(join(runnerDirectory!, 'tracked.txt'), 'utf8')).toBe('retained checkout source');
+      expect(git('branch', '--show-current').trim()).toBe('main');
+    } finally {
+      storage.runnerSpawn = null;
+      storage.runnerBootstrapPath = '';
+      storage.sourceChecks = null;
+    }
+  });
+
   it('M-COV: materializes a first-Session directory through UI admission and refuses member preflight before filesystem effects', async () => {
     const originalCredentials = storage.credentials;
     const originalStoredCredentials = storage.ordinaryStoredCredentials;

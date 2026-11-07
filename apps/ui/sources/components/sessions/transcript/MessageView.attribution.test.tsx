@@ -4,9 +4,18 @@ import { act } from 'react-test-renderer';
 import type { Message, UserTextMessage } from "@happier-dev/session-core/messages";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { SessionMessageProvenance } from '@happier-dev/protocol';
+import type { SessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
 
-const attributionBoundaries = vi.hoisted(() => ({ push: vi.fn(), transcriptCommits: vi.fn() }));
+const attributionBoundaries = vi.hoisted(() => ({
+    push: vi.fn(), transcriptCommits: vi.fn(),
+    // The sync orchestrator is the by-id read boundary a cold sender is demanded through.
+    ensureSession: vi.fn(async (sessionId: string, options?: { serverId?: string }): Promise<EnsureSessionVisibleForRouteResult> => ({ kind: 'missing', sessionId, serverId: options?.serverId, cause: 'not_found' })),
+}));
+vi.mock('@/sync/sync', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/sync')>()),
+    sync: { ensureSessionVisibleForMessageRoute: attributionBoundaries.ensureSession },
+}));
 installMessageViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -58,9 +67,93 @@ afterEach(() => {
     storage.setState(storage.getInitialState(), true);
     attributionBoundaries.push.mockClear();
     attributionBoundaries.transcriptCommits.mockClear();
+    attributionBoundaries.ensureSession.mockClear();
 });
 
 describe('MessageView Account attribution', () => {
+    it.each([false, true])('shows onboarding provenance and a selectable example without exposing its model prompt (display facts: %s)', async (displayFacts) => {
+        const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+        const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
+        const { UserMessageBubble } = await import('./UserMessageBubble');
+        const { TranscriptEventRow } = await import('./events/TranscriptEventRow');
+        const prompt = 'Host startup instructions containing the example task';
+        const normalized = normalizeRawMessage('onboarding', 'creation-first-input', 1, {
+            role: 'user', content: { type: 'text', text: prompt }, meta: {
+                ...(displayFacts ? { happierHostOnboardingV1: { v: 1, templateName: 'Garden', templateVersion: '1.2.3',
+                    authorDisplayName: 'Ana', firstTask: 'Review my change' } } : {}),
+                happierProvenanceV1: { v: 1, kind: 'host', producer: 'hostOnboarding' },
+                happierInputAuthorityV1: { v: 1, producer: 'hostOnboarding', caller: { kind: 'host' },
+                    permission: { admittedPermissionCeiling: 'read-only' } },
+            },
+        }, { seq: 1 });
+        expect(normalized).not.toBeNull();
+        const messages = reducer(createReducer(), [normalized!]).messages;
+        const source = createReadOnlySessionTranscriptSource({ sessionId: 'bot', messages,
+            reducerState: null, metadata: null, agentState: null });
+        const screen = await renderBareScreen(<SessionTranscriptSourceProvider source={source}>
+            <MessageView sessionId="bot" metadata={null} message={messages[0]} />
+        </SessionTranscriptSourceProvider>);
+        expect(screen.findAllByType(UserMessageBubble)).toHaveLength(0);
+        expect(screen.findAllByType(TranscriptEventRow)).toHaveLength(1);
+        expect(screen.getTextContent()).not.toContain(prompt);
+        expect(screen.getTextContent()).toContain(displayFacts ? 'Ana' : 'Happier');
+        if (displayFacts) {
+            expect(screen.getTextContent()).toContain('v1.2.3');
+            expect(screen.findByTestId('bot-template-first-task-chip')).toBeTruthy();
+        }
+        expect(attributionBoundaries.ensureSession).not.toHaveBeenCalled();
+    });
+    it.each([false, true])('renders retained next-turn Follow sources without inventing accepted wakes (cards: %s)', async (cards) => {
+        const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+        const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
+        const { resolveTranscriptHostWakeCountByMessageId } = await import('./events/transcriptEventEmphasis');
+        const { TranscriptFollowSourceNotice } = await import('./events/TranscriptEventRow');
+        const { UserMessageBubble } = await import('./UserMessageBubble');
+        // Redacted retained producer shape from seq267–273: next_turn, message-backed
+        // terminal event, no accepted Turn or turn-start witness. The text is synthetic.
+        const prompt = 'Synthetic model-only Follow instructions';
+        const normalized = ['finished', 'failed_or_stopped', 'message'].map((kind, index) => normalizeRawMessage(
+            `retained-${index}`, `follow-original:${index}`, index + 1,
+            { role: 'user', content: { type: 'text', text: prompt }, meta: {
+                happierProvenanceV1: { v: 1, kind: 'host', producer: 'sessionAction' },
+                happierInputAuthorityV1: { v: 1, producer: 'sessionAction', caller: { kind: 'host' },
+                    permission: { admittedPermissionCeiling: 'default' }, followDeliveryV1: {
+                        v: 1, delivery: 'next_turn', original: { sourceSessionId: 'worker',
+                            sourceMessage: { localId: `source-${index}`, seq: index + 1 } }, event: { kind },
+                    } },
+            } }, { seq: index + 1 },
+        ));
+        expect(normalized.every(message => message !== null)).toBe(true);
+        const messages = reducer(createReducer(), normalized.filter((message): message is NonNullable<typeof message> => message !== null)).messages;
+        if (cards) messages.push(...messages.map((message): Extract<Message, { kind: 'agent-event' }> => ({
+            kind: 'agent-event', id: `card-${message.id}`, localId: null, createdAt: 4,
+            event: { type: 'worker-update', followInputLocalId: message.localId!, update: {
+                v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'finished',
+                headline: 'Finished its turn', canInspect: false,
+            } },
+        })));
+        else messages.push({ kind: 'agent-event', id: 'unrelated-card', localId: null, createdAt: 4,
+            event: { type: 'worker-update', followInputLocalId: 'another-original', update: {
+                v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'finished',
+                headline: 'Finished its turn', canInspect: false,
+            } } });
+        const messagesById = Object.fromEntries(messages.map(message => [message.id, message]));
+        const counts = resolveTranscriptHostWakeCountByMessageId({ messageIdsOldestFirst: messages.map(message => message.id), messagesById });
+        expect(counts).toEqual({});
+        const source = createReadOnlySessionTranscriptSource({ sessionId: 'bot', messages,
+            reducerState: null, metadata: null, agentState: null });
+        const screen = await renderBareScreen(<SessionTranscriptSourceProvider source={source}>
+            {messages.map(message => <MessageView key={message.id} sessionId="bot" metadata={null}
+                message={message} hostWakeCount={counts[message.id]} />)}
+        </SessionTranscriptSourceProvider>);
+        expect(screen.findAllByType(TranscriptFollowSourceNotice)).toHaveLength(cards ? 0 : 3);
+        expect(screen.findAllByType(UserMessageBubble)).toHaveLength(0);
+        expect(screen.findAllHostsByTestId('transcript-event-host-wake')).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain(prompt);
+        // Source notices read held identity; presenting N originals must issue zero by-id hydration reads.
+        expect(attributionBoundaries.ensureSession).not.toHaveBeenCalled();
+    });
+
     it.each(['next_turn', 'wake', 'generated'] as const)('keeps committed host %s context outside the person’s bubble and defers Follow notices to delivery facts', async (delivery) => {
         const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
         const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
@@ -96,15 +189,16 @@ describe('MessageView Account attribution', () => {
                 sessionId="bot" metadata={null} message={message}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }} />)}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }} />)}
         </AppSessionTranscriptSourceProvider>);
         expect(screen.findAllByType(UserMessageBubble)).toHaveLength(2);
-        expect(screen.findAllByType(TranscriptEventRow)).toHaveLength(delivery === 'generated' ? 1 : 0);
+        expect(screen.findAllByType(TranscriptEventRow)).toHaveLength(1);
         expect(screen.getTextContent()).toContain(text);
     });
 
     it.each([false, true])('shows an accepted Follow wake once as structured host facts without the model prompt (cards: %s)', async (cards) => {
         const { resolveTranscriptHostWakeCountByMessageId } = await import('./events/transcriptEventEmphasis');
+        const { indexFollowWorkerCardsByInputLocalId } = await import('./events/followWorkerCardDelivery');
         const text = 'Followed source changed. Read the original source context.';
         const messages: Message[] = [1, 2, 3].map((seq): UserTextMessage => ({
             kind: 'user-text', id: `follow-${seq}`, localId: `follow-input-${seq}`, createdAt: seq, text,
@@ -128,12 +222,13 @@ describe('MessageView Account attribution', () => {
             messagesById: Object.fromEntries(messages.map(m => [m.id, m])) });
         const source = createReadOnlySessionTranscriptSource({ sessionId: 'bot', messages,
             reducerState: null, metadata: null, agentState: null });
+        const followWorkerCardsByInputLocalId = indexFollowWorkerCardsByInputLocalId(Object.fromEntries(messages.map(message => [message.id, message])));
         const screen = await renderBareScreen(<SessionTranscriptSourceProvider source={source}>
             {messages.map(message => <MessageViewWithSessionCommon key={message.id} sessionId="bot" metadata={null}
                 message={message} hostWakeCount={counts[message.id]}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }} />)}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null, followWorkerCardsByInputLocalId }} />)}
         </SessionTranscriptSourceProvider>);
         expect(screen.getTextContent()).not.toContain(text);
         expect(screen.findAllHostsByTestId('transcript-event-host-wake')).toHaveLength(1);
@@ -195,7 +290,7 @@ describe('MessageView Account attribution', () => {
                 sessionId="session-b" metadata={null} message={message}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }} />)}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }} />)}
         </AppSessionTranscriptSourceProvider>);
         expect(screen.findHostByTestId('transcript-provenance-attribution:cmv3woe8e010jm24a1ua7n6ed')).toBeNull();
         expect(screen.findHostByTestId('transcript-provenance-attribution:daily-digest-input')?.props.accessibilityLabel)
@@ -218,7 +313,7 @@ describe('MessageView Account attribution', () => {
                     meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: invocation.id, stepOrdinal: '3' } } }}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         const chip = 'transcript-provenance-attribution:workflow-message';
@@ -256,7 +351,7 @@ describe('MessageView Account attribution', () => {
                         meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'invocation-a' } } }}
                     forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                     messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                    toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                    toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
                 />
             </AppSessionTranscriptSourceProvider>,
         );
@@ -287,7 +382,7 @@ describe('MessageView Account attribution', () => {
                     meta: { happierProvenanceV1: { v: 2, kind: 'workflow_invocation', runId: run.id, invocationRecordId: 'invocation-a' } } }}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         expect(screen.findHostByTestId('transcript-provenance-attribution:workflow-other-home')?.props.accessibilityLabel)
@@ -309,7 +404,7 @@ describe('MessageView Account attribution', () => {
                         sessionId="public-session" metadata={null} message={message}
                         forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                         messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                        toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                        toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
                     />
                 </React.Profiler>
             </SessionTranscriptSourceProvider>,
@@ -345,7 +440,7 @@ describe('MessageView Account attribution', () => {
                 sessionId="session-b" metadata={null} message={message}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         const testId = provenance.kind === 'pluginSession' ? 'transcript-plugin-attribution:producer-message' : 'transcript-provenance-attribution:producer-message';
@@ -368,7 +463,7 @@ describe('MessageView Account attribution', () => {
                 sessionId="session-b" metadata={null} message={message}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         expect(screen.findHostByTestId('transcript-provenance-attribution:typed-message')).toBeNull();
@@ -395,12 +490,145 @@ describe('MessageView Account attribution', () => {
                 }}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         expect(screen.findHostByTestId('transcript-provenance-attribution:home-scoped-producer')?.props.accessibilityLabel)
             .toBe('message.provenanceFrom(source=Lead B)');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Other Home title');
+    });
+
+    describe('a Discussion-delivering Session that this view has not loaded', () => {
+        const discussionAddressing = { discussionId: 'discussion-1', messageId: 'discussion-message-1', throughSeq: 1, participantSessionId: 'receiver' };
+        const deliveredBy = (id: string, senderId: string): UserTextMessage => ({
+            kind: 'user-text', id, localId: null, createdAt: 1, text: 'Continue', meta: {
+                happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: senderId, via: 'action' },
+                happierInputAuthorityV1: { v: 1, producer: 'sessionAction', permission: { admittedPermissionCeiling: 'default' },
+                    replyIntent: { mode: 'return' }, discussionAddressing,
+                    sourceSession: { sourceSessionId: senderId, sourceTurnId: 'turn-1', sourceInputId: 'input-1', via: 'action' } },
+            },
+        });
+        const renderDeliveries = async (serverId: string, messages: readonly UserTextMessage[]) => renderScreen(
+            <>{messages.map(message => (
+                <MessageViewWithSessionCommon key={message.id} sessionId="receiver" serverId={serverId} metadata={null} message={message}
+                    forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                    messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                    toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }} />
+            ))}</>,
+        );
+
+        it('names the sender from one by-id read per distinct sender, shared by every row it delivered', async () => {
+            const home = await upsertServerProfile({ serverUrl: 'https://cold-sender-home.example.test' });
+            // The by-id owner publishes the not-yet-loaded sender's row; the byline only demands it.
+            attributionBoundaries.ensureSession.mockImplementationOnce(async (sessionId, options) => {
+                const row = createSessionFixture({ id: sessionId, serverId: home.id, metadataLayoutVersion: 1,
+                    metadata: { ...createSessionFixture().metadata!, name: 'Lead A' } });
+                storage.setState({
+                    sessionListRowsByServerId: { [home.id]: { [sessionId]: row } },
+                    sessionListIndexByServerId: { [home.id]: [{ type: 'session', sessionId, serverId: home.id }] },
+                });
+                return { kind: 'available', sessionId, serverId: options?.serverId };
+            });
+            const rows = [deliveredBy('cold-1', 'cold-sender'), deliveredBy('cold-2', 'cold-sender'), deliveredBy('cold-3', 'cold-sender')];
+            const screen = await renderDeliveries(home.id, rows);
+            for (const { id } of rows) {
+                expect(screen.findHostByTestId(`transcript-provenance-attribution:${id}`)?.props.accessibilityLabel)
+                    .toBe('message.provenanceFrom(source=Lead A) · message.provenanceDiscussion');
+            }
+            expect(attributionBoundaries.ensureSession).toHaveBeenCalledTimes(1);
+            // A re-entered transcript (a layout switch or route re-entry builds a new source) finds the published row held.
+            await screen.unmount();
+            const reentered = await renderDeliveries(home.id, rows);
+            expect(reentered.findHostByTestId('transcript-provenance-attribution:cold-1')?.props.accessibilityLabel)
+                .toBe('message.provenanceFrom(source=Lead A) · message.provenanceDiscussion');
+            expect(attributionBoundaries.ensureSession).toHaveBeenCalledTimes(1);
+            expect(attributionBoundaries.ensureSession).toHaveBeenCalledWith('cold-sender',
+                { serverId: home.id, hydrateMessages: false, includeTurnsProjection: false });
+        });
+
+        it('keeps the generic sender wording, never an id, when the sender cannot be read', async () => {
+            const home = await upsertServerProfile({ serverUrl: 'https://unreadable-sender-home.example.test' });
+            const screen = await renderDeliveries(home.id, [deliveredBy('unreadable-1', 'unreadable-sender')]);
+            expect(screen.findHostByTestId('transcript-provenance-attribution:unreadable-1')?.props.accessibilityLabel)
+                .toBe('message.provenanceFrom(source=message.provenanceSession) · message.provenanceDiscussion');
+            expect(screen.getTextContent()).not.toContain('unreadable-sender');
+        });
+
+        it('does not read a sender the view already holds', async () => {
+            const home = await upsertServerProfile({ serverUrl: 'https://held-sender-home.example.test' });
+            const row = createSessionFixture({ id: 'held-sender', serverId: home.id, metadataLayoutVersion: 1,
+                metadata: { ...createSessionFixture().metadata!, name: 'Lead B' } });
+            storage.setState({ sessionListRowsByServerId: { [home.id]: { 'held-sender': row } },
+                sessionListIndexByServerId: { [home.id]: [{ type: 'session', sessionId: 'held-sender', serverId: home.id }] } });
+            await renderDeliveries(home.id, [deliveredBy('held-1', 'held-sender')]);
+            expect(attributionBoundaries.ensureSession).not.toHaveBeenCalled();
+        });
+    });
+
+    it.each([
+        ['the viewer delivered it', 'host', 'message.provenanceFrom(source=message.provenanceDiscussion)'],
+        ['another Session delivered it', 'happierSession',
+            'message.provenanceFrom(source=Lead A) · message.provenanceDiscussion'],
+    ] as const)('shows a Discussion message as the authored words, never the provider prompt, and names who delivered it when %s', async (_case, origin, byline) => {
+        const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
+        const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
+        const { UserMessageBubble } = await import('./UserMessageBubble');
+        const { TranscriptEventRow } = await import('./events/TranscriptEventRow');
+        const home = await upsertServerProfile({ serverUrl: 'https://discussion-input-home.example.test' });
+        // Persisted shape observed live (INT-LIVEFOLLOW round 14, receiver seq2): the provider text keeps the
+        // context block and mention ids for the Agent; the sender stored the authored sentence as displayText.
+        const prompt = '<happier_input_context v="1">\ndiscussion_id="cmvpj3mb70060mcz4xtt9d6cf"\n'
+            + 'discussion_sender_account_id="5e3a0581-6f3d-4e73-bf40-383db0be6c3e"\n</happier_input_context>\n\n'
+            + '@session:cmvpirt8g003rmcz4lk9djsnh The wording is ready; @session:cmvpirtak003tmcz4n0f3vg4a has checked it.';
+        const sender = createSessionFixture({ id: 'session-source-a', serverId: home.id, metadataLayoutVersion: 1,
+            metadata: { ...createSessionFixture().metadata!, name: 'Lead A' } });
+        storage.setState({
+            sessionListRowsByServerId: { [home.id]: { 'session-source-a': sender } },
+            sessionListIndexByServerId: { [home.id]: [{ type: 'session', sessionId: 'session-source-a', serverId: home.id }] },
+        });
+        const discussionAddressing = { discussionId: 'cmvpj3mb70060mcz4xtt9d6cf', messageId: 'cmvpj3o6r0062mcz4k1rwgcwr',
+            throughSeq: 1, participantSessionId: 'cmvpirt8g003rmcz4lk9djsnh' };
+        // Stored mentions keep every participant the provider prompt names, the receiver included.
+        const mention = (sessionId: string, label: string) => ({ kind: 'happier.session', ref: `session:${sessionId}`, label,
+            token: `@Session "${label}"` });
+        const meta = {
+            displayText: 'The wording is ready; @Session has checked it.',
+            happierStructuredInputV1: { v: 1, mentions: [mention('cmvpirt8g003rmcz4lk9djsnh', 'Receiver'), mention('cmvpirtak003tmcz4n0f3vg4a', 'Peer')] },
+            ...(origin === 'host' ? {
+                happierProvenanceV1: { v: 1, kind: 'host', producer: 'sessionAction' },
+                happierInputAuthorityV1: { v: 1, producer: 'sessionAction', caller: { kind: 'host' },
+                    permission: { admittedPermissionCeiling: 'default' }, replyIntent: { mode: 'return' }, discussionAddressing },
+            } : {
+                happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'session-source-a', via: 'action' },
+                happierInputAuthorityV1: { v: 1, producer: 'sessionAction', permission: { admittedPermissionCeiling: 'default' },
+                    replyIntent: { mode: 'return' }, discussionAddressing,
+                    sourceSession: { sourceSessionId: 'session-source-a', sourceTurnId: 'turn-1', sourceInputId: 'input-1', via: 'action' } },
+            }),
+        };
+        const normalized = normalizeRawMessage('discussion-input', 'discussion-follow-v1:local', 1,
+            { role: 'user', content: { type: 'text', text: prompt }, meta }, { seq: 2 });
+        const messages = reducer(createReducer(), normalized ? [normalized] : []).messages;
+        expect(messages).toHaveLength(1);
+        const screen = await renderScreen(
+            <MessageViewWithSessionCommon
+                sessionId="cmvpirt8g003rmcz4lk9djsnh" serverId={home.id} metadata={null} message={messages[0]!}
+                forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
+                messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
+            />,
+        );
+        expect(screen.findAllByType(UserMessageBubble)).toHaveLength(1);
+        expect(screen.findAllByType(TranscriptEventRow)).toHaveLength(0);
+        const text = screen.getTextContent();
+        expect(text).toContain('The wording is ready; @Session has checked it.');
+        expect(text).not.toContain('happier_input_context');
+        expect(text).not.toContain('@session:');
+        expect(text).not.toContain('cmvp');
+        expect(screen.findHostByTestId(`transcript-provenance-attribution:${messages[0]!.id}`)?.props.accessibilityLabel)
+            .toBe(byline);
+        // The receiving Session never references itself in its own transcript; the peer chip stays.
+        expect(screen.findHostByTestId('transcript-session-reference:cmvpirtak003tmcz4n0f3vg4a')).not.toBeNull();
+        expect(screen.findHostByTestId('transcript-session-reference:cmvpirt8g003rmcz4lk9djsnh')).toBeNull();
     });
 
     it.each(['host', 'happierSession'] as const)('quotes a %s returned answer as information instead of a host notice or person’s bubble', async (origin) => {
@@ -419,7 +647,7 @@ describe('MessageView Account attribution', () => {
                 message={returnedAnswerMessage(home.id, origin, 'No. A replayed charge shows “Payment confirmed”.')}
                 forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                 messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                toolChromeCommon={settingsDefaults} toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolChromeCommon={settingsDefaults} toolRouteCommon={{ reducerState: null }}
             />,
         );
         const quote = screen.findHostByTestId('transcript-returned-answer:returned-answer');
@@ -442,7 +670,7 @@ describe('MessageView Account attribution', () => {
         const common = {
             forkCommon: { ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null },
             messageDisplayCommon: { ...settingsDefaults, workspacePath: null, debugInformationEnabled: false },
-            toolChromeCommon: settingsDefaults, toolRouteCommon: { messagesById: {}, reducerState: null },
+            toolChromeCommon: settingsDefaults, toolRouteCommon: { reducerState: null },
         };
         const screen = await renderScreen(
             <MessageViewWithSessionCommon sessionId="asker" serverId={home.id} metadata={null}
@@ -497,11 +725,47 @@ describe('MessageView Account attribution', () => {
                 <MessageViewWithSessionCommon sessionId="asker" serverId={home.id} metadata={null} message={message}
                     forkCommon={{ ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null }}
                     messageDisplayCommon={{ ...settingsDefaults, workspacePath: null, debugInformationEnabled: false }}
-                    toolChromeCommon={{ ...settingsDefaults, serverId: home.id }} toolRouteCommon={{ messagesById: {}, reducerState: null }} />,
+                    toolChromeCommon={{ ...settingsDefaults, serverId: home.id }} toolRouteCommon={{ reducerState: null }} />,
             );
             expect(screen.getTextContent()).toContain('Is the changelog wording final?');
             expect(screen.findAllByType(TranscriptEventRow)).toHaveLength(0);
             expect(screen.findHostByTestId(`session-ask-record:${message.id}`)).not.toBeNull();
+        } finally {
+            publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
+        }
+    });
+
+    it('presents a recognized agent Ask tool call as its Ask record alone, and keeps the tool row when the result is not a send', async () => {
+        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const { ToolTimelineRow } = await import('@/components/tools/shell/views/ToolTimelineRow');
+        const { publishAppliedActiveServerSnapshot, getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+        const home = await upsertServerProfile({ serverUrl: 'https://ask-record-tool.example.test' });
+        const previousRuntime = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        const binding = getActionSpec('session.message.send').bindings?.mcpToolName;
+        if (!binding) throw new Error('Session message Action requires its catalog binding');
+        const base = createToolCallMessageFixture({ id: 'ask-tool', createdAt: 10 });
+        const call = (result: unknown) => ({ ...base, tool: { ...base.tool, name: `mcp__happier__${binding}`,
+            input: { sessionId: 'receiver', message: 'Is the changelog wording final?', reply: 'wait' }, result, state: 'completed' as const } });
+        const answered = { content: [{ type: 'text', text: JSON.stringify({ status: 'replied', localId: 'real-request',
+            outcome: { kind: 'answer', text: 'Yes', messageRef: { kind: 'session', session: { serverId: home.id, sessionId: 'receiver' }, messageId: 'real-answer' } } }) }] };
+        const common = {
+            forkCommon: { ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null },
+            messageDisplayCommon: { ...settingsDefaults, workspacePath: null, debugInformationEnabled: false },
+            toolChromeCommon: { ...settingsDefaults, serverId: home.id }, toolRouteCommon: { reducerState: null },
+        };
+        try {
+            storage.getState().activateProfileScope({ serverId: home.id, accountId: 'alice' });
+            publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: 'https://ask-record-tool.example.test', generation: previousRuntime.generation + 1 });
+            const recognized = call(answered);
+            const record = await renderScreen(<MessageViewWithSessionCommon sessionId="asker" serverId={home.id} metadata={null} message={recognized} {...common} />);
+            expect(record.findHostByTestId(`session-ask-record:${recognized.id}`)).not.toBeNull();
+            expect(record.findAllByType(ToolTimelineRow)).toHaveLength(0);
+            const other = call({ ok: true, result: { unrelated: true } });
+            const plain = await renderScreen(<MessageViewWithSessionCommon sessionId="asker" serverId={home.id} metadata={null} message={other} {...common} />);
+            expect(plain.findHostByTestId(`session-ask-record:${other.id}`)).toBeNull();
+            expect(plain.findAllByType(ToolTimelineRow)).toHaveLength(1);
         } finally {
             publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable);
         }
@@ -531,7 +795,7 @@ describe('MessageView Account attribution', () => {
                     hasOtherNamedCollaborator: true,
                 }}
                 toolChromeCommon={settingsDefaults}
-                toolRouteCommon={{ messagesById: {}, reducerState: null }}
+                toolRouteCommon={{ reducerState: null }}
             />,
         );
         expect(screen.findHostByTestId('transcript-account-attribution:actor-message')?.props.accessibilityLabel)

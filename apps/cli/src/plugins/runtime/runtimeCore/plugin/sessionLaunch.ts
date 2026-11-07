@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import type { StoredCredentials } from '@/persistence';
+import { preserveStoredCredentialsHostContext, type StoredCredentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { SessionAttachSecret } from '@/agent/runtime/sessionAttach';
@@ -302,10 +302,11 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
         throw new Error('Plugin session launch params must be an object payload');
     }
 
-    const credentials = readStoredCredentials(raw.credentials);
-    if (!credentials) {
+    const parsedCredentials = readStoredCredentials(raw.credentials);
+    if (!parsedCredentials) {
         throw new Error('Plugin session launch params must include valid credentials');
     }
+    const credentials = preserveStoredCredentialsHostContext(raw.credentials, parsedCredentials);
 
     if (
         Object.prototype.hasOwnProperty.call(raw, 'resume')

@@ -1,4 +1,5 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
@@ -6,8 +7,11 @@ import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolve
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { isOriginalOwnAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import type { PrepareExternalActionRequesterAccountContext } from './executeExternalAction';
+import { isOriginalOwnAccountActionCustody, readOriginalRequesterSessionCustodyId } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
+import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import type { PrepareExternalActionRequesterAccountContext, ResolveExternalActionEncryption } from './executeExternalAction';
 
 /** Reacquire the ingress owner's private custody after decoding an approval. */
 export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readonly<{
@@ -17,9 +21,13 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
   resolveCurrentMachineExecutionOriginContext?: (signal?: AbortSignal) => Promise<CurrentMachineExecutionOriginContext | null>;
   requesterAccountContext?: RequesterAccountActionContext;
   prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
+  resolveEncryption?: ResolveExternalActionEncryption;
+  /** Snapshot from this admitted requester's Account/Home owner, never the deciding caller's policy. */
+  readAdmittedRequesterActionsSettings?: (request: Parameters<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>[0]) =>
+    Promise<ActionExecutorContext['actionsSettings'] | null>;
   daemonWorkSignal: AbortSignal;
 }>): NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']> {
-  const prepareRequesterContext: NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']> = async ({ authorization, signal }) => {
+  const prepareRequesterContext: NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']> = async ({ authorization, originalActionEnvelope, signal }) => {
     if ('credentialId' in authorization.binding) {
       // Artifact decoding drops private ports. Rebuild the same signed
       // HTTP custody used at ingress without lending Account credentials.
@@ -29,18 +37,37 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
       if (!installation || installation.installationId !== binding.installationId
         || origin?.serverIdentityId !== binding.serverIdentityId
         || origin.machineId !== binding.machineId || binding.machineId !== input.machineId) return null;
-      const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+      let projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
         serverId: input.serverId, serverIdentityId: origin.serverIdentityId,
         serverHttpBaseUrl: input.serverBaseUrl, target: binding.target,
         installationId: installation.installationId, privateKey: installation.privateKey,
         ...(signal ? { signal } : {}),
       });
-      return projected ? { authorization: projected } : null;
+      if (!projected) return null;
+      if (originalActionEnvelope?.v !== 2 || binding.accountEncryptionMode !== 'e2ee') return { authorization: projected };
+      const encryption = await input.resolveEncryption?.(signal, projected);
+      if (!encryption || encryption.serverIdentityId !== binding.serverIdentityId) return null;
+      const opened = openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: originalActionEnvelope, material: encryption.material,
+        binding: { serverIdentityId: binding.serverIdentityId, accountId: binding.accountId,
+          credentialId: binding.credentialId, actionId: binding.actionId,
+          requestId: binding.requestId, target: binding.target } });
+      if (!opened) return null;
+      if (!opened.apiTokenContentAccess || !doesExternalActionConsumeRequesterAccountContentV1({
+        actionId: binding.actionId, input: opened.input, target: binding.target,
+      })) return { authorization: projected };
+      // Reopen only the existing private ciphertext at its original receiver.
+      // Transport keys open the envelope; the PAT alone supplies content access.
+      projected = Object.defineProperties({ ...projected }, Object.getOwnPropertyDescriptors(projected));
+      const releaseAccess = retainApiTokenDeploymentContentAccess(projected, opened.apiTokenContentAccess);
+      const content = await prepareApiTokenDeploymentAccountProjection(projected, signal);
+      if (!content) { releaseAccess(); return null; }
+      return { authorization: projected, dispose: async () => { content.dispose(); releaseAccess(); } };
     }
     // Match first admission's custody classification. Session/Workflow
     // carriers retain their existing owners rather than borrowing this
     // installation's ordinary Account credentials.
-    if (!authorization.requesterAccountContext && !isOriginalOwnAccountActionCustody(authorization.binding)) {
+    if (!authorization.requesterAccountContext && !isOriginalOwnAccountActionCustody(authorization.binding)
+      && readOriginalRequesterSessionCustodyId(authorization.binding) === null) {
       const binding = authorization.binding;
       const requester = input.requesterAccountContext;
       if (!requester || !('authentication' in binding)
@@ -64,7 +91,9 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
     const prepared = await input.prepareRequesterAccountContext?.({ authorization,
       ...(signal ? { signal } : {}) });
     if (!prepared) return null;
-    return prepared;
+    const { actionsSettings, ...preparedContext } = prepared;
+    // Replay already treats null as absent; do not substitute host policy.
+    return { ...preparedContext, ...(actionsSettings == null ? {} : { actionsSettings }) };
   };
   return async request => {
     const prepared = await prepareRequesterContext(request);
@@ -101,7 +130,9 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
         authorization = projected;
       }
       const actionsSettings = readRequesterAccountActionContext(authorization)
-        ?.savedSecretOperationContext.readSnapshot()?.settings.actionsSettingsV1;
+        ?.savedSecretOperationContext.readSnapshot()?.settings.actionsSettingsV1
+        ?? prepared.actionsSettings
+        ?? await input.readAdmittedRequesterActionsSettings?.({ ...request, authorization });
       return { ...prepared, ...(actionsSettings ? { actionsSettings } : {}),
         signExternalActionApprovalInput: ({ actionId, input: approvedInput, target, requesterConfirmation, sessionTargetsV1 }) =>
           signExternalActionApprovalInputV1({ authorizationToken: authorization.token,

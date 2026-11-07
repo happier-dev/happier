@@ -1,7 +1,7 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import type { AgentCompositionToolSelection } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import type {
-  BackendTargetRefV2,
+  PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol';
 import type { RuntimeActiveTurnPermissionWitness } from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { ResolvedRolesSnapshotV1 } from '@happier-dev/protocol';
@@ -23,7 +23,7 @@ export type RunnerMcpSessionContextAccessors = Readonly<{
   getActiveTurnAdmissionWitness?: (() => import('@/plugins/runtime/invocation/services/types').AgentInvocationTurnAdmissionWitness | null) | null;
   getRuntimeLifetimeSignal?: (() => AbortSignal | null | undefined) | null;
   getHostTurnAbortSignal?: (() => AbortSignal | null | undefined) | null;
-  getBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
+  getBackendTarget?: (() => PersistedBackendTargetRefV2 | null | undefined) | null;
   getCurrentSessionLocation?: (() => Readonly<{
     path?: string | null;
     host?: string | null;
@@ -47,7 +47,7 @@ export type RunnerMcpSessionWithContext<TSession> = TSession & {
   getActiveTurnAdmissionWitness?: () => import('@/plugins/runtime/invocation/services/types').AgentInvocationTurnAdmissionWitness | null;
   getRuntimeLifetimeSignal?: () => AbortSignal | null | undefined;
   getHostTurnAbortSignal?: () => AbortSignal | null | undefined;
-  getBackendTarget?: () => BackendTargetRefV2 | null | undefined;
+  getBackendTarget?: () => PersistedBackendTargetRefV2 | null | undefined;
   getCurrentSessionLocation?: () => Readonly<{
     path?: string | null;
     host?: string | null;
