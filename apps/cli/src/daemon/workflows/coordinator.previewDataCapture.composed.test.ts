@@ -35,6 +35,12 @@ import { DurableWorkflowCoordinatorStore } from './production';
 import { createWorkflowCoordinator } from './coordinator';
 import { buildWorkflowActionContext } from './workflowActionContext';
 
+// Node's provider HTTP uses Undici; share the fixture boundary with portable fetch.
+vi.mock('undici', async importOriginal => ({
+    ...await importOriginal<typeof import('undici')>(),
+    fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
+}));
+
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 /** Only Home persistence and vendor HTTP are replaced. The public Account
@@ -194,7 +200,7 @@ describe('Workflow preview data creation capture composition', () => {
         await app.ready();
         const restoreHttp = installAxiosFastifyAdapter({ app, origin });
         const mounted = await createWorkflowDataPluginRuntimeFixture({ connectedAccounts: purposeOwner,
-            actionFormConnectedAccounts: purposeOwner, accountExecution: { credentials, serverUrl: origin, serverId: 'home', machineId,
+            actionFormConnectedAccounts: purposeOwner, accountExecution: { credentials, serverUrl: origin, serverId: 'home', serverIdentityId: 'home', machineId,
                 isCurrent: async () => true }, resolveCurrentMachineId: () => machineId });
         try {
             const list: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['listContributedActionDefinitions']> =
