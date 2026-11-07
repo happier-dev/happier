@@ -2,6 +2,7 @@ import { Writable } from 'node:stream';
 import { readCredentialRedactionValues } from '@happier-dev/cli-common/plugins/http';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { isBaseCredentialDiagnosticKey } from '@happier-dev/protocol/diagnostics/sensitive-keys';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { AgentLaunchPayload } from './agentLaunchFrame';
 import type { SpawnFailure } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -47,7 +48,9 @@ export function createAgentLaunchStderr(payload: AgentLaunchPayload) {
   // (which can contain argv) in a diagnostic. Protect exact values even when
   // the child splits a Provider key across writes or emits it without a label.
   const lease = createProviderRedactionLease({ values: [
-    ...Object.values(payload.environment),
+    ...Object.entries(payload.environment)
+      .filter(([key]) => isBaseCredentialDiagnosticKey(key))
+      .map(([, value]) => value),
     ...payload.selectedMaterials.flatMap(file => {
       const text = Buffer.from(file.contentBase64, 'base64').toString('utf8');
       const values = [text];
@@ -63,7 +66,12 @@ export function createAgentLaunchStderr(payload: AgentLaunchPayload) {
   const sanitizer = lease.createStreamingSanitizer();
   let tail = '';
   const retain = (value: string) => {
-    tail = trimBugReportTextToMaxBytes(tail + value, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
+    const combined = tail + value;
+    // Keep labels across writes while they fit. Before truncation can remove
+    // a label, redact its value as well as the already-sanitized frame secrets.
+    tail = Buffer.byteLength(combined) <= SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH
+      ? combined
+      : trimBugReportTextToMaxBytes(redactBugReportSensitiveText(combined), SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
   };
   const stream = new Writable({
     write(chunk: Buffer, _encoding, callback) {

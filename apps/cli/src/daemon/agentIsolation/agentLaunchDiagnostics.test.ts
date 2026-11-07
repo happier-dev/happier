@@ -103,14 +103,14 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
     const secret = 'synthetic-private\nprovider-"key"\\雪🔐';
     const payload = await launch(['-e', `
       const fs = require('node:fs');
-      const echo = ${representation === 'plain' ? 'process.env.PROVIDER_KEY' : 'JSON.stringify(process.env.PROVIDER_KEY).slice(1, -1)'};
+      const echo = ${representation === 'plain' ? 'process.env.PROVIDER_API_KEY' : 'JSON.stringify(process.env.PROVIDER_API_KEY).slice(1, -1)'};
       fs.writeSync(2, 'old diagnostic '.repeat(2000));
-      fs.writeSync(2, 'native-startup-refused ' + echo.slice(0, 12));
+      fs.writeSync(2, 'EACCES ' + process.env.CODEX_HOME + '; missing ' + process.env.CODEX_SQLITE_HOME + '; native-startup-refused ' + echo.slice(0, 12));
       setImmediate(() => {
         fs.writeSync(2, echo.slice(12) + '; Bearer private-native-token\\n');
         process.exit(23);
       });
-    `], { PROVIDER_KEY: secret });
+    `], { PROVIDER_API_KEY: secret, CODEX_HOME: '/native/codex-home', CODEX_SQLITE_HOME: '/native/codex-sqlite-home' });
     const stderr = new PassThrough();
     const chunks: Buffer[] = [];
     stderr.on('data', chunk => chunks.push(Buffer.from(chunk)));
@@ -126,6 +126,8 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
     const message = issue?.failureCause?.providerErrorMessage;
     const classified = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', error: failure });
     for (const preview of [diagnostic, message, classified.sanitizedPreview, classified.failureCause?.providerErrorMessage]) {
+      expect(preview).toContain(`EACCES ${payload.environment.CODEX_HOME}`);
+      expect(preview).toContain(`missing ${payload.environment.CODEX_SQLITE_HOME}`);
       expect(preview).toContain('native-startup-refused [REDACTED]');
       expect(preview).not.toContain(secret);
       expect(preview).not.toContain(JSON.stringify(secret).slice(1, -1));
@@ -141,7 +143,7 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
 
   it('redacts an escaped credential spanning two stderr chunks before retaining the tail', async () => {
     const secret = 'synthetic-private\nprovider-"key"\\雪🔐';
-    const payload = await launch([], { PROVIDER_KEY: secret });
+    const payload = await launch([], { PROVIDER_API_KEY: secret });
     const capture = createAgentLaunchStderr(payload);
     const echo = Buffer.from(JSON.stringify(secret).slice(1, -1));
     // Split inside the JSON escape for the newline, with no OS coalescing.
@@ -155,14 +157,35 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
     } finally { capture.close(); }
   });
 
+  it('redacts an unregistered labelled credential before the stderr tail boundary cuts its label', async () => {
+    const payload = await launch([]);
+    const capture = createAgentLaunchStderr(payload);
+    const secret = 'private-boundary-credential'.repeat(SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
+    try {
+      await new Promise<void>(resolve => capture.stream.end(`Bearer ${secret} safe-tail`, resolve));
+      expect(capture.readTail()).toBe('Bearer [REDACTED] safe-tail');
+      expect(capture.readTail()).not.toContain('credential');
+      expect(Buffer.byteLength(capture.readTail())).toBeLessThanOrEqual(SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
+    } finally { capture.close(); }
+  });
+
+  it('keeps a labelled credential spanning writes intact until it can be redacted', async () => {
+    const capture = createAgentLaunchStderr(await launch([]));
+    try {
+      capture.stream.write('native-startup-refused Bearer private-');
+      await new Promise<void>(resolve => capture.stream.end('native-token safe-tail', resolve));
+      expect(capture.readTail()).toBe('native-startup-refused Bearer [REDACTED] safe-tail');
+    } finally { capture.close(); }
+  });
+
   for (const runtime of ['node', 'bun'] as const) {
   it.skipIf(process.getuid?.() === 0 || runtime === 'bun' && !hasBun).each(['child_exit', 'inaccessible cwd'] as const)(
     `retains the final %s through the real ${runtime} shim without forced process exit`, async kind => {
     const payload = await launch(['-e', `
       require('node:fs').writeSync(2, 'old diagnostic '.repeat(2000));
-      require('node:fs').writeSync(2, 'native-startup-refused ' + process.env.PROVIDER_KEY + '\\n');
+      require('node:fs').writeSync(2, 'native-startup-refused ' + process.env.PROVIDER_API_KEY + '\\n');
       process.exit(23);
-    `], { PROVIDER_KEY: 'synthetic-private-provider-key' });
+    `], { PROVIDER_API_KEY: 'synthetic-private-provider-key' });
     const privateDirectory = join(payload.cwd, 'private-cwd');
     if (kind === 'inaccessible cwd') { await mkdir(privateDirectory); await chmod(privateDirectory, 0); }
     const entry = join(payload.cwd, 'shim.cjs');
@@ -193,7 +216,7 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
       const cause = readCodexAppServerFailureCause(failure);
       expect(cause.providerErrorMessage).toContain(kind === 'inaccessible cwd' ? 'stage=exec errno=EACCES' : 'stage=child_exit');
       if (kind === 'child_exit') expect(cause.providerErrorMessage).toContain('native-startup-refused [REDACTED]');
-      expect(cause.providerErrorMessage).not.toContain(payload.environment.PROVIDER_KEY);
+      expect(cause.providerErrorMessage).not.toContain(payload.environment.PROVIDER_API_KEY);
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex', error: failure });
       expect(issue.sanitizedPreview).toContain(kind === 'inaccessible cwd' ? 'stage=exec errno=EACCES' : 'native-startup-refused [REDACTED]');
     } finally {
