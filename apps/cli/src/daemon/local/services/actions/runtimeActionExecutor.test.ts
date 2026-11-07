@@ -1,9 +1,9 @@
-import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { describe, expect, it, vi } from 'vitest';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { assertActionOutputContract, withActionOutputContract } from '@/testkit/actionOutputContract';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import type { RpcHandler } from '@/api/rpc/types';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -13,7 +13,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
-import { FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1, FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
 import type {
     DaemonLocalServiceLauncherStartResponseV1,
     LocalServiceActionResultV1,
@@ -28,6 +28,10 @@ import { createLocalServiceActionRoutes } from './routes';
 import { createLocalServicesDaemonFeatureGate, type LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
+import { createLocalServiceInventoryRoutes } from '../inventory/routes';
+import { createLocalServiceLauncherFeed } from '../launch/feed';
+import { createLocalServiceLauncherHistoryStore, createLocalServiceLauncherLeafRoutes } from '../launch/leaves';
+import { createLocalServiceLauncherRoutes } from '../launch/routes';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServicePreviewRoutes } from '../preview/routes';
 import { createLocalServicePublicPreviewServerRoutes } from '../public/routes';
@@ -100,7 +104,7 @@ it('does not report creation refusal when creation succeeded and its status read
     await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.create', input: {
         machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', mode: 'secret_link', ttlMs: 600_000,
         confirmation: { acknowledged: true },
-    } }))).rejects.toBe(statusError);
+    } }))).rejects.toMatchObject({ rpcErrorCode: 'session_not_authorized' });
 });
 
 const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
@@ -189,6 +193,95 @@ const publicPreviewSnapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('daemon local-services runtime action executor', () => {
+    // Relocation's cross-machine producer is exercised by projectDeclarations.composed.test.ts.
+    // These cases install the real local owners; only Home HTTP is substituted.
+    const localProducerIds = [
+        ...ACTION_ID_FAMILIES_V1.local_services_inventory,
+        ...ACTION_ID_FAMILIES_V1.local_services_launcher,
+        ...ACTION_ID_FAMILIES_V1.local_services_preview,
+        ...ACTION_ID_FAMILIES_V1.local_services_public_preview,
+        ...ACTION_ID_FAMILIES_V1.local_services_actions.filter(id => id !== 'projects.service.relocate'),
+    ];
+    it.each(localProducerIds)('validates the real %s producer output against its Action spec', async actionId => {
+        const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+        const { registry: inventoryRegistry, routes: actionRoutes } = createObservedActionRoutes();
+        inventoryRegistry.replaceSnapshot({ ...inventoryRegistry.getSnapshot(), entries: inventoryRegistry.getSnapshot().entries.map(entry => ({
+            ...entry, classification: { kind: 'vite' },
+            endpoint: { scheme: 'http' as const, host: '127.0.0.1', port: 5173, probeState: 'ready' as const, probedAt: 2_000 },
+        })) });
+        const previewRegistry = createLocalServicePreviewRegistry();
+        const previewRoutes = createLocalServicePreviewRoutes({ machineId: 'machine_1', accountId: 'account_1',
+            inventoryRegistry, registry: previewRegistry, server: { token: 'fixture-token', serverBaseUrl: 'https://home.example.test',
+                http: { async post(_url, body) {
+                    const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                    return { data: { resource, accessUrl: 'https://private.example.test/?previewToken=admission', expiresAt: 61_000 } };
+                }, async delete() { return { data: { ok: true } }; } },
+            } });
+        const opened = await previewRoutes.openOrCreate({ machineId: 'machine_1', sessionId: 'session_1', inventoryEntryId: 'entry_1' });
+        if (!opened.ok) throw new Error(opened.reasonCode);
+        const feed = createLocalServiceLauncherFeed({ machineId: 'machine_1', accountId: 'account_1', inventoryRegistry, previewRegistry });
+        const target = (await feed.getSnapshot()).targets.find(candidate => candidate.sourceClass?.kind === 'inventory_entry');
+        if (!target) throw new Error('Expected the actual classified inventory launcher target');
+        const history = createLocalServiceLauncherHistoryStore();
+        history.record(target.id);
+        const launcherRoutes = createLocalServiceLauncherRoutes({ feed, history,
+            leaves: createLocalServiceLauncherLeafRoutes({ machineId: 'machine_1', feed, previewRoutes, history }) });
+        let currentExposure = publicExposure;
+        const publicPreviewRoutes = createLocalServicePublicPreviewServerRoutes({ token: 'fixture-token', serverBaseUrl: 'https://home.example.test', http: {
+            async post(url) { return { data: url.endsWith('/status')
+                ? { protocolVersion: 1, snapshot: { ...publicPreviewSnapshot, exposures: [currentExposure] } } : { exposure: currentExposure } }; },
+            async delete() { currentExposure = { ...currentExposure, state: 'revoked', revokedAt: 3_100 }; return { data: { ok: true } }; },
+        } });
+        const execute = withActionOutputContract(createLocalServicesDaemonRuntimeActionExecutor({ featureGate: enabledFeatureGate,
+            routes: { inventoryRoutes: createLocalServiceInventoryRoutes({ registry: inventoryRegistry }), launcherRoutes, previewRoutes, publicPreviewRoutes, actionRoutes } }));
+        const machine = { machineId: 'machine_1', sessionId: 'session_1' };
+        const inventoryTarget = { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId: 'machine_1', sessionId: 'session_1' };
+        const managedTarget = { kind: 'managed_service', managedServiceId: 'missing_service', machineId: 'machine_1' };
+        const action = (kind: string, target: unknown = inventoryTarget) => ({ requestId: `contract_${kind}`, action: kind, target, force: false, confirmationNonce: 'fixture-confirmation' });
+        const inputs: Record<typeof localProducerIds[number], unknown> = {
+            'localServices.inventory.list': { machineId: 'machine_1' },
+            'localServices.inventory.refresh': { machineId: 'machine_1' },
+            'localServices.launcher.snapshot': machine,
+            'localServices.launcher.start': { ...machine, targetId: target.id },
+            'localServices.launcher.openPreview': { ...machine, targetId: target.id },
+            'localServices.launcher.registerPreview': { ...machine, targetId: target.id },
+            'localServices.launcher.history.clear': { ...machine, scope: 'machine' },
+            'localServices.preview.openOrCreate': { ...machine, inventoryEntryId: 'entry_1' },
+            'localServices.preview.status': machine,
+            'localServices.preview.revoke': { machineId: 'machine_1', previewId: opened.response.preview.previewId,
+                serviceTarget: opened.response.preview.resource.serviceTarget },
+            'localServices.publicPreview.create': { ...machine, previewId: 'preview_1', mode: 'secret_link', ttlMs: 600_000, confirmation: { acknowledged: true } },
+            'localServices.publicPreview.status': { ...machine, previewId: 'preview_1' },
+            'localServices.publicPreview.revoke': { ...machine, previewId: 'preview_1', exposureId: publicExposure.exposureId },
+            'localServices.publicPreview.copyUrl': { ...machine, previewId: 'preview_1', exposureId: publicExposure.exposureId },
+            'localServices.actions.copyUrl': action('copy_url'),
+            'localServices.actions.openPreview': action('open_preview'),
+            'localServices.actions.forget': action('forget'),
+            'localServices.actions.stopManaged': action('stop_managed', managedTarget),
+            'localServices.actions.restartManaged': action('restart_managed', managedTarget),
+            'localServices.actions.terminateDetected': action('terminate_detected'),
+        };
+        const output = await execute(runtimeArgs({ actionId, input: getActionSpec(actionId).inputSchema.parse(inputs[actionId]), context: { surface: 'ui' } }));
+        expect(output).not.toMatchObject({ ok: false });
+        if (actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.stopManaged'
+            || actionId === 'localServices.actions.restartManaged' || actionId === 'localServices.actions.terminateDetected') {
+            expect(output).toMatchObject({ status: 'denied' });
+        } else if (actionId === 'localServices.inventory.list' || actionId === 'localServices.inventory.refresh') {
+            expect(output).toMatchObject({ entries: [expect.objectContaining({ id: 'entry_1' })] });
+        } else if (actionId === 'localServices.launcher.history.clear') {
+            expect(output).toMatchObject({ cleared: 1 });
+        } else if (actionId === 'localServices.launcher.openPreview') {
+            expect(output).toMatchObject({ status: 'opened' });
+        } else if (actionId === 'localServices.launcher.registerPreview' || actionId === 'localServices.preview.openOrCreate'
+            || actionId === 'localServices.actions.openPreview') {
+            expect(output).toMatchObject({ status: 'existing' });
+        } else if (actionId === 'localServices.actions.copyUrl' || actionId === 'localServices.actions.forget') {
+            expect(output).toMatchObject({ status: 'succeeded' });
+        } else if (actionId === 'localServices.preview.revoke') {
+            expect(output).toMatchObject({ revoked: true });
+        }
+    });
+
     it('opens and revokes the actual source-qualified preview through Actions without retargeting an inventory entry', async () => {
         const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const owner = createManagedServicesOwner({
@@ -298,7 +391,7 @@ describe('daemon local-services runtime action executor', () => {
             routes: { previewRoutes, actionRoutes: createLocalServiceActionRoutes({ machineId: 'machine_1', inventoryRegistry }) },
         });
         const settings = normalizeActionsSettingsV1({ v: 1,
-            approvalWaivedSurfaces: { 'localServices.actions.openPreview': ['rpc'] } });
+            approvalWaivedSurfaces: { 'localServices.actions.openPreview': ['rpc'], 'localServices.preview.openOrCreate': ['agent'] } });
         const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runtimeActionExecute: execute,
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context) });
         // Registration is the RPC boundary; each registered handler validates its own request schema.
@@ -331,6 +424,17 @@ describe('daemon local-services runtime action executor', () => {
         expect(parsedReuse.status).toBe('existing');
         expect(parsedReuse.preview.previewId).toBe(snapshot.resources[0]?.previewId);
         expect(parsedReuse.snapshot.resources).toHaveLength(1);
+        // Inventory registration still inherits the invoking Session, while its
+        // output traverses the public Action's strict terminal parser.
+        const bridge = createActionToolExecutorBridge({ executor, surface: 'agent', actionsSettings: settings,
+            defaultSessionMachineId: 'machine_1' });
+        const reopened = await bridge.executeActionByToolName('action_execute', {
+            actionId: 'localServices.preview.openOrCreate', input: { machineId: 'machine_1', inventoryEntryId: 'entry_1' },
+        }, 'session_1');
+        if (!reopened.ok) throw new Error(`Agent preview reopen failed: ${reopened.errorCode}`);
+        expect(reopened).toMatchObject({ ok: true, result: { status: 'existing',
+            preview: { previewId: parsedReuse.preview.previewId, resource: { sessionId: 'session_1', owner: { kind: 'session', id: 'session_1' } } },
+            snapshot: { resources: snapshot.resources } } });
         const aggregate = handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE);
         await expect(aggregate!({ requestId: 'aggregate-open', action: 'open_preview',
             target: { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId: 'machine_1', sessionId: 'session_1' } })).rejects.toThrow();
