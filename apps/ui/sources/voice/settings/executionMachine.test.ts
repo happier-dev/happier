@@ -248,13 +248,63 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe(null);
   });
 
-  it('uses the canonical preferred-machine ordering only before a sticky auto target exists', () => {
+  it('chooses the same automatic target across inventory order and presence changes', () => {
+    const original = getAppliedActiveServerSnapshot();
+    const originalAvailable = isAppliedActiveServerRuntimeAvailable();
+    const serverId = 'voice-auto-stability';
+    const older = machine('older', true, { createdAt: 1, availability: { kind: 'available' }, metadata: { displayName: 'Voice host' } });
+    const newer = machine('newer', true, { createdAt: 2, availability: { kind: 'available' }, metadata: { displayName: 'Voice host' } });
+    const stateFor = (machines: Record<string, ReturnType<typeof machine>>) => ({
+      profileScope: { serverId, accountId: settingsScope.accountId },
+      machines,
+      machineListByServerId: { [serverId]: Object.values(machines) },
+      settings: { voice: { executionMachine: { mode: 'auto', machineId: null } } },
+    });
+    let settingsWrites = 0;
+    let previousSettings = storage.getState().settings;
+    const unsubscribe = storage.subscribe(state => {
+      if (state.settings !== previousSettings) settingsWrites += 1;
+      previousSettings = state.settings;
+    });
+    try {
+      publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://voice-auto-stability.test', generation: 1 });
+      const state = stateFor({ older, newer });
+      expect(resolveVoiceExecutionMachineSelectionFromState(state)).toEqual({ kind: 'resolved', machineId: 'newer' });
+      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer, older })))
+        .toEqual({ kind: 'resolved', machineId: 'newer' });
+      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, createdAt: older.createdAt }, older })))
+        .toEqual({ kind: 'resolved', machineId: 'newer' });
+      // Both Machines remain reachable under the canonical presence grace rule.
+      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, active: false, activeAt: Date.now() - 1_000 }, older })))
+        .toEqual({ kind: 'resolved', machineId: 'newer' });
+      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, replacedByMachineId: 'older' }, older })))
+        .toEqual({ kind: 'resolved', machineId: 'older' });
+      expect(resolveVoiceExecutionMachineSelectionFromState(state, { machineId: 'older' }))
+        .toEqual({ kind: 'resolved', machineId: 'older' });
+      const scope = { serverId, accountId: settingsScope.accountId };
+      useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'newer');
+      expect(resolveVoiceExecutionMachineSelectionFromState({ ...stateFor({ newer: { ...newer, active: false }, older }),
+        settingsScope: scope,
+      })).toEqual({ kind: 'selected_unreachable', machineId: 'newer' });
+      expect(settingsWrites).toBe(0);
+    } finally {
+      unsubscribe();
+      publishAppliedActiveServerSnapshot(original, originalAvailable);
+    }
+  });
+
+  it('uses stable Machine facts only before a sticky auto target exists', () => {
+    const original = getAppliedActiveServerSnapshot();
+    const originalAvailable = isAppliedActiveServerRuntimeAvailable();
+    const serverId = 'voice-auto-recency';
+    const machines = {
+      older: machine('older', true, { createdAt: 1, availability: { kind: 'available' } }),
+      newer: machine('newer', true, { createdAt: 2, availability: { kind: 'available' } }),
+    };
     const state = {
-      profileScope: fixtureScope,
-      machines: {
-        older: machine('older', true, { createdAt: 1 }),
-        newer: machine('newer', true, { createdAt: 2 }),
-      },
+      profileScope: { serverId, accountId: settingsScope.accountId },
+      machines,
+      machineListByServerId: { [serverId]: Object.values(machines) },
       authoringMemory: {
         recentMachinePaths: [{ machineId: 'older', path: '/repo' }],
       },
@@ -265,7 +315,13 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       },
     };
 
-    expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('older');
+    try {
+      publishAppliedActiveServerSnapshot({ serverId, serverUrl: 'https://voice-auto-recency.test', generation: 1 });
+      // VOICE-LOGIC-1106: recent authoring activity must not move Automatic Voice.
+      expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('newer');
+    } finally {
+      publishAppliedActiveServerSnapshot(original, originalAvailable);
+    }
   });
 
   it('honors a scoped override without rewriting the persisted default', () => {

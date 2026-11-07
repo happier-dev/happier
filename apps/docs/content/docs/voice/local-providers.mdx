@@ -127,7 +127,11 @@ For machine-backed speech and Voice agent work, you can choose where it runs:
 
 Auto does **not** mean “follow whichever machine became active most recently.”
 
-The selection is stored with your account and reused by your signed-in clients.
+In 0.3 development, the initial choice uses the newest registration among reachable
+Machines, with the Machine ID breaking ties. Recent session activity and inventory order do
+not change that choice. Once Voice selects a Machine for use, this client remembers
+it for the current Account; this remembered choice is not an Account preference
+shared across clients.
 An offline selected machine is reported as unavailable; Happier does not silently
 substitute another machine. Selecting Automatic again clears the sticky selection;
 selecting a particular machine makes it fixed.

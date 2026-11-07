@@ -1,4 +1,4 @@
-import { listPreferredMachineIds } from '@/components/settings/pickers/resolvePreferredMachineId';
+import { isMachineReplaced } from '@/sync/domains/machines/identity/machineIdentityTypes';
 import { resolveReplacementAwareMachineRpcTarget } from '@/sync/domains/machines/identity/resolveReplacementAwareMachineRpcTarget';
 import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -70,18 +70,14 @@ export function resolveVoiceExecutionMachineSelectionFromState(
   if (mode === 'fixed') return { kind: 'none' };
 
   const visibleMachines = resolveVisibleMachinesForActiveServerFromState(state, { serverId });
-  const preferredMachineIds = listPreferredMachineIds({
-    scope: selectActiveServerAccountScopeForServer(state.profileScope, serverId),
-    machines: visibleMachines.filter(machine => isMachineReachable(selectActiveServerAccountScopeForServer(state.profileScope, serverId), machine)),
-    recentMachinePaths: Array.isArray(state?.authoringMemory?.recentMachinePaths)
-      ? state.authoringMemory.recentMachinePaths
-      : [],
-    onlineOnly: true,
-  });
+  const scope = selectActiveServerAccountScopeForServer(state.profileScope, serverId);
+  // Presence and authoring recency may change across surfaces without changing the
+  // initial Voice target. Fixed and remembered targets were resolved above.
+  const candidates = visibleMachines.filter(machine => !isMachineReplaced(machine))
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
 
-  for (const candidateMachineId of preferredMachineIds) {
-    const resolved = resolveReplacementAwareSelection(state, candidateMachineId, serverId);
-    if (resolved.kind === 'resolved') return resolved;
+  for (const machine of candidates) {
+    if (isMachineReachable(scope, machine)) return { kind: 'resolved', machineId: machine.id };
   }
   return { kind: 'none' };
 }
