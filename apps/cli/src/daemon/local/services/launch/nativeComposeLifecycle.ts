@@ -1,87 +1,85 @@
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
+import { tmpdir } from 'node:os';
+import type { NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
 import { createHash } from 'node:crypto';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import type { HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
-import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
+import { authorizePluginExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import { createProviderRedactionLease, type ProviderRedactionLease } from '@/providers/spawn/redaction';
 import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import type { ManagedServiceNativeLogReadForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import type { ProjectBuiltinNativeLifecycle, ProjectNativeContainerObservation, ProjectNativeAccountingResult, ProjectNativeRuntimeFacts, ProjectNativeStageOutput } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
-import type { NativeComposeConfigurationMatcher } from './nativeComposeConfiguration';
-import type { NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
-import { readNativeComposeEngine, assertNativeComposeAvailable } from './nativeComposeEngine';
+import type { DeploymentImageV1, OwnServerDeploymentInputBasisV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
+import type { MachineNativeEffectContext, MachineNativeEffectKey } from './machineNativeEffectAdmission';
+import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
+import { resolveEnvironmentComposeProjectName } from '@/workspaces/projectSetup/projectNativeResolution';
+import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
+import { assertStoredComposeToolSupport } from '@/workspaces/projectSetup/nativeComposeSource';
+import { projectNativeComposeReview, type NativeComposeRuntimeReview } from '@/workspaces/projectSetup/nativeComposeReview';
+import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentImageReferences, normalizeNativeComposePlatform,
+    type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition, type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
+import { inspectNativeComposeStorage, type NativeComposeStorageReview } from './nativeComposeStorage';
+import { assertNativeComposeSharedDataPaths, createNativeComposeIncumbentBindReader, projectNativeComposeSharedData, seedNativeComposeSharedData,
+    type NativeComposeSharedDataInput, type NativeComposeSharedDataPlan } from './nativeComposeSharedData';
+import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
+import { readNativeComposeEngine, assertNativeComposeAvailable, type NativeComposeEngineFacts } from './nativeComposeEngine';
+import { createNativeComposeGenerationProof, nativeComposeCompletedServices } from './nativeComposeGeneration';
 import { observeDockerEngine, openDockerEngineEvents, type DockerEngineEventSource } from './dockerEngineObservation';
 import { createManagedServiceAccountingRead } from '@/plugins/runtime/invocation/services/managedServiceAccountingRead';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
-import { readDeploymentSourceIdentityForHost } from '@/deployments/targets/ownServer/paths';
-import { readNativeComposePublishedPorts } from './nativeComposePorts';
-import { resolveEnvironmentComposeProjectName } from '@/workspaces/projectSetup/projectNativeResolution';
-import { createNativeComposeImageIdentity } from './nativeComposeImageIdentity';
-import { mkdtemp } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { rm } from 'node:fs/promises';
-import { type NativeComposeRegistryAcquisition } from './nativeComposeImageIdentity';
-import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
-import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
-import { createProviderRedactionLease } from '@/providers/spawn/redaction';
-import { type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
-import { normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
-import { resolveNativeComposeDeploymentImageReferences } from './nativeComposeImageIdentity';
-import { inspectNativeComposeStorage } from './nativeComposeStorage';
-import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
-import { createNativeComposeGenerationProof } from './nativeComposeGeneration';
-import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
-import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
-import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
-import { assertStoredComposeToolSupport } from '@/workspaces/projectSetup/nativeComposeSource';
-import { resolve } from 'node:path';
-import { createNativeRuntimeProjectionForHost } from './candidateRuntimeProjection';
-import { createNativeComposeImagePreparation } from './nativeComposeImagePreparation';
-import { MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
-import { writeFile } from 'node:fs/promises';
-import { createNativeComposeIncumbentBindReader } from './nativeComposeSharedData';
-import { projectNativeComposeSharedData } from './nativeComposeSharedData';
-import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
-import { realpath } from 'node:fs/promises';
-import { relative } from 'node:path';
-import { isAbsolute } from 'node:path';
-import { assertNativeComposeSharedDataPaths } from './nativeComposeSharedData';
-import { assertNativeComposeStartFirstConfiguration } from './nativeComposeStartFirst';
-import { admitNativeResticCommand } from './nativeResticCommand';
-import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
-import { activateNativeComposeStartFirst } from './nativeComposeStartFirst';
-import { nativeServiceCommandArgs } from './serviceCommand';
-import { admitNativeServiceCommandForHost } from './serviceCommand';
-import { seedNativeComposeSharedData } from './nativeComposeSharedData';
-import { nativeComposeCompletedServices } from './nativeComposeGeneration';
-import { type NativeComposeRoutingGeneration } from './nativeComposeStartFirst';
-import type { MachineNativeEffectContext } from './machineNativeEffectAdmission';
-import { type NativeComposeEngineFacts } from './nativeComposeEngine';
-import type { OwnServerDeploymentInputBasisV1 } from '@happier-dev/deployment-protocol';
-import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
-import { type NativeComposeStorageReview } from './nativeComposeStorage';
-import { type NativeComposeSharedDataPlan } from './nativeComposeSharedData';
-import { type NativeResticCommandInput } from './nativeResticCommand';
-import type { AdmittedServiceExecContextV1 } from './serviceCommand';
-import type { DeploymentImageV1 } from '@happier-dev/deployment-protocol';
-import { type NativeComposeStartFirstInput } from './nativeComposeStartFirst';
-import { type NativeComposeStartFirstResult } from './nativeComposeStartFirst';
-import { type NativeComposeBuildSelection } from './nativeComposeImagePreparation';
-import { type NativeComposeBuildDescription } from './nativeComposeImagePreparation';
-import { type NativeComposePrepareImagesOptions } from './nativeComposeImagePreparation';
+import { createNativeComposeImagePreparation, type NativeComposePrepareImagesOptions, type NativeComposeBuildDescription,
+    type NativeComposeBuildSelection } from './nativeComposeImagePreparation';
 import type { NativeComposeImageArchive } from './nativeComposeImageIdentity';
-import type { ServiceCommandV1 } from './serviceCommand';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
-import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
-import { type NativeComposeImageAcquisition } from './nativeComposeImageIdentity';
-import { type NativeComposeSharedDataInput } from './nativeComposeSharedData';
-import { hostname } from 'node:os';
-import type { LocalServiceNativePrerequisiteV1 } from '@happier-dev/protocol/local/services/launcher/v1';
-
+import { admitNativeServiceCommandForHost, nativeServiceCommandArgs } from './serviceCommand';
+import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
+import type { AdmittedServiceExecContextV1, ServiceCommandV1 } from './serviceCommand';
+import type { HostDeploymentRuntimeProjectionV1 } from '@/deployments/secrets/deploymentExecEnvPort';
+import { createNativeRuntimeProjectionForHost } from './candidateRuntimeProjection';
+import { readDeploymentSourceIdentityForHost } from '@/deployments/targets/ownServer/paths';
+import { admitNativeResticCommand, type NativeResticCommandInput } from './nativeResticCommand';
+import { RESTIC_RUNTIME_V1 } from '@happier-dev/deployments';
+import { createNativeComposeActivatedProject } from './nativeComposeActivatedProject';
+import { readNativeComposePublishedPorts } from './nativeComposePorts';
+export type { NativeResticCommandInput } from './nativeResticCommand';
+import { activateNativeComposeStartFirst, assertNativeComposeStartFirstConfiguration, type NativeComposeRoutingGeneration, type NativeComposeStartFirstInput,
+    type NativeComposeStartFirstResult } from './nativeComposeStartFirst';
+export type { NativeComposeRoutingGeneration, NativeComposeStartFirstRoutes, NativeComposeStartFirstInput,
+    NativeComposeStartFirstResult, NativeComposeRouteSwitchResult } from './nativeComposeStartFirst';
+export { executeAdmittedServiceCommand, admitServiceCommandStreamForHost } from './serviceCommand';
+export type { AdmittedServiceExecContextV1, ServiceCommandV1, ServiceCommandResultV1, ServiceCommandRuntimeForHost } from './serviceCommand';
 export { assertNativeComposeAvailable, NativeComposePrerequisiteError } from './nativeComposeEngine';
+export type { NativeComposeImageArchive } from './nativeComposeImageIdentity';
 
+export type NativeComposeProjectRender = Readonly<{
+    environmentInstanceId: string;
+    admissionProjectName: string;
+    engineId: string;
+    engine: NativeComposeEngineFacts;
+    projectName: string;
+    platform: string;
+    services: readonly string[];
+    health?: OwnServerDeploymentInputBasisV1['health'];
+    healthServices: readonly string[];
+    servicePlatforms: readonly Readonly<{ service: string; platform: string }>[];
+    buildServices: readonly string[];
+    /** Host-only admission coordinates, never serialized as review/receipt content. */
+    keys: readonly MachineNativeEffectKey[];
+    review: NativeComposeRuntimeReview;
+    storage?: NativeComposeStorageReview;
+    /** Invocation-only source plan; never serialized as review/receipt content. */
+    sharedData?: NativeComposeSharedDataPlan;
+    basis: Readonly<{
+        manifestFingerprint: string;
+        configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
+        toolVersion: string;
+        physicalProjectName: string;
+        nativeGeneration?: OwnServerDeploymentInputBasisV1['nativeGeneration'];
+    }>;
+}>;
 export type NativeComposeActivatedServiceFacts = Readonly<{
     configuration: NativeComposeRuntimeReview['services'][number];
     containerImages: readonly Readonly<{ id: string; nativeImageId: string; imageConfigDigest: string;
@@ -99,6 +97,68 @@ export type NativeComposeActivatedProject = Readonly<{
     authorizeServiceObserver(): HostAuthorizedPluginExecLaunch;
     dispose(): Promise<void>;
 }>;
+export type NativeComposeObservedActivation = Readonly<{ kind: 'active'; activation: NativeComposeActivatedProject }>
+    | Readonly<{ kind: 'absent' }> | Readonly<{ kind: 'unknown'; reason: string }>;
+export type NativeComposeEnvironmentProjectInput = Readonly<{
+    kind: 'environmentProject';
+    phase?: 'build' | 'runtime';
+    /** Exact host-owned empty build cwd, admitted by the source phase facade. */
+    executionDirectory?: string;
+    exec: ExecService;
+    envPort: DeploymentExecEnvPortV1;
+    source: DeploymentSourceMaterializationV1;
+    files: readonly string[];
+    sourceKind?: 'repository' | 'stored';
+    profiles?: readonly string[];
+    services: readonly string[];
+    health?: OwnServerDeploymentInputBasisV1['health'];
+    physicalProjectName?: string;
+    /** Protected imported origin; native admission must address that same engine. */
+    expectedEngineId?: string;
+    images: readonly DeploymentImageV1[];
+    /** Current host-admitted binding, never caller-supplied Docker credentials. */
+    imageAcquisition?: NativeComposeImageAcquisition;
+    storage?: Readonly<{ runtimeMachineCount: number; sharedData?: NativeComposeSharedDataInput }>;
+    io: ProjectNativeToolchainIo;
+    /** Operation-owned sink receives only the supervisor's P42-sanitized bytes. */
+    stageOutput?: Readonly<{
+        appendRedacted(stream: 'stdout' | 'stderr', chunk: Uint8Array): void;
+        assertWritten(): void;
+    }>;
+    /** The invocation-scoped native process owner, not detached app lifetime. */
+    settleNative(): Promise<void>;
+}>;
+export type NativeComposeEnvironmentProject = Readonly<{
+    observeActivated(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal;
+        /** Exact losing-generation custody only; returned health is unverified. */
+        purpose?: 'retire' }>): Promise<NativeComposeObservedActivation>;
+    admitResticCommand(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>;
+    prepareResticRuntime(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext }>): Promise<DeploymentImageV1>;
+    createStartFirstCandidate(): NativeComposeEnvironmentProject;
+    activateStartFirst(input: NativeComposeStartFirstInput): Promise<NativeComposeStartFirstResult>;
+    describeBuild(options?: NativeComposeBuildSelection): Promise<NativeComposeBuildDescription & Readonly<{ keys: readonly MachineNativeEffectKey[] }>>;
+    prepareImages(options?: NativeComposePrepareImagesOptions & Readonly<{ context?: MachineNativeEffectContext }>): Promise<readonly DeploymentImageV1[]>;
+    exportImages(input: Readonly<{ images: readonly DeploymentImageV1[]; signal?: AbortSignal; context?: MachineNativeEffectContext }>): Promise<readonly NativeComposeImageArchive[]>;
+    render(options?: Readonly<{ signal?: AbortSignal }> & (Readonly<{ purpose?: undefined }>
+        | Readonly<{ purpose: 'serviceCommand'; service: string }>)): Promise<NativeComposeProjectRender>;
+    /** Compare an imported project's reviewed generation once under native admission. */
+    assertReviewedGeneration(render: NativeComposeProjectRender, signal?: AbortSignal): Promise<void>;
+    /** Explicit P41 image-acquisition stage under its existing complete admission.
+     * Candidate command admission itself never pulls/builds/tags/starts services. */
+    prepareRuntimeImages(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
+        signal?: AbortSignal }>): Promise<void>;
+    /** Actual admitted candidate render/pins, never incumbent selection or a caller launch DTO. */
+    admitServiceCommand(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
+        service: string; command: ServiceCommandV1; environmentOverrides?: Readonly<Record<string, string>>;
+        signal?: AbortSignal }>): Promise<AdmittedServiceExecContextV1>;
+    observe(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal }>): Promise<Readonly<{
+        status: 'matching' | 'different' | 'unknown'; health: 'healthy' | 'unhealthy' | 'unverified';
+    }>>;
+    activate(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext; signal?: AbortSignal;
+        cleanupOnFailure?: boolean }>): Promise<NativeComposeActivatedProject>;
+    settleNative(): Promise<void>;
+    dispose(): Promise<void>;
+}>;
 
 type Container = ProjectNativeContainerObservation & Readonly<{
     state: string; health: string; ports: Readonly<Record<string, unknown>>; workingDirectory?: string;
@@ -112,14 +172,15 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 /** Exact P30 generation witness only: labels validate custody, never discover deletion targets. */
-async function removeWitnessedContainers(input: Readonly<{ ids: readonly string[]; project: string; services: readonly string[];
+export async function removeWitnessedContainers(input: Readonly<{ ids: readonly string[]; project: string; services?: readonly string[];
     stopWithNativeGrace?: true;
     run(args: readonly string[]): Promise<Readonly<{ exitCode: number | null; stdout: string }>> }>): Promise<boolean> {
     if (!input.ids.length || new Set(input.ids).size !== input.ids.length || input.ids.some(id => !/^[a-f0-9]{64}$/u.test(id))) return false;
     const before = await input.run(['inspect', '--type', 'container', ...input.ids]);
     const witnessed = before.exitCode === 0 ? containers(before.stdout, input.project) : null;
     if (!witnessed || witnessed.length !== input.ids.length
-        || witnessed.some(row => !input.ids.includes(row.id) || !input.services.includes(row.service))) return false;
+        || witnessed.some(row => !input.ids.includes(row.id)
+            || input.services !== undefined && !input.services.includes(row.service))) return false;
     if (input.stopWithNativeGrace) {
         // Omit --timeout: Docker owns the configured per-container StopTimeout.
         const stopped = await input.run(['container', 'stop', ...input.ids]);
@@ -305,119 +366,6 @@ function endpoint(rows: readonly Container[]): string | null {
 /** Native process boundaries; tests replace events alongside their existing Docker run boundary. */
 export type NativeComposeObservationIo = Pick<ProjectNativeToolchainIo, 'run'> & Readonly<{ events?: DockerEngineEventSource }>;
 
-/** A codec/control capture, not another supervisor, registry, shell or placement owner. */
-export function createNativeComposeLifecycle(input: NativeComposeEnvironmentProjectInput): NativeComposeEnvironmentProject;
-export function createNativeComposeLifecycle(input: NativeComposeServiceInput): ReturnType<typeof createNativeComposeServiceCapture>;
-export function createNativeComposeLifecycle(input: NativeComposeServiceInput | NativeComposeEnvironmentProjectInput) {
-    return 'kind' in input ? createEnvironmentProject(input) : createNativeComposeServiceCapture(input);
-}
-
-
-
-
-
-export type NativeComposeEnvironmentProject = Readonly<{
-    observeActivated(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal;
-        /** Exact losing-generation custody only; returned health is unverified. */
-        purpose?: 'retire' }>): Promise<NativeComposeObservedActivation>;
-    admitResticCommand(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>;
-    prepareResticRuntime(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext }>): Promise<DeploymentImageV1>;
-    createStartFirstCandidate(): NativeComposeEnvironmentProject;
-    activateStartFirst(input: NativeComposeStartFirstInput): Promise<NativeComposeStartFirstResult>;
-    describeBuild(options?: NativeComposeBuildSelection): Promise<NativeComposeBuildDescription & Readonly<{ keys: readonly MachineNativeEffectKey[] }>>;
-    prepareImages(options?: NativeComposePrepareImagesOptions & Readonly<{ context?: MachineNativeEffectContext }>): Promise<readonly DeploymentImageV1[]>;
-    exportImages(input: Readonly<{ images: readonly DeploymentImageV1[]; signal?: AbortSignal; context?: MachineNativeEffectContext }>): Promise<readonly NativeComposeImageArchive[]>;
-    render(options?: Readonly<{ signal?: AbortSignal }> & (Readonly<{ purpose?: undefined }>
-        | Readonly<{ purpose: 'serviceCommand'; service: string }>)): Promise<NativeComposeProjectRender>;
-    /** Compare an imported project's reviewed generation once under native admission. */
-    assertReviewedGeneration(render: NativeComposeProjectRender, signal?: AbortSignal): Promise<void>;
-    /** Explicit P41 image-acquisition stage under its existing complete admission.
-     * Candidate command admission itself never pulls/builds/tags/starts services. */
-    prepareRuntimeImages(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
-        signal?: AbortSignal }>): Promise<void>;
-    /** Actual admitted candidate render/pins, never incumbent selection or a caller launch DTO. */
-    admitServiceCommand(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
-        service: string; command: ServiceCommandV1; environmentOverrides?: Readonly<Record<string, string>>;
-        signal?: AbortSignal }>): Promise<AdmittedServiceExecContextV1>;
-    observe(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal }>): Promise<Readonly<{
-        status: 'matching' | 'different' | 'unknown'; health: 'healthy' | 'unhealthy' | 'unverified';
-    }>>;
-    activate(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext; signal?: AbortSignal;
-        cleanupOnFailure?: boolean }>): Promise<NativeComposeActivatedProject>;
-    settleNative(): Promise<void>;
-    dispose(): Promise<void>;
-}>;
-
-export type NativeComposeProjectRender = Readonly<{
-    environmentInstanceId: string;
-    admissionProjectName: string;
-    engineId: string;
-    engine: NativeComposeEngineFacts;
-    projectName: string;
-    platform: string;
-    services: readonly string[];
-    health?: OwnServerDeploymentInputBasisV1['health'];
-    healthServices: readonly string[];
-    servicePlatforms: readonly Readonly<{ service: string; platform: string }>[];
-    buildServices: readonly string[];
-    /** Host-only admission coordinates, never serialized as review/receipt content. */
-    keys: readonly MachineNativeEffectKey[];
-    review: NativeComposeRuntimeReview;
-    storage?: NativeComposeStorageReview;
-    /** Invocation-only source plan; never serialized as review/receipt content. */
-    sharedData?: NativeComposeSharedDataPlan;
-    basis: Readonly<{
-        manifestFingerprint: string;
-        configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
-        toolVersion: string;
-        physicalProjectName: string;
-        nativeGeneration?: OwnServerDeploymentInputBasisV1['nativeGeneration'];
-    }>;
-}>;
-
-export type NativeComposeObservedActivation = Readonly<{ kind: 'active'; activation: NativeComposeActivatedProject }>
-    | Readonly<{ kind: 'absent' }> | Readonly<{ kind: 'unknown'; reason: string }>;
-
-
-
-export type NativeComposeEnvironmentProjectInput = Readonly<{
-    kind: 'environmentProject';
-    phase?: 'build' | 'runtime';
-    /** Exact host-owned empty build cwd, admitted by the source phase facade. */
-    executionDirectory?: string;
-    exec: ExecService;
-    envPort: DeploymentExecEnvPortV1;
-    source: DeploymentSourceMaterializationV1;
-    files: readonly string[];
-    sourceKind?: 'repository' | 'stored';
-    profiles?: readonly string[];
-    services: readonly string[];
-    health?: OwnServerDeploymentInputBasisV1['health'];
-    physicalProjectName?: string;
-    /** Protected imported origin; native admission must address that same engine. */
-    expectedEngineId?: string;
-    images: readonly DeploymentImageV1[];
-    /** Current host-admitted binding, never caller-supplied Docker credentials. */
-    imageAcquisition?: NativeComposeImageAcquisition;
-    storage?: Readonly<{ runtimeMachineCount: number; sharedData?: NativeComposeSharedDataInput }>;
-    io: ProjectNativeToolchainIo;
-    /** Operation-owned sink receives only the supervisor's P42-sanitized bytes. */
-    stageOutput?: Readonly<{
-        appendRedacted(stream: 'stdout' | 'stderr', chunk: Uint8Array): void;
-        assertWritten(): void;
-    }>;
-    /** The invocation-scoped native process owner, not detached app lifetime. */
-    settleNative(): Promise<void>;
-}>;
-
-
-
-export function resolveNativeComposeCandidateProjectName(admissionProjectName: string, deploymentId: string): string {
-    return `happier-g-${createHash('sha256').update(JSON.stringify([admissionProjectName, deploymentId])).digest('hex')}`;
-}
-
-export { executeAdmittedServiceCommand, admitServiceCommandStreamForHost } from './serviceCommand';
-
 type NativeComposeServiceInput = Readonly<{
     args: readonly string[];
     io: NativeComposeObservationIo;
@@ -428,6 +376,395 @@ type NativeComposeServiceInput = Readonly<{
     /** P41 already activated this project once; each capture observes one rendered service. */
     environment?: Readonly<{ composeService: string; containerIds: readonly string[]; facts?: NativeComposeActivatedServiceFacts }>;
 }>;
+
+/** Project activation and service observation share the same native codec. */
+export function createNativeComposeLifecycle(input: NativeComposeEnvironmentProjectInput): NativeComposeEnvironmentProject;
+export function createNativeComposeLifecycle(input: NativeComposeServiceInput): ReturnType<typeof createNativeComposeServiceCapture>;
+export function createNativeComposeLifecycle(input: NativeComposeServiceInput | NativeComposeEnvironmentProjectInput) {
+    return 'kind' in input ? createEnvironmentProject(input) : createNativeComposeServiceCapture(input);
+}
+
+/** A codec/control capture, not another supervisor, registry, shell or placement owner. */
+function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
+    const project = input.args[input.args.indexOf('--project-name') + 1];
+    const up = input.args.indexOf('up');
+    const target = input.environment?.composeService ?? input.args.at(-1);
+    if (!project || (!input.environment && up < 0) || !target) throw new Error('native_service_invocation_invalid');
+    let launch: HostAuthorizedPluginExecLaunch | undefined;
+    let prefix: readonly string[] = [];
+    let ids: readonly string[] | undefined = input.environment ? Object.freeze([...input.environment.containerIds]) : undefined;
+    if (input.environment && (!ids?.length || ids.some(id => !/^[a-f0-9]{64}$/u.test(id)) || new Set(ids).size !== ids.length)) {
+        throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable' });
+    }
+    let starterStarted = false;
+    let observedEmpty = false;
+    let observedIds: readonly string[] | undefined;
+    let cleared = false;
+    let engineId = input.engineId;
+    let engineSubscription: ReturnType<typeof observeDockerEngine> | undefined;
+    let engineRows: readonly Container[] | null = null;
+    let nativeContainers: readonly ProjectNativeContainerObservation[] | null = null;
+    let runtimeFacts: ProjectNativeRuntimeFacts = { configuration: input.environment?.facts?.configuration ?? null,
+        observedAt: null, freshness: 'unavailable' };
+    const imageProofs = new Map(input.environment?.facts?.containerImages.map(image => [image.id, image]));
+    const run = async (args: readonly string[], signal?: AbortSignal, stageOutput?: ProjectNativeStageOutput, inputBytes?: Uint8Array) => {
+        if (!launch?.cwd) throw new Error('native_service_admission_required');
+        const env: Record<string, string> = {};
+        for (const [key, value] of Object.entries(launch.env ?? {})) if (value !== undefined) env[key] = value;
+        if (stageOutput && !launch.secretRedactionLease?.isActive()) {
+            throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Native effect output custody is unavailable' });
+        }
+        const output = await input.io.run({ command: launch.command, args: [...prefix, ...args], cwd: launch.cwd, env,
+            ...(signal ? { signal } : {}), ...(inputBytes ? { stdin: inputBytes } : {}), ...(stageOutput ? { output: { redaction: launch.secretRedactionLease!,
+                onChunk: stageOutput.appendRedacted } } : {}) });
+        stageOutput?.assertWritten();
+        return output;
+    };
+    const accounting = createManagedServiceAccountingRead(async (signal): Promise<ProjectNativeAccountingResult> => {
+        const startedAtMs = runtimeFacts.accounting?.startedAtMs;
+        runtimeFacts = { ...runtimeFacts, accounting: startedAtMs === undefined ? undefined : { startedAtMs } };
+        const selected = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
+        if (!selected?.length) return { kind: 'unavailable', reason: 'unavailable' };
+        try {
+            const result = await run(['stats', '--no-stream', '--no-trunc', '--format', '{{json .}}', ...selected], signal);
+            signal.throwIfAborted();
+            const current = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
+            if (!current || JSON.stringify(current) !== JSON.stringify(selected) || result.exitCode !== 0) {
+                return { kind: 'unavailable', reason: 'unavailable' };
+            }
+            const sampled = nativeAccounting(result.stdout, selected);
+            if (sampled.kind === 'sample' && sampled.samples.length && sampled.samples.every(sample => sample.memoryBytes !== null)) {
+                runtimeFacts = { ...runtimeFacts, accounting: { ...runtimeFacts.accounting,
+                    memoryBytes: sampled.samples.reduce((total, sample) => total + sample.memoryBytes!, 0) } };
+            }
+            return sampled;
+        } catch (error) {
+            // Unsettled probe custody belongs to the native IO owner;
+            // it is not an ordinary missing accounting observation.
+            if (error !== null && typeof error === 'object' && 'code' in error
+                && error.code === 'plugin_exec_termination_incomplete') throw error;
+            signal.throwIfAborted();
+            return { kind: 'unavailable', reason: 'unavailable' };
+        }
+    });
+    const read = async (signal?: AbortSignal) => {
+        const listed = await run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${project}`,
+            ...(input.environment ? ['--filter', `label=com.docker.compose.service=${target}`] : []), '--format', '{{.ID}}'], signal);
+        if (listed.exitCode !== 0) return null;
+        const listedIds = listed.stdout.trim() ? listed.stdout.trim().split('\n') : [];
+        // A nonempty listing withdraws the earlier empty witness even when
+        // its identities cannot be decoded or belong to a replacement.
+        observedEmpty = listedIds.length === 0;
+        if (listedIds.some(id => !/^[a-f0-9]{64}$/u.test(id)) || new Set(listedIds).size !== listedIds.length) return null;
+        observedIds = listedIds;
+        if (ids && listedIds.some(id => !ids!.includes(id))) return null;
+        if (!listedIds.length) return [];
+        const result = await run(['inspect', '--type', 'container', ...listedIds], signal);
+        const rows = result.exitCode === 0 ? containers(result.stdout, project) : null;
+        if (!rows || input.environment && rows.some(row => row.service !== target)) return null;
+        if (rows.length !== listedIds.length || rows.some(row => !listedIds.includes(row.id))) return null;
+        if (!ids && rows.length) ids = rows.map(row => row.id);
+        if (ids && rows.some(row => !ids!.includes(row.id))) return null;
+        return rows;
+    };
+    const unknownObservation = { ...unknown, displayName: project };
+    const stoppedObservation = { ...stopped, displayName: project };
+    const observe = (rows: readonly Container[] | null): ManagedServiceNativeObservationV1 => {
+        if (cleared) return stoppedObservation;
+        if (!rows) return unknownObservation;
+        // A missing deployment generation is not a stopped incumbent that can
+        // be started again. Only deploy/rollback can recreate missing resources.
+        if (input.environment && rows.length === 0) return unknownObservation;
+        if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) return stoppedObservation;
+        const selected = rows.filter(row => row.service === target);
+        if (!selected.length || selected.some(row => row.state !== 'running')
+            || rows.some(row => !['running', 'exited', 'dead'].includes(row.state))) return unknownObservation;
+        return { phase: 'running', readiness: selected.every(row => row.health === 'healthy') ? 'ready'
+            : selected.some(row => row.health === 'starting' || row.health === 'unhealthy') ? 'not_ready' : 'not_reported', endpoint: endpoint(selected), displayName: project };
+    };
+    const afterControl = async (signal?: AbortSignal) => {
+        if (!engineSubscription) return observe(await read(signal));
+        await engineSubscription.refresh();
+        signal?.throwIfAborted();
+        return observe(engineRows);
+    };
+    const controlExisting = async (operation: 'start' | 'restart', options?: Readonly<{ signal?: AbortSignal }>) => {
+        if (!input.environment) throw new PluginError({ code: 'native_service_control_unsupported', message: 'Existing-generation controls require Environment custody' });
+        const before = await read(options?.signal);
+        if (!before?.length || !ids?.length) throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable; deploy or roll back to restore it' });
+        const result = await run([operation, ...before.map(row => row.id)], options?.signal);
+        if (result.exitCode !== 0) throw new PluginError({ code: 'native_service_control_unconfirmed', message: 'Native service control could not be confirmed' });
+        return afterControl(options?.signal);
+    };
+    const hasCapturedEngine = async (signal?: AbortSignal): Promise<boolean> => {
+        signal?.throwIfAborted();
+        if (!input.engineId || !launch?.cwd) return false;
+        const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+        try {
+            return (await readNativeComposeEngine({ io: input.io, command: launch.command,
+                prefix, cwd: launch.cwd, env, signal })).id === input.engineId;
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            return false;
+        }
+    };
+    const readRemoval = async (signal?: AbortSignal) => {
+        if (!await hasCapturedEngine(signal)) return null;
+        try { return await read(signal); }
+        catch (error) {
+            if (signal?.aborted) throw error;
+            return null;
+        }
+    };
+    const prepareServiceLaunch = async (args: readonly string[], signal?: AbortSignal): Promise<HostAuthorizedPluginExecLaunch> => {
+            signal?.throwIfAborted();
+            const rows = await read(signal);
+            if (!input.environment || !rows?.length || rows.length !== ids?.length
+                || rows.some(row => row.state !== 'running') || !input.retainLaunch) {
+                throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable' });
+            }
+            const retained = input.retainLaunch();
+            let released: Promise<void> | undefined;
+            try {
+                signal?.throwIfAborted();
+                assertServiceOutputRedactionForHost(retained);
+                // The retained observer is the finalized original host tuple,
+                // not the application overlay. Keep its admitted endpoint.
+                const env = retained.env;
+                if (!retained.cwd || !engineId || (await readNativeComposeEngine({ io: input.io, command: retained.command,
+                    prefix, cwd: retained.cwd, env, signal })).id !== engineId) {
+                    throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service engine is unavailable' });
+                }
+                signal?.throwIfAborted();
+                return { ...retained, args,
+                    env: { ...env, COMPOSE_DISABLE_ENV_FILE: '1' }, async release() {
+                        return released ??= Promise.resolve().then(() => retained.release());
+                    } };
+            } catch (error) { await retained.release(); throw error; }
+    };
+    const lifecycle: ProjectBuiltinNativeLifecycle = {
+        shell: options => prepareServiceLaunch([...prefix, ...input.args, 'exec', '-it', target, '/bin/sh'], options?.signal),
+        async admitServiceCommand(command, options) {
+            if (command.mode !== 'exec') throw new PluginError({ code: 'service_admission_unavailable', message: 'A fresh admitted runtime environment is required for a one-off service command' });
+            const args = nativeServiceCommandArgs([...prefix, ...input.args], target, command);
+            return admitNativeServiceCommandForHost({ ...options,
+                launch: () => prepareServiceLaunch(args, options.signal) });
+        },
+        async prepareStart(options) {
+            if (input.environment) throw new PluginError({ code: 'deployment_generation_required', message: 'Environment services use their admitted deployment generation' });
+            if (observe(await read(options?.signal)).phase !== 'stopped') throw new Error('native_service_stop_unconfirmed');
+            // Retire only an observed stopped generation before admitting its replacement.
+            ids = undefined;
+            cleared = false;
+        },
+        markStarted() { starterStarted = true; observedEmpty = false; },
+        get redactedValues() { return launch?.secretRedactionLease?.values() ?? []; },
+        readLogRedactionLease(containerIds) {
+            return !cleared && launch?.secretRedactionLease?.isActive() && ids?.length === containerIds.length
+                && ids.every(id => containerIds.includes(id)) ? launch?.secretRedactionLease : undefined;
+        },
+        nativeContainers: () => nativeContainers,
+        async nativeDocker(options) {
+            if (cleared || !launch?.cwd || !engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation is unavailable' });
+            const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+            const current = await readNativeComposeEngine({ io: input.io, command: launch.command, prefix,
+                cwd: launch.cwd, env, signal: options?.signal });
+            if (current.id !== engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation engine changed' });
+            return { engineId, run: (args, signal, inputBytes) => run(args, signal, undefined, inputBytes) };
+        },
+        nativeInstances() {
+            if (!engineId) return undefined;
+            const adapter = { pluginId: 'happier.machine.services', localId: 'compose' };
+            return [
+                { adapter, nativeResourceId: JSON.stringify([engineId, project]) },
+                { adapter, nativeResourceId: JSON.stringify([engineId, project, target]) },
+            ];
+        },
+        runtimeFacts: () => runtimeFacts,
+        readAccounting: options => accounting.read(options),
+        async observe(listener, options) {
+            if (!launch?.cwd) throw new Error('native_service_admission_required');
+            if (!ids?.length) {
+                // Only the first workspace capture discovers its admitted generation.
+                const initial = await read(options?.signal);
+                if (!ids?.length) { listener(observe(initial)); return { async dispose() {} }; }
+            }
+            if (!engineId) {
+                const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+                engineId = await assertNativeComposeAvailable({ io: input.io, command: launch.command, prefix, cwd: launch.cwd, env, signal: options?.signal });
+            }
+            const subscription = observeDockerEngine(engineId, { ids,
+                events: input.io.events ?? openDockerEngineEvents(launch, prefix),
+                async inspect(containerIds, signal) {
+                    const output = await run(['inspect', '--type', 'container', ...containerIds], signal);
+                    // Docker returns an array of the remaining members with exit 1
+                    // when an admitted container has gone. That is not engine loss.
+                    try { const value: unknown = JSON.parse(output.stdout); return Array.isArray(value) ? value : null; }
+                    catch { return null; }
+                },
+                configurationMatches(row) {
+                    return record(row) && typeof row.Id === 'string'
+                        ? imageProofs.get(row.Id)?.configurationMatches(row.Config, row.HostConfig) : undefined;
+                },
+                changed(rows) {
+                    const parsed = rows ? containers(JSON.stringify(rows), project) : null;
+                    if (parsed) observedIds = parsed.map(row => row.id);
+                    engineRows = parsed && parsed.length === ids?.length ? parsed : null;
+                    if (engineRows && input.environment && engineRows.some(row => row.service !== target)) engineRows = null;
+                    const configuration = input.environment?.facts?.configuration;
+                    // A replicated service has been fully up since its newest member started.
+                    const startedAtMs = engineRows?.length && engineRows.every(row => row.startedAtMs !== undefined)
+                        ? Math.max(...engineRows.map(row => row.startedAtMs!)) : undefined;
+                    const healthSince = engineRows?.length && engineRows.every(row => row.healthSince !== undefined)
+                        ? Math.max(...engineRows.map(row => row.healthSince!)) : undefined;
+                    const memoryBytes = engineRows && runtimeFacts.accounting?.startedAtMs === startedAtMs
+                        ? runtimeFacts.accounting?.memoryBytes : undefined;
+                    const ports = engineRows && readNativeComposePublishedPorts(engineRows.map(row => row.ports),
+                        value => launch?.secretRedactionLease?.redact(value) ?? value);
+                    runtimeFacts = { configuration: engineRows && configuration
+                        ? ports ? { ...configuration, ports } : null : runtimeFacts.configuration,
+                        observedAt: engineRows ? Date.now() : runtimeFacts.observedAt,
+                        freshness: engineRows ? 'current' : 'unavailable',
+                        ...(startedAtMs === undefined && memoryBytes === undefined ? {} : { accounting: {
+                            ...(startedAtMs === undefined ? {} : { startedAtMs }), ...(memoryBytes === undefined ? {} : { memoryBytes }) } }),
+                        ...(healthSince === undefined ? {} : { healthSince }) };
+                    const next = engineRows?.map(({ id, composeProject, service, containerName, networkNames, pid, restartCount, restartPolicy, nativeImageId, configurationMatches }) => {
+                        const proof = imageProofs.get(id);
+                        return { id, composeProject, service, ...(configurationMatches === undefined ? {} : { configurationMatches }),
+                            ...(containerName ? { containerName } : {}), ...(networkNames ? { networkNames } : {}),
+                            ...(pid === undefined ? {} : { pid }),
+                            ...(restartCount === undefined ? {} : { restartCount }), ...(restartPolicy ? { restartPolicy } : {}),
+                            ...(nativeImageId ? { nativeImageId } : {}),
+                            ...(proof && proof.nativeImageId === nativeImageId ? { imageConfigDigest: proof.imageConfigDigest } : {}) };
+                    }) ?? null;
+                    if (JSON.stringify(next) !== JSON.stringify(nativeContainers)) {
+                        const attribution = (rows: typeof nativeContainers) => rows?.map(({ id, composeProject, service, pid }) => ({ id, composeProject, service, pid })) ?? null;
+                        const changed = JSON.stringify(attribution(next)) !== JSON.stringify(attribution(nativeContainers));
+                        nativeContainers = next;
+                        if (changed) invalidateProcessLaunchDiscovery();
+                    }
+                    if (!nativeContainers) accounting.cancel();
+                    listener(observe(engineRows));
+                },
+            });
+            engineSubscription = subscription;
+            const dispose = async () => {
+                options?.signal?.removeEventListener('abort', onAbort);
+                if (engineSubscription === subscription) {
+                    engineSubscription = undefined; engineRows = null;
+                    runtimeFacts = { ...runtimeFacts, freshness: 'unavailable' };
+                    const hadAttribution = nativeContainers !== null;
+                    nativeContainers = null; accounting.cancel();
+                    if (hadAttribution) invalidateProcessLaunchDiscovery();
+                }
+                await subscription.dispose();
+            };
+            const onAbort = () => { void dispose().catch(() => {}); };
+            options?.signal?.addEventListener('abort', onAbort, { once: true });
+            if (options?.signal?.aborted) { await dispose(); options.signal.throwIfAborted(); }
+            await subscription.ready;
+            return { dispose };
+        },
+        async logs(options) {
+            if (options.kind === 'watch') {
+                options.signal?.throwIfAborted();
+                options.emit({ kind: 'unavailable', reason: 'unsupported' });
+                return { dispose() {} };
+            }
+            return readNativeComposeLogsForHost({ containerIds: ids ?? [], observedIds,
+                environment: Boolean(input.environment), redactionLease: launch?.secretRedactionLease, run }, options);
+        },
+        async inspect(options) {
+            if (cleared) return stopped;
+            if (engineSubscription) { options?.signal?.throwIfAborted(); return observe(engineRows); }
+            try { return observe(await read(options?.signal)); }
+            catch (error) { if (options?.signal?.aborted) throw error; return unknown; }
+        },
+        ...(input.environment ? {
+            start: (options?: Readonly<{ signal?: AbortSignal }>) => controlExisting('start', options),
+            restart: (options?: Readonly<{ signal?: AbortSignal }>) => controlExisting('restart', options),
+            async inspectRemoval(options?: Readonly<{ signal?: AbortSignal }>) {
+                const rows = await readRemoval(options?.signal);
+                return rows === null ? 'unknown' as const : rows.length ? 'present' as const : 'absent' as const;
+            },
+            async remove(options?: Readonly<{ signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>) {
+                options?.signal?.throwIfAborted();
+                const current = await readRemoval(options?.signal);
+                if (!current) return { status: 'termination_incomplete' as const };
+                if (current.length && !await removeWitnessedContainers({ ids: current.map(row => row.id), project, services: [target],
+                    run: args => run(args, options?.signal, args[0] === 'container' && args[1] === 'rm' ? options?.stageOutput : undefined) })) return { status: 'termination_incomplete' as const };
+                if ((await readRemoval(options?.signal))?.length !== 0) {
+                    return { status: 'termination_incomplete' as const };
+                }
+                cleared = true;
+                await afterControl(options?.signal);
+                return { status: 'stopped' as const };
+            },
+        } : {}),
+        async stop(options) {
+            try {
+                if (options?.signal?.aborted) options.signal.throwIfAborted();
+                if (cleared) return { status: 'stopped' };
+                const before = await read(options?.signal);
+                if (input.environment && !before?.length) return { status: 'termination_incomplete' };
+                if (!before) {
+                    // Local identity absence is not an absence witness for a
+                    // detached incumbent recovered by a new daemon controller.
+                    if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
+                    return { status: 'termination_incomplete' };
+                }
+                if (observe(before).phase === 'stopped') return { status: 'stopped' };
+                if (!ids?.length) return { status: 'termination_incomplete' };
+                const result = await run(['stop', ...before.map(row => row.id)], options?.signal);
+                if (result.exitCode !== 0) return { status: 'termination_incomplete' };
+                return { status: (await afterControl(options?.signal)).phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
+            } catch (error) {
+                if (options?.signal?.aborted) throw error;
+                if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
+                return { status: 'termination_incomplete' };
+            }
+        },
+    };
+    return {
+        lifecycle,
+        async assertAvailable(signal?: AbortSignal) {
+            if (!launch?.cwd) throw new Error('native_service_admission_required');
+            const env: Record<string, string> = {};
+            for (const [key, value] of Object.entries(launch.env ?? {})) if (value !== undefined) env[key] = value;
+            engineId = await assertNativeComposeAvailable({ io: input.io, command: launch.command, prefix, cwd: launch.cwd, env, signal });
+        },
+        bindLaunch(value: HostAuthorizedPluginExecLaunch) {
+            const args = value.args ?? [];
+            if (args.length < input.args.length || args.slice(-input.args.length).some((arg, index) => arg !== input.args[index])) {
+                throw new Error('native_service_invocation_invalid');
+            }
+            launch = value;
+            engineId = input.engineId;
+            prefix = args.slice(0, args.length - input.args.length);
+        },
+    };
+}
+
+function nativeRefusal(reason: string, step = 'deployment.native', errorCode: 'EACCES' | null = null,
+    effectAttempted?: true): never {
+    const failureCause = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
+    throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason },
+        failureCause }, effectAttempted === undefined ? undefined : { cause: {
+            ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause, effectAttempted,
+        } });
+}
+
+function nativeModel(stdout: string): Record<string, unknown> {
+    let value: unknown;
+    try { value = JSON.parse(stdout); } catch { return nativeRefusal('native_compose_configuration_invalid'); }
+    if (!record(value) || !record(value.services)) return nativeRefusal('native_compose_configuration_invalid');
+    return value;
+}
+
+/** The physical start-first generation name is shared with cold observation. */
+export function resolveNativeComposeCandidateProjectName(admissionProjectName: string, deploymentId: string): string {
+    return `happier-g-${createHash('sha256').update(JSON.stringify([admissionProjectName, deploymentId])).digest('hex')}`;
+}
 
 function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
     candidate?: Readonly<{ admissionProjectName: string }>): NativeComposeEnvironmentProject {
@@ -484,6 +821,7 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             const admitted = await authorizePluginExecLaunchForHost(input.exec, { executable: tool.executable, args,
                 cwd: input.phase === 'build' && input.executionDirectory ? input.executionDirectory : input.source.rootPath,
                 ...(attachment ? { deploymentEnv: attachment } : {}) }, {
+                    agentIsolation: null,
                     ...(signal ? { signal } : {}), ...(deploymentRuntimeProjection ? { deploymentRuntimeProjection } : {}) });
             // Input-free commands keep the host tuple, without materializing
             // application inputs merely to stream their native output.
@@ -528,7 +866,14 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                 throw new PluginError({ code: 'docker_buildx_not_installed',
                     message: 'Install Docker Buildx on the build machine before deploying', retryable: false });
             }
-            return nativeRefusal('native_compose_command_failed');
+            return nativeRefusal('native_compose_command_failed', args[0] === 'compose'
+                ? args.includes('--no-interpolate') || args.includes('--no-consistency')
+                    ? 'deployment.native.compose.config' : 'deployment.native.compose'
+                : args[0] === 'version' ? 'deployment.native.docker.version' : 'deployment.native.command',
+                /permission denied while trying to connect to the docker (?:API|daemon socket)\b/iu.test(output.stderr ?? '') ? 'EACCES' : null,
+                // A returned process result proves this admitted native effect ran.
+                // Launch errors and read-only native commands remain unknown.
+                authority ? true : undefined);
         }
         return output;
     };
@@ -694,7 +1039,7 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
             model = nativeModel((await runAuthorized(actualLaunch, signal)).stdout);
             if (!actualLaunch.secretRedactionLease) return nativeRefusal('secret_redaction_unavailable');
             if (!record(model.services)) return nativeRefusal('native_compose_configuration_invalid');
-            if (input.storage?.sharedData && input.sourceKind === 'repository') {
+            if (input.storage?.sharedData) {
                 const nativeBinds = createNativeComposeIncumbentBindReader({ projectName, run: args => run(args, signal),
                     readSourceCustody: input.storage.sharedData.readSourceCustody });
                 sharedData = await projectNativeComposeSharedData({ model, source: input.source, unresolvedModel: normalized,
@@ -1078,7 +1423,9 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
                         const removed = await removeWitnessedContainers({ ids: introduced, project: projectName, services: current.services,
                             run: args => run(args, request.signal, undefined, false, authority) });
                         if (removed) throw new PluginError({ code: 'native_failed', message: 'First deployment failed; introduced containers were removed',
-                            details: { reason: String(details?.reason), firstDeployCleanup: 'removed' } });
+                            details: { reason: String(details?.reason), firstDeployCleanup: 'removed' },
+                            ...(isPluginError(error) && error.data.failureCause ? { failureCause: error.data.failureCause } : {}) },
+                            error instanceof Error && error.cause !== undefined ? { cause: error.cause } : undefined);
                     }
                     throw error;
                 } finally { stopLending(); await launch.release(); }
@@ -1093,378 +1440,3 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
     };
     return owner;
 }
-
-function nativeRefusal(reason: string): never {
-    throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason } });
-}
-
-
-
-function nativeModel(stdout: string): Record<string, unknown> {
-    let value: unknown;
-    try { value = JSON.parse(stdout); } catch { return nativeRefusal('native_compose_configuration_invalid'); }
-    if (!record(value) || !record(value.services)) return nativeRefusal('native_compose_configuration_invalid');
-    return value;
-}
-
-function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
-    const project = input.args[input.args.indexOf('--project-name') + 1];
-    const up = input.args.indexOf('up');
-    const target = input.environment?.composeService ?? input.args.at(-1);
-    if (!project || (!input.environment && up < 0) || !target) throw new Error('native_service_invocation_invalid');
-    let launch: HostAuthorizedPluginExecLaunch | undefined;
-    let prefix: readonly string[] = [];
-    let ids: readonly string[] | undefined = input.environment ? Object.freeze([...input.environment.containerIds]) : undefined;
-    if (input.environment && (!ids?.length || ids.some(id => !/^[a-f0-9]{64}$/u.test(id)) || new Set(ids).size !== ids.length)) {
-        throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable' });
-    }
-    let starterStarted = false;
-    let observedEmpty = false;
-    let observedIds: readonly string[] | undefined;
-    let cleared = false;
-    let engineId = input.engineId;
-    let engineSubscription: ReturnType<typeof observeDockerEngine> | undefined;
-    let engineRows: readonly Container[] | null = null;
-    let nativeContainers: readonly ProjectNativeContainerObservation[] | null = null;
-    let runtimeFacts: ProjectNativeRuntimeFacts = { configuration: input.environment?.facts?.configuration ?? null,
-        observedAt: null, freshness: 'unavailable' };
-    const imageProofs = new Map(input.environment?.facts?.containerImages.map(image => [image.id, image]));
-    const run = async (args: readonly string[], signal?: AbortSignal, stageOutput?: ProjectNativeStageOutput, inputBytes?: Uint8Array) => {
-        if (!launch?.cwd) throw new Error('native_service_admission_required');
-        const env: Record<string, string> = {};
-        for (const [key, value] of Object.entries(launch.env ?? {})) if (value !== undefined) env[key] = value;
-        if (stageOutput && !launch.secretRedactionLease?.isActive()) {
-            throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Native effect output custody is unavailable' });
-        }
-        const output = await input.io.run({ command: launch.command, args: [...prefix, ...args], cwd: launch.cwd, env,
-            ...(signal ? { signal } : {}), ...(inputBytes ? { stdin: inputBytes } : {}), ...(stageOutput ? { output: { redaction: launch.secretRedactionLease!,
-                onChunk: stageOutput.appendRedacted } } : {}) });
-        stageOutput?.assertWritten();
-        return output;
-    };
-    const accounting = createManagedServiceAccountingRead(async (signal): Promise<ProjectNativeAccountingResult> => {
-        const startedAtMs = runtimeFacts.accounting?.startedAtMs;
-        runtimeFacts = { ...runtimeFacts, accounting: startedAtMs === undefined ? undefined : { startedAtMs } };
-        const selected = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
-        if (!selected?.length) return { kind: 'unavailable', reason: 'unavailable' };
-        try {
-            const result = await run(['stats', '--no-stream', '--no-trunc', '--format', '{{json .}}', ...selected], signal);
-            signal.throwIfAborted();
-            const current = nativeContainers?.filter(row => row.service === target).map(row => row.id).sort();
-            if (!current || JSON.stringify(current) !== JSON.stringify(selected) || result.exitCode !== 0) {
-                return { kind: 'unavailable', reason: 'unavailable' };
-            }
-            const sampled = nativeAccounting(result.stdout, selected);
-            if (sampled.kind === 'sample' && sampled.samples.length && sampled.samples.every(sample => sample.memoryBytes !== null)) {
-                runtimeFacts = { ...runtimeFacts, accounting: { ...runtimeFacts.accounting,
-                    memoryBytes: sampled.samples.reduce((total, sample) => total + sample.memoryBytes!, 0) } };
-            }
-            return sampled;
-        } catch (error) {
-            // Unsettled probe custody belongs to the native IO owner;
-            // it is not an ordinary missing accounting observation.
-            if (error !== null && typeof error === 'object' && 'code' in error
-                && error.code === 'plugin_exec_termination_incomplete') throw error;
-            signal.throwIfAborted();
-            return { kind: 'unavailable', reason: 'unavailable' };
-        }
-    });
-    const read = async (signal?: AbortSignal) => {
-        const listed = await run(['ps', '--all', '--no-trunc', '--filter', `label=com.docker.compose.project=${project}`,
-            ...(input.environment ? ['--filter', `label=com.docker.compose.service=${target}`] : []), '--format', '{{.ID}}'], signal);
-        if (listed.exitCode !== 0) return null;
-        const listedIds = listed.stdout.trim() ? listed.stdout.trim().split('\n') : [];
-        // A nonempty listing withdraws the earlier empty witness even when
-        // its identities cannot be decoded or belong to a replacement.
-        observedEmpty = listedIds.length === 0;
-        if (listedIds.some(id => !/^[a-f0-9]{64}$/u.test(id)) || new Set(listedIds).size !== listedIds.length) return null;
-        observedIds = listedIds;
-        if (ids && listedIds.some(id => !ids!.includes(id))) return null;
-        if (!listedIds.length) return [];
-        const result = await run(['inspect', '--type', 'container', ...listedIds], signal);
-        const rows = result.exitCode === 0 ? containers(result.stdout, project) : null;
-        if (!rows || input.environment && rows.some(row => row.service !== target)) return null;
-        if (rows.length !== listedIds.length || rows.some(row => !listedIds.includes(row.id))) return null;
-        if (!ids && rows.length) ids = rows.map(row => row.id);
-        if (ids && rows.some(row => !ids!.includes(row.id))) return null;
-        return rows;
-    };
-    const unknownObservation = { ...unknown, displayName: project };
-    const stoppedObservation = { ...stopped, displayName: project };
-    const observe = (rows: readonly Container[] | null): ManagedServiceNativeObservationV1 => {
-        if (cleared) return stoppedObservation;
-        if (!rows) return unknownObservation;
-        // A missing deployment generation is not a stopped incumbent that can
-        // be started again. Only deploy/rollback can recreate missing resources.
-        if (input.environment && rows.length === 0) return unknownObservation;
-        if (rows.every(row => ['created', 'exited', 'dead'].includes(row.state))) return stoppedObservation;
-        const selected = rows.filter(row => row.service === target);
-        if (!selected.length || selected.some(row => row.state !== 'running')
-            || rows.some(row => !['running', 'exited', 'dead'].includes(row.state))) return unknownObservation;
-        return { phase: 'running', readiness: selected.every(row => row.health === 'healthy') ? 'ready'
-            : selected.some(row => row.health === 'starting' || row.health === 'unhealthy') ? 'not_ready' : 'not_reported', endpoint: endpoint(selected), displayName: project };
-    };
-    const afterControl = async (signal?: AbortSignal) => {
-        if (!engineSubscription) return observe(await read(signal));
-        await engineSubscription.refresh();
-        signal?.throwIfAborted();
-        return observe(engineRows);
-    };
-    const controlExisting = async (operation: 'start' | 'restart', options?: Readonly<{ signal?: AbortSignal }>) => {
-        if (!input.environment) throw new PluginError({ code: 'native_service_control_unsupported', message: 'Existing-generation controls require Environment custody' });
-        const before = await read(options?.signal);
-        if (!before?.length || !ids?.length) throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable; deploy or roll back to restore it' });
-        const result = await run([operation, ...before.map(row => row.id)], options?.signal);
-        if (result.exitCode !== 0) throw new PluginError({ code: 'native_service_control_unconfirmed', message: 'Native service control could not be confirmed' });
-        return afterControl(options?.signal);
-    };
-    const hasCapturedEngine = async (signal?: AbortSignal): Promise<boolean> => {
-        signal?.throwIfAborted();
-        if (!input.engineId || !launch?.cwd) return false;
-        const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-        try {
-            return (await readNativeComposeEngine({ io: input.io, command: launch.command,
-                prefix, cwd: launch.cwd, env, signal })).id === input.engineId;
-        } catch (error) {
-            if (signal?.aborted) throw error;
-            return false;
-        }
-    };
-    const readRemoval = async (signal?: AbortSignal) => {
-        if (!await hasCapturedEngine(signal)) return null;
-        try { return await read(signal); }
-        catch (error) {
-            if (signal?.aborted) throw error;
-            return null;
-        }
-    };
-    const prepareServiceLaunch = async (args: readonly string[], signal?: AbortSignal): Promise<HostAuthorizedPluginExecLaunch> => {
-            signal?.throwIfAborted();
-            const rows = await read(signal);
-            if (!input.environment || !rows?.length || rows.length !== ids?.length
-                || rows.some(row => row.state !== 'running') || !input.retainLaunch) {
-                throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service generation is unavailable' });
-            }
-            const retained = input.retainLaunch();
-            let released: Promise<void> | undefined;
-            try {
-                signal?.throwIfAborted();
-                if (!retained.secretRedactionLease?.isActive()) throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Service shell redaction is unavailable' });
-                // The retained observer is the finalized original host tuple,
-                // not the application overlay. Keep its admitted endpoint.
-                const env = retained.env;
-                if (!retained.cwd || !engineId || (await readNativeComposeEngine({ io: input.io, command: retained.command,
-                    prefix, cwd: retained.cwd, env, signal })).id !== engineId) {
-                    throw new PluginError({ code: 'deployment_generation_required', message: 'The admitted service engine is unavailable' });
-                }
-                signal?.throwIfAborted();
-                return { ...retained, args,
-                    env: { ...env, COMPOSE_DISABLE_ENV_FILE: '1' }, async release() {
-                        return released ??= Promise.resolve().then(() => retained.release());
-                    } };
-            } catch (error) { await retained.release(); throw error; }
-    };
-    const lifecycle: ProjectBuiltinNativeLifecycle = {
-        shell: options => prepareServiceLaunch([...prefix, ...input.args, 'exec', '-it', target, '/bin/sh'], options?.signal),
-        async admitServiceCommand(command, options) {
-            if (command.mode !== 'exec') throw new PluginError({ code: 'service_admission_unavailable', message: 'A fresh admitted runtime environment is required for a one-off service command' });
-            const args = nativeServiceCommandArgs([...prefix, ...input.args], target, command);
-            return admitNativeServiceCommandForHost({ ...options,
-                launch: () => prepareServiceLaunch(args, options.signal) });
-        },
-        async prepareStart(options) {
-            if (input.environment) throw new PluginError({ code: 'deployment_generation_required', message: 'Environment services use their admitted deployment generation' });
-            if (observe(await read(options?.signal)).phase !== 'stopped') throw new Error('native_service_stop_unconfirmed');
-            // Retire only an observed stopped generation before admitting its replacement.
-            ids = undefined;
-            cleared = false;
-        },
-        markStarted() { starterStarted = true; observedEmpty = false; },
-        get redactedValues() { return launch?.secretRedactionLease?.values() ?? []; },
-        readLogRedactionLease(containerIds) {
-            return !cleared && launch?.secretRedactionLease?.isActive() && ids?.length === containerIds.length
-                && ids.every(id => containerIds.includes(id)) ? launch?.secretRedactionLease : undefined;
-        },
-        nativeContainers: () => nativeContainers,
-        async nativeDocker(options) {
-            if (cleared || !launch?.cwd || !engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation is unavailable' });
-            const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-            const current = await readNativeComposeEngine({ io: input.io, command: launch.command, prefix,
-                cwd: launch.cwd, env, signal: options?.signal });
-            if (current.id !== engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation engine changed' });
-            return { engineId, run: (args, signal, inputBytes) => run(args, signal, undefined, inputBytes) };
-        },
-        nativeInstances() {
-            if (!engineId) return undefined;
-            const adapter = { pluginId: 'happier.machine.services', localId: 'compose' };
-            return [
-                { adapter, nativeResourceId: JSON.stringify([engineId, project]) },
-                { adapter, nativeResourceId: JSON.stringify([engineId, project, target]) },
-            ];
-        },
-        runtimeFacts: () => runtimeFacts,
-        readAccounting: options => accounting.read(options),
-        async observe(listener, options) {
-            if (!launch?.cwd) throw new Error('native_service_admission_required');
-            if (!ids?.length) {
-                // Only the first workspace capture discovers its admitted generation.
-                const initial = await read(options?.signal);
-                if (!ids?.length) { listener(observe(initial)); return { async dispose() {} }; }
-            }
-            if (!engineId) {
-                const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-                engineId = await assertNativeComposeAvailable({ io: input.io, command: launch.command, prefix, cwd: launch.cwd, env, signal: options?.signal });
-            }
-            const subscription = observeDockerEngine(engineId, { ids,
-                events: input.io.events ?? openDockerEngineEvents(launch, prefix),
-                async inspect(containerIds, signal) {
-                    const output = await run(['inspect', '--type', 'container', ...containerIds], signal);
-                    // Docker returns an array of the remaining members with exit 1
-                    // when an admitted container has gone. That is not engine loss.
-                    try { const value: unknown = JSON.parse(output.stdout); return Array.isArray(value) ? value : null; }
-                    catch { return null; }
-                },
-                configurationMatches(row) {
-                    return record(row) && typeof row.Id === 'string'
-                        ? imageProofs.get(row.Id)?.configurationMatches(row.Config, row.HostConfig) : undefined;
-                },
-                changed(rows) {
-                    const parsed = rows ? containers(JSON.stringify(rows), project) : null;
-                    if (parsed) observedIds = parsed.map(row => row.id);
-                    engineRows = parsed && parsed.length === ids?.length ? parsed : null;
-                    if (engineRows && input.environment && engineRows.some(row => row.service !== target)) engineRows = null;
-                    const configuration = input.environment?.facts?.configuration;
-                    // A replicated service has been fully up since its newest member started.
-                    const startedAtMs = engineRows?.length && engineRows.every(row => row.startedAtMs !== undefined)
-                        ? Math.max(...engineRows.map(row => row.startedAtMs!)) : undefined;
-                    const healthSince = engineRows?.length && engineRows.every(row => row.healthSince !== undefined)
-                        ? Math.max(...engineRows.map(row => row.healthSince!)) : undefined;
-                    const memoryBytes = engineRows && runtimeFacts.accounting?.startedAtMs === startedAtMs
-                        ? runtimeFacts.accounting?.memoryBytes : undefined;
-                    const ports = engineRows && readNativeComposePublishedPorts(engineRows.map(row => row.ports),
-                        value => launch?.secretRedactionLease?.redact(value) ?? value);
-                    runtimeFacts = { configuration: engineRows && configuration
-                        ? ports ? { ...configuration, ports } : null : runtimeFacts.configuration,
-                        observedAt: engineRows ? Date.now() : runtimeFacts.observedAt,
-                        freshness: engineRows ? 'current' : 'unavailable',
-                        ...(startedAtMs === undefined && memoryBytes === undefined ? {} : { accounting: {
-                            ...(startedAtMs === undefined ? {} : { startedAtMs }), ...(memoryBytes === undefined ? {} : { memoryBytes }) } }),
-                        ...(healthSince === undefined ? {} : { healthSince }) };
-                    const next = engineRows?.map(({ id, composeProject, service, containerName, networkNames, pid, restartCount, restartPolicy, nativeImageId, configurationMatches }) => {
-                        const proof = imageProofs.get(id);
-                        return { id, composeProject, service, ...(configurationMatches === undefined ? {} : { configurationMatches }),
-                            ...(containerName ? { containerName } : {}), ...(networkNames ? { networkNames } : {}),
-                            ...(pid === undefined ? {} : { pid }),
-                            ...(restartCount === undefined ? {} : { restartCount }), ...(restartPolicy ? { restartPolicy } : {}),
-                            ...(nativeImageId ? { nativeImageId } : {}),
-                            ...(proof && proof.nativeImageId === nativeImageId ? { imageConfigDigest: proof.imageConfigDigest } : {}) };
-                    }) ?? null;
-                    if (JSON.stringify(next) !== JSON.stringify(nativeContainers)) {
-                        const attribution = (rows: typeof nativeContainers) => rows?.map(({ id, composeProject, service, pid }) => ({ id, composeProject, service, pid })) ?? null;
-                        const changed = JSON.stringify(attribution(next)) !== JSON.stringify(attribution(nativeContainers));
-                        nativeContainers = next;
-                        if (changed) invalidateProcessLaunchDiscovery();
-                    }
-                    if (!nativeContainers) accounting.cancel();
-                    listener(observe(engineRows));
-                },
-            });
-            engineSubscription = subscription;
-            const dispose = async () => {
-                options?.signal?.removeEventListener('abort', onAbort);
-                if (engineSubscription === subscription) {
-                    engineSubscription = undefined; engineRows = null;
-                    runtimeFacts = { ...runtimeFacts, freshness: 'unavailable' };
-                    const hadAttribution = nativeContainers !== null;
-                    nativeContainers = null; accounting.cancel();
-                    if (hadAttribution) invalidateProcessLaunchDiscovery();
-                }
-                await subscription.dispose();
-            };
-            const onAbort = () => { void dispose().catch(() => {}); };
-            options?.signal?.addEventListener('abort', onAbort, { once: true });
-            if (options?.signal?.aborted) { await dispose(); options.signal.throwIfAborted(); }
-            await subscription.ready;
-            return { dispose };
-        },
-        async logs(options) {
-            if (options.kind === 'watch') {
-                options.signal?.throwIfAborted();
-                options.emit({ kind: 'unavailable', reason: 'unsupported' });
-                return { dispose() {} };
-            }
-            return readNativeComposeLogsForHost({ containerIds: ids ?? [], observedIds,
-                environment: Boolean(input.environment), redactionLease: launch?.secretRedactionLease, run }, options);
-        },
-        async inspect(options) {
-            if (cleared) return stopped;
-            if (engineSubscription) { options?.signal?.throwIfAborted(); return observe(engineRows); }
-            try { return observe(await read(options?.signal)); }
-            catch (error) { if (options?.signal?.aborted) throw error; return unknown; }
-        },
-        ...(input.environment ? {
-            start: (options?: Readonly<{ signal?: AbortSignal }>) => controlExisting('start', options),
-            restart: (options?: Readonly<{ signal?: AbortSignal }>) => controlExisting('restart', options),
-            async inspectRemoval(options?: Readonly<{ signal?: AbortSignal }>) {
-                const rows = await readRemoval(options?.signal);
-                return rows === null ? 'unknown' as const : rows.length ? 'present' as const : 'absent' as const;
-            },
-            async remove(options?: Readonly<{ signal?: AbortSignal; stageOutput?: ProjectNativeStageOutput }>) {
-                options?.signal?.throwIfAborted();
-                const current = await readRemoval(options?.signal);
-                if (!current) return { status: 'termination_incomplete' as const };
-                if (current.length && !await removeWitnessedContainers({ ids: current.map(row => row.id), project, services: [target],
-                    run: args => run(args, options?.signal, args[0] === 'container' && args[1] === 'rm' ? options?.stageOutput : undefined) })) return { status: 'termination_incomplete' as const };
-                if ((await readRemoval(options?.signal))?.length !== 0) {
-                    return { status: 'termination_incomplete' as const };
-                }
-                cleared = true;
-                await afterControl(options?.signal);
-                return { status: 'stopped' as const };
-            },
-        } : {}),
-        async stop(options) {
-            try {
-                if (options?.signal?.aborted) options.signal.throwIfAborted();
-                if (cleared) return { status: 'stopped' };
-                const before = await read(options?.signal);
-                if (input.environment && !before?.length) return { status: 'termination_incomplete' };
-                if (!before) {
-                    // Local identity absence is not an absence witness for a
-                    // detached incumbent recovered by a new daemon controller.
-                    if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
-                    return { status: 'termination_incomplete' };
-                }
-                if (observe(before).phase === 'stopped') return { status: 'stopped' };
-                if (!ids?.length) return { status: 'termination_incomplete' };
-                const result = await run(['stop', ...before.map(row => row.id)], options?.signal);
-                if (result.exitCode !== 0) return { status: 'termination_incomplete' };
-                return { status: (await afterControl(options?.signal)).phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
-            } catch (error) {
-                if (options?.signal?.aborted) throw error;
-                if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
-                return { status: 'termination_incomplete' };
-            }
-        },
-    };
-    return {
-        lifecycle,
-        async assertAvailable(signal?: AbortSignal) {
-            if (!launch?.cwd) throw new Error('native_service_admission_required');
-            const env: Record<string, string> = {};
-            for (const [key, value] of Object.entries(launch.env ?? {})) if (value !== undefined) env[key] = value;
-            engineId = await assertNativeComposeAvailable({ io: input.io, command: launch.command, prefix, cwd: launch.cwd, env, signal });
-        },
-        bindLaunch(value: HostAuthorizedPluginExecLaunch) {
-            const args = value.args ?? [];
-            if (args.length < input.args.length || args.slice(-input.args.length).some((arg, index) => arg !== input.args[index])) {
-                throw new Error('native_service_invocation_invalid');
-            }
-            launch = value;
-            engineId = input.engineId;
-            prefix = args.slice(0, args.length - input.args.length);
-        },
-    };
-}
-
-/** The physical start-first generation name is shared with cold observation. */
