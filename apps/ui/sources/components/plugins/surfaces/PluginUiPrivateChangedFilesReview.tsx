@@ -131,7 +131,7 @@ export function PluginUiPrivateChangedFilesReview(
     },
     [truncated, theme.colors.text.secondary, theme.space.s12],
   );
-  const { stacked, indexPlacement } = layout;
+  const { indexPlacement } = layout;
   const leading = props.leadingContent;
   // On the index caption's inset, so the Viewed fact lines up with "Changed files" below it.
   const headerRowStyle = React.useMemo(() => ({
@@ -142,14 +142,17 @@ export function PluginUiPrivateChangedFilesReview(
     () => ({
       renderBarLeading: () => null,
       // The file count is the review index's own caption (as in the Session review), so the header
-      // adds no second one: only the source's Viewed fact, the phone layout switch and its notices.
+      // adds no second one: only the source's Viewed fact, the list | tree switch and its notices.
+      // The rail draws its own switch; a detail pane is narrower than the rail, so without one the
+      // header carries it (the stream index honours the same preference).
       renderHeader: (_coverage, facts) => {
         const viewed = facts?.viewed ?? null;
-        const facts_row = viewed !== null || stacked ? (
+        const layoutSwitch = indexPlacement !== 'rail';
+        const facts_row = viewed !== null || layoutSwitch ? (
           <View style={headerRowStyle}>
             {viewed}
             <View style={GROW_STYLE} />
-            {stacked ? <ChangedFilesLayoutSwitch testIDPrefix="plugin-changed-files-layout" /> : null}
+            {layoutSwitch ? <ChangedFilesLayoutSwitch testIDPrefix="plugin-changed-files-layout" /> : null}
           </View>
         ) : null;
         return facts_row === null && (leading ?? null) === null ? null : <>{facts_row}{leading ?? null}</>;
@@ -158,7 +161,7 @@ export function PluginUiPrivateChangedFilesReview(
       rootPath: null,
       renderFileNotes,
     }),
-    [leading, stacked, indexPlacement, renderFileNotes, headerRowStyle],
+    [leading, indexPlacement, renderFileNotes, headerRowStyle],
   );
   const activeReviewFile = React.useMemo(
     () => ({ key: `plugin-review:${props.identity}`, presented: props.active }),

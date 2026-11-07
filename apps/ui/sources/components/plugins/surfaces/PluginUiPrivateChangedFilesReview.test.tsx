@@ -66,6 +66,11 @@ describe('plugin-ui ChangedFilesReview renders through the Session review owner'
         screen.findByTestId('scm-review-index'),
         'the host review index, not a plugin row list',
       ).not.toBeNull();
+      expect(
+        screen.tree.root.findAll((node) => typeof node.props?.testIDPrefix === 'string'
+          && node.props.testIDPrefix === 'plugin-changed-files-layout').length,
+        'without a rail, the header offers the list | tree switch',
+      ).toBeGreaterThan(0);
       const review = screen.tree.root.findByType(HostChangedFilesReview);
       expect(review.props.allRepositoryChangedFiles.map((file: { fullPath: string }) => file.fullPath),
         'every listed file reaches the Session review owner').toEqual(files.map((file) => file.path));
