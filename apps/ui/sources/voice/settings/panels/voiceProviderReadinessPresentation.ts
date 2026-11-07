@@ -39,7 +39,7 @@ function resolveVoiceReadinessShort(code: string): VoiceReadinessShort {
 }
 
 export function resolveVoiceProviderReadinessPresentation(
-  readiness: VoiceRoleReadiness,
+  readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction'>,
   translate: (key: string, params?: { service: string }) => string,
   service?: string,
 ): VoiceProviderReadinessPresentation {

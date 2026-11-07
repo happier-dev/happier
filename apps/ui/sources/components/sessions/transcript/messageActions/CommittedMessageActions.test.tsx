@@ -149,6 +149,43 @@ function element(kind: 'user-text' | 'agent-text', overrides: Partial<typeof set
 }
 
 describe('Committed row and native menu availability', () => {
+    it.each(['machine', 'engine'] as const)('offers the canonical %s recovery from unavailable read-aloud', async (failure) => {
+        const { writeLocalConversationVoiceSettings, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
+        const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+        const { VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET, VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } = await import('@/voice/settings/voiceSettingsRouteFocus');
+        const { router } = await import('expo-router');
+        const features = createRootLayoutFeaturesResponse({ features: {
+            voice: { enabled: true }, execution: { runs: { enabled: true } },
+        } });
+        home.answer(serverId, '/v1/features', { body: features });
+        home.answer(serverId, '/v1/features/authenticated', { body: features });
+        await featuresClient.getServerFeaturesSnapshot({ serverId, force: true });
+        const voice = getStorage().getState().settings.voice;
+        const local = readLocalConversationVoiceSettings(voice);
+        getStorage().getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+            experiments: true, featureToggles: { voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true },
+            voice: writeLocalConversationVoiceSettings({ ...voice, providerId: 'happier.voice.xai/realtime-grok',
+                executionMachine: { mode: 'fixed', machineId: 'unreachable-machine', autoMachineId: null },
+            }, { ...local, tts: { ...local.tts,
+                provider: failure === 'machine' ? 'local_neural' : 'acme.speech/missing',
+                localNeural: { ...local.tts.localNeural, model: 'kokoro', execution: 'daemon' },
+            } }),
+        }, getStorage().getState().settings));
+        const screen = await renderScreen(element('agent-text'));
+        const action = screen.findAllByType(IconButton).find(button => button.props.testID === 'transcript-message-readAloud:m1')!;
+        expect(action.props.disabled).toBe(true);
+        expect(action.props.onDisabledPress).toEqual(expect.any(Function));
+        const destination = failure === 'machine' ? VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET : VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;
+        await screen.pressByTestIdAsync('transcript-message-readAloud:m1');
+        expect(router.push).toHaveBeenLastCalledWith(destination);
+        const menu = screen.findByType(ContextMenu);
+        const recovery = menu.props.items.find((item: { id: string }) => item.id === 'readAloud:recovery');
+        expect(recovery).toBeDefined();
+        await act(async () => { await menu.props.onSelect(recovery.id); });
+        expect(router.push).toHaveBeenLastCalledWith(destination);
+        await screen.unmount();
+    });
+
     it('offers read-aloud only for readable assistant answers and explains unavailable speech in the menu', async () => {
         const { writeLocalConversationVoiceSettings, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
         const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');

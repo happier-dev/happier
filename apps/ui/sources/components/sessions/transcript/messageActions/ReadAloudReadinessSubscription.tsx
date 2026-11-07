@@ -6,7 +6,7 @@ import { useVoiceSettingsReadinessInputs } from '@/voice/settings/useVoiceSettin
 import { useVoiceConversationsReadinessModel } from '@/voice/settings/panels/VoiceProviderSection';
 
 const retainVoiceSettings = () => {};
-export type ReadAloudReadiness = Pick<VoiceRoleReadiness, 'status' | 'reasonKey'>;
+export type ReadAloudReadiness = Pick<VoiceRoleReadiness, 'status' | 'code' | 'reasonKey' | 'recoveryAction'>;
 
 /** A revealed assistant action observes the same selected Speak role as Voice setup, without probing. */
 export function ReadAloudReadinessSubscription(props: Readonly<{
@@ -20,13 +20,15 @@ export function ReadAloudReadinessSubscription(props: Readonly<{
         localAvailability: inputs.localAvailability,
         executionMachineId: inputs.executionMachine.machineId,
         executionMachineSelectedId: inputs.executionMachine.selectedMachineId,
-        executionMachineSelectionKind: inputs.executionMachine.kind,
+        executionMachineSelectionKind: inputs.executionMachine.selectionKind,
     });
     const status = model.selectedLocalSpeechReadiness?.speak?.status ?? null;
     const reasonKey = model.selectedLocalSpeechReadiness?.speak?.reasonKey ?? null;
+    const code = model.selectedLocalSpeechReadiness?.speak?.code ?? null;
+    const recoveryAction = model.selectedLocalSpeechReadiness?.speak?.recoveryAction ?? null;
     React.useLayoutEffect(() => {
-        props.onChange(status && reasonKey ? { status, reasonKey } : null);
+        props.onChange(status && reasonKey && code && recoveryAction ? { status, reasonKey, code, recoveryAction } : null);
         return () => props.onChange(null);
-    }, [props.onChange, status, reasonKey]);
+    }, [props.onChange, status, reasonKey, code, recoveryAction]);
     return null;
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { projectVoiceReadinessRequirement } from '@/voice/registry/readiness';
 
 import {
   VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET,
@@ -10,6 +11,12 @@ import {
 } from './voiceSettingsRouteFocus';
 
 describe('voice settings route focus', () => {
+  it('routes an unreachable speech Machine to Choose a machine and leaves transient unknowns informational', () => {
+    const unreachable = projectVoiceReadinessRequirement('conversation_tts', 'local_neural', 'execution_machine', 'incompatible')!;
+    expect(resolveVoiceSettingsRecoveryTarget(unreachable)).toEqual(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
+    const unknown = projectVoiceReadinessRequirement('conversation_tts', 'local_neural', 'runtime', 'unknown')!;
+    expect(resolveVoiceSettingsRecoveryTarget(unknown)).toBeNull();
+  });
   it('opens the existing turn-on feature destination for a policy-disabled Voice agent', () => {
     expect(resolveVoiceSettingsRecoveryTarget('enable_voice_agent')).toBe('/settings/features');
     expect(resolveVoiceSettingsRecoveryTarget('configure_credential')).toEqual(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);

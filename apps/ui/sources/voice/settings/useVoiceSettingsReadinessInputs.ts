@@ -1,20 +1,8 @@
 import * as React from 'react';
 
 import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
-import { createVoiceDictationRuntimeSettingsSnapshot } from '@/voice/dictation/voiceDictationRuntimeSettings';
-import {
-  readLocalConversationVoiceSettings,
-  readLocalDirectVoiceSettings,
-  type VoiceSettings,
-} from '@/sync/domains/settings/voiceSettings';
-import { useVoiceExecutionMachineSelection } from '@/voice/credentials/useExecutionMachinePresentation';
-import {
-  parseLocalVoiceSttSettings,
-  parseLocalVoiceTtsSettings,
-} from '@/voice/local/localVoiceSettings';
-import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
-import { useDaemonVoiceModelCatalogState } from '@/voice/settings/panels/modelCatalog/useDaemonVoiceModelCatalogState';
-import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { useSelectedVoiceSpeechModelCatalog } from './useSelectedVoiceSpeechModelCatalog';
 import {
   resolveVoiceDaemonModelAvailabilityFromCatalogState,
   resolveVoiceDaemonModelKindAvailabilityFromCatalogState,
@@ -37,32 +25,9 @@ export function useVoiceSettingsReadinessInputs(voice: VoiceSettings, options: R
   purpose: 'conversation' | 'dictation';
 }>) {
   const happierVoiceSupported = useHappierVoiceSupport();
-  const providerId = resolveVoiceProviderId(voice.providerId);
-  const executionMachine = useVoiceExecutionMachineSelection();
+  const { executionMachine, activeLocalStt, activeLocalTts, requiresDaemonSttModel,
+    requiresDaemonTtsModel, daemonModelCatalog } = useSelectedVoiceSpeechModelCatalog(voice, options);
   const daemonMachineId = executionMachine.machineId;
-  const speechVoice = options.purpose === 'dictation'
-    ? createVoiceDictationRuntimeSettingsSnapshot({ voice }).voice : voice;
-  const activeLocalAdapter = speechVoice.providerId === 'local_direct'
-    ? readLocalDirectVoiceSettings(speechVoice)
-    : readLocalConversationVoiceSettings(speechVoice);
-  const activeLocalStt = parseLocalVoiceSttSettings(activeLocalAdapter.stt);
-  const activeLocalTts = parseLocalVoiceTtsSettings(activeLocalAdapter.tts);
-  const requiresDaemonSttModel = activeLocalStt.provider === 'local_neural'
-    && resolveLocalNeuralExecutionPolicy({
-      requestedExecution: activeLocalStt.localNeural.execution,
-    }).preferredExecution === 'daemon';
-  const requiresDaemonTtsModel = options.purpose === 'conversation' && activeLocalTts.provider === 'local_neural'
-    && resolveLocalNeuralExecutionPolicy({
-      requestedExecution: activeLocalTts.localNeural.execution,
-    }).preferredExecution === 'daemon';
-  const daemonCatalogEnabled = options.probeMachine
-    && (options.purpose === 'dictation'
-      ? requiresDaemonSttModel
-      : providerId === 'local_direct' || providerId === 'local_conversation');
-  const daemonModelCatalog = useDaemonVoiceModelCatalogState({
-    enabled: daemonCatalogEnabled,
-    refreshKey: daemonMachineId,
-  });
   const daemonModelAvailability = React.useMemo(
     () => resolveVoiceDaemonModelAvailabilityFromCatalogState({
       loading: daemonModelCatalog.state.loading,

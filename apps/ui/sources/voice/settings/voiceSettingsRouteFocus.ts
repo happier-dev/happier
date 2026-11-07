@@ -34,7 +34,13 @@ export function resolveVoiceSettingsRecoveryFocus(
 }
 
 /** The existing feature turn-on destination and section recovery share one route owner. */
-export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction']): Href | null {
+export function resolveVoiceSettingsRecoveryTarget(readiness: Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'>): Href | null;
+export function resolveVoiceSettingsRecoveryTarget(action: VoiceRoleReadiness['recoveryAction']): Href | null;
+export function resolveVoiceSettingsRecoveryTarget(input: VoiceRoleReadiness['recoveryAction'] | Pick<VoiceRoleReadiness, 'status' | 'code' | 'recoveryAction'>): Href | null {
+  // An unsettled observation has no setup destination; its owner will publish the result.
+  if (typeof input !== 'string' && (input.status === 'ready'
+    || (input.status === 'unavailable' && input.code.endsWith('_unknown')))) return null;
+  const action = typeof input === 'string' ? input : input.recoveryAction;
   if (action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
   const focus = resolveVoiceSettingsRecoveryFocus(action);
   if (focus === 'provider') return VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;

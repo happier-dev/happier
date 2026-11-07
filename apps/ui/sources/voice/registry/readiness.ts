@@ -137,7 +137,7 @@ export function projectVoiceReadinessRequirement(
   }
   // This historical Machine fact means unreachable, not incompatible software.
   if (requirement === 'execution_machine' && fact === 'incompatible') {
-    return result(role, providerId, 'unavailable', 'execution_machine_incompatible', 'retry');
+    return result(role, providerId, 'unavailable', 'execution_machine_incompatible', 'select_execution_machine');
   }
   if (fact === 'installing') {
     return result(role, providerId, 'installing', `${requirement}_installing`, RECOVERY_BY_REQUIREMENT[requirement]);

@@ -92,7 +92,10 @@ export function CommittedMessageActions(props: Props) {
                 icon: <Icon name={action.icon} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
                 ...(action.id === 'savePrompt' ? { subtitle: t('committedMessageActions.savePromptHint') } : {}),
                 ...(action.disabledReason ? { subtitle: action.disabledReason } : {}),
-            }]);
+            }, ...(action.disabledRecovery ? [{
+                id: `${action.id}:recovery`, title: action.disabledRecovery.title,
+                icon: <Icon name="gear" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
+            }] : [])]);
     // The gap to the neighbouring action (its `marginRight`) is split between the two hit areas.
     const actionGapPx = props.invertTimestampAndActions ? theme.space.s2 : theme.space.s6;
     const neighbourGapPx = resolveMessageActionNeighbourGapPx(theme);
@@ -125,6 +128,8 @@ export function CommittedMessageActions(props: Props) {
             return;
         }
         const action = availableActions.find((candidate) => candidate.id === id);
+        const recovery = availableActions.find((candidate) => `${candidate.id}:recovery` === id)?.disabledRecovery;
+        if (recovery) { recovery.onPress(); return; }
         if (action && !action.disabled) void action.onPress();
     };
     const pinAction = availableActions.find((action) => action.id === 'pin');
@@ -171,6 +176,7 @@ export function CommittedMessageActions(props: Props) {
                 accessibilityLabel={action.title}
                 accessibilityHint={action.accessibilityHint}
                 disabled={action.disabled} disabledReason={action.disabledReason}
+                onDisabledPress={action.disabledRecovery?.onPress}
                 tooltip={action.title} interactiveTargetGapPx={actionGapPx} interactiveTargetVerticalGapPx={neighbourGapPx}
                 variant="plain" onPress={action.onPress}
                 onFocusChange={(focused) => focused ? props.onActionsFocus() : props.onActionsBlur()}

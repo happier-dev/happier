@@ -28,7 +28,9 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { VoiceSayActionResultSchema } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import type { ReadAloudReadiness } from './ReadAloudReadinessSubscription';
-import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
+import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
+import { resolveVoiceSettingsRecoveryTarget } from '@/voice/settings/voiceSettingsRouteFocus';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 const executeSpeechAction = createFrontDoorUiActionExecutor();
 
@@ -40,6 +42,7 @@ export type CommittedMessageAction = Readonly<{
     accessibilityHint?: string;
     disabled?: boolean;
     disabledReason?: string;
+    disabledRecovery?: Readonly<{ title: string; onPress: () => void }>;
     icon: IconName;
     onPress: () => void | Promise<void>;
     menuItems?: readonly ContextMenuItem[];
@@ -72,10 +75,16 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
     menuVisible: boolean;
 }> = { rowVisible: true, menuVisible: false }) {
     const { message, settings } = input;
+    const router = useRouter();
     const readableAssistantMessage = message.kind === 'agent-text' && !message.isThinking && input.selectableText != null
         && !input.isStructuredOnly && !input.hasUnsupportedContent;
     const readAloudEligible = readableAssistantMessage && input.copyText.trim().length > 0;
     const [readAloudReadiness, setReadAloudReadiness] = React.useState<ReadAloudReadiness | null>(null);
+    const readAloudRecoveryTarget = readAloudReadiness ? resolveVoiceSettingsRecoveryTarget(readAloudReadiness) : null;
+    const readAloudPresentation = readAloudReadiness
+        ? resolveVoiceProviderReadinessPresentation(readAloudReadiness, translateVoiceReadiness) : null;
+    const readAloudRecovery = readAloudRecoveryTarget && readAloudPresentation?.action
+        ? { title: readAloudPresentation.action, onPress: () => router.push(readAloudRecoveryTarget) } : undefined;
     const observeReadAloudReadiness = readAloudEligible && (presentation.rowVisible || presentation.menuVisible);
     const makeRepeatableEligible = settings.transcriptMessageMakeRepeatableActionEnabled !== false
         && message.kind === 'agent-text' && !message.isThinking && input.selectableText != null && !input.isStructuredOnly;
@@ -164,7 +173,9 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
             icon: copied ? 'check' : 'copy', title: t('common.copy'), onPress: copy },
         { id: 'readAloud', available: readAloudEligible, disabled: readAloudReadiness?.status !== 'ready',
             disabledReason: readAloudReadiness?.status === 'ready' ? undefined
-                : translateVoiceReadiness(readAloudReadiness?.reasonKey ?? 'voice.readiness.runtime_unknown'),
+                : [translateVoiceReadiness(readAloudReadiness?.reasonKey ?? 'voice.readiness.runtime_unknown'),
+                    readAloudRecovery?.title].filter(Boolean).join(' · '),
+            disabledRecovery: readAloudRecovery,
             icon: 'speaker-high', title: t('committedMessageActions.readAloud'), onPress: async () => {
                 try {
                     const result = VoiceSayActionResultSchema.parse(await executeSpeechAction('ui.voice_global.say.start', { text: input.copyText }));

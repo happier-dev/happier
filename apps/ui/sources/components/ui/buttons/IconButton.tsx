@@ -141,11 +141,11 @@ export function IconButton(props: Readonly<{
     /**
      * The free space on each side the hit area may take (half of each neighbour gap, or the
      * container's padding at its ends), so a row of controls tiles its container with targets and
-     * none overlap. Overrides `interactiveTargetGapPx`. `top` and `bottom` bound the vertical reach
-     * where a clipping edge sits closer than the target (a control in a clipped block); omitted, the
-     * hit area reaches the whole target above and below.
+     * none overlap. Overrides `interactiveTargetGapPx`. Each side is bounded only when given: `top` and
+     * `bottom` where a clipping edge or a neighbour sits closer than the target (a control in a clipped
+     * block, a header over its first row); an omitted side reaches the whole target.
      */
-    interactiveTargetEdgesPx?: Readonly<{ leading: number; trailing: number; top?: number; bottom?: number }>;
+    interactiveTargetEdgesPx?: Readonly<{ leading?: number; trailing?: number; top?: number; bottom?: number }>;
     /**
      * Vertical gap this control's column leaves to the neighbours above and below, in px. The hit area
      * reaches at most half of it up and down (a stacked rail of controls); omitted, it reaches the
@@ -182,6 +182,8 @@ export function IconButton(props: Readonly<{
     tabIndex?: HappierPressableProps['tabIndex'];
     /** Human copy for WHY the button is disabled — tooltip + a11y hint. */
     disabledReason?: string;
+    /** A named recovery may handle a disabled press; otherwise touch reveals its reason. */
+    onDisabledPress?: HappierPressableProps['onDisabledPress'];
     animationEnabled?: boolean;
     /** Receives the gesture event so a row-nested action can stop propagation to its row. */
     onPress: HappierPressableProps['onPress'];
@@ -226,7 +228,7 @@ export function IconButton(props: Readonly<{
             border: theme.colors.border.default,
             hover: paintColor(theme.colors.surface.selected),
             pressed: paintColor(theme.colors.surface.pressed),
-            selected: paintColor(theme.colors.surface.pressed),
+            selected: paintColor(theme.colors.surface.selected),
             focus: theme.colors.border.focus,
         } : {
             // The fill is its own edge: a `well` draws no outline.
@@ -252,8 +254,8 @@ export function IconButton(props: Readonly<{
         : undefined;
     const horizontalReach = edges
         ? {
-            left: Math.max(0, edges.leading),
-            right: Math.max(0, edges.trailing),
+            ...(edges.leading === undefined ? null : { left: Math.max(0, edges.leading) }),
+            ...(edges.trailing === undefined ? null : { right: Math.max(0, edges.trailing) }),
             ...(edges.top === undefined ? null : { top: Math.max(0, edges.top) }),
             ...(edges.bottom === undefined ? null : { bottom: Math.max(0, edges.bottom) }),
         }
@@ -313,7 +315,7 @@ export function IconButton(props: Readonly<{
             accessibilityHint={props.disabled === true && props.disabledReason ? props.disabledReason : props.accessibilityHint}
             describedById={disabledReason ? descriptionId : undefined}
             disabled={props.disabled}
-            onDisabledPress={disabledReason ? revealReason : undefined}
+            onDisabledPress={props.onDisabledPress ?? (disabledReason ? revealReason : undefined)}
             busy={props.busy}
             selected={props.selected}
             checked={props.checked}
@@ -322,7 +324,6 @@ export function IconButton(props: Readonly<{
             controlRef={props.controlRef}
             onKeyDown={props.onKeyDown}
             tabIndex={props.tabIndex}
-            hitSlop={8}
             hitTarget={hitTarget}
             hitReach={hitReach}
             onPress={props.onPress}

@@ -38,7 +38,7 @@ describe('resolveVoiceRoleReadiness', () => {
       facts: { ...readyFacts, executionMachine },
     });
     expect(project('unknown')).toMatchObject({ status: 'unavailable', code: 'execution_machine_unknown', recoveryAction: 'retry' });
-    expect(project('incompatible')).toMatchObject({ status: 'unavailable', recoveryAction: 'retry' });
+    expect(project('incompatible')).toMatchObject({ status: 'unavailable', recoveryAction: 'select_execution_machine' });
     expect(project('ready')).toMatchObject({ status: 'ready', recoveryAction: 'none' });
   });
 
@@ -53,7 +53,7 @@ describe('resolveVoiceRoleReadiness', () => {
       modeId: 'byo',
       facts: { ...readyFacts, executionMachine },
     });
-    expect(project('incompatible')).toMatchObject({ status: 'unavailable', code: 'execution_machine_incompatible', recoveryAction: 'retry' });
+    expect(project('incompatible')).toMatchObject({ status: 'unavailable', code: 'execution_machine_incompatible', recoveryAction: 'select_execution_machine' });
     expect(project('missing')).toMatchObject({ status: 'needs_setup', code: 'execution_machine_missing' });
     expect(project('ready')).toMatchObject({ status: 'ready', code: 'ready' });
   });
