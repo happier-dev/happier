@@ -50,7 +50,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'externalSessionHostOperationOwner'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
     & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean }): Promise<InstalledProjectAgentDaemonFixture> {
   let daemonCredentials = requesterOptions?.credentials ?? { token: 'custodian-token', encryption: null };
@@ -140,6 +140,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     await skillStore.collectSkillCache({ libraryDigests: [] });
   });
   const daemon = await startDaemonSessionControlRuntime({ machineId: 'machine', serverId, serverBaseUrl: 'https://session-home.test',
+    externalSessionHostOperationOwner: requesterOptions?.externalSessionHostOperationOwner,
     agentIsolation: requesterOptions?.agentIsolation,
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,

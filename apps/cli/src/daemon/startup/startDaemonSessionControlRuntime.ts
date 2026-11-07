@@ -16154,7 +16154,32 @@ daemonWorkSignal: AbortSignal;
         readStartupFailure: trackedSession => readStartupFailure({ sessionId: input.sessionId, trackedSession }),
       }),
     installExternalSessionHostOperations: (operations) =>
-      externalSessionHostOperationOwner.install(operations),
+      externalSessionHostOperationOwner.install({
+        followOperation: operations.followOperation && {
+          execute: request => withSessionAccountContext(request.sessionId, context =>
+            withSessionAccountHome(context, () => operations.followOperation!.execute({
+              ...request,
+              accountContext: context ? {
+                credentials: context.bootstrap.credentials,
+                agentSettings: context.readAccountSettingsSnapshot().settings,
+                serverId: context.bootstrap.attribution.serverId,
+                activeServerDir: context.activeServerDir,
+              } : undefined,
+            })), undefined, request.options.signal),
+        },
+        followTargetOperation: operations.followTargetOperation && {
+          execute: request => withSessionAccountContext(request.sessionId, context =>
+            withSessionAccountHome(context, () => operations.followTargetOperation!.execute({
+              ...request,
+              accountContext: context ? {
+                credentials: context.bootstrap.credentials,
+                agentSettings: context.readAccountSettingsSnapshot().settings,
+                serverId: context.bootstrap.attribution.serverId,
+                activeServerDir: context.activeServerDir,
+              } : undefined,
+            })), undefined, request.signal),
+        },
+      }),
     readMaterializedStateObservationBinding: (sessionId) =>
       readTrackedSessionMaterializedStateObservationBinding(params.pidToTrackedSession.values(), sessionId),
     providerAccountUsageStore,
