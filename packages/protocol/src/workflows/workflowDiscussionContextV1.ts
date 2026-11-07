@@ -20,7 +20,8 @@ export async function readWorkflowDiscussionContextV1(params: Readonly<{
   const unavailable = () => ({ ok: false as const, code: 'workflow_discussion_context_unavailable' as const });
   const { origin, context } = params;
   const sameHome = (left: string, right: string) => areServerProfileIdentifiersEquivalent(left, right,
-    id => id === context.serverId && context.serverIdentityId ? context.serverIdentityId : params.resolveServerProfileScopeId?.(id));
+    id => (id === context.serverId || id === context.serverIdentityId) && context.serverIdentityId
+      ? context.serverIdentityId : params.resolveServerProfileScopeId?.(id));
   if (!context.serverId || !sameHome(context.serverId, origin.discussion.serverId)) return { ok: false, code: 'invalid_reference_scope' };
   const messages: DiscussionOpenedMessageV1[] = [];
   let throughSeq = params.scope === 'addressing_message' ? origin.throughSeq : undefined;

@@ -7,6 +7,7 @@ import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import type { DiscussionProducerV1 } from '@happier-dev/protocol/discussions/content';
 import type { WorkflowCoordinatorInvocation } from './coordinator';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
+import { readWorkflowDiscussionContextV1 } from '@happier-dev/protocol/workflows/workflowDiscussionContextV1';
 import { createProductionWorkflowDiscussionContextReader, resolveWorkflowDiscussionOrigin } from './workflowDiscussion';
 
 vi.mock('axios', async importOriginal => {
@@ -76,6 +77,20 @@ describe('Workflow production Discussion context', () => {
     vi.stubGlobal('fetch', async () => Response.json(features));
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it.each(['plain', 'e2ee'] as const)('opens %s round context through the executing profile and its portable Home', async mode => {
+    const state = await fixture(mode);
+    const serverIdentityId = 'srv_workflow_home';
+    const stableOrigin = { ...origin, discussion: { ...discussion, serverId: serverIdentityId } };
+    const discussionAction = createDiscussionActionDeps({ credentials: state.credentials, serverId: discussion.serverId,
+      serverIdentityId, serverHttpBaseUrl, resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) }).discussionAction!;
+    const read = (target: typeof stableOrigin) => readWorkflowDiscussionContextV1({ origin: target, scope: 'addressing_message',
+      context: { serverId: discussion.serverId, serverIdentityId, surface: 'agent', authority: 'account_automation' }, discussionAction });
+    expect(await read(stableOrigin)).toMatchObject({ ok: true, context: { discussion: stableOrigin.discussion,
+      messages: [{ id: 'message-1', content: { parts: [{ text: 'message 1' }] } }, { id: 'question' }] } });
+    expect(await read({ ...stableOrigin, discussion: { ...discussion, serverId: 'srv_foreign' } }))
+      .toEqual({ ok: false, code: 'invalid_reference_scope' });
+  });
 
   it.each(['origin', 'context'] as const)('accepts only the observed stable Home behind a local routing profile (%s)', async boundary => {
     const state = await fixture('plain');

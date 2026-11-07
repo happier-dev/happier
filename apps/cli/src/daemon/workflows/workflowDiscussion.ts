@@ -96,7 +96,6 @@ export function createProductionWorkflowDiscussionContextReader(params: Readonly
         throw new WorkflowInputResolutionError('invalid_reference_scope');
       }
       const read = await readWorkflowDiscussionContextV1({ origin, scope, discussionAction,
-        resolveServerProfileScopeId: id => id === params.serverId || id === params.serverIdentityId ? params.serverIdentityId : undefined,
         context: { surface: 'api', authority: 'account_automation', serverId: params.serverId,
           ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
           ...(params.signal ? { signal: params.signal } : {}) } });
