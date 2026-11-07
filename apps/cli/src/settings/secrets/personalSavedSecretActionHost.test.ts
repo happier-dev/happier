@@ -29,6 +29,17 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionAccountActionExecutor } from '@/mcp/runtime/createSessionAccountActionExecutor';
+import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 
 // HTTP is the process boundary; Account admission, resource opening, sealing and Action execution stay real.
 vi.mock('axios', async importOriginal => {
@@ -38,7 +49,7 @@ vi.mock('axios', async importOriginal => {
 afterEach(() => { vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockReset(); vi.mocked(axios.request).mockReset(); vi.unstubAllGlobals(); });
 
 describe('personal Saved Secret key rotation', () => {
-    it('stores a person-entered value through agent Action → private approval RPC → Saved Secret owner without disclosing it', async () => {
+    it.each(['agent', 'mcp'] as const)('stores a person-entered value through %s MCP → private approval RPC → Saved Secret owner without disclosing it', async surface => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'secret-owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };
         const scopeKey = resolveAccountSettingsScopeKeyForToken(token)!;
@@ -50,6 +61,7 @@ describe('personal Saved Secret key rotation', () => {
         vi.stubGlobal('fetch', async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} })));
         vi.mocked(axios.get).mockImplementation(async rawUrl => {
             const path = new URL(String(rawUrl)).pathname;
+            if (path === '/v2/sessions/session') return { status: 200, data: { session: createSessionRecordFixture({ id: 'session', share: null }) } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
                 settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -61,7 +73,13 @@ describe('personal Saved Secret key rotation', () => {
         let approval: ApprovalRequest | undefined;
         const history: unknown[] = [];
         const observations: unknown[] = [];
+        const deliveredMessages: string[] = [];
         const executor = createActionExecutor({
+            // Session input delivery is the transport boundary; approval settlement stays real.
+            sessionSendMessage: async ({ sessionId, message, localId }) => {
+                expect(sessionId).toBe('session'); deliveredMessages.push(message);
+                return { status: 'accepted', localId };
+            },
             approvalsCreate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); history.push(structuredClone(approval)); return { artifactId: 'secret-approval' }; },
             approvalsGet: async () => structuredClone(approval),
             approvalsUpdate: async ({ request, expectedStatus }) => {
@@ -83,21 +101,51 @@ describe('personal Saved Secret key rotation', () => {
                 } }),
             observeActionExecution: async event => { observations.push(event); },
         });
+        const input = { name: 'Replay3 disposable secret' };
+        const daemonExecute = createDaemonSessionAccountActionExecutor({ serverId: 'home', machineId: 'machine',
+            serverHttpBaseUrl: 'https://secret-approval.example.test', token, createExecutor: () => executor });
+        const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'session',
+            execute: operation => daemonExecute(operation, { sessionId: 'session', isCurrent: async () => true }) });
+        const sessionExecutor = createSessionAccountActionExecutor({ base: executor, client: {
+            sessionId: 'session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://secret-approval.example.test' }),
+            rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+            getActiveTurnAdmissionWitness: () => ({ turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1],
+                agentStartCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 } }),
+        } });
+        const bridge = createActionToolExecutorBridge({ surface, executor: {
+            execute: (id, args, context) => sessionExecutor.execute(id, args, { ...context, actionRequestId: 'request' }),
+        } });
+        const server = new McpServer({ name: 'happier', version: '1' });
+        registerHappierMcpBuiltInTools(server, { sessionId: 'session', sessionMachineId: 'machine', surface,
+            deps: { ...bridge, changeTitle: async () => ({ success: true }),
+                resolveActionOptions: args => bridge.resolveActionOptions(args, 'session') } });
+        const client = new Client({ name: 'secret-seam', version: '1' });
+        const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
         try {
-            const input = { name: 'Agent-requested deployment token', kind: 'token' };
-            const agent = { surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'secret-owner',
-                defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' } } as const;
-            expect(await executor.execute('secrets.create', input, agent)).toMatchObject({ ok: true,
-                result: { kind: 'approval_request_created', artifactId: 'secret-approval' } });
+            await server.connect(serverTransport); await client.connect(clientTransport);
+            const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+                actionId: 'secrets.create', input,
+            } }));
+            const text = response.content.find(block => block.type === 'text');
+            if (text?.type !== 'text') throw new Error('Missing Action result');
+            expect(JSON.parse(text.text)).toMatchObject({ kind: 'approval_request_created', artifactId: 'secret-approval' });
             expect(saved).toBeUndefined();
             expect(approval).toMatchObject({ actionArgs: input, preview: { confidentialInputs: { kind: 'action_inputs', paths: ['value'] } } });
             expect(await executor.execute('approval.request.decide', { artifactId: 'secret-approval', decision: 'approve' },
                 { surface: 'ui', authority: 'present_user', serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'confidential_choice_required' });
-            const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {} });
+            const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger: () => {},
+                authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: 'machine',
+                    resolveCustodianAccountId: async () => 'secret-owner', resolveInstallationId: () => 'installation',
+                    // The authenticated Home verification is a network boundary.
+                    verifyMachineAdmission: async () => true,
+                }) });
             registerApprovalRpcHandlers({ rpcHandlerManager: rpc, actionExecutor: executor });
             const result = await rpc.handleRequest({ method: `machine:${RPC_METHODS.APPROVAL_REQUEST_SECRET_CONTINUE}`, callerAuthority: 'present_user',
+                machineAdmission: { actorAccountId: 'secret-owner', custodianAccountId: 'secret-owner', machineId: 'machine',
+                    installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
                 params: { v: 1, kind: 'action_inputs', artifactId: 'secret-approval', requestId: 'request', actionId: 'secrets.create', request: input,
                     serverId: 'home', machineId: 'machine', accountEncryptionMode: 'plain', choices: [{ path: 'value', choice: { kind: 'once', value: material } }] } });
+            expect(result).not.toHaveProperty('errorCode');
             expect(result).toMatchObject({ ok: true, result: { secretId: expect.any(String) } });
             expect(saved).toBeDefined();
             // The private result redactor may omit secret-named fields; the
@@ -106,8 +154,12 @@ describe('personal Saved Secret key rotation', () => {
             expect(openSavedSecretResourceStoredContentV1({ resourceId: saved!.resourceId, mode: 'plain', storedContent: saved!.storedContent }))
                 .toMatchObject({ name: input.name, value: material });
             expect(approval).toMatchObject({ status: 'executed' });
-            expect(JSON.stringify({ result, history, observations })).not.toContain(material);
-        } finally { resetActiveAccountSettingsSnapshotForTests(); }
+            expect(deliveredMessages.map(message => JSON.parse(message))).toContainEqual(expect.objectContaining({
+                actionId: 'secrets.create', execution: expect.objectContaining({ ok: true,
+                    result: expect.objectContaining({ secretId: saved!.resourceId }) }),
+            }));
+            expect(JSON.stringify({ response, result, history, observations, deliveredMessages })).not.toContain(material);
+        } finally { await client.close(); await server.close(); await daemon.close(); resetActiveAccountSettingsSnapshotForTests(); }
     });
     it('describes Connected Account referrers through the same read-only census as delete', async () => {
         const accountId = 'secret-owner';

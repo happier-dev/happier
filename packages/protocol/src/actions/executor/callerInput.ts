@@ -9,8 +9,8 @@ export function callerInputSchema(spec: ActionSpec, ctx: ActionExecutorContext) 
     // Friendly argv has already been bound; admit only the declared whole Action input.
     return spec.cli?.wholeInputSchema ?? spec.inputSchema;
   }
-  if (ctx.surface === 'mcp') {
-    return spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema;
+  if (ctx.surface === 'agent' || ctx.surface === 'mcp') {
+    return spec.surfaceBindings?.[ctx.surface]?.inputSchema ?? spec.inputSchema;
   }
   if (ctx.surface === 'api') {
     return spec.surfaceBindings?.api?.inputSchema ?? spec.inputSchema;

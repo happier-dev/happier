@@ -15,6 +15,7 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
+import { bindCallerInput } from '@happier-dev/protocol/actions/executor/callerInput';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -194,11 +195,13 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     }
     // Agent authoring retains inherited choices until the canonical
     // start owner resolves them. Malformed known fields still fail before Home proof.
-    const actionSpec = getActionSpec(operation.actionId);
-    const inputSchema = operation.actionId === 'session.spawn_new'
-      ? SessionSpawnNewAgentAuthoringInputV2Schema : actionSpec.surfaceBindings?.agent?.inputSchema ?? actionSpec.inputSchema;
-    const parsedInput = inputSchema.safeParse(operation.input ?? {});
-    if (!parsedInput.success) return actionInputValidationFailure(parsedInput.error);
+    if (operation.actionId === 'session.spawn_new') {
+      const parsedInput = SessionSpawnNewAgentAuthoringInputV2Schema.safeParse(operation.input ?? {});
+      if (!parsedInput.success) return actionInputValidationFailure(parsedInput.error);
+    } else {
+      const callerInput = await bindCallerInput(getActionSpec(operation.actionId), operation.input, { surface: operationSurface });
+      if (!callerInput.ok) return callerInput;
+    }
     if (operation.actionId.startsWith('scm.')) {
       if (requiresExplicitScmMachineTarget(operation.actionId)) {
         return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
