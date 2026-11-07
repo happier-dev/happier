@@ -1,4 +1,4 @@
-import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 
 import type { CorpusQualifiedObservationV1 } from '../../corpus/fold/qualify.js';
 import {
@@ -24,20 +24,25 @@ type TriagePostMutationHostV1 = Readonly<{
  *
  * Source renderers signal only that a potentially changing Action settled. This target callback
  * invokes the exact configured-source `get` Action and feeds its qualified answer through the
- * canonical aggregate fold. It returns one row which the parent supplies to both its common header
- * and its targeted child; no provider result or source-local fold participates. The mounted detail
+ * canonical retained owner when that entry is already acquired. An exact-only surface uses the same
+ * aggregate fold without creating list demand; no provider result or source-local fold participates. The mounted detail
  * must supply its lifetime signal so leaving or replacing that detail cancels the exact read and
  * makes a late answer inert.
  */
 export async function reobserveTriagePostMutationRow(
   host: TriagePostMutationHostV1,
-  row: TriageListRowV1,
+  row: TriageListRowV1 | Pick<TriageListRowV1, 'entryRef'>,
   lanes: readonly TriageListLaneV1[],
   sourceInstanceId: string,
-  options: PluginCancellationOptions & Readonly<{ keepViewerFacts?: boolean }>,
+  options: PluginCancellationOptions & Readonly<{
+    keepViewerFacts?: boolean;
+    onReadFailure?: (error: unknown) => void;
+    publishObservation?: (observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean) => TriageListRowV1 | null;
+  }>,
 ): Promise<TriageListRowV1 | null> {
-  const { keepViewerFacts, ...cancellation } = options;
-  const prior = row.observations.find(
+  const { keepViewerFacts, onReadFailure, publishObservation, ...cancellation } = options;
+  const previous = 'observations' in row ? row : null;
+  const prior = previous?.observations.find(
     (observation) => observation.sourceInstanceId === sourceInstanceId,
   );
   const lastKnownLocator = prior?.outcome.kind === 'present'
@@ -55,18 +60,27 @@ export async function reobserveTriagePostMutationRow(
       },
       cancellation,
     ));
-  } catch {
+  } catch (error) {
+    onReadFailure?.(error);
     return null;
   }
-  if (result.kind !== 'observed') return null;
+  if (result.kind !== 'observed') {
+    onReadFailure?.(new PluginError({ code: result.kind === 'rejected' ? 'denied' : result.kind }));
+    return null;
+  }
   const observation: CorpusQualifiedObservationV1 = {
     entryRef: result.entryRef,
     ...result.observation,
   };
+  if (options.signal?.aborted) return null;
+  const published = publishObservation?.(observation, keepViewerFacts);
+  if (published != null) return published;
   return foldTriagePostMutationObservation({
-    row,
+    row: previous,
     observation,
     lanes,
+    // The reobserve owner just admitted this active instance, even when the list has no successful lane.
+    activeSourceInstanceIds: [...lanes.map(lane => lane.sourceInstanceId), sourceInstanceId],
     assembledAtMs: result.observation.observedAtMs,
     ...(keepViewerFacts === true ? { keepViewerFacts } : {}),
   });

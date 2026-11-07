@@ -92,6 +92,7 @@ import { planTriageTaskViewInventoryV1, TRIAGE_PR_VIEW_INVENTORY_V1 } from '../l
 import {
   TRIAGE_LIST_GROUPS_V1,
   planTriageListItemsV1,
+  readTriageTaskBlockerNamesV1,
   readTriageSharedGroupReasonsV1,
   type TriageListGroupIdV1,
   type TriageListItemV1,
@@ -621,8 +622,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     const reasons = readTriageSharedGroupReasonsV1(projected);
     return { ...snapshot, window: { ...structure,
       items: projected.map(item => ({ key: item.key, group: item.group, statusGroup: item.statusGroup })),
-      // A task can name another listed task as a blocker; that shared name is model structure.
-      ...(taskAudience === undefined ? {} : { taskNames: projected.map(item => item.row.designation ?? item.row.title) }),
+      // Only Mine's blocker hints share another row's name; other titles are keyed row facts.
+      ...(taskAudience !== 'mine' ? {} : { taskNames: [...readTriageTaskBlockerNamesV1(projected)] }),
       reasons: [...reasons],
       columns: readTriageDataColumnsV1({ tasks: taskAudience !== undefined, items: projected, sharedGroupReasons: reasons }),
     } };

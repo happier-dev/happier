@@ -18,6 +18,7 @@ import {
   admitTriageSourceDescriptorV1,
   type TriageEntryRefV1,
   type TriageSourceDescriptorV1,
+  type TriageSourceKindGlyphV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -189,8 +190,24 @@ export function resolveTriageSourceWorkflowSubjectV1(
   targetedContributions: SurfaceContext['targetedContributions'],
   entryRef: TriageEntryRefV1,
 ): TriageSourceWorkflowSubjectV1 | null {
+  return projectTriageSourceWorkflowSubjectV1(resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source), entryRef.kindId);
+}
+
+/** The mark the source declares for this kind, if it declares one. */
+export function resolveTriageSourceKindGlyphV1(
+  targetedContributions: SurfaceContext['targetedContributions'],
+  entryRef: TriageEntryRefV1,
+): TriageSourceKindGlyphV1 | null {
   return resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)
-    ?.kinds.find((kind) => kind.id === entryRef.kindId)?.workflowSubject ?? null;
+    ?.kinds.find(kind => kind.id === entryRef.kindId)?.glyph ?? null;
+}
+
+/** The descriptor's subject is shared by portable and mounted consumers. */
+export function projectTriageSourceWorkflowSubjectV1(
+  descriptor: TriageSourceDescriptorV1 | null | undefined,
+  kindId: string,
+): TriageSourceWorkflowSubjectV1 | null {
+  return descriptor?.kinds.find(kind => kind.id === kindId)?.workflowSubject ?? null;
 }
 
 /** The same lookup, read from the mount's own host-stamped surface context. */

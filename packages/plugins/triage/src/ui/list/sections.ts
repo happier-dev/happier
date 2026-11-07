@@ -1,4 +1,5 @@
-import type { TriageEntryLocatorV1, TriageEntryRelationsV1, TriageSourceWorkflowSubjectV1, TriageTaskCapabilitiesV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryLocatorV1, TriageEntryRelationsV1, TriageEntryStateV1, TriageSourceWorkflowSubjectV1, TriageTaskCapabilitiesV1,
+  TriageTaskTransitionRequiredFieldV1 } from '@happier-dev/triage-protocol/v1';
 import { projectTriageDetailFieldsV1, projectTriageDetailFieldTextV1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_LANE } from '../../corpus/fold/lane.js';
@@ -13,7 +14,8 @@ import {
 } from '../marks/pinnedRows.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { readTriageEntryAgentStatusV1, type TriageAgentStateV1, type TriageAgentStatusV1 } from '../detail/agentState.js';
-import { isInternalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { isPersonalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { TRIAGE_PR_VIEW_INVENTORY_V1 } from './viewInventory.js';
 
 /**
  * The PRs & Issues rows and their ONE grouping axis (PLAN.md r0.41): **Needs you / With an agent / In review /
@@ -49,6 +51,11 @@ export type TriageListItemV1 = Readonly<{
   key: string;
   row: TriageListDisplayRowV1;
   group: TriageListGroupIdV1;
+  /**
+   * The group its facts file it in, never `pinned`: the same as `group` for an unpinned entry. A view with no Pinned
+   * group (the board, owner ruling 2026-10-31) places a pinned entry here and marks the pin on the entry itself.
+   */
+  statusGroup: Exclude<TriageListGroupIdV1, 'pinned'>;
   /** The source's bounded summary, for the peek. */
   summary: string | null;
   signal: TriageListRowSignalV1 | null;
@@ -62,9 +69,13 @@ export type TriageListItemV1 = Readonly<{
 
 /** A task row's status and relation facts, read from the source's live snapshot (never stored by Happier). */
 export type TriageListTaskFactsV1 = Readonly<{
-  category: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled' | null;
+  category: ReturnType<typeof triageTaskStatusCategoryV1>;
   /** The source's own word ("In Review", "Open"); `null` when the source names none. */
   statusLabel: string | null;
+  /** Null is source-confirmed unassigned; omission is unknown. */
+  assigneeLabel?: string | null;
+  /** The source says the reader is an assignee, so the owner reads as You rather than the reader's own handle. */
+  assignedToViewer?: true;
   relations: TriageEntryRelationsV1 | null;
   /** Source facts only; an omitted timestamp is unknown. */
   dueDate?: string;
@@ -72,8 +83,16 @@ export type TriageListTaskFactsV1 = Readonly<{
   /** Names an offered completed transition; activation uses the existing transition role. */
   completingTransitionId?: string;
   /** The selected connection's offered workflow (the row's status menu), each with the category it moves to. */
-  transitions?: readonly Readonly<{ id: string; label: string; category: TriageListTaskFactsV1['category'] }>[];
+  transitions?: readonly Readonly<{ id: string; label: string; category: TriageListTaskFactsV1['category'];
+    state?: TriageEntryStateV1; requiredFields?: readonly TriageTaskTransitionRequiredFieldV1[] }>[];
 }>;
+
+/** Only names referenced by a listed task's blocker hint are shared row facts. */
+export function readTriageTaskBlockerNamesV1(items: readonly TriageListItemV1[]): ReadonlyMap<string, string> {
+  const referenced = new Set(items.flatMap(item => item.task?.relations?.blockedBy?.map(triageEntryRowKey) ?? []));
+  return new Map(items.filter(item => referenced.has(item.key))
+    .map(item => [item.key, item.row.designation ?? item.row.title]));
+}
 
 function readTaskFacts(row: TriageListRowV1 | null, declared?: TriageTaskCapabilitiesV1): TriageListTaskFactsV1 | null {
   const snapshot = row?.content?.outcome.snapshot;
@@ -87,13 +106,16 @@ function readTaskFacts(row: TriageListRowV1 | null, declared?: TriageTaskCapabil
   return Object.freeze({
     category: triageTaskStatusCategoryV1(snapshot.state),
     statusLabel: snapshot.state.nativeLabel ?? null,
+    ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
+    ...(row?.content?.outcome.viewer.involvement.includes('assignee') === true ? { assignedToViewer: true as const } : {}),
     relations: snapshot.relations ?? null,
     ...(snapshot.dueDate === undefined ? {} : { dueDate: snapshot.dueDate }),
     ...(snapshot.completedAtMs === undefined ? {} : { completedAtMs: snapshot.completedAtMs }),
     ...(completing === undefined ? {} : { completingTransitionId: completing.id }),
     ...(capabilities?.transitions === undefined || capabilities.transitions.length === 0 ? {} : {
       transitions: capabilities.transitions.map((transition) => Object.freeze({
-        id: transition.id, label: transition.label, category: triageTaskStatusCategoryV1(transition.state),
+        id: transition.id, label: transition.label, category: triageTaskStatusCategoryV1(transition.state), state: transition.state,
+        ...(transition.requiredFields === undefined ? {} : { requiredFields: transition.requiredFields }),
       })),
     }),
   });
@@ -145,6 +167,12 @@ function readSignal(row: TriageListRowV1 | null, locale: string): TriageListRowS
 export function planTriageListItemsV1(input: Readonly<{
   rows: readonly TriageListRowV1[];
   pins: readonly TriagePinnedEntryV1[];
+  /**
+   * Rows this mount read exactly (an opened detail's authoritative read) that the window may not hold. They answer
+   * a pin the window never walked, so an entry the reader has just read no longer says it is unsynchronized; they
+   * never join the window's own groups. A window row for the same entry wins.
+   */
+  readRows?: readonly TriageListRowV1[];
   locale?: string;
   /** The admitted source contribution's workflow subject for this kind, or `null` when none was declared. */
   workflowSubjectOf: (entryRef: TriageListRowV1['entryRef']) => TriageSourceWorkflowSubjectV1 | null;
@@ -165,15 +193,20 @@ export function planTriageListItemsV1(input: Readonly<{
     completedSinceMs?: number;
     /** A read of tasks.internal.list; this projection never persists order. */
     personalOrder?: readonly string[];
+    personalAccountId?: string;
   }>;
 }>, previous: readonly TriageListItemV1[] = []): readonly TriageListItemV1[] {
   const pinIndex = indexTriagePinsByEntry(input.pins);
   const agentStatesOf = (key: string) => input.agentStatesOf?.(key) ?? NO_AGENT_STATES;
   const projectedByKey = new Map<string, TriageListRowV1>();
+  for (const row of input.readRows ?? []) projectedByKey.set(triageEntryRowKey(row.entryRef), row);
   for (const row of input.rows) projectedByKey.set(triageEntryRowKey(row.entryRef), row);
 
   const included = (ref: TriageListRowV1['entryRef'], row: TriageListRowV1 | null): boolean => {
-    if (input.tasks === undefined) return true;
+    // Personal Account tasks belong to the Tasks view. The neutral corpus
+    // stays shared with the picker; both pinned and listed page rows use this
+    // one view-membership decision.
+    if (input.tasks === undefined) return TRIAGE_PR_VIEW_INVENTORY_V1.includesKind(ref);
     if (!input.tasks.isTask(ref)) return false;
     const snapshot = row?.content?.outcome.snapshot;
     if (snapshot !== undefined && !triageTaskCompletionMatchesWindowV1(snapshot, input.tasks.completedSinceMs)) return false;
@@ -182,6 +215,13 @@ export function planTriageListItemsV1(input: Readonly<{
     return row?.observations.some((observation) => observation.outcome.kind === 'present'
       && observation.outcome.viewer.involvement.some(role => role === 'assignee' || role === 'author')) ?? false;
   };
+  const statusGroupOf = (row: TriageListRowV1, key: string): Exclude<TriageListGroupIdV1, 'pinned'> => (input.tasks !== undefined
+    ? (row.content === null ? null : triageTaskStatusCategoryV1(row.content.outcome.snapshot.state)) ?? 'everythingElse'
+    : readTriageListGroupV1({
+      row,
+      workflowSubject: input.workflowSubjectOf(row.entryRef),
+      agentActive: agentStatesOf(key).some((state) => state.workStatus.bucket === 'working'),
+    }));
   const items: TriageListItemV1[] = input.pins.filter((pin) => included(pin.entryRef,
     projectedByKey.get(triageEntryRowKey(pin.entryRef)) ?? null)).map((pin) => {
     const projected = projectedByKey.get(triageEntryRowKey(pin.entryRef)) ?? null;
@@ -190,6 +230,8 @@ export function planTriageListItemsV1(input: Readonly<{
       key: row.key,
       row,
       group: 'pinned' as const,
+      // A pin the window never walked has no facts to file it by.
+      statusGroup: projected === null ? 'everythingElse' : statusGroupOf(projected, row.key),
       summary: projected?.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(projected, input.locale ?? 'en'),
       agent: readTriageEntryAgentStatusV1(agentStatesOf(row.key)),
@@ -201,16 +243,12 @@ export function planTriageListItemsV1(input: Readonly<{
     if (!included(windowRow.entryRef, windowRow)) continue;
     const row = projectTriageWindowRow(windowRow, pinIndex, input.display);
     if (row.pinned) continue;
+    const statusGroup = statusGroupOf(windowRow, row.key);
     items.push(Object.freeze({
       key: row.key,
       row,
-      group: input.tasks !== undefined
-        ? (windowRow.content === null ? null : triageTaskStatusCategoryV1(windowRow.content.outcome.snapshot.state)) ?? 'everythingElse'
-        : readTriageListGroupV1({
-        row: windowRow,
-        workflowSubject: input.workflowSubjectOf(windowRow.entryRef),
-        agentActive: agentStatesOf(row.key).some((state) => state.workStatus.bucket === 'working'),
-      }),
+      group: statusGroup,
+      statusGroup,
       summary: windowRow.content?.outcome.snapshot.summary ?? null,
       signal: readSignal(windowRow, input.locale ?? 'en'),
       agent: readTriageEntryAgentStatusV1(agentStatesOf(row.key)),
@@ -222,7 +260,7 @@ export function planTriageListItemsV1(input: Readonly<{
     const rank = new Map(input.tasks.personalOrder.map((id, index) => [id, index]));
     const groups = new Map<TriageListGroupIdV1, { slots: number[]; items: TriageListItemV1[] }>();
     for (const [index, item] of items.entries()) {
-      if (!isInternalTaskReferenceV1(item.row.entryRef) || !rank.has(item.row.entryRef.entryId)) continue;
+      if (!isPersonalTaskReferenceV1(item.row.entryRef, input.tasks.personalAccountId) || !rank.has(item.row.entryRef.entryId)) continue;
       const group = groups.get(item.group) ?? { slots: [], items: [] };
       group.slots.push(index); group.items.push(item); groups.set(item.group, group);
     }
@@ -241,7 +279,7 @@ export function planTriageListItemsV1(input: Readonly<{
     const row = rowKeys.length === Object.keys(prior.row).length
       && rowKeys.every((key) => item.row[key] === prior.row[key])
       ? prior.row : item.row;
-    if (row === prior.row && item.group === prior.group && item.summary === prior.summary
+    if (row === prior.row && item.group === prior.group && item.statusGroup === prior.statusGroup && item.summary === prior.summary
       && item.locator === prior.locator
       && JSON.stringify(item.task) === JSON.stringify(prior.task)
       && JSON.stringify(item.signal) === JSON.stringify(prior.signal)

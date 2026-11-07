@@ -5,10 +5,16 @@ import type { PluginUiContextEnrichmentV1, PluginUiHostApi } from '@happier-dev/
 export function useTriageCurrentUiContextPublication(
   hostApi: Pick<PluginUiHostApi, 'publishCurrentUiContext'>,
   currentUiContext: PluginUiContextEnrichmentV1,
+  publication?: Readonly<{
+    subscribe: (listener: () => void) => () => void;
+    read: () => PluginUiContextEnrichmentV1;
+  }>,
 ): void {
   React.useLayoutEffect(() => {
-    hostApi.publishCurrentUiContext(currentUiContext);
-  }, [currentUiContext, hostApi]);
+    const publish = () => hostApi.publishCurrentUiContext(publication?.read() ?? currentUiContext);
+    publish();
+    return publication?.subscribe(publish);
+  }, [currentUiContext, hostApi, publication]);
   React.useLayoutEffect(() => () => {
     hostApi.publishCurrentUiContext(null);
   }, [hostApi]);

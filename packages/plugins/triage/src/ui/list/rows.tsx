@@ -24,27 +24,29 @@ import {
   type PluginTranslate,
   type TextTone,
 } from '@happier-dev/plugin-ui';
-import { formatTriageTimestampV1, resolveTriageRowFactStatusToneV1 } from '@happier-dev/triage-protocol/v1';
+import { formatTriageCompactAgeV1, formatTriageTimestampV1, resolveTriageRowFactStatusToneV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
-import type { TriageEntryRelationsV1, TriageSourceDescriptorV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
-import { readTriageSourceDescriptorV1, resolveTriageSourceDescriptorV1, resolveTriageSourceWorkflowSubjectV1 } from '../detail/sourceSurface.js';
+import type { TriageSourceDescriptorV1, TriageSourceKindGlyphV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { readTriageSourceDescriptorV1, resolveTriageSourceDescriptorV1, resolveTriageSourceKindGlyphV1, resolveTriageSourceWorkflowSubjectV1 } from '../detail/sourceSurface.js';
 import {
   readTriageEntryRowAnnouncementV1,
   readTriageEntryRowContextV1,
   readTriageEntryGlyphV1,
   type TriageEntryDisplayTextV1,
 } from '../window/entryDisplay.js';
-import type { TriageListGroupIdV1, TriageListItemV1, TriageListRowSignalV1, TriageListTaskFactsV1 } from './sections.js';
-import { TriageTaskRowStatusControl } from '../detail/taskFields.js';
-import { createTriageTaskListFactV1, readTriageTaskDueV1 } from './taskColumns.js';
-export { readTriageTaskDueV1 } from './taskColumns.js';
+import { readTriageTaskBlockerNamesV1, type TriageListGroupIdV1, type TriageListItemV1, type TriageListRowSignalV1, type TriageListTaskFactsV1 } from './sections.js';
+import { TriageTaskRowStatusControl, useTriageTaskStatusLabel } from '../detail/taskFields.js';
+import { createTriageTaskColumnsV1, createTriageTaskListFactV1 } from './taskColumns.js';
+import { triageEntryRowKey } from '../../projection/listWindow.js';
+export { readTriageTaskDueV1, readTriageTaskProgressV1 } from './taskColumns.js';
 
 const NO_SHARED_GROUP_REASONS: ReadonlyMap<TriageListGroupIdV1, string> = new Map();
 const NO_TASK_REREAD = async () => undefined;
 import type { TriageAgentStatusV1 } from '../detail/agentState.js';
 import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1, TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1 } from './entryDragDrop.js';
-import { isInternalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { isPersonalTaskReferenceV1 } from '../../internalTasks/identity.js';
+import { TriageSourceMark } from './sourceMark.js';
 import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
 
 /**
@@ -58,8 +60,8 @@ import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
  *
  * There is exactly one such affordance per row, and it is never two states of two controls. Every row offers it
  * through the public secondary-action owner, which keeps the overflow outside the row press target and owns the
- * menu's focus and keyboard behavior. That includes a pinned row this mount never materialized: it has no detail
- * panel to host the operation, so its row menu is where the reader removes the pin (an inline Unpin beside the
+ * menu's focus and keyboard behavior. That includes a pinned row this mount never materialized: its row menu
+ * lets the reader remove the pin without opening it (an inline Unpin beside the
  * shared row menu read as a stray word in the Age column and squeezed the place on a phone).
  */
 
@@ -156,13 +158,15 @@ export function triageListRowTestId(rowKey: string): string {
  * glyph and colour are never the only carriers of state.
  */
 export function readTriageRowMarkV1(
-  row: Pick<TriageListDisplayRowV1, 'lifecyclePresentation' | 'detailKind' | 'tone'>,
+  row: Pick<TriageListDisplayRowV1, 'lifecyclePresentation' | 'detailKind' | 'tone' | 'detailDanger'>,
   workflowSubject: TriageSourceWorkflowSubjectV1 | null = null,
+  kindGlyph: TriageSourceKindGlyphV1 | null = null,
 ): Readonly<{ name: IconName; tone: TextTone }> {
-  const name = readTriageEntryGlyphV1(row.lifecyclePresentation, workflowSubject);
+  const name = readTriageEntryGlyphV1(row.lifecyclePresentation, workflowSubject, kindGlyph);
+  // The chip beside it is the row's one loud fact, so a request's glyph stays ink; a failure's mark says so too.
   const tone: TextTone = row.detailKind === 'presence' && row.tone !== 'neutral'
     ? row.tone
-    : row.detailKind === 'attention' ? HAPPIER_WORK_STATUS_SEMANTIC_TONE.attention : 'secondary';
+    : row.detailDanger === true ? 'danger' : 'secondary';
   return { name, tone };
 }
 
@@ -184,6 +188,8 @@ export const TRIAGE_ROW_REASON_TEST_ID_V1 = 'triage-row-reason';
  */
 export function TriageAttentionReasonChip(props: Readonly<{
   level: 'required' | 'suggested';
+  /** The reason is a failure, not a request (a severe security finding): rose, never amber. */
+  danger?: boolean;
   label: string;
   icon: string | null;
   testID?: string;
@@ -192,7 +198,7 @@ export function TriageAttentionReasonChip(props: Readonly<{
   return (
     <Badge
       variant="tinted"
-      tone={readTriageAttentionBadgeToneV1(props.level)}
+      tone={props.danger === true ? 'danger' : readTriageAttentionBadgeToneV1(props.level)}
       value={props.label}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
       {...(icon === undefined ? {} : { icon })}
@@ -285,25 +291,6 @@ export function triageListRowItemProps(
 
 
 /**
- * A compact, locale-owned age for the table's tabular Age column ("18m", "2h", "3d", "10w", "2y"). The row's accessible
- * description keeps the full relative phrase; this is only what fits the column.
- */
-export function formatTriageCompactAgeV1(locale: string, atMs: number, nowMs: number): string {
-  const seconds = Math.max(0, Math.round((nowMs - atMs) / 1000));
-  const [value, unit] = seconds < 3_600
-    ? [Math.max(1, Math.round(seconds / 60)), 'minute' as const]
-    : seconds < 86_400
-      ? [Math.round(seconds / 3_600), 'hour' as const]
-      : seconds < 30 * 86_400
-        ? [Math.round(seconds / 86_400), 'day' as const]
-        // Weeks up to a year, then years: a narrow month ("3m") would read as minutes in this column.
-        : seconds < 365 * 86_400
-          ? [Math.round(seconds / (7 * 86_400)), 'week' as const]
-          : [Math.round(seconds / (365 * 86_400)), 'year' as const];
-  return new Intl.NumberFormat(locale, { style: 'unit', unit, unitDisplay: 'narrow' }).format(value);
-}
-
-/**
  * What every row of the mounted list shares: the Pin/Unpin handlers and the one activation path. The Collection
  * renders rows itself, so a row reads these from here rather than through a closure per row.
  */
@@ -369,7 +356,7 @@ function TriageListPeek(props: Readonly<{ item: TriageListItemV1 }>): React.Reac
       <Text variant="micro" tone="secondary" value={context.label} numberOfLines={1} />
       {summary === null ? null : <Text variant="meta" tone="secondary" value={summary} numberOfLines={3} />}
       <Row gap="small" wrap>
-        {row.sourceInstanceId === null ? null : (
+        {row.sourceInstanceId === null && !row.pinned ? null : (
           <Button
             title={text('plugins.triage.surface.peek.open', 'Open')}
             variant="primary"
@@ -491,10 +478,11 @@ export function readTriageRowBylinePlaceV1(
  * `keep` (the designation) is said after the place and is the last thing a narrow row gives up; `trail` (who
  * opened it) goes after it and gives way before it.
  */
-function TriageRowWhere(props: Readonly<{ pluginId: string; label: string; keep?: string | null; trail?: string | null }>): React.ReactElement {
+function TriageRowWhere(props: Readonly<{ source: Readonly<{ pluginId: string; localId: string }>; label: string; keep?: string | null; trail?: string | null; pinned?: boolean }>): React.ReactElement {
   return (
     <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
-      <BrandMark pluginId={props.pluginId} size="small" externallyLabelled />
+      {props.pinned ? <Icon name="pin" size="small" tone="secondary" /> : null}
+      <TriageSourceMark source={props.source} />
       <Stack style={TRIAGE_CELL_STATE_WORD_STYLE_V1}>
         <Text variant="meta" tone="secondary" value={props.label} numberOfLines={1} />
       </Stack>
@@ -512,6 +500,12 @@ function TriageRowWhere(props: Readonly<{ pluginId: string; label: string; keep?
   );
 }
 
+function TriageTaskRowWhere({ item }: Readonly<{ item: TriageListItemV1 }>) {
+  const { label } = useTriageTaskStatusLabel(item.row.entryRef, item.task?.statusLabel ?? null);
+  const { place, designation } = readTriageRowBylinePartsV1(item.row);
+  return <TriageRowWhere source={item.row.entryRef.source} label={place} keep={designation} trail={label} />;
+}
+
 /**
  * Whether a row says why it is here: a reason that is not only a summary, and not the one suggestion its group's
  * line already says for every entry (`readTriageSharedGroupReasonsV1`). The column is drawn only while a row does.
@@ -523,6 +517,24 @@ export function readTriageRowSaysReasonV1(
   const { row } = item;
   if (row.detail === null || row.detailKind === 'summary') return false;
   return !(row.detailKind === 'suggestion' && sharedGroupReasons.get(item.group) === row.detail);
+}
+
+/**
+ * Which fact columns the table draws. PRs & Issues keeps all of them from the first paint: signals and linked agents
+ * arrive after the rows, and a column appearing then would move Where and cut the titles. A Tasks lens has its own
+ * column set, so there a fact column exists only while some row can fill it.
+ */
+export function readTriageDataColumnsV1(input: Readonly<{
+  tasks: boolean;
+  items: readonly TriageListItemV1[];
+  sharedGroupReasons: ReadonlyMap<TriageListGroupIdV1, string>;
+}>): Readonly<{ withSignal: boolean; withAgent: boolean; withReason: boolean }> {
+  if (!input.tasks) return { withSignal: true, withAgent: true, withReason: true };
+  return {
+    withSignal: input.items.some((item) => item.signal !== null),
+    withAgent: input.items.some((item) => item.agent !== null),
+    withReason: input.items.some((item) => readTriageRowSaysReasonV1(item, input.sharedGroupReasons)),
+  };
 }
 
 /**
@@ -544,22 +556,25 @@ export function useTriageListAnatomyV1(input: Readonly<{
    * the PR signal stay on PRs & Issues; the agent's state stays in Agent.
    */
   tasks?: boolean;
+  taskAudience?: 'mine' | 'agents' | 'everyone';
   taskItems?: readonly TriageListItemV1[];
   personalTaskOrder?: PersonalTaskOrder | null;
   onTaskOrderOutcome?: () => void;
   /** After a row's status control wrote at the source: the list's authoritative reread. */
   onTaskApplied?: () => Promise<void>;
+  /** Pinned entries stand in their status group (the board): the entry carries the pin mark itself. */
+  pinMarks?: boolean;
 }>): CollectionAnatomy<TriageListItemV1> {
   const text = usePluginTranslation();
   const { locale, targetedContributions } = useSurfaceContext();
-  // Row facts read only these serialized contributions and the locale. Other
+  // Row facts read these serialized contributions and the locale. Other
   // host-context pushes must not replace every row's anatomy and callbacks.
   const contributionSnapshotJson = JSON.stringify(targetedContributions);
   // A column no listed entry fills is not drawn: an all-dash Agent column is noise, like an all-dash Signal one.
-  const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD } = input;
+  const { withAgent = true, organizing = false, sharedGroupReasons = NO_SHARED_GROUP_REASONS, tasks = false, onTaskApplied = NO_TASK_REREAD, pinMarks = false } = input;
   const withSignal = input.withSignal && !tasks;
   const withReason = (input.withReason ?? true) && !tasks;
-  const { taskItems, personalTaskOrder, onTaskOrderOutcome } = input;
+  const { taskItems, personalTaskOrder, onTaskOrderOutcome, taskAudience = 'mine' } = input;
   return React.useMemo<CollectionAnatomy<TriageListItemV1>>(() => {
     const descriptorOf = (item: TriageListItemV1) => resolveTriageSourceDescriptorV1(targetedContributions, item.row.entryRef.source);
     const agent = (item: TriageListItemV1) => {
@@ -569,10 +584,13 @@ export function useTriageListAnatomyV1(input: Readonly<{
         label={text(item.agent.labelKey, item.agent.label, item.agent.labelParams)}
         leading={item.agent.agent?.brand === undefined ? undefined : <BrandMark pluginId={item.agent.agent.brand.pluginId} size="small" pixelSize={resolveHappierIconSize('small')} externallyLabelled />} />;
     };
+    // A blocker the list holds is named by its designation, else its title; one it does not hold stays unnamed.
+    const listedNames = readTriageTaskBlockerNamesV1(taskItems ?? []);
+    const blockerName = (blocker: TriageListItemV1['row']['entryRef']) => listedNames.get(triageEntryRowKey(blocker)) ?? null;
     const unfinished = new Set(personalTaskOrder?.undoneOrder ?? []);
     const orderByGroup = new Map<TriageListGroupIdV1, string[]>();
     for (const item of taskItems ?? []) {
-      if (!isInternalTaskReferenceV1(item.row.entryRef) || !unfinished.has(item.row.entryRef.entryId)) continue;
+      if (!isPersonalTaskReferenceV1(item.row.entryRef, personalTaskOrder?.scope.accountId) || !unfinished.has(item.row.entryRef.entryId)) continue;
       const group = orderByGroup.get(item.group) ?? [];
       group.push(item.row.entryRef.entryId); orderByGroup.set(item.group, group);
     }
@@ -587,7 +605,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
             verb: text('plugins.triage.surface.drop.linkSession', 'Link Session'), target: row.title,
             consequence: text('plugins.triage.sessionLinks.linkReassurance', 'Linking doesn’t change anything at the source.'),
           } }} testID={`triage-entry-session-drop:${encodeURIComponent(row.key)}`}>{children}</DropTarget>;
-        const personal = isInternalTaskReferenceV1(row.entryRef);
+        const personal = isPersonalTaskReferenceV1(row.entryRef, personalTaskOrder?.scope.accountId);
         const unavailableReason = !personal ? text('plugins.triage.tasks.order.external', 'External tasks keep their source order.')
           : personalTaskOrder == null ? text('plugins.triage.tasks.order.unavailable', 'Task order is unavailable. Refresh and try again.')
             : text('plugins.triage.tasks.order.unfinished', 'Only unfinished personal tasks in the same group can be reordered.');
@@ -620,6 +638,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
         const mark = readTriageRowMarkV1(
           item.row,
           resolveTriageSourceWorkflowSubjectV1(targetedContributions, item.row.entryRef),
+          resolveTriageSourceKindGlyphV1(targetedContributions, item.row.entryRef),
         );
         return <Icon name={mark.name} size="small" tone={mark.tone} />;
       },
@@ -650,50 +669,40 @@ export function useTriageListAnatomyV1(input: Readonly<{
       title: (item) => item.row.title,
       // The table says the designation quietly after the title ("Retry … #2481") and Where is the place alone.
       titleSuffix: (item) => item.row.designation,
-      where: (item) => <TriageRowWhere pluginId={item.row.entryRef.source.pluginId} label={readTriageRowPlaceV1(item.row)} />,
+      where: (item) => <TriageRowWhere source={item.row.entryRef.source} label={readTriageRowPlaceV1(item.row)} />,
       // The list says the place with the designation, and who opened it ("payments-api #2481 · Mara Oduya"); the
       // full source address stays in the peek and the detail.
       byline: (item) => {
+        if (tasks) return <TriageTaskRowWhere item={item} />;
         const { row } = item;
         const { place, designation } = readTriageRowBylinePartsV1(row);
         return (
           <TriageRowWhere
-            pluginId={row.entryRef.source.pluginId}
+            source={row.entryRef.source}
             label={place}
             keep={designation}
-            trail={tasks ? item.task?.statusLabel ?? null : row.authorLabel}
+            trail={row.authorLabel}
+            pinned={pinMarks && row.pinned}
           />
         );
       },
-      ...(tasks ? { fields: [{
-        key: 'status',
-        title: text('plugins.triage.tasks.column.status', 'Status'),
-        leading: true,
-        minWidth: 104,
-        priority: 3,
-        render: (item: TriageListItemV1) => item.task?.statusLabel == null ? null
-          : <Text variant="meta" tone="secondary" value={item.task.statusLabel} numberOfLines={1} />,
-      }, {
-        key: 'progress',
-        title: text('plugins.triage.tasks.column.progress', 'Progress'),
-        minWidth: 120,
-        priority: 2,
-        render: (item: TriageListItemV1) => {
-          const progress = readTriageTaskProgressV1(item.task?.relations ?? null, text);
-          return progress === null ? null : <Text variant="meta" tone="secondary" value={progress} numberOfLines={1} />;
-        },
-      }, {
-        key: 'due',
-        title: text('plugins.triage.tasks.column.due', 'Due'),
-        minWidth: 96,
-        priority: 1,
-        render: (item: TriageListItemV1) => {
-          const due = item.task == null ? null : readTriageTaskDueV1(item.task.dueDate, item.task.category, locale, Date.now(), text);
-          if (due === null) return null;
-          return <Text variant="meta" tone={due.tone ?? 'secondary'} value={due.label} numberOfLines={1} />;
-        },
-      }] } : {}),
-      ...(tasks ? { listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent, agentSpeaks: (state) => readTriageAgentBadgeV1(state) !== null }) } : {}),
+      ...(tasks ? {
+        fields: createTriageTaskColumnsV1({ audience: taskAudience, locale, text, blockerName,
+          // The Agents lens widens the agent to what its Session is about (lab `tasks-agents`).
+          renderAgent: (item: TriageListItemV1) => {
+            const state = agent(item);
+            const about = item.agent?.sessionTitle;
+            return state === null || about === undefined ? state : (
+              <Row gap="xsmall" align="center" style={TRIAGE_CELL_STATE_STYLE_V1}>
+                {state}
+                <Stack style={TRIAGE_CELL_STATE_WORD_STYLE_V1}>
+                  <Text variant="meta" tone="muted" value={`· ${about}`} numberOfLines={1} />
+                </Stack>
+              </Row>
+            );
+          } }),
+        listFact: createTriageTaskListFactV1({ locale, text, renderAgent: agent, agentSpeaks: (state) => readTriageAgentBadgeV1(state) !== null }),
+      } : {}),
       ...(withReason ? { reason: (item: TriageListItemV1) => {
         const { row } = item;
         // The group's header already says the one suggestion all its rows share; the row does not repeat it.
@@ -703,6 +712,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           return (
             <TriageAttentionReasonChip
               level={row.detailKind === 'attention' ? 'required' : 'suggested'}
+              {...(row.detailDanger === true ? { danger: true } : {})}
               label={row.detail}
               icon={row.detailIcon}
               testID={TRIAGE_ROW_REASON_TEST_ID_V1}
@@ -721,7 +731,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
           return <Status presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live} label={item.signal.label} />;
         },
       } : {}),
-      ...(withAgent ? { agent } : {}),
+      ...(withAgent && !(tasks && taskAudience === 'agents') ? { agent } : {}),
       age: (item) => (item.row.activityAtMs === null
         ? null
         : formatTriageCompactAgeV1(locale, item.row.activityAtMs, Date.now())),
@@ -748,27 +758,5 @@ export function useTriageListAnatomyV1(input: Readonly<{
         age: text('plugins.triage.surface.column.age', 'Age'),
       },
     };
-  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, sharedGroupReasons, tasks, text, withAgent, withReason, withSignal, taskItems, personalTaskOrder, onTaskOrderOutcome]);
-}
-
-/**
- * A task's relation hint for its Progress cell, from the source's live relations: a blocker first (it decides what
- * can happen next), then sub-tasks done ("3 of 5"), then the parent it belongs to. Unread relations say nothing:
- * absent is unknown, never "none".
- */
-export function readTriageTaskProgressV1(
-  relations: TriageEntryRelationsV1 | null,
-  text: PluginTranslate,
-): string | null {
-  if (relations === null) return null;
-  const blockers = relations.blockedBy?.length ?? 0;
-  if (blockers > 0) return text('plugins.triage.tasks.progress.blocked', 'Blocked');
-  const children = relations.children;
-  if (children !== undefined && children.total > 0) {
-    return children.completed === undefined
-      ? text('plugins.triage.tasks.progress.subtasks', '{total} sub-tasks', { total: children.total })
-      : text('plugins.triage.tasks.progress.done', '{completed} of {total}', { completed: children.completed, total: children.total });
-  }
-  if (relations.parent !== undefined) return text('plugins.triage.tasks.progress.subtask', 'Sub-task');
-  return null;
+  }, [contributionSnapshotJson, locale, onTaskApplied, organizing, pinMarks, sharedGroupReasons, tasks, taskAudience, text, withAgent, withReason, withSignal, taskItems, personalTaskOrder, onTaskOrderOutcome]);
 }

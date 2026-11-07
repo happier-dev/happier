@@ -1,4 +1,4 @@
-import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 
@@ -13,7 +13,6 @@ import {
     type TriageRefreshPassOutcomeV1,
 } from '../refresh/refreshCoordinator.js';
 import {
-    TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS,
     type TriageRefreshPacingBlockV1,
     type TriageRefreshTriggerV1,
 } from '../refresh/refreshEligibility.js';
@@ -26,17 +25,19 @@ import {
 } from '../actions/listEntriesProtocol.js';
 import {
     TRIAGE_LIST_DEFAULT_LENS_V1,
-    triageSourceFilterKeyV1,
-    triageScopeFilterKeyV1,
     foldTriageListWindow,
+    foldTriagePostMutationObservation,
+    createTriageListFoldBaselineV1,
     triageEntryRowKey,
     MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     triageListCoverageLanes,
     type TriageListLaneV1,
     type TriageListLensV1,
     type TriageListWindowV1,
+    type TriageListRowV1,
 } from './listWindow.js';
 import { retainTriageObservation, retainTriageProjectionArray, retainTriageProjectionValue } from './listWindowReconciliation.js';
+import { projectTriageEntrySearchText } from './entrySearch.js';
 import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
 
 /**
@@ -64,6 +65,7 @@ export type TriageListWindowErrorV1 = Readonly<{
     message: string;
     /** Structured host reasons; presentation never parses the diagnostic disclosure. */
     diagnostics?: readonly string[];
+    requestId?: string;
     /**
      * Whether another read can succeed, as the host classified the failure. A
      * failure nobody classified is worth one more try; absent means that.
@@ -94,10 +96,12 @@ export type TriageListWindowSnapshotV1 = Readonly<{
     window?: TriageListWindowV1;
     freshness: 'unknown' | 'fresh' | 'stale';
     /**
-     * Oldest last-successful configured-lane read, on this store's clock — the
-     * same completion fact used for age staleness. Absent until every configured
-     * lane has completed a read (and when none are configured). Failed refreshes
-     * retain this time; re-folding or a paced-away demand cannot advance it.
+     * Oldest last-successful available-lane read, on this store's clock — the
+     * completion fact shown to readers. Absent until every available
+     * lane has completed a read (and when none are available). Unavailable
+     * contributions keep their own coverage/health without preventing a read
+     * from settling. Failed refreshes retain this time; re-folding or a
+     * paced-away demand cannot advance it.
      */
     completedAtMs?: number;
     pending: 'idle' | 'initial' | 'refresh';
@@ -128,7 +132,7 @@ export type TriageListWindowSnapshotV1 = Readonly<{
     /**
      * The one pacing decision, straight from the refresh coordinator: present
      * only when the last cycle could read **no** configured connection because a
-     * source deadline or an aggregate backoff is still running.
+     * source retry deadline is still running.
      *
      * It is published rather than kept inside the coordinator because a Refresh
      * that silently does nothing is the failure `core/CORPUS.md` §4.2 exists to
@@ -196,17 +200,16 @@ export type TriageListWindowStoreV1 = Readonly<{
     /** Project the retained acquisition through another lens without mutating it. */
     project(lens: TriageListLensV1): TriageListWindowV1 | undefined;
     subscribe(listener: () => void): () => void;
+    /** Read retained entry truth, including entries outside the current lens. */
+    getRow(key: string): TriageListRowV1 | null;
+    subscribeRow(key: string, listener: () => void): () => void;
+    /** Fold an exact read for an already retained entry; exact-only opens do not acquire list membership. */
+    publishObservation(observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean): TriageListRowV1 | null;
     /** The only way a consumer causes provider work. */
     refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
     /**
-     * Rebuild immediately from the retained page, then reacquire one neutral
-     * first page for the new lens generation. Every lens change invalidates the
-     * preceding per-lane frontiers; keeping them would let Load More resume the
-     * new lens at an old lens's depth.
-     *
-     * It deliberately does **not** mark the retained page stale while that
-     * replacement is pending. The provider read remains neutral, so the rows
-     * already held are exactly as fresh as the cycle that fetched them.
+     * Rebuild from retained rows. Ranking and task-scope changes replace
+     * acquisition and its frontiers; text and facets remain local projections.
      */
     setLens(lens: TriageListLensV1): void;
     /**
@@ -217,8 +220,7 @@ export type TriageListWindowStoreV1 = Readonly<{
      * second acquisition path: the coordinator still paces it, the same merge
      * still keeps what is already retained, and a failure still leaves every
      * row on screen. It reads as explicit user demand — the reader pressed a
-     * row — so the shared minimum interval does not refuse it, exactly as it
-     * does not refuse **Refresh**.
+     * row — and still honors the source's own retry deadline.
      *
      * Nothing durable is created. Depth and per-lane continuations are retained
      * only by this mounted store, and a lost process starts at the first window.
@@ -269,55 +271,24 @@ function sameConfiguredSourceAcquisitionSet(
     });
 }
 
-function sameMemberSet<T>(
-    left: readonly T[],
-    right: readonly T[],
-    same: (leftMember: T, rightMember: T) => boolean,
-): boolean {
-    return left.length === right.length
-        && left.every((member) => right.some((candidate) => same(member, candidate)));
-}
-
-function sameFilterSelection(
-    left: TriageListLensV1['filters'],
-    right: TriageListLensV1['filters'],
-): boolean {
-    // Facets are sets: press order changes no query and therefore must not mint
-    // a new paging generation. Duplicate values are rejected by the reducer
-    // and saved-view owner before a lens reaches this store.
-    return left.tasks === right.tasks && sameMemberSet(left.sources, right.sources, (a, b) => (
-        triageSourceFilterKeyV1(a) === triageSourceFilterKeyV1(b)
-    ))
-        && sameMemberSet(left.types, right.types, (a, b) => (
-            a.kindId === b.kindId && sameTriageSourceIdentity(a.source, b.source)
-        ))
-        && sameMemberSet(left.scopes, right.scopes, (a, b) => (
-            triageScopeFilterKeyV1(a) === triageScopeFilterKeyV1(b)
-        ))
-        && sameMemberSet(left.states, right.states, (a, b) => a === b)
-        && sameMemberSet(left.attention, right.attention, (a, b) => a === b);
-}
-
 function sameAcquisitionLens(left: TriageListLensV1, right: TriageListLensV1): boolean {
-    return left.order === right.order
-        && left.tasks?.completedSinceMs === right.tasks?.completedSinceMs
-        && left.smartPolicy.v === right.smartPolicy.v
-        && left.smartPolicy.precedence[0] === right.smartPolicy.precedence[0]
-        && left.smartPolicy.precedence[1] === right.smartPolicy.precedence[1]
-        && left.limit === right.limit
-        && sameFilterSelection(left.filters, right.filters);
+    return left.tasks?.completedSinceMs === right.tasks?.completedSinceMs
+        && left.limit === right.limit;
 }
 
 function errorFrom(cause: unknown): TriageListWindowErrorV1 {
     if (isPluginError(cause)) {
+        const requestId = readPluginErrorRequestIdV1(cause);
         return {
             code: cause.code,
             message: cause.message,
             // The host's own verdict: `unsupported_method` or `denied` will
             // fail the same way however often the reader presses Refresh.
             retryable: cause.retryable,
+            ...(requestId === undefined ? {} : { requestId }),
             ...(cause.diagnostics?.length ? { diagnostics: cause.diagnostics.map(diagnostic => diagnostic.code) } : {}),
-            detail: [cause.code, ...(cause.diagnostics ?? []).map((diagnostic) => diagnostic.code)].join(' · '),
+            detail: [cause.code, ...(cause.diagnostics ?? []).map((diagnostic) => diagnostic.code),
+                ...(requestId ? [`Request ID: ${requestId}`] : [])].join(' · '),
         };
     }
     if (cause instanceof Error) {
@@ -345,9 +316,12 @@ export function createTriageListWindowStore(deps: Readonly<{
     nowMs: () => number;
     lens?: TriageListLensV1;
     onUnexpectedError?: (error: unknown) => void;
+    onRowProjected?: (entryRef: TriageListWindowV1['rows'][number]['entryRef']) => void;
 }>): TriageListWindowStoreV1 {
     const listeners = new Set<() => void>();
+    const rowSubscriptions = new Map<string, { row: TriageListRowV1 | null; listeners: Set<() => void> }>();
     const lanes = new Map<string, LaneState>();
+    const foldBaseline = createTriageListFoldBaselineV1();
     /** Provider frontiers retained only for this mounted store's lifetime. */
     const continuations = new Map<string, LaneContinuation>();
     let lens: TriageListLensV1 = deps.lens ?? TRIAGE_LIST_DEFAULT_LENS_V1;
@@ -366,9 +340,9 @@ export function createTriageListWindowStore(deps: Readonly<{
      * at one window with no frontier, which is `INV-03` holding.
      */
     let windowsRequested = 1;
-    /** A refresh/lens-generation change resets depth at the next cycle boundary. */
+    /** Queued refresh intent resets depth when its cycle admits a read. */
     let pagingResetPending = false;
-    /** An acquisition-generation change keeps replacing the old cut until a reset read succeeds. */
+    /** Failed lanes keep their old membership until a replacement read succeeds. */
     let generationReplacementPending = false;
     /** Captured at the cycle boundary so demand queued during a read cannot change that read's mode. */
     let activeCycleIsAppend = false;
@@ -426,6 +400,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     function completedAtMs(): number | undefined {
         let oldest: number | undefined;
         for (const summary of configuredSources) {
+            if (!summary.available) continue;
             const completed = lanes.get(summary.sourceInstanceId)?.completedAtMs;
             if (completed == null) return undefined;
             oldest = oldest === undefined ? completed : Math.min(oldest, completed);
@@ -435,18 +410,15 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     function freshness(completed: number | undefined): TriageListWindowSnapshotV1['freshness'] {
         if (window === null) return 'unknown';
-        if (error !== null) return 'stale';
-        // Each connection ages from its own completed read, not the final
-        // transport batch. A slow tail cannot make earlier lanes newly fresh.
+        if (error !== null || completed === undefined) return 'stale';
         for (const summary of configuredSources) {
+            if (!summary.available) continue;
             const lane = lanes.get(summary.sourceInstanceId);
             if (
                 lane === undefined
                 || lane.error !== null
-                || completed === undefined
             ) return 'stale';
         }
-        if (completed !== undefined && deps.nowMs() - completed >= TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS) return 'stale';
         return 'fresh';
     }
 
@@ -465,7 +437,7 @@ export function createTriageListWindowStore(deps: Readonly<{
                 ...(state.error.retryable === undefined ? {} : { retryable: state.error.retryable }),
             }));
         }
-        return Object.freeze(unreadable);
+        return retainTriageProjectionValue(snapshot.unreadableSources, Object.freeze(unreadable));
     }
 
     /**
@@ -528,10 +500,10 @@ export function createTriageListWindowStore(deps: Readonly<{
     function loadMore(): TriageListLoadMoreV1 | null {
         if (window === null) return null;
         // These are the same replacement facts the imperative admission reads.
-        // Publishing `available` while that path refuses the press is a split
-        // answer from one owner, and an old frontier must not remain visible as
-        // actionable while its replacement is pending.
-        if (pagingResetPending || generationReplacementPending) return null;
+        // A queued replacement cannot offer its predecessor's frontier. Its
+        // healthy frontiers remain actionable even if another lane still
+        // needs its old membership replaced.
+        if (pagingResetPending) return null;
         if (appending) return Object.freeze({ kind: 'loading' });
         if (appendFailed) return Object.freeze({ kind: 'failed' });
         if (window.coverage === 'complete') return Object.freeze({ kind: 'exhausted' });
@@ -572,8 +544,8 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     function publish(): void {
         const unreadable = unreadableSources();
-        const blocked = refreshBlock();
-        const appendable = loadMore();
+        const blocked = retainTriageProjectionValue(snapshot.refreshBlocked, refreshBlock() ?? undefined);
+        const appendable = retainTriageProjectionValue(snapshot.loadMore, loadMore() ?? undefined);
         const completed = completedAtMs();
         const taskState = [...lanes.values()].find(state => state.taskProjection !== undefined);
         const taskFailure = taskState?.lane.health.kind === 'failed' ? taskState.lane.health.failure
@@ -591,7 +563,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             ...(completed === undefined ? {} : { completedAtMs: completed }),
             pending,
             passes,
-            ...(appendable === null ? {} : { loadMore: appendable }),
+            ...(appendable === undefined ? {} : { loadMore: appendable }),
             // The one gate on the store-wide slot, and the reason it is here
             // rather than at each writer: "the list could not be read" is only
             // true while there is no list. A writer that forgets this puts that
@@ -602,13 +574,19 @@ export function createTriageListWindowStore(deps: Readonly<{
             // not a settled failure: publish its verdict only after it settles.
             ...(error === null || window !== null || pending !== 'idle' ? {} : { error }),
             ...(unreadable.length === 0 ? {} : { unreadableSources: unreadable }),
-            ...(blocked === null ? {} : { refreshBlocked: blocked }),
+            ...(blocked === undefined ? {} : { refreshBlocked: blocked }),
             configuredSources,
         });
         // Nothing a subscriber can read changed: notifying would only make every consumer recompute.
-        if (sameTriageListWindowSnapshot(snapshot, next)) return;
-        snapshot = next;
-        for (const listener of [...listeners]) listener();
+        const snapshotChanged = !sameTriageListWindowSnapshot(snapshot, next);
+        if (snapshotChanged) snapshot = next;
+        for (const [key, subscription] of rowSubscriptions) {
+            const row = foldBaseline.entries.get(key)?.row ?? null;
+            if (subscription.row === row) continue;
+            subscription.row = row;
+            for (const listener of [...subscription.listeners]) listener();
+        }
+        if (snapshotChanged) for (const listener of [...listeners]) listener();
     }
 
     /**
@@ -632,7 +610,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         return snapshot;
     }
 
-    function projectRetained(projectionLens: TriageListLensV1): TriageListWindowV1 {
+    function projectRetained(projectionLens: TriageListLensV1, retainWindow = true): TriageListWindowV1 {
         const observations: CorpusQualifiedObservationV1[] = [];
         const walked: TriageListLaneV1[] = [];
         for (const lane of lanes.values()) {
@@ -640,6 +618,9 @@ export function createTriageListWindowStore(deps: Readonly<{
             walked.push(lane.lane);
         }
         return foldTriageListWindow({
+            // A one-off reader shares admitted rows, but does not replace the mounted lens's window baseline.
+            baseline: retainWindow ? foldBaseline : { ...foldBaseline },
+            ...(deps.onRowProjected === undefined ? {} : { onRowProjected: deps.onRowProjected }),
             observations,
             // Every configured source is a lane of this window, including one no
             // pass could ask: this mount set out to cover it either way.
@@ -659,63 +640,11 @@ export function createTriageListWindowStore(deps: Readonly<{
     }
 
     function rebuild(): void {
-        const next = projectRetained({ ...lens, limit: foldLimit() });
-        // A cycle the pacing refused, or a lens that projects the same rows, assembles a window that differs
-        // only in when it was assembled. Every subscriber re-plans the whole list (and the list's Session join
-        // and the open detail key on it), so the window that says the same thing is kept as it is.
-        window = window !== null && sameTriageListWindowContent(window, next) ? window : next;
+        window = projectRetained({ ...lens, limit: foldLimit() });
     }
 
-    /**
-     * The neutral provider read this mount projects every lens from.
-     *
-     * The lens is deliberately **not** a parameter of it. The Action folds the
-     * pass through the same projection owner this store rebuilds with, so a
-     * lens sent into the read drops the excluded rows before they ever reach
-     * the wire — and this mount retains only what came back. A refresh taken
-     * while the reader had narrowed the list therefore deleted the excluded
-     * entries from the mount, and clearing the filter afterwards could not
-     * bring them back without another provider read: the reader narrowed,
-     * widened, and their entries were silently gone.
-     *
-     * So the chain runs one way only — provider page, retained raw lane, local
-     * lens projection in `rebuild` — and the read asks for no query and no
-     * filters at all. `limit` and `order` are required members, and they are
-     * the window owner's own defaults rather than a second pair of numbers.
-     *
-     * `limit` costs nothing: the shell's lens already took it from the window
-     * owner (`ui/shell/lens.ts` reads `MAX_TRIAGE_LIST_WINDOW_ROWS_V1`), so the
-     * page this mount asks for is byte-identical to the one it asked for
-     * before — same `pageLimit`, same observation budget, same provider walk.
-     *
-     * `order` is the one decision this read takes over from the reader's lens,
-     * and it is **not** inert. The Action's observation budget stops the pass's
-     * *rotation*; it does not cap a page (`projection/scanPass.ts` checks it
-     * before asking for a page, never while adopting one), so a single-instance
-     * walk whose source pages short can qualify up to `limit - 1 + pageLimit`
-     * observations — 111 at today's 56 — and `foldTriageListWindow` then cuts
-     * them to `limit` rows *after* applying the lens it was given. Two costs
-     * follow, both bounded by that over-delivery and both visible rather than
-     * silent. The scan-pass owner leaves the lane unexhausted whenever another
-     * native page could not fit, so rebuilding from that lane preserves
-     * `coverage: 'partial'` without a second correction owner here:
-     *
-     *  - the retained page is the *newest* rows of what came back, so a reader
-     *    looking oldest-first sees the oldest of those, not the oldest the
-     *    provider holds;
-     *  - a filter is applied to those rows here rather than to the whole walk
-     *    at the Action, so a narrow lens over a deep connection can match
-     *    fewer rows than a lens-carrying read would have returned.
-     *
-     * That is the trade this function exists to make. A page fetched under the
-     * reader's own lens cannot be re-projected through any other one, so paying
-     * for it in depth is paying once; paying for it in destroyed rows was
-     * paying every time the reader touched a filter.
-     *
-     * This is what the *mounted* store sends. The Action's parameters are
-     * untouched, and a stateless caller that genuinely wants one filtered
-     * answer still asks for one.
-     */
+    /** Provider acquisition follows task scope and page geometry. Text, facets,
+     * order and Smart policy project retained rows locally, including appended pages. */
     function scanInputFor(
         sourceInstanceIds: readonly string[],
         /**
@@ -738,29 +667,11 @@ export function createTriageListWindowStore(deps: Readonly<{
              * More.
              *
              * The mounted store retains it only until the next Load More,
-             * Refresh, acquisition-ranking change, or unmount. That is enough to
+             * Refresh, acquisition-scope change, or unmount. That is enough to
              * make Load More linear without minting durable cursor custody.
              */
             ...(resume === undefined ? {} : { resume }),
             limit,
-            /*
-             * `order` IS sent, while `query` and the facets are not, and the
-             * difference is not a hedge — the two kinds of lens member fail in
-             * opposite directions.
-             *
-             * `query` and the facets EXCLUDE rows. Asking the provider to apply
-             * them throws away entries that widening the filter should bring
-             * back with no further read, which is the defect this store was
-             * changed to fix.
-             *
-             * `order` excludes nothing. It RANKS, and the window ranks before it
-             * bounds (`rankCorpusWindow` then `boundAcrossSourceLanes` in
-             * `listWindow.ts`), so whichever order is in force at the cut decides
-             * WHICH rows survive it. Sending a fixed order hands a reader on
-             * `oldest` the NEWEST page re-sorted ascending, and no local re-sort
-             * can recover the older entries already cut away — the exact loss
-             * keeping it local was meant to prevent.
-             */
             order: lens.order,
             smartPolicy: lens.smartPolicy,
             ...(lens.tasks === undefined ? {} : { tasks: lens.tasks }),
@@ -851,7 +762,8 @@ export function createTriageListWindowStore(deps: Readonly<{
         const previousBySourceInstanceId = new Map(
             previousConfiguredSources.map((summary) => [summary.sourceInstanceId, summary]),
         );
-        configuredSources = nextConfiguredSources;
+        configuredSources = retainTriageProjectionArray(previousConfiguredSources, nextConfiguredSources.map(summary =>
+            retainTriageProjectionValue(previousBySourceInstanceId.get(summary.sourceInstanceId), summary)));
         configuredSourcesStatus = nextConfiguredSourcesStatus;
         const known = new Set(nextConfiguredSources.map((summary) => summary.sourceInstanceId));
         let availabilityChanged = false;
@@ -924,7 +836,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     }
 
     /**
-     * One mixed transport page.
+     * One independently settling read per configured source.
      *
      * Refresh begins without a frontier. Load More resumes the frontier set the
      * preceding page returned, once. Keeping that set in this mounted store is
@@ -1235,7 +1147,7 @@ export function createTriageListWindowStore(deps: Readonly<{
      * The retained error is kept even for a lane that never succeeded, and that
      * is the whole point: the store-wide `error` is cleared by the *next*
      * cycle's successful enumeration, and a coalesced cycle whose per-instance
-     * pass is skipped by the shared minimum interval never re-sets it. Without a
+     * pass is held by a provider retry deadline never re-sets it. Without a
      * retained lane fact the window then reported `fresh` while one configured
      * connection could not be read at all, so the surface said "Up to date" over
      * a list that was missing a whole source.
@@ -1301,14 +1213,8 @@ export function createTriageListWindowStore(deps: Readonly<{
         activeCycleReplacesGeneration = generationReplacementPending && !cycleWasAppend;
         activeCycleAggregateFailed = false;
         const trigger = pendingTrigger;
-        // Consumed by the cycle that carries it. Manual **Refresh** is the one
-        // trigger the shared minimum interval does not refuse, and leaving it
-        // raised handed that exemption to every later view demand — a remount, a
-        // focus, a visibility change — so the pacing the interval exists to
-        // impose stopped applying the moment a reader pressed Refresh once.
-        // Demand that arrives WHILE this cycle runs re-raises it through
-        // `refresh`/`loadMore` below, so a manual press queued behind a running
-        // cycle still reaches the next one.
+        // Each cycle consumes the demand that produced it. Demand arriving
+        // while it runs is retained by the same coalesced scheduler.
         pendingTrigger = 'view';
         pending = window === null ? 'initial' : 'refresh';
         publish();
@@ -1427,14 +1333,65 @@ export function createTriageListWindowStore(deps: Readonly<{
         scheduler.dispose();
         coordinator.dispose();
         listeners.clear();
+        rowSubscriptions.clear();
+        foldBaseline.entries.clear();
+        foldBaseline.activeSourceInstanceIds?.clear();
+        foldBaseline.window = null;
     }
 
     publish();
 
     return Object.freeze({
         getSnapshot: readSnapshot,
+        getRow(key) {
+            return foldBaseline.entries.get(key)?.row ?? null;
+        },
+        subscribeRow(key, listener) {
+            let subscription = rowSubscriptions.get(key);
+            if (subscription === undefined) {
+                subscription = { row: foldBaseline.entries.get(key)?.row ?? null, listeners: new Set() };
+                rowSubscriptions.set(key, subscription);
+            }
+            subscription.listeners.add(listener);
+            return () => {
+                subscription.listeners.delete(listener);
+                if (subscription.listeners.size === 0) rowSubscriptions.delete(key);
+            };
+        },
+        publishObservation(observation, keepViewerFacts = false) {
+            if (!isCurrent()) return null;
+            const lane = lanes.get(observation.sourceInstanceId);
+            if (lane === undefined) return null;
+            const key = triageEntryRowKey(observation.entryRef);
+            const previous = foldBaseline.entries.get(key)?.row ?? null;
+            if (previous === null) return null;
+            const row = foldTriagePostMutationObservation({
+                row: previous,
+                observation,
+                lanes: [...lanes.values()].map(value => value.lane),
+                activeSourceInstanceIds: configuredSources.filter(source => source.available).map(source => source.sourceInstanceId),
+                assembledAtMs: observation.observedAtMs,
+                keepViewerFacts,
+            });
+            if (row === null) return null;
+            const replacement = row.observations.find(value => value.sourceInstanceId === observation.sourceInstanceId);
+            if (replacement === undefined) return null;
+            const qualified = { ...replacement, entryRef: observation.entryRef };
+            const replace = (observations: readonly CorpusQualifiedObservationV1[]) => [
+                ...observations.filter(value => triageEntryRowKey(value.entryRef) !== key), qualified,
+            ];
+            lane.observations = replace(lane.observations);
+            if (lane.walkObservations !== undefined) lane.walkObservations = replace(lane.walkObservations);
+            // The exact fold also owns last-good presentation for an unresolved read.
+            // Reuse that row in the retained fold rather than qualifying its observations twice.
+            foldBaseline.entries.set(key, { row, searchText: projectTriageEntrySearchText(row.observations) });
+            if (row !== previous) deps.onRowProjected?.(row.entryRef);
+            rebuild();
+            publish();
+            return foldBaseline.entries.get(key)?.row ?? null;
+        },
         project(nextLens) {
-            return window === null ? undefined : projectRetained(nextLens);
+            return window === null ? undefined : projectRetained(nextLens, false);
         },
         subscribe(listener) {
             listeners.add(listener);
@@ -1444,6 +1401,9 @@ export function createTriageListWindowStore(deps: Readonly<{
         },
         refresh(trigger) {
             if (!isCurrent()) return Promise.resolve();
+            // Concurrent view consumers need the same read. Join before changing
+            // reset/trigger intent; manual Refresh still queues a fresh cycle.
+            if (trigger === 'view' && pending !== 'idle') return scheduler.flush({ ifRunning: 'join' });
             pagingResetPending = true;
             // Manual Refresh is the strongest intent in a coalesced cycle, so it
             // never loses to a view trigger that arrived first.
@@ -1458,11 +1418,10 @@ export function createTriageListWindowStore(deps: Readonly<{
             // One append at a time, and the published arm says so: the two read
             // the same flag, so a row can never offer a press this refuses.
             if (appending) return Promise.resolve();
-            // A lens replacement has invalidated every continuation from the
-            // previous generation.  The replacement refresh may be waiting on
-            // the coordinator's pacing window; do not let Load More race it
-            // and send an old cursor under the new lens.
-            if (pagingResetPending || generationReplacementPending) return Promise.resolve();
+            // Replacement clears predecessor frontiers before publication.
+            // Wait for that queued read, then allow its healthy continuations
+            // independently of failed lanes retaining old membership.
+            if (pagingResetPending) return Promise.resolve();
             if (appendFailed) {
                 // Retry the depth already asked for. Deepening here would step
                 // past a window this mount never received.
@@ -1475,10 +1434,8 @@ export function createTriageListWindowStore(deps: Readonly<{
                 windowsRequested += 1;
             }
             appending = true;
-            // The reader pressed a row, so this is explicit demand and the shared
-            // minimum interval must not refuse it — the same reason **Refresh**
-            // sends `manual`. The source's own retry deadline and the failure
-            // backoff still apply, and still publish through `refreshBlocked`.
+            // The reader pressed a row, so this is explicit demand. The source's
+            // own retry deadline still publishes through `refreshBlocked`.
             pendingTrigger = 'manual';
             publish();
             return scheduler.flush();
@@ -1497,22 +1454,18 @@ export function createTriageListWindowStore(deps: Readonly<{
         setLens(next) {
             // Re-applying the lens this mount already projects (every shell mount does) changes nothing.
             if (pluginJsonValuesEqual(lens, next)) return;
-            // A continuation belongs to the complete mounted lens generation
-            // that produced it. Query/facet changes are projected locally, but
-            // retaining their predecessor frontier would let Load More resume
-            // the new lens at the old lens's depth. Reacquire one neutral first
-            // page and mint a fresh frontier set instead. This remains the same
-            // store, coordinator and coalesced scheduler; no search-owned reader
-            // or cursor state is introduced.
+            // Text, facets, order and Smart policy project retained pages without
+            // replacing their provider walk or its continuation.
             const acquisitionChanged = !sameAcquisitionLens(lens, next);
             lens = next;
             if (acquisitionChanged) {
+                coordinator.cancel();
                 // Invalidate admission before publishing the newly projected
                 // lens. Subscribers run synchronously inside `publish`; doing
                 // this afterwards briefly offered the predecessor frontier and
                 // the imperative path would have accepted that press too.
+                resetPagingGeneration({ replacesGeneration: true });
                 pagingResetPending = true;
-                generationReplacementPending = true;
                 pendingTrigger = 'manual';
             }
             if (window !== null) rebuild();
@@ -1528,20 +1481,13 @@ export function createTriageListWindowStore(deps: Readonly<{
     } satisfies TriageListWindowStoreV1);
 }
 
-/** Two windows that say the same thing: everything but the moment each was assembled. */
-function sameTriageListWindowContent(left: TriageListWindowV1, right: TriageListWindowV1): boolean {
-    return pluginJsonValuesEqual({ ...left, assembledAtMs: 0 }, { ...right, assembledAtMs: 0 });
-}
-
 /**
- * Two snapshots a subscriber cannot tell apart: the same window object and equal plain members (the configured
- * sources are re-enumerated each cycle into a new array). An aggregate error is compared by identity, because it
- * is a retained value, not a projection.
+ * Producers retain semantic values. Only actual scalar/reference changes notify subscribers.
  */
 function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: TriageListWindowSnapshotV1): boolean {
-    const { window: leftWindow, error: leftError, ...leftRest } = left;
-    const { window: rightWindow, error: rightError, ...rightRest } = right;
-    return leftWindow === rightWindow
-        && leftError === rightError
-        && pluginJsonValuesEqual(leftRest, rightRest);
+    return left.window === right.window && left.error === right.error && left.taskProjection === right.taskProjection
+        && left.freshness === right.freshness && left.completedAtMs === right.completedAtMs
+        && left.pending === right.pending && left.passes === right.passes
+        && left.loadMore === right.loadMore && left.refreshBlocked === right.refreshBlocked
+        && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources;
 }

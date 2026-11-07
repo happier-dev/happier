@@ -98,6 +98,7 @@ export type CollectionCardsProps<Item> = Readonly<{
   presentation: 'board' | 'grid';
   selection?: CollectionProps<Item>['selection'];
   useRowActions?: CollectionProps<Item>['useRowActions'];
+  useRowItem?: CollectionProps<Item>['useRowItem'];
   tabStopKey: string | null;
   eligibleKeys: readonly string[];
   model: HappierCollectionModel<Item>;
@@ -266,10 +267,12 @@ function BoardCardRow<Item>(props: Readonly<{
   anatomy: CollectionAnatomy<Item>;
   selected: boolean;
   useRowActions?: CollectionProps<Item>['useRowActions'];
+  useRowItem?: CollectionProps<Item>['useRowItem'];
 }>): ReactElement {
   const host = useOptionalPluginUiPresentationHost();
   const card = useCardLayout();
-  const { item, anatomy } = props;
+  const { anatomy } = props;
+  const item = props.useRowItem?.(props.item) ?? props.item;
   const actions = props.useRowActions?.(item) ?? {};
   // Row actions are the card's own corner control, not a sibling beside the card: they sit at the title line's
   // end inside the card's body (its top and side insets), revealed like a grid card's.
@@ -294,6 +297,7 @@ function BoardColumn<Item>(props: Readonly<{
   section: HappierCollectionSection<Item>;
   selection?: CollectionProps<Item>['selection'];
   useRowActions?: CollectionProps<Item>['useRowActions'];
+  useRowItem?: CollectionProps<Item>['useRowItem'];
   tabStopKey: string | null;
   eligibleKeys: readonly string[];
   columnKey: string;
@@ -320,7 +324,7 @@ function BoardColumn<Item>(props: Readonly<{
   const observeFocus = useCallback((key: string) => props.onFocusedKeyChange(key, viewport), [props.onFocusedKeyChange, viewport]);
   const selected = selectedKey !== null && section.items.some((item) => keyOf(item) === selectedKey) ? selectedKey : null;
   const renderItem = useCallback((item: Item) => <BoardCardRow item={item} anatomy={anatomy}
-    selected={keyOf(item) === selected} useRowActions={props.useRowActions} />, [anatomy, keyOf, props.useRowActions, selected]);
+    selected={keyOf(item) === selected} useRowActions={props.useRowActions} useRowItem={props.useRowItem} />, [anatomy, keyOf, props.useRowActions, props.useRowItem, selected]);
   const control = useMemo<ListCollectionControl>(() => ({
     ownsSelectionRows: true,
     hideChrome: true,
@@ -445,6 +449,7 @@ function CollectionBoard<Item>(props: CollectionCardsProps<Item>): ReactElement 
         focusRequest={focusRequest !== null && section.items.some(item => model.keyOf(item) === focusRequest.key) ? focusRequest : undefined}
         selection={props.selection}
         useRowActions={props.useRowActions}
+        useRowItem={props.useRowItem}
         eligibleKeys={props.eligibleKeys}
         tabStopKey={narrow && !section.items.some(item => model.keyOf(item) === props.tabStopKey)
           ? section.items.map(model.keyOf).find(key => key === model.viewport('board', columnKey).anchorRef.current && props.eligibleKeys.includes(key))
@@ -629,6 +634,7 @@ function GridCardView<Item>(props: Readonly<{
   singleChoice: boolean;
   unavailableReason?: string | null;
   useRowActions?: CollectionProps<Item>['useRowActions'];
+  useRowItem?: CollectionProps<Item>['useRowItem'];
   rowIndex: number;
   /** Remaining cells in this logical row, kept as layout space without reparenting keyed cards. */
   rowEndSpace: number;
@@ -637,7 +643,8 @@ function GridCardView<Item>(props: Readonly<{
   const host = useOptionalPluginUiPresentationHost();
   const cardLayout = useCardLayout();
   const cardText = useCardText();
-  const { item, itemKey, anatomy, geometry } = props;
+  const { itemKey, anatomy, geometry } = props;
+  const item = props.useRowItem?.(props.item) ?? props.item;
   const { palette } = useCardColors();
   const testID = anatomy.testID?.(item);
   const register = props.register;
@@ -906,6 +913,7 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                       singleChoice={single !== undefined}
                       unavailableReason={single?.unavailableReason?.(item)}
                       useRowActions={props.useRowActions}
+                      useRowItem={props.useRowItem}
                       rowIndex={rowIndices.get(key)!}
                       rowEndSpace={!paged && itemIndex === row.length - 1 ? (geometry.columns - row.length) * (geometry.cardWidth + CARD_GAP) : 0}
                       selected={key === selectedKey}

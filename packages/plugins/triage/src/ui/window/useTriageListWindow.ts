@@ -3,7 +3,8 @@ import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { usePluginHostApi, usePluginHostReadiness, usePluginUiEphemeralSharedScope, type PluginUiHostReadiness } from '@happier-dev/plugin-ui';
 
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
-import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js';
 import {
   acquireTriageListWindow,
@@ -32,15 +33,14 @@ import {
  * picker is not, so the demand belongs to the page rather than to this shared
  * hook: opening the picker must not turn a cold shared window into a full walk
  * of every configured source. A consumer that is a producer calls `refresh` from
- * its own mount effect; every demand it makes still passes through the one
- * shared minimum interval, so a cold or stale window starts exactly one pass no
- * matter how much of that surface asked.
+ * its own mount effect; every demand it makes passes through the shared window
+ * scheduler, which coalesces bursts and respects the source's retry deadline.
  *
  * There is no timer and no poller here, and none anywhere beneath it.
  */
 export type TriageMountedListWindowV1 = Readonly<{
   /** Existing Account/plugin/generation-shared window identity. */
-  readOwner: object | null;
+  readOwner: TriageListWindowStoreV1 | null;
   /** Includes completedAtMs from the freshness owner for the shell's read-age display. */
   snapshot: TriageListWindowSnapshotV1;
   readiness: PluginUiHostReadiness;
@@ -57,7 +57,7 @@ export type TriageMountedListWindowV1 = Readonly<{
   setLens(lens: TriageListLensV1): void;
 }>;
 
-export function useTriageListWindow(): TriageMountedListWindowV1 {
+export function useTriageListWindow(shapeOf?: (snapshot: TriageListWindowSnapshotV1) => unknown): TriageMountedListWindowV1 {
   const hostApi = usePluginHostApi();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const hostReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
@@ -82,7 +82,18 @@ export function useTriageListWindow(): TriageMountedListWindowV1 {
     () => readTriageMountedWindowReadState(hostApi, sharedScope),
     [hostApi, sharedScope],
   );
-  const { snapshot: acquired, readiness: readClientReadiness } = useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
+  const shape = useRef<unknown>(undefined);
+  const readShape = useCallback(() => {
+    const state = readSnapshot();
+    if (shapeOf === undefined) return state;
+    const next = { readiness: state.readiness, snapshot: shapeOf(state.snapshot) };
+    if (!pluginJsonValuesEqual(shape.current, next)) shape.current = next;
+    return shape.current;
+  }, [readSnapshot, shapeOf]);
+  // The shell subscribes to structure, but always reads the owner's full current snapshot.
+  // Ordinary consumers retain the full-snapshot subscription.
+  useSyncExternalStore(subscribe, readShape, readShape);
+  const { snapshot: acquired, readiness: readClientReadiness } = readSnapshot();
   const readOwner = readTriageListWindowReadOwner(hostApi, sharedScope);
   // Before subscription commits there is no transport client. Use this mount's
   // shared host fact rather than inventing an admitted initial observation.
@@ -103,10 +114,19 @@ export function useTriageListWindow(): TriageMountedListWindowV1 {
   );
 
   const snapshot = useMemo<TriageListWindowSnapshotV1>(() => {
-    if (!readiness.pending) return acquired;
-    const { error: _error, unreadableSources: _unreadableSources, ...retained } = acquired;
-    return Object.freeze({ ...retained, pending: acquired.window === undefined ? 'initial' : 'refresh' });
-  }, [acquired, readiness.pending]);
+    if (readiness.pending) {
+      const { error: _error, unreadableSources: _unreadableSources, ...retained } = acquired;
+      return Object.freeze({ ...retained, pending: acquired.window === undefined ? 'initial' : 'refresh' });
+    }
+    // No read can start after settled admission refusal. Project that fact into
+    // the existing unavailable presentation, without inventing a completed
+    // empty window or replacing retained rows, a real pending read or its error.
+    if (readiness.ready === false && acquired.pending === 'idle'
+      && acquired.window === undefined && acquired.error === undefined) {
+      return Object.freeze({ ...acquired, error: Object.freeze({ code: 'unavailable', message: 'unavailable' }) });
+    }
+    return acquired;
+  }, [acquired, readiness.pending, readiness.ready]);
 
   return useMemo(() => Object.freeze({
     readOwner,
