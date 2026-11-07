@@ -1,53 +1,66 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerPowerResultV1Schema, MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
+  MachineProvisionerNativeCredentialApplyResultV1Schema,
   observeMachineProvisionerNativeRead, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, nativeFetch, readAccountScope } from './account.js';
+import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
+import { ACCOUNT_PURPOSE, nativeFetch, readAccountScope } from './machine/credentials.js';
 import { createVercelNativeClient } from './machine/nativeClient.js';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, VercelLaunchSchema, VercelOptionsSchema, VercelOperationSchema, VercelResourceSchema, VERCEL_REGIONS, type VercelOperation } from './machine/schemas.js';
 import { label } from './ui/translations.js';
 
 export { ROLE_SCHEMAS, prepareStoredSchemas } from './machine/schemas.js';
 const locales = ['en', 'de', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja'] as const;
-const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: ['native-api', ACCOUNT_PURPOSE] } as const;
+const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAccess: ['native-api', ACCOUNT_PURPOSE],
+  execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+} as const;
+const nativeDefaults = { ...defaults, scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' } } as const;
 const confirmation = { title: label('confirmTitle'), body: label('confirmBody') };
-const runtime = async (context: PluginInvocationContext) => createVercelNativeClient(
+const runtime = async (context: PluginAccountActionContext | PluginInvocationContext) => createVercelNativeClient(
   await readAccountScope(context), nativeFetch(context), context.signal, context.invokedAtMs);
 const errorCode = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
   ? error.code : error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'vercel_unavailable';
 
 export const MACHINE_PROVISIONER = {
   title: 'Vercel', icon: 'cloud', resourceKind: 'vercel-sandbox', schemaVersion: 1,
+  enrollmentRole: 'sandbox',
   kindTitle: label('kind'), description: label('description'),
   launchSchema: VercelLaunchSchema.jsonSchema, resourceSchema: VercelResourceSchema.jsonSchema,
   resourceIdPath: 'name', platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
+  browserReachable: true,
   billing: BILLING, retention: { supportedIntents: ['start', 'stop', 'resume', 'delete'] },
   nativeDurationInput: { path: 'timeoutMs', unit: 'milliseconds' },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
+  nativeCredentialDelivery: { apply: 'native-credential-apply', transports: ['https_headers'], preservesEndpoint: true, perBindingMatching: true },
   reconciliation: { nativeOperationSchema: VercelOperationSchema.jsonSchema, action: 'reconcile', cleanup: 'observe-cleanup' },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
   id: CONTRIBUTION.pluginId, version: '0.0.0', displayName: 'Vercel Machines',
-  description: label('description'), engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
+  description: label('description'),
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   resources: Object.fromEntries(locales.map(locale => ['i18n-' + locale.toLowerCase(),
     { kind: 'asset' as const, path: 'assets/i18n/' + locale + '.json', contentType: 'application/json' }])),
   ui: { translations: locales.map(locale => ({ locale, resourceId: 'i18n-' + locale.toLowerCase() })) },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: label('confirmBody'),
-      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.vercel.com' }], methods: ['GET', 'POST', 'DELETE'] } },
+      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.vercel.com' }], methods: ['GET', 'POST', 'DELETE', 'PATCH'] } },
     { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: label('account'),
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders', 'environment'] } },
   ], optional: [] },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
-    declaration: { title: label('account'), ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
+    declaration: { title: label('account'), ui: { category: 'cloud-machines' }, authentication: {
+      account: { artifactId: 'connected-account-authentication', exportName: 'activate' }, defaultModeId: 'token', modes: [{
       id: 'token', title: label('token'), kind: 'manual', outcomeReconciliation: 'none', credentialOrigin: 'authentication',
+      setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Open Vercel access tokens',
+        checklist: ['Open Tokens in your Vercel account settings and enter a name for the token.', 'Choose a scope with access to the team and projects where you will create sandboxes, then choose an expiration and create the token.', 'Copy the token and paste it here; enter the matching Team ID below.'] },
+      credentialFieldKeys: { token: 'token' },
       directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
       fields: [{ id: 'token', title: label('token'), description: label('tokenDescription'), schema: { type: 'string', minLength: 1 }, secret: true }],
       // A team contains its projects, so the team comes first.
@@ -55,11 +68,9 @@ export const PLUGIN = definePlugin({
         { id: 'teamId', title: label('teamId'), description: label('teamIdDescription'), presentation: { placeholder: 'team_…', order: 1 },
           schema: { type: 'string', minLength: 1 }, required: true, secret: false },
         { id: 'projectId', title: label('projectId'), description: label('projectIdDescription'), presentation: { placeholder: 'prj_…', order: 2 },
-          schema: { type: 'string', minLength: 1 }, required: true, secret: false },
+          schema: { type: 'string', minLength: 1 }, required: false, secret: false },
       ] },
-      setup: { url: 'https://vercel.com/account/tokens', createKeyTitle: 'Open Vercel access tokens',
-        checklist: ['Open Tokens in your Vercel account settings and enter a name for the token.', 'Choose a scope with access to the team and projects where you will create sandboxes, then choose an expiration and create the token.', 'Copy the token and paste it here; enter the matching Team ID below.'] },
-    }] } }, runtime: connectedAccountRuntime,
+    }] } }, runtime: connectedAccountRuntime, accountRuntime: connectedAccountPortableRuntime,
   } },
   machineProvisioners: { [CONTRIBUTION.localId]: MACHINE_PROVISIONER },
   actions: {
@@ -78,19 +89,19 @@ export const PLUGIN = definePlugin({
           options: VERCEL_REGIONS
             .map(value => ({ value, label: value })) },
         { path: 'vcpus', title: label('vcpus'), widget: 'integer', required: true, defaultValue: 2 },
-        { path: 'timeoutMs', title: label('timeout'), widget: 'integer', required: true, defaultValue: 300000, description: label('timeoutDescription') },
+        { path: 'timeoutMs', title: label('timeout'), widget: 'integer', description: label('timeoutDescription') },
         { path: 'snapshotExpirationMs', title: label('snapshotExpiration'), widget: 'integer', required: true, defaultValue: 0, description: label('retentionDescription') },
       ] },
       async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
         const client = await runtime(context);
-        const [check, limits] = await Promise.all([client.check(), client.limits()]);
+        const [check, limits] = await Promise.all([client.checkProject(), client.limits()]);
         context.signal.throwIfAborted();
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         if (!check.available) return { dimensions, code: 'provider_unavailable',
           ...(check.nativeCause ? { nativeCause: check.nativeCause } : {}) };
         if (limits.kind !== 'available') return { dimensions, code: 'provider_unavailable',
           ...(limits.nativeCause ? { nativeCause: limits.nativeCause } : {}) };
-        const parsed = VercelLaunchSchema.safeParse(input);
+        const parsed = VercelLaunchSchema.safeParse({ ...input, timeoutMs: input.timeoutMs ?? limits.timeoutMs });
         if (!parsed.success) return { dimensions };
         const launch = parsed.data;
         const image = { id: launch.image, title: launch.image };
@@ -99,9 +110,9 @@ export const PLUGIN = definePlugin({
         const duration = { id: String(launch.timeoutMs), title: String(launch.timeoutMs / 1000) + ' s', afterMs: launch.timeoutMs };
         // This is the reviewed native form draft, not a Cartesian catalog. The
         // public selection projector owns selection completeness and launch.
-        return { base: { launch, available: launch.vcpus <= limits.vcpus && launch.timeoutMs <= limits.timeoutMs },
+        return { base: { launch, guestPlatform: 'linux', available: launch.vcpus <= limits.vcpus && launch.timeoutMs <= limits.timeoutMs },
           dimensions: { ...dimensions,
-            image: [{ id: image.id, title: image.title, assignments: [], nativeFacts: { image } }],
+            image: [{ id: image.id, title: image.title, guestPlatform: 'linux', assignments: [], nativeFacts: { image } }],
             size: [{ id: size.id, title: size.title, assignments: [], nativeFacts: { size } }],
             location: [{ id: location.id, title: location.title, assignments: [], nativeFacts: { location } }],
             duration: [{ id: duration.id, title: duration.title, assignments: [], nativeFacts: { duration } }],
@@ -146,6 +157,15 @@ export const PLUGIN = definePlugin({
         try { return await (await runtime(context)).inspect(input.resource); }
         catch (error) { return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: errorCode(error) }); }
       } },
+    'native-credential-apply': { ...nativeDefaults, title: label('kind'), confirmation, dangerLevel: 'writesRemote',
+      inputSchema: ROLE_SCHEMAS.nativeCredentialApplyInput,
+      resultSchema: MachineProvisionerNativeCredentialApplyResultV1Schema,
+      async run(input, context) {
+        try {
+          return await (await runtime(context)).applyNativeCredentials(input,
+            request => context.services.machineProvisioners.materializeNativeCredentialHeaders(request));
+        } catch { return { kind: 'unknown', code: 'vercel_policy_unconfirmed' }; }
+      } },
     power: { ...defaults, title: label('confirmTitle'), confirmation, dangerLevel: 'writesRemote',
       inputSchema: ROLE_SCHEMAS.powerInput, resultSchema: MachineProvisionerPowerResultV1Schema,
       async run(input, context) { try { return await (await runtime(context)).power(input.resource, input.intent); }
@@ -169,3 +189,5 @@ export const PLUGIN = definePlugin({
   },
 });
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
+export const activateAccount = (api: Parameters<typeof PLUGIN.activateAccount>[0]) =>
+  PLUGIN.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activateAccount' });

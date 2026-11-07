@@ -1,7 +1,5 @@
-import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
-import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
-import { MachineSetupV1Schema } from './machineSetupV1.js';
 import * as z from 'zod/mini';
+export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
 import { lazyDefinition } from '../../lazyZodSchema.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
@@ -11,8 +9,9 @@ import { QualifiedConnectedAccountPurposeV1Schema } from '../../connect/connecte
 import { createManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
 import { ManagedNativeOperationReferenceV1Schema, ManagedRecoveryHintV1Schema, ProviderObservationV1Schema, SharedSavedSecretRefV1Schema, SupportedNativeIntentSchema } from './providerFactsV1.js';
 import { DevcontainerChildProjectionV1Schema, DevcontainerNativeObservationV1Schema, deriveManagedDevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from './devcontainerV1.js';
-import { MachineEnvironmentV1Schema } from './machineEnvironmentV1.js';
-
+import { MachineSetupV1Schema } from './machineSetupV1.js';
+import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
+import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAdminAccessV1,
   MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1, resolveManagedMachineEnrollmentAgentIsolationV1, matchesManagedMachineEnrollmentAgentIsolationV1,
   type ManagedMachineEnrollmentIdentityV1 } from './enrollmentIdentityV1.js';
@@ -24,15 +23,17 @@ export type ManagedMachineRefV1 = z.infer<typeof ManagedMachineRefV1Schema>;
 /** Released 0.2 Home rows omit this projection; explicit invalid references still fail. */
 export const ManagedMachineRefReadV1Schema = lazyDefinition(() => z._default(z.nullable(ManagedMachineRefV1Schema), null));
 /** Setup belongs to the immutable admitted preset snapshot, independently of Join. */
-export const ManagedMachineEnvironmentSetupV1Schema = lazyDefinition(() => z.strictObject({
-  environment: MachineEnvironmentV1Schema,
+export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
+  setup: MachineSetupV1Schema,
   state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
   operation: z.optional(z.strictObject({ operationId: id() })),
+  /** Server settlement clock; replay never substitutes a reader's clock. */
+  settledAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   errorCode: z.optional(id()),
 }).check(z.superRefine((value, context) => {
   if (value.state !== 'failed' && value.errorCode !== undefined) context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
 })));
-export type ManagedMachineEnvironmentSetupV1 = z.infer<typeof ManagedMachineEnvironmentSetupV1Schema>;
+export type ManagedMachineSetupV1 = z.infer<typeof ManagedMachineSetupV1Schema>;
 export const RetentionV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('until-delete') }),
   z.strictObject({ kind: z.literal('unused'), afterMs: z.number().check(z.gt(0)), effect: z.enum(['stop', 'delete']) }),
@@ -43,6 +44,12 @@ export const ReusableRetentionV1Schema = lazyDefinition(() => z.discriminatedUni
   RetentionV1Schema.def.options[0], RetentionV1Schema.def.options[1],
 ]));
 export const ManagedControllerV1Schema = lazyDefinition(() => z.strictObject({ machineId: id(), installationId: id() }));
+/** Public carrier for one admitted preset/resource, never ordinary Machine access. */
+export const ManagedControllerAccessV1Schema = lazyDefinition(() => z.strictObject({
+  installationPublicKey: MachineInstallationPublicKeySchema,
+  custodian: z.strictObject({ accountId: id() }),
+}));
+export type ManagedControllerAccessV1 = z.infer<typeof ManagedControllerAccessV1Schema>;
 /** A host submission fact, independently displayed from native power observations. */
 export const SubmittedNativeEffectV1Schema = lazyDefinition(() => z.strictObject({
   intentRevision: z.int().check(z.gte(0)), requestId: id(), intent: SupportedNativeIntentSchema, controller: z.optional(ManagedControllerV1Schema),
@@ -77,31 +84,31 @@ export function createManagedMachineV1Schema<Launch extends z.core.$ZodType, Nat
   return z.strictObject({
     id: id(), homeId: id(), custodianAccountId: id(),
     enrollmentAccountId: z.optional(id()),
-    enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     preset: z.optional(z.strictObject({ id: id(), revision: z.int().check(z.gte(0)) })),
     launch: createRetainedManagedLaunchSnapshotV1Schema(launch), controller: z.optional(ManagedControllerV1Schema),
     controllerAccess: z.optional(ManagedControllerAccessV1Schema),
+    enrollmentIdentity: z.optional(ManagedMachineEnrollmentIdentityV1Schema),
     reviewedFacts: z.optional(createManagedConfigurationFactsV1Schema(launch)),
-    environmentSetup: z.optional(ManagedMachineEnvironmentSetupV1Schema),
+    machineSetup: z.optional(ManagedMachineSetupV1Schema),
     allocation: z.enum(['unsubmitted', 'may-exist', 'bound', 'confirmed-absent']),
-    creationState: z.enum(['active', 'canceled', 'retired']),
+    creationState: z.enum(['active', 'canceled']),
     nativeOperationRef: z.optional(z.strictObject({ ...ManagedNativeOperationReferenceV1Schema.shape, value: nativeOperation ?? PluginJsonValueV2Schema })),
     recovery: z.optional(ManagedRecoveryHintV1Schema),
     bootstrapCredentialRef: z.optional(SharedSavedSecretRefV1Schema),
+    /** Successful CLI installation on the retained resource; absence is unknown. */
+    bootstrapInstalled: z.optional(z.literal(true)),
     resource: z.optional(z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), value: native,
       devcontainerObservation: z.optional(DevcontainerNativeObservationV1Schema) })),
     devcontainerChild: z.optional(DevcontainerChildProjectionV1Schema),
     enrolledMachineId: z.optional(id()), desired: SupportedNativeIntentSchema,
-    /** Successful CLI installation on the retained resource; absence is unknown. */
-    bootstrapInstalled: z.optional(z.literal(true)),
     desiredWhen: z.enum(['now', 'after-idle']), desiredAfterMs: z.optional(z.number().check(z.gt(0))),
     intentRevision: z.int().check(z.gte(0)), archivedAt: z.optional(z.number().check(z.gte(0))),
     submittedNativeEffect: z.optional(SubmittedNativeEffectV1Schema),
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(), observation: z.optional(ProviderObservationV1Schema),
     cleanup: z.optional(z.strictObject({ disposition: z.enum(['pending', 'unavailable']), reason: id() })),
   }).check(z.superRefine((value, context) => {
-    if (value.environmentSetup && !value.preset) {
-      context.addIssue({ code: 'custom', path: ['environmentSetup'], message: 'Setup requires its admitted preset.' });
+    if (value.machineSetup && !value.preset) {
+      context.addIssue({ code: 'custom', path: ['machineSetup'], message: 'Setup requires its admitted preset.' });
     }
     if ((value.resource?.devcontainerObservation || value.devcontainerChild) && !value.controller) {
       context.addIssue({ code: 'custom', path: ['controller'], message: 'A local child requires its physical controller.' });
@@ -135,22 +142,6 @@ export type RetentionV1 = z.infer<typeof RetentionV1Schema>;
 export type ManagedControllerV1 = z.infer<typeof ManagedControllerV1Schema>;
 export type ValidatedLaunchSnapshotV1 = z.infer<typeof ValidatedLaunchSnapshotV1Schema>;
 export type RetainedManagedLaunchSnapshotV1 = z.infer<typeof RetainedManagedLaunchSnapshotV1Schema>;
-
-export const ManagedControllerAccessV1Schema = lazyDefinition(() => z.strictObject({
-  installationPublicKey: MachineInstallationPublicKeySchema,
-  custodian: z.strictObject({ accountId: id() }),
-}));
-
-export const ManagedMachineSetupV1Schema = lazyDefinition(() => z.strictObject({
-  setup: MachineSetupV1Schema,
-  state: z.enum(['pending', 'running', 'succeeded', 'failed', 'skipped']),
-  operation: z.optional(z.strictObject({ operationId: id() })),
-  errorCode: z.optional(id()),
-}).check(z.superRefine((value, context) => {
-  if (value.state !== 'failed' && value.errorCode !== undefined) context.addIssue({ code: 'custom', path: ['errorCode'], message: 'Only failed setup retains an error.' });
-})));
-
-export { classifyManagedMachineAllocationV1, type ManagedMachineAllocationPresentationV1 } from './managedAllocationPresentationV1.js';
 
 /** Public creator output never carries the custodian's connection or bootstrap selectors. */
 export function redactManagedMachineCredentialReferences(machine: ManagedMachineV1): ManagedMachineV1 {

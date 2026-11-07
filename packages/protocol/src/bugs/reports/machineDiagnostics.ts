@@ -91,7 +91,7 @@ export const BugReportSessionDiagnosticsSchema = lazyZodSchema(() => z.object({
 }));
 export type BugReportSessionDiagnostics = z.infer<typeof BugReportSessionDiagnosticsSchema>;
 export const BugReportMachineDiagnosticsSnapshotSchema = lazyZodSchema(() => z.object({
-  daemonState: z.nullable(z.object({ pid: z.number(), httpPort: z.number(), startedAt: z.number(), startedWithCliVersion: z.string(), hasControlToken: z.boolean(), daemonLogPath: z.nullable(z.string()) })),
+  daemonState: z.nullable(z.object({ pid: z.number(), httpPort: z.number(), startedAt: z.number(), startedWithCliVersion: z.string(), hasControlToken: z.boolean(), daemonLogPath: z.nullable(z.string()), machineId: z.optional(z.string()) })),
   daemonLogs: z.array(z.object({ file: z.string(), path: z.string(), modifiedAt: z.string() })),
   doctorSnapshot: z.nullable(DoctorSnapshotSchema),
   runtime: z.object({ cwd: z.string(), platform: z.string(), nodeVersion: z.string() }),
@@ -108,6 +108,7 @@ export type BugReportMachineDiagnosticsSnapshot = Readonly<{
     startedWithCliVersion: string;
     hasControlToken: boolean;
     daemonLogPath: string | null;
+    machineId?: string;
   }> | null;
   daemonLogs: ReadonlyArray<Readonly<{ file: string; path: string; modifiedAt: string }>>;
   doctorSnapshot: DoctorSnapshot | null;

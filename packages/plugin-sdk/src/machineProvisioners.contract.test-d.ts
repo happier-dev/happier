@@ -1,5 +1,4 @@
-import type { ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import type * as z from 'zod/mini';
+import type { AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 import type { MachineProvisionerRefusalCodeV1 } from './machine-provisioners/index.js';
 
@@ -10,7 +9,12 @@ type IsEqual<Left, Right> = (
   <T>() => T extends Right ? 1 : 2
 ) ? true : false;
 
-// Keep the portable public union identical to the canonical refusal schema.
+// Provider acquire refusals follow AcquireResult, independently of Home admission codes.
 type _SdkRefusalCodesMatchProtocol = Assert<
-  IsEqual<MachineProvisionerRefusalCodeV1, z.infer<typeof ManagedRefusalCodeV1Schema>>
+  IsEqual<MachineProvisionerRefusalCodeV1, Extract<AcquireResultV1, { kind: 'rejected' }>['code']>
+>;
+
+// A provider may report its own definite pre-effect refusal without extending a shared enum.
+type _SdkAcceptsProviderOwnedRefusal = Assert<
+  'provider_plan_required' extends MachineProvisionerRefusalCodeV1 ? true : false
 >;

@@ -1,18 +1,18 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
-import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
-import type { StoredCredentials } from '@/persistence';
 import axios from 'axios';
 import { execFile } from 'node:child_process';
+import * as childProcesses from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, readFileSync } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -20,13 +20,14 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
 import { readManagedMachine } from './readManagedMachine';
 import { createManagedNativeInvocation } from './reconcile';
+import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
-import { addConnectedAccountsAvailablePluginInvocationServiceBinding, createLoggerEventsAndExecServiceBinding } from '@/plugins/runtime/invocation/services/factory';
-import { withPluginInvocationServiceBindingAvailability } from '@/plugins/runtime/invocation/services/unavailable';
+import { fixture as nativeFixture, roles as nativeRoles, roleActionId, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+
 import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
@@ -34,10 +35,12 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { PluginConnectedAccountAuthenticationV2Schema, type JsonValue } from '@happier-dev/protocol';
 import type { PluginServices, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { ManagedBootstrapCredentialCreateV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { ManagedBootstrapCredentialCreateV1Schema, ManagedControllerCurrentInputV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { logger } from '@/ui/logger';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { SharedSavedSecretCreateInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -67,12 +70,38 @@ import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalA
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { formatSshCommandFailure, readSshCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { CRABBOX_PLUGIN } from '../../../../../packages/plugins/machine-crabbox/src/manifest';
+import { LUME_PLUGIN } from '../../../../../packages/plugins/machine-lume/src/manifest';
+import { PLUGIN as HETZNER_PLUGIN } from '../../../../../packages/plugins/machine-hetzner/src/manifest';
+import { createDigitalOceanNativeClient } from '../../../../../packages/plugins/machine-digitalocean/src/machine/nativeClient';
+import { machineProvisionerAuthorFixture } from '../../../../../packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
+import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
+import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
+import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createStablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
+import { createV2ManagedDependencySourceModel } from '@/plugins/runtime/invocation/services/managedDependencySourceModel';
+import { createProductionManagedDependencySourceAdapter } from '@/plugins/runtime/invocation/services/managedDependencySourceAdapters';
+import { createStableManagedExecutableResolver } from '@/plugins/runtime/invocation/services/managedExecutableResolver';
+import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projection/registry/managedDependencyExecutables';
+import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
+import { createDevelopmentPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { describeManagedOperationDiagnostic } from '../../../../ui/sources/components/settings/machines/managed/managedNativeFailurePresentation';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import type { StoredCredentials } from '@/persistence';
 
 // Only the filesystem removal boundary is mutable; every protection, codec,
 // SavedSecret and invocation owner still runs against the actual implementation.
@@ -81,16 +110,22 @@ vi.mock('node:fs/promises', async importOriginal => {
     return { ...actual, rm: vi.fn(actual.rm) };
 });
 
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, spawnSync: vi.fn(actual.spawnSync) };
+});
+
 const controller = { machineId: 'controller', installationId: 'installation' };
 function isJsonObject(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-const input = { selection: { kind: 'one-off' as const, homeId: 'home', controller, launch: {
+const input = { enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } as const, selection: { kind: 'one-off' as const, homeId: 'home', controller, launch: {
     provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
     name: 'guest', choices: {},
 }, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
 const machine = {
     id: 'managed', homeId: 'home', custodianAccountId: 'owner', launch: input.selection.launch,
+    enrollmentIdentity: input.enrollmentIdentity,
     controller, allocation: 'may-exist', creationState: 'active', desired: 'start',
     desiredWhen: 'now', intentRevision: 0, retention: input.selection.retention, wakeOnAcceptedMessage: false,
 } satisfies ManagedMachineV1;
@@ -318,14 +353,43 @@ describe('creation environment stage', () => {
         expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
     });
 
-    const runHomeRecoveryScenario = async (scenario: 'recover' | 'expire' | 'late-confirmation' | 'install-recover' | 'install-expire' | 'payload-memory') => {
+    it.each(['mcp', 'agent'] as const)('refuses headless Ask before admission or native spend (%s)', async surface => {
+        const wire = originAuthorization('home', 'headless-ask');
+        const keys = tweetnacl.sign.keyPair();
+        const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
+            throw new Error('Unexpected admission write');
+        });
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: wire,
+            serverId: 'daemon-local-profile', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example',
+            target: wire.binding.target, installationId: controller.installationId, privateKey: keys.secretKey,
+            isCurrent: async () => true,
+        });
+        if (!authorization) throw new Error('Requester authority was not established');
+        post.mockClear();
+        await expect(driver().execute('machines.managed.acquire', { ...input, enrollmentIdentity: {
+            kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server',
+            adminAccessAtCreation: 'ask', administrator: { username: 'alice' },
+        } }, { requestId: 'headless-ask', context: { surface, externalActionExecutionAuthorization: authorization,
+            operationAcceptance: { operationId: 'headless-create', accept() {} } } }))
+            .rejects.toMatchObject({ code: 'enrollment_attendance_required' });
+        expect(post).not.toHaveBeenCalled();
+    });
+    const runHomeRecoveryScenario = async (scenario: 'recover' | 'expire' | 'late-confirmation' | 'install-recover' | 'payload-memory' | 'cloud-ssh' | 'cloud-ssh-root') => {
+        const cloudSsh = scenario.startsWith('cloud-ssh');
         const root = await filesystem.mkdtemp(join(tmpdir(), 'managed-controller-home-recovery-'));
         const guestHome = join(root, 'guest');
         const payload = join(root, 'payload');
         const homeId = 'srv_controller_home_recovery';
+        const token = cloudSsh ? `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` : 'token';
+        const reference = { kind: 'shared_resource' as const, resourceId: 'cloud-key' };
+        const publicKeyPair = generateKeyPairSync('rsa', { modulusLength: 1024,
+            privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: reference.resourceId, mode: 'plain',
+            content: { v: 1, name: 'Cloud key', kind: 'other', value: publicKeyPair.privateKey } });
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
-        } });
+        }, ...(cloudSsh ? { bootstrapCredentialRef: reference } : {}) });
         let unavailableReads = 0;
         let installing = false;
         let nowMs = Date.now();
@@ -336,12 +400,11 @@ describe('creation environment stage', () => {
         const server = createServer((request, response) => {
             response.setHeader('Content-Type', 'application/json');
             if (request.url?.endsWith('/controller/current')
-                && (scenario.startsWith('install-') ? installing && (scenario === 'install-expire' || unavailableReads === 0) : retained.enrolledMachineId
+                && (scenario === 'install-recover' ? installing && unavailableReads === 0 : retained.enrolledMachineId
                     && (scenario === 'expire' || scenario === 'recover' && unavailableReads === 0))) {
                 unavailableReads++;
                 if (unavailableReads === 2) {
                     if (scenario === 'expire') nowMs = pairingExpiresAtMs + 1;
-                    if (scenario === 'install-expire') nowMs = startedAt + 10 * 60_000 + 1;
                 }
                 response.writeHead(503);
                 response.end(JSON.stringify({ error: 'database_connection_unavailable' }));
@@ -350,8 +413,14 @@ describe('creation environment stage', () => {
             if (request.url?.startsWith('/v1/features')) {
                 response.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } }, homeConnectionDescriptor: descriptor }));
             } else if (request.url === '/v1/account/encryption/currentness') {
-                response.end(JSON.stringify({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 }));
-            } else if (request.url === '/v1/auth/response') response.end('{}');
+                response.end(JSON.stringify({ mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 }));
+            } else if (request.url === '/v1/account/profile') response.end(JSON.stringify({ id: 'owner' }));
+            else if (request.url?.startsWith('/v2/account/settings')) response.end(JSON.stringify({ content: null, version: 1 }));
+            else if (request.url?.endsWith('/resources/materials')) response.end(JSON.stringify({ resources: [{ resourceId: reference.resourceId,
+                encryptionMode: 'plain', storedContent, recipientEnvelope: null, entry: { ref: formatSharedSavedSecretRefV1(reference.resourceId),
+                    source: 'shared_resource', relationship: 'owner', name: 'Cloud key', kind: 'other', ownerAccountId: 'owner', revision: 1,
+                    materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] }));
+            else if (request.url === '/v1/auth/response') response.end('{}');
             else response.end(JSON.stringify({ machine: retained, ...(request.url?.endsWith('/admit') ? { replayed: true } : {}) }));
         });
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -385,7 +454,7 @@ describe('creation environment stage', () => {
             await writeFile(join(root, 'settings.json'), JSON.stringify({ schemaVersion: 5, onboardingCompleted: true, activeServerId: homeId,
                 servers: { [homeId]: { id: homeId, name: 'Test Home', serverUrl, webappUrl: serverUrl,
                     homeConnectionDescriptor: descriptor, createdAt: 1, updatedAt: 1, lastUsedAt: 1 } } }));
-            await writeFile(join(root, 'servers', homeId, 'access.key'), JSON.stringify({ token: 'token', encryption: null }));
+            await writeFile(join(root, 'servers', homeId, 'access.key'), JSON.stringify({ token, encryption: null }));
             vi.stubEnv('HAPPIER_HOME_DIR', root);
             vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload);
             reloadConfiguration();
@@ -398,10 +467,89 @@ describe('creation environment stage', () => {
             // The guest executable/native transport and Home HTTP are the only
             // substituted systems. Controller, installer, auth, task, Action,
             // currentness parser and operation store run their real owners.
-            await writeFile(join(payload, 'happier'), `#!/bin/sh\ncase "$1 $2" in\n'auth request') cat >/dev/null; printf '%s\\n' '${JSON.stringify(pairing)}';;\n'auth wait') printf '%s\\n' '${JSON.stringify(completion)}';;\n'auth status') printf '%s\\n' '{"ok":true,"data":{"authenticated":true,"credentialState":"valid","machineRegistrationState":"server-confirmed","machineId":"enrolled-guest"}}';;\n*) printf '%s\\n' '{"ok":true,"data":{}}';;\nesac\n`);
+            const installer = [
+                `import { installVersionedPayload } from ${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve('@happier-dev/cli-common/firstPartyRuntime')).href)};`,
+                'const args = process.argv.slice(1); const value = flag => args[args.indexOf(flag) + 1];',
+                'await installVersionedPayload({ componentId: value("--component"), channel: value("--channel"), versionId: value("--version"), payloadRoot: value("--payload-root"), processEnv: process.env, selectAsDefaultReleaseChannel: true });',
+            ].join('\n');
+            await writeFile(join(payload, 'happier'), `#!/bin/sh
+if [ "$1 $2" = "self __install-payload" ]; then exec ${safeBashSingleQuote(process.execPath)} --conditions=happier-source --import ${safeBashSingleQuote(createRequire(import.meta.url).resolve('tsx'))} --input-type=module -e ${safeBashSingleQuote(installer)} "$@"; fi
+case "$1 $2" in
+'auth request') cat >/dev/null; printf '%s\\n' '${JSON.stringify(pairing)}';;
+'auth wait') printf '%s\\n' '${JSON.stringify(completion)}';;
+'auth enroll-remote') cat >/dev/null; printf '%s\\n' '${JSON.stringify(pairing)}' '${JSON.stringify(completion)}';;
+'auth status') printf '%s\\n' '{"v":1,"ok":true,"kind":"auth_status","data":{"authenticated":true,"credentialState":"valid","machineRegistrationState":"server-confirmed","machineId":"enrolled-guest"}}';;
+'daemon status') printf '%s\\n' '${JSON.stringify({ server: { activeServerId: homeId }, service: { installed: true }, daemon: { running: true, healthy: true }, auth: { needsAuth: false, machineId: 'enrolled-guest' } })}';;
+*) printf '%s\\n' '{"ok":true,"data":{}}';;
+esac
+`);
             const results: Partial<Record<'bootstrap' | 'exec', JsonValue>> = { bootstrap: { kind: 'native',
                 transport: { contributionRef: input.selection.launch.provider, schemaVersion: 1 },
                 guestHome: { homeDir: guestHome, happyHomeDir: join(guestHome, '.happier'), daemonStartup: 'native-process' } } };
+            const sshTargets: string[] = [];
+            const guestFailures: { command: string; status: number | null; stderr: string }[] = [];
+            if (cloudSsh) {
+                // Vendor HTTP and SSH processes are boundaries. Native request,
+                // connection identity, key carrier, installer and enrollment stay real.
+                const publicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest';
+                const vendorWrites: unknown[] = [];
+                const droplet = { id: 42, name: 'managed', status: 'active', tags: [], volume_ids: [],
+                    networks: { v4: [{ type: 'public', ip_address: '203.0.113.42' }], v6: [] } };
+                const cloud = createDigitalOceanNativeClient({ token: 'fixture', fetch: async (_url, init) => {
+                    if (init?.method === 'POST') vendorWrites.push(JSON.parse(String(init.body)));
+                    return Response.json({ droplet });
+                } });
+                const acquired = await cloud.create({ name: 'managed', recoveryTag: 'managed', bootstrapSshPublicKey: publicKey,
+                    launch: { regionSlug: 'nyc1', sizeSlug: 's-1vcpu-1gb', imageId: 'ubuntu-22-04-x64', publicNetworking: { ipv6: false } } });
+                if (acquired.kind !== 'bound') throw new Error('Cloud fixture did not bind');
+                const observed = await cloud.inspect(acquired.resource);
+                if (observed.kind !== 'present' || !observed.ssh) throw new Error('Cloud fixture has no SSH identity');
+                const { parse } = await import('yaml');
+                const config = parse((vendorWrites[0] as { user_data: string }).user_data);
+                const login = observed.ssh.user;
+                const hostKeyLine = '203.0.113.42 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest';
+                const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'ssh-keyscan' } }) },
+                    run: async () => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                        stdout: new TextEncoder().encode(hostKeyLine), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false })
+                } as unknown as PluginServices['exec']; // Only the scanner OS port is used.
+                results.bootstrap = await resolveMachineProvisionerSshBootstrap({ exec,
+                    connection: scenario === 'cloud-ssh-root' ? { ...observed.ssh, user: 'root' } : observed.ssh,
+                    credentialRef: reference });
+                const os = await vi.importActual<typeof childProcesses>('node:child_process');
+                vi.spyOn(childProcesses, 'spawnSync').mockImplementation((...args: Parameters<typeof childProcesses.spawnSync>) =>
+                    args[0] === 'ssh-keyscan' ? { pid: 1, status: 0, signal: null, stdout: `${hostKeyLine}\n`, stderr: '', output: [] } : os.spawnSync(...args));
+                const spawn = os.spawn;
+                const observeGuest = (child: childProcesses.ChildProcess, command: string) => {
+                    let stderr = '';
+                    child.stderr?.on('data', chunk => { stderr += String(chunk); });
+                    child.on('close', status => { if (status !== 0) guestFailures.push({ command, status, stderr }); });
+                    return child;
+                };
+                vi.spyOn(childProcesses, 'spawn').mockImplementation((command, argv = [], options) => {
+                    if (command !== 'ssh' && command !== 'scp') return spawn(command, argv, options);
+                    if (command === 'scp') {
+                        const destination = String(argv.at(-1)).split(':').slice(1).join(':').replace(/^'|'$/gu, '').replace(/^~(?=\/)/u, guestHome);
+                        // SCP resolves relative destinations in the remote login home.
+                        return observeGuest(spawn('/bin/cp', ['-R', String(argv.at(-2)), destination], { ...options, cwd: guestHome }), 'scp');
+                    }
+                    const target = argv.find(arg => arg.endsWith('@203.0.113.42')) ?? '';
+                    sshTargets.push(target);
+                    if (target.startsWith('root@')) return spawn('/bin/sh', ['-c',
+                        'printf "%s\\n" "WARNING: Your password has expired. Password change required but no TTY available." >&2; exit 1'], options);
+                    expect(target).toBe(`${login}@203.0.113.42`);
+                    expect(config.users).toContainEqual(expect.objectContaining({ name: login, lock_passwd: true,
+                        ssh_authorized_keys: [publicKey], sudo: 'ALL=(ALL) NOPASSWD:ALL' }));
+                    expect(config.users.some((user: { name: string }) => user.name === 'happier')).toBe(false);
+                    const remote = argv.slice(argv.indexOf(target) + 1);
+                    // Execute the remote shell as the simulated guest, retaining its HOME.
+                    const remoteArgs = remote[0] === 'bash' && remote[1] === '-lc' ? ['bash', '-c', ...remote.slice(2)] : remote;
+                    const child = spawn('/bin/sh', ['-c', remoteArgs.join(' ')], { ...options, cwd: guestHome, env: { ...process.env, HOME: guestHome } });
+                    child.stdout?.on('data', chunk => {
+                        if (String(chunk).includes('remote_home_enrollment_result')) retained = ManagedMachineV1Schema.parse({ ...retained, enrolledMachineId: 'enrolled-guest' });
+                    });
+                    return observeGuest(child, remoteArgs.join(' '));
+                });
+            }
             const native = nativeFixture({ privateNative: true, credentialPurposes: [], nativeRoleResults: results,
                 onNativeRole: async (role, body) => {
                     if (role === 'putFile' && isJsonObject(body)
@@ -430,8 +578,8 @@ describe('creation environment stage', () => {
                         stdoutBase64: Buffer.from(result.stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
                 } });
             vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
-            const acquisition = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl, homeId, controller,
-                ...accountInputs, runtimeRegistry: native.runtimeRegistry, homeTarget });
+            const acquisition = createManagedMachineAcquisitionDriver({ token, serverUrl, homeId, controller,
+                ...accountInputs, credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget });
             const operations = operationRuntime = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
                 generateOperationId: () => `controller-home-${scenario}` });
             const actionInput = { ...input, selection: { ...input.selection, homeId } };
@@ -449,16 +597,6 @@ describe('creation environment stage', () => {
                     return await execution;
                 } });
             let taskId = '';
-            if (scenario === 'install-expire') {
-                await work;
-                expect(await operations.handlers.getV2({ operationId: `controller-home-${scenario}`, waitForTerminal: true }))
-                    .toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
-                        errorCode: 'database_connection_unavailable', details: { kind: 'managedControllerRequest', status: 503 },
-                    } } });
-                expect(unavailableReads).toBe(2);
-                expect(retained.enrolledMachineId).toBeUndefined();
-                return;
-            }
             await expect.poll(async () => {
                 const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}` });
                 if (found.kind === 'found' && found.operation.state === 'failed') throw new Error(JSON.stringify(found.operation.error));
@@ -467,7 +605,41 @@ describe('creation environment stage', () => {
                 return taskId;
             }, { timeout: scenario === 'payload-memory' ? 120_000 : 20_000 }).not.toBe('');
             const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
+            if (cloudSsh) {
+                await getLiveSystemTasksRunnerAdapter().respond({ taskId, answer: { trusted: true } });
+                if (scenario === 'cloud-ssh-root') {
+                    await work;
+                    const terminal = await operations.handlers.getV2({ operationId: `controller-home-${scenario}`, waitForTerminal: true });
+                    expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'failed', progress: { phase: 'ssh.installCli' },
+                        error: { errorCode: 'ssh_password_expired' } } });
+                    if (terminal.kind !== 'found') throw new Error('Missing SSH failure operation');
+                    expect(readSshCommandFailure(terminal.operation.error?.errorCode, terminal.operation.error?.error)).toEqual({
+                        code: 'ssh_password_expired',
+                        message: formatSshCommandFailure('ssh_password_expired', {
+                            phase: 'ssh.command', exitStatus: 1, stdoutPresent: false, stderrPresent: true,
+                        }),
+                    });
+                    expect(JSON.stringify(terminal)).not.toContain('no TTY');
+                    expect(sshTargets).toEqual(['root@203.0.113.42']);
+                    expect(retained.enrolledMachineId).toBeUndefined();
+                    return;
+                }
+                await expect.poll(async () => {
+                    const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}` });
+                    if (found.kind === 'found' && found.operation.state === 'failed') throw new Error(JSON.stringify({ error: found.operation.error, sshTargets, guestFailures }));
+                    const domain = found.kind === 'found' ? found.operation.domainRef : undefined;
+                    return domain?.kind === 'managedMachine' ? domain.bootstrapTask?.prompt?.kind : undefined;
+                }, { timeout: 20_000 }).toBe('auth.approveRemoteProvisioning');
+            }
             await getLiveSystemTasksRunnerAdapter().respond({ taskId, answer: { approved: true } });
+            if (cloudSsh) {
+                await expect.poll(async () => {
+                    const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}` });
+                    expect(found, JSON.stringify({ progress: found.kind === 'found' ? found.operation.progress : null,
+                        sshTargets, guestFailures, enrolledMachineId: retained.enrolledMachineId }))
+                        .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+                }, { timeout: 20_000 }).toBeUndefined();
+            }
             await work;
             const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}`, waitForTerminal: true });
             expect(found, JSON.stringify(found.kind === 'found' ? found.operation.error : found)).toMatchObject({ kind: 'found', operation: scenario === 'expire'
@@ -475,10 +647,17 @@ describe('creation environment stage', () => {
             expect(unavailableReads).toBe(scenario === 'expire' ? 2 : scenario === 'recover' || scenario === 'install-recover' ? 1 : 0);
             if (scenario === 'expire' && found.kind === 'found') expect(found.operation.settledAt).toBeUndefined();
             expect(retained.enrolledMachineId).toBe('enrolled-guest');
+            if (scenario === 'cloud-ssh') {
+                expect(installing).toBe(true);
+                expect(sshTargets.length).toBeGreaterThan(0);
+                expect(sshTargets.every(target => target === 'happier-bootstrap@203.0.113.42')).toBe(true);
+                expect((await stat(join(guestHome, '.happier/cli/current/happier'))).isFile()).toBe(true);
+            }
             if (scenario === 'payload-memory') {
                 const digest = createHash('sha256');
                 for await (const bytes of createReadStream(join(guestHome, '.happier/cli/current/large.dat'))) digest.update(bytes);
                 expect(digest.digest('hex')).toBe(expectedPayloadDigest);
+                console.info('QBP5 delivery measurement', JSON.stringify({ baselineMemory, deliveries, afterMemory: process.memoryUsage() }));
                 // The real Action body ceiling must include base64, not raw bytes.
                 expect(Math.max(...deliveries.map(delivery => delivery.bytes))).toBeLessThanOrEqual(Math.floor(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES / 4) * 3);
                 expect(Math.max(...deliveries.map(delivery => delivery.bodyBytes))).toBeLessThanOrEqual(EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES);
@@ -498,13 +677,15 @@ describe('creation environment stage', () => {
             await filesystem.rm(root, { recursive: true, force: true });
         }
     };
-    it.each(['recover', 'expire', 'late-confirmation', 'install-recover', 'install-expire'] as const)(
+    it.each(['recover', 'expire', 'late-confirmation', 'install-recover'] as const)(
         'keeps Create truthful when controller Home currentness is unavailable during installation or after guest enrollment (%s)', runHomeRecoveryScenario);
     it('bounds the payload-memory Action body and preserves a large guest payload through real enrollment',
         () => runHomeRecoveryScenario('payload-memory'), 180_000);
+    it.each(['cloud-ssh', 'cloud-ssh-root'] as const)('acquires through cloud SSH installCli with an expired root password (%s)',
+        runHomeRecoveryScenario, 60_000);
     it.each(['succeeded', 'skipped'] as const)('retains the original first message across failed setup until exact paid row becomes %s', async state => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
-            preset: { id: 'preset', revision: 4 }, environmentSetup: { environment: { setupScript: 'echo admitted' }, state: 'pending' },
+            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async url => {
@@ -523,16 +704,16 @@ describe('creation environment stage', () => {
             context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
             // Genuine external Account socket boundary; the notification grants no row authority.
             subscribeEnvironmentSetupChanges: async callbacks => { wake = callbacks.onChange; return { dispose() { disposed = true; } }; },
-            runEnvironmentSetup: async () => { setup++; retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state: 'failed' } };
-                throw Object.assign(new Error('setup failed'), { code: 'machine_environment_setup_failed' }); },
+            runEnvironmentSetup: async () => { setup++; retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'failed' } };
+                throw Object.assign(new Error('setup failed'), { code: 'machine_setup_setup_failed' }); },
             runAgentStart: async ({ machine: prepared, isCurrent }) => { expect(await isCurrent()).toBe(true);
-                expect(prepared.environmentSetup?.state).toBe(state); started++; },
+                expect(prepared.machineSetup?.state).toBe(state); started++; },
         });
         const observed = execution.then(value => { settled = true; return value; }, error => { settled = true; return error; });
         await expect.poll(() => setup).toBe(1);
         expect(settled).toBe(false);
         expect(started).toBe(0);
-        retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state } };
+        retained = { ...retained, machineSetup: { ...retained.machineSetup!, state } };
         wake!();
         expect(await observed).toMatchObject({ managedId: 'managed', operation: { operationId: 'creation' } });
         expect(started).toBe(1);
@@ -541,7 +722,7 @@ describe('creation environment stage', () => {
     });
     it('runs setup after Join and before the admitted first message without buying again', async () => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
-            preset: { id: 'preset', revision: 4 }, environmentSetup: { environment: { setupScript: 'echo admitted' }, state: 'pending' },
+            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async url => {
@@ -557,10 +738,10 @@ describe('creation environment stage', () => {
                 expect(joined.enrolledMachineId).toBe('guest');
                 expect(await isCurrent()).toBe(true);
                 sequence.push('setup');
-                retained = { ...retained, environmentSetup: { ...retained.environmentSetup!, state: 'succeeded' } };
+                retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'succeeded' } };
                 return retained;
             }, runAgentStart: async ({ machine: prepared }) => {
-                expect(prepared.environmentSetup?.state).toBe('succeeded'); sequence.push('message');
+                expect(prepared.machineSetup?.state).toBe('succeeded'); sequence.push('message');
             } });
         expect(sequence).toEqual(['setup', 'message']);
         expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
@@ -622,6 +803,360 @@ afterEach(async () => {
     resetActiveAccountSettingsSnapshotForTests();
 });
 describe('managed acquisition durable custody', () => {
+    it('refuses native delivery before effects when the exact controller census lacks binding support', async () => {
+        const homeId = 'srv_native_missing_census';
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const native = nativeFixture({ nativeCredentialDelivery: true, privateNative: true, credentialPurposes: [] });
+        const reads: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            reads.push(String(url));
+            if (String(url).endsWith(managedMachineActionEndpointPathV1('machines.managed.get'))) return { status: 200, data: retained };
+            if (String(url).endsWith('/controller/context')) return { status: 200, data: { machine: retained, requestId: 'incumbent' } };
+            throw new Error('Unsupported native delivery must not reach a generic effect endpoint');
+        });
+        const driver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs });
+        expect(await driver.execute('machines.managed.credentials.install', { homeId, managedId: retained.id,
+            sessionId: 'accepted-session', bindingKey: 'accepted-binding', expectedResourceRevision: 1,
+            expectedSourceRevision: 'source-current', expectedProviderTicket: 'ticket-current' }, { requestId: 'native-install' }))
+            .toEqual({ kind: 'refused', code: 'credential_unavailable' });
+        expect(native.effects()).toBe(0);
+        expect(reads.some(url => url.endsWith('/machines.managed.credentials.install'))).toBe(false);
+    });
+    it('dispatches a complete empty native credential replacement only through the descriptor managed role', async () => {
+        const homeId = 'srv_native_credential_composer';
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const native = nativeFixture({ nativeCredentialDelivery: true, privateNative: true, credentialPurposes: [] });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine: retained } });
+        const driverInput = { token: 'token', serverUrl: 'https://home.example', homeId, controller,
+            runtimeRegistry: native.runtimeRegistry, ...accountInputs,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) };
+        const options = { requestId: 'native-policy', context: { operationOwnerUpdate: { update() {} } } };
+        const action = 'machines.managed.credentials.install' as const;
+        const client = createManagedMachineControllerClient(driverInput, options, action);
+        const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action }, () => retained);
+        const result = await invocation.invoke('nativeCredentialApply', {
+            resource: retained.resource, baseline: { kind: 'allow-all' }, bindings: [], ownedBindings: [],
+        }, { managedNativeCredentials: { role: 'nativeCredentialApply', bindings: new Map() } });
+        expect(result).toEqual({ kind: 'confirmed' });
+        expect(native.effects()).toBe(1);
+    });
+    it.each(['quota', 'uniqueness', 'invalid-fields'] as const)('carries a native acquire refusal through real Action execution to operation Details without retrying (%s)', async outcome => {
+        const homeId = 'srv_native_cause';
+        const provider = { pluginId: 'happier.machine.hetzner', localId: 'hetzner' };
+        const service = { pluginId: provider.pluginId, localId: 'hetzner-account' };
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const key = generateKeyPairSync('rsa', { modulusLength: 1024, privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+            publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+        const resourceId = 'native-cause-key';
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+            content: { v: 1, name: 'Bootstrap key', kind: 'other', value: key } });
+        const credential = { purpose: { consumer: provider, purpose: 'cloud-api' }, account: { service, accountId: 'captured' } };
+        const launch = { provider, schemaVersion: 1, name: 'Native refusal', credentials: [credential], choices: {
+            serverTypeId: '22', imageId: '67794396', locationId: 'fsn1', publicNetworking: { ipv4: true, ipv6: false },
+        } };
+        // CLOUD5's exact row/selection; the native replies below are synthetic
+        // documented REST v1 errors, not a recovered historical vendor response.
+        let retained = ManagedMachineV1Schema.parse({ ...machine, id: 'cmvorjl0j0098mcpsjelrb062', homeId,
+            launch, allocation: 'unsubmitted', bootstrapCredentialRef: { kind: 'shared_resource', resourceId } });
+        const nativeCause = outcome === 'invalid-fields' ? { httpStatusClass: '4xx', code: 'invalid_input', fields: ['image'] } as const
+            : { httpStatusClass: '4xx', code: outcome === 'quota' ? 'resource_limit_exceeded' : 'uniqueness_error' } as const;
+        const manifest = normalizePluginManifestV2(HETZNER_PLUGIN.manifest);
+        const activated = await activateContributionModule({ pluginId: provider.pluginId, occurrenceId: createPluginRuntimeOccurrenceId(provider.pluginId),
+            manifest, moduleNamespace: { activateAccount: HETZNER_PLUGIN.activateAccount },
+            target: { realm: 'account', artifactId: 'account-runtime', exportName: 'activateAccount' }, isOccurrenceCurrent: () => true });
+        const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
+            registration.family === 'actions' ? [[registration.localId, (body, context) => Reflect.apply(registration.value, undefined, [body, context])]] : []));
+        const credentialOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'owner',
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unavailableTransport, resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Captured' } : null,
+            materializeAccount: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer private-provider-token' } }),
+            resolveCredentialConfigurationRevision: async () => 'configuration-1',
+            projectTargetAccounts: unavailableTransport, assertTargetAccountMaterializable: unavailableTransport });
+        let vendorWrites = 0;
+        let vendorReads = 0;
+        const serviceOwners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} }, connectedAccounts: credentialOwner,
+            http: createStablePluginHttpHost({ adapter: { openWebSocket: unavailableTransport, request: async request => {
+                const path = new URL(request.url).pathname;
+                if (request.method === 'GET') vendorReads++;
+                if (request.method === 'POST' && path === '/v1/servers') vendorWrites++;
+                const refused = request.method === 'POST' && path === '/v1/servers';
+                const response = { error: { code: outcome === 'quota' ? 'resource_limit_exceeded' : outcome === 'invalid-fields' ? 'invalid_input' : 'uniqueness_error',
+                    message: 'private request content', details: outcome === 'invalid-fields'
+                        ? { fields: [{ name: 'image', messages: ['private reflected input'] }, { name: 'private-token', messages: ['private'] }] }
+                        : { limits: [{ name: 'project_limit' }] } } };
+                return { status: refused ? outcome === 'quota' ? 403 : outcome === 'invalid-fields' ? 422 : 409 : 200, headers: { 'content-type': 'application/json' }, finalUrl: request.url,
+                    body: new TextEncoder().encode(JSON.stringify(response)) };
+            } } }) });
+        const native = nativeFixture({ fixtureManifest: manifest, actionHandlers, credentialOwner, executionRealm: 'account',
+            credentialPurposes: [{ purpose: 'cloud-api', service }],
+            createServices: serviceOwners.createServices, resolveHostBinding: serviceOwners.resolveHostBinding });
+        const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(), purposeBindingOwner: credentialOwner,
+            requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+            createRedactionLease: () => ({ add() {}, close() {} }) });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } }, capabilities: {} })));
+        vi.spyOn(axios, 'get').mockImplementation(async rawUrl => {
+            const path = new URL(String(rawUrl)).pathname;
+            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+            if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+            if (path.endsWith('/resources/materials')) return { status: 200, data: { resources: [{ resourceId,
+                encryptionMode: 'plain', storedContent, recipientEnvelope: null, entry: { ref: formatSharedSavedSecretRefV1(resourceId),
+                    source: 'shared_resource', relationship: 'owner', name: 'Bootstrap key', kind: 'other', ownerAccountId: 'owner', revision: 1,
+                    materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+            throw new Error(`Unexpected Home GET ${path}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/current')) ManagedControllerCurrentInputV1Schema.parse(body);
+            if (String(url).endsWith('/submit')) {
+                ManagedControllerSubmitInputV1Schema.parse(body);
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+            }
+            if (String(url).endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                if (report.result.kind === 'rejected') retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'confirmed-absent' });
+            }
+            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: false } : {}),
+                ...(String(url).endsWith('/submit') ? { submitted: true } : {}) } };
+        });
+        const acquisition = createManagedMachineAcquisitionDriver({ token, serverUrl: 'https://home.example', homeId, controller,
+            credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority: authority,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
+            generateOperationId: () => 'native-cause' });
+        const acquisitionInput = { enrollmentIdentity: input.enrollmentIdentity,
+            selection: { kind: 'one-off', homeId, controller, launch, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        let work: Promise<JsonValue | null> | undefined;
+        const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) => {
+            work = acquisition.execute(actionId, input, { requestId: 'creation', context, signal: context.signal });
+            return await work;
+        } } as ActionExecutorDeps);
+        try {
+            await operations.observeExecution({ actionId: 'machines.managed.acquire', input: acquisitionInput, actionRequestId: 'creation',
+                execute: context => executor.execute('machines.managed.acquire', acquisitionInput, { ...context, surface: 'cli', authority: 'present_user',
+                    presentUserConfirmation: { actionId: 'machines.managed.acquire' } }) });
+            await work?.catch(() => undefined);
+            await expect(work).rejects.toMatchObject({ code: 'provider_unavailable' });
+            expect(vendorWrites).toBe(1);
+            const settled = await operations.handlers.getV2({ operationId: 'native-cause', waitForTerminal: true });
+            expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'provider_unavailable',
+                details: { kind: 'managedNative', nativeCause } } } });
+            if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
+            expect(describeManagedOperationDiagnostic(settled.operation.error))
+                .toBe(outcome === 'invalid-fields' ? 'provider_unavailable · HTTP 4xx · invalid_input · image'
+                    : `provider_unavailable · HTTP 4xx · ${outcome === 'quota' ? 'resource_limit_exceeded' : 'uniqueness_error'}`);
+            expect(JSON.stringify(settled)).not.toMatch(/private-provider-token|private request content|private reflected input|private-token/);
+            expect(vendorWrites).toBe(1);
+            expect(vendorReads).toBe(0);
+            expect(retained.allocation).toBe('confirmed-absent');
+        } finally { await work?.catch(() => undefined); }
+    });
+    it.skipIf(process.platform === 'win32').each(['lost-reply', 'delayed-success'] as const)('acquires, recovers and deletes the exact Lume VM for a captured host CUID (%s)', async acquisition => {
+        await withTempDir('managed-lume-cuid-', async root => {
+            // Captured from LUME1 attempt 3's admitted ManagedMachine row;
+            // apps/server/prisma/schema.prisma produces it with @default(cuid()).
+            const managedId = 'cmvnxb7gn009mmcagisyszwlh';
+            const vmName = `happier-${managedId}`;
+            const homeId = 'srv_lume_cuid_custody';
+            const provider = { pluginId: 'happier.machine.lume', localId: 'lume' };
+            const launch = { storage: 'home', image: { kind: 'catalog', id: 'ghcr.io/trycua/macos:26-slim' },
+                cpu: 2, memoryBytes: 4294967296, diskBytes: 161061273600 };
+            const value = { storage: launch.storage, vmName };
+            const resource = { contributionRef: provider, schemaVersion: 1, value };
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+            const resourceId = 'lume-retained-key';
+            const key = generateKeyPairSync('rsa', { modulusLength: 1024, privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+                publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+            const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+                content: { v: 1, name: 'Lume key', kind: 'other', value: key } });
+            let retained = ManagedMachineV1Schema.parse({ ...machine, id: managedId, homeId,
+                allocation: 'unsubmitted', bootstrapCredentialRef: { kind: 'shared_resource', resourceId },
+                launch: { provider, schemaVersion: 1, name: 'Lume CUID regression', choices: launch } });
+            const manifest = normalizePluginManifestV2(LUME_PLUGIN.manifest);
+            const pluginId = manifest.id;
+            const sourceCustody = createDevelopmentPluginSourceCustody(root);
+            // Only the native executable is replaced; real dependency discovery
+            // and version probing qualify its declared system source.
+            await writeFile(join(root, 'lume'), `#!${process.execPath}\nif (process.argv[2] !== '--version') process.exit(9);\nprocess.stdout.write('lume version 0.6.1');\n`, { mode: 0o755 });
+            const contributions = manifest.contributes.managedDependencies.map(definition => ({ pluginId,
+                provenance: 'external' as const, source: { kind: 'path' as const }, manifestPath: join(root, 'plugin.json'),
+                daemonEntryPath: null, sourceSpec: { kind: 'path' as const, locator: root, trustPolicy: 'local_trusted' as const,
+                    installPolicy: 'link' as const }, definition })) satisfies readonly ResolvedInstallableContribution[];
+            const dependencies = createStablePluginManagedDependenciesHost({
+                installablesRegistry: resolveExecutableManagedDependenciesRegistry(contributions),
+                sourceModel: createV2ManagedDependencySourceModel({ platform: 'darwin', architecture: 'arm64', contributions }),
+                sourceCustodiesByPluginId: new Map([[pluginId, sourceCustody]]), isCurrent: () => true, getSettings: () => ({}),
+                resolveAdapter: unavailableTransport,
+                resolveSourceAdapter: input => createProductionManagedDependencySourceAdapter({ ...input, env: { ...process.env, PATH: root } }),
+                removeManagedInstall: unavailableTransport,
+            });
+            const managedServices = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({}),
+                dependencies: scope => dependencies.bind(scope.pluginId), resolveScope: scope => scope });
+            const requests: { method: string; path: string; storage: string | null; body: unknown }[] = [];
+            let exists = false;
+            let running = acquisition === 'lost-reply';
+            let pullStarted!: () => void;
+            const pulling = new Promise<void>(resolve => { pullStarted = resolve; });
+            const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} }, managedServices,
+                exec: { resolveExecutable: createStableManagedExecutableResolver({ systemTools: [], managedDependencies: dependencies,
+                    resolveSystemTool: unavailableTransport }), resolvePath: async () => root },
+                http: createStablePluginHttpHost({ adapter: { openWebSocket: unavailableTransport, request: async request => {
+                    const url = new URL(request.url);
+                    const body: unknown = request.body ? JSON.parse(new TextDecoder().decode(request.body)) : null;
+                    requests.push({ method: request.method ?? 'GET', path: url.pathname, storage: url.searchParams.get('storage'), body });
+                    let response: unknown;
+                    if (url.origin === 'https://ghcr.io' && url.pathname === '/token') response = { token: 'anonymous' };
+                    else if (url.pathname === '/v2/trycua/macos/tags/list') response = { name: 'trycua/macos', tags: ['26-slim'] };
+                    else if (url.pathname === '/v2/trycua/macos/manifests/26-slim') response = {
+                        annotations: { 'org.trycua.lume.disk-size': String(launch.diskBytes) },
+                    };
+                    else if (url.pathname === '/lume/host/status') response = { version: '0.6.1' };
+                    else if (url.pathname === '/lume/config/locations') response = [{ name: 'home', path: '/native/lume' }];
+                    else if (url.pathname === '/lume/pull') {
+                        expect(body).toEqual({ image: 'macos:26-slim', name: vmName, registry: 'ghcr.io', organization: 'trycua', storage: 'home' });
+                        if (acquisition === 'delayed-success') {
+                            // The clock is a system boundary. Start virtual time
+                            // only after native dependency probing has settled.
+                            vi.useFakeTimers();
+                            const pulled = new Promise<void>(resolve => setTimeout(resolve, 330_001));
+                            pullStarted();
+                            await pulled;
+                            exists = true;
+                            response = { name: vmName, image: 'macos:26-slim' };
+                        } else {
+                            // The pull outlives its lost response. The exact VM
+                            // becomes observable only after a later completion.
+                            throw new Error('Native pull response lost');
+                        }
+                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'PATCH') {
+                        expect(body).toEqual({ storage: launch.storage, cpu: launch.cpu,
+                            memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B` });
+                        response = {};
+                    } else if (url.pathname === `/lume/vms/${vmName}/run`) {
+                        expect(exists).toBe(true); running = true; response = {};
+                    } else if (url.pathname === `/lume/vms/${vmName}/stop` && request.method === 'POST') {
+                        expect(request.url).toBe(`${url.origin}/lume/vms/${vmName}/stop`);
+                        expect(body).toEqual({ storage: launch.storage });
+                        expect(exists).toBe(true); running = false; response = {};
+                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'DELETE') {
+                        expect(exists).toBe(true); expect(running).toBe(false); exists = false; response = {};
+                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'GET' && exists) response = {
+                        name: vmName, locationName: 'home', status: running ? 'running' : 'stopped', os: 'macos', cpuCount: launch.cpu,
+                        memorySize: launch.memoryBytes, diskSize: { allocated: 1073741824, total: launch.diskBytes }, display: '1024x768',
+                    };
+                    else throw new Error(`Unexpected native Lume request ${request.method} ${url.pathname}`);
+                    return { status: url.pathname.endsWith('/run') ? 202 : 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(response)), finalUrl: request.url };
+                } } }),
+            });
+            const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
+            const activated = await activateContributionModule({ pluginId, occurrenceId, manifest,
+                moduleNamespace: { activate: LUME_PLUGIN.activate }, isOccurrenceCurrent: () => true });
+            const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
+                registration.family === 'actions' ? [[registration.localId,
+                    (input, context) => Reflect.apply(registration.value, undefined, [input, context])]] : []));
+            const native = nativeFixture({ fixtureManifest: manifest, reconciliation: true, actionHandlers,
+                createServices: owners.createServices, resolveHostBinding: owners.resolveHostBinding });
+            vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } }, capabilities: {} })));
+            vi.spyOn(axios, 'get').mockImplementation(async rawUrl => {
+                const path = new URL(String(rawUrl)).pathname;
+                if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+                if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+                if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+                if (path.endsWith('/resources/materials')) return { status: 200, data: { resources: [{ resourceId,
+                    encryptionMode: 'plain', storedContent, recipientEnvelope: null, entry: { ref: formatSharedSavedSecretRefV1(resourceId),
+                        source: 'shared_resource', relationship: 'owner', name: 'Lume key', kind: 'other', ownerAccountId: 'owner', revision: 1,
+                        materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+                throw new Error(`Unexpected Lume Home GET ${path}`);
+            });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                if (String(url).endsWith('/current')) ManagedControllerCurrentInputV1Schema.parse(body);
+                if (String(url).endsWith('/submit')) retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                if (String(url).endsWith('/report')) {
+                    const report = ManagedControllerReportV1Schema.parse(body);
+                    if (report.result.kind === 'pending') retained = ManagedMachineV1Schema.parse({ ...retained,
+                        nativeOperationRef: report.result.nativeOperationRef });
+                    if (report.result.kind === 'bound') retained = ManagedMachineV1Schema.parse({ ...retained,
+                        allocation: 'bound', resource: report.result.resource });
+                }
+                if (String(url).endsWith('/get')) return { status: 200, data: retained };
+                return { status: 200, data: { machine: retained,
+                    ...(String(url).endsWith('/admit') ? { replayed: false } : {}),
+                    ...(String(url).endsWith('/submit') ? { submitted: true } : {}),
+                    ...(String(url).endsWith('/context') ? { requestId: 'lume-cuid-regression' } : {}) } };
+            });
+            const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
+            const driverInput = { token, serverUrl: 'https://home.example', homeId, controller,
+                runtimeRegistry: native.runtimeRegistry, ...accountInputs, credentials: { token, encryption: null }, homeTarget };
+            const options = { requestId: 'lume-cuid-regression', context: { operationOwnerUpdate: { update() {} },
+                operationAcceptance: { operationId: 'lume-cuid-operation', accept() {} } } };
+            const client = createManagedMachineControllerClient(driverInput, options, 'machines.managed.acquire');
+            try {
+                expect(activated.status).toBe('active');
+                const controllerDriver = createManagedMachineAcquisitionDriver(driverInput);
+                if (acquisition === 'delayed-success') {
+                    retained = (await client.submit(retained)).machine;
+                    const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained,
+                        action: 'machines.managed.acquire' }, () => retained);
+                    const result = invocation.invoke('acquire', { launch, managedId });
+                    let settled = false;
+                    void result.then(() => { settled = true; }, () => { settled = true; });
+                    await pulling;
+                    await vi.advanceTimersByTimeAsync(330_000);
+                    expect(settled).toBe(false);
+                    expect(retained.allocation).toBe('may-exist');
+                    await vi.advanceTimersByTimeAsync(1);
+                    await expect(result).resolves.toEqual({ kind: 'bound', resource, startPending: true });
+                    vi.useRealTimers();
+                    const bound = AcquireResultV1Schema.parse(await result);
+                    if (bound.kind !== 'bound') throw new Error('Delayed native pull did not bind its exact resource');
+                    retained = await client.reportIssuedAcquireFact(retained, bound);
+                    expect(retained).toMatchObject({ id: managedId, allocation: 'bound', resource });
+                } else {
+                    await expect(controllerDriver.execute('machines.managed.acquire', { enrollmentIdentity: input.enrollmentIdentity, selection: { ...input.selection,
+                        homeId, launch: retained.launch } }, options)).rejects.toMatchObject({ code: 'native_acquisition_unconfirmed' });
+                    expect(retained).toMatchObject({ id: managedId, allocation: 'may-exist', nativeOperationRef: {
+                        contributionRef: provider, schemaVersion: 1, value } });
+                    await expect(controllerDriver.execute('machines.managed.inspect', { homeId, managedId }, options))
+                        .resolves.toMatchObject({ machine: { id: managedId, allocation: 'may-exist', nativeOperationRef: {
+                            contributionRef: provider, schemaVersion: 1, value } } });
+                    // Native completion after the original request failed must
+                    // rebind the retained identity without another pull.
+                    exists = true;
+                    await expect(controllerDriver.execute('machines.managed.inspect', { homeId, managedId }, options))
+                        .resolves.toMatchObject({ machine: { id: managedId, resource } });
+                }
+                const deletion = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained,
+                    action: 'machines.managed.delete' }, () => retained);
+                await expect(deletion.invoke('destroy', { resource: value })).resolves.toEqual({ kind: 'confirmed' });
+                expect(exists).toBe(false);
+                expect(requests.filter(request => request.path === '/lume/pull')).toHaveLength(1);
+                expect(requests.filter(request => request.method === 'DELETE')).toEqual([
+                    { method: 'DELETE', path: `/lume/vms/${vmName}`, storage: 'home', body: null },
+                ]);
+                expect(requests.slice(-4).map(({ method, path, storage }) => ({ method, path, storage }))).toEqual([
+                    { method: 'GET', path: `/lume/vms/${vmName}`, storage: 'home' },
+                    { method: 'POST', path: `/lume/vms/${vmName}/stop`, storage: null },
+                    { method: 'GET', path: `/lume/vms/${vmName}`, storage: 'home' },
+                    { method: 'DELETE', path: `/lume/vms/${vmName}`, storage: 'home' },
+                ]);
+                expect(requests.filter(request => request.path.startsWith('/lume/vms/'))
+                    .every(request => request.path.startsWith(`/lume/vms/${vmName}`))).toBe(true);
+            } finally {
+                vi.useRealTimers();
+                await native.targetActionInvocations.dispose();
+                await activated.dispose();
+                await owners.dispose();
+                await managedServices.dispose();
+            }
+        });
+    });
     it.each(['acquire', 'inspect', 'reconcile', 'destroy'] as const)('admits direct Crabbox %s without a coordinator and delivers only its retained SSH key', async role => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         const homeId = 'srv_crabbox_direct_custody';
@@ -666,9 +1201,7 @@ describe('managed acquisition durable custody', () => {
             // The real daemon has these declared host capacities even when
             // no coordinator Account is selected. Any unexpected service IO
             // still fails because only the native module reader is substituted.
-            createHostServiceBinding: (occurrence, id, requests) => addConnectedAccountsAvailablePluginInvocationServiceBinding(
-                withPluginInvocationServiceBindingAvailability(createLoggerEventsAndExecServiceBinding(occurrence, id, requests),
-                    { serviceId: 'events', availability: 'unavailable' })),
+            createHostServiceBinding: (occurrence, id) => createPluginInvocationServiceBinding(occurrence, id),
             hostServiceAdapters: {
                 exec: { resolveExecutable: unavailableTransport, resolvePath: unavailableTransport },
                 http: createStablePluginHttpHost({ adapter: { request: unavailableTransport, openWebSocket: unavailableTransport } }),
@@ -700,7 +1233,7 @@ describe('managed acquisition durable custody', () => {
         await expect(stat(deliveredPath)).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(stat(deliveredPath + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
     });
-    it.each(['available', 'retired', 'unavailable', 'targeted'] as const)('projects each declared native purpose once with authorized labelled accounts and refuses retired occurrence (%s)', async availability => {
+    it.each(['available', 'retired', 'unavailable', 'targeted'] as const)('projects an admitted provisioner snapshot despite an occurrence retiring during inventory (%s)', async availability => {
         const services = [{ pluginId: 'acme.accounts', localId: 'cloud' }, { pluginId: 'acme.accounts', localId: 'cua' }, { pluginId: 'acme.accounts', localId: 'maintenance' }];
         const purposes = services.map(service => ({ purpose: service.localId, service }));
         const authentication = nativeAccountAuthentication;
@@ -709,6 +1242,20 @@ describe('managed acquisition durable custody', () => {
         const requestedServices: string[] = [];
         let releaseInventory!: () => void;
         const inventoryReady = new Promise<void>(resolve => { releaseInventory = resolve; });
+        const listAccounts = async (service: (typeof services)[number]) => {
+            if (availability === 'unavailable') throw new Error('An unauthorized purpose must not read account inventory');
+            if (availability === 'retired') native.retire();
+            if (availability === 'available' || availability === 'targeted') {
+                requestedServices.push(service.localId);
+                await inventoryReady;
+            }
+            return { service, accounts: (['connected', 'needs_reauth'] as const).map(status => ({
+                ref: { service, accountId: `${service.localId}-${status}` }, status,
+                authenticationModeId: 'token', revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+                configurationReady: true, configurationRevision: null, kind: 'token' as const, expiresAt: null,
+                providerIdentity: { accountId: service.localId, email: null }, displayName: `${service.localId} account`, scopes: [],
+            })) };
+        };
         const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             establishedRuntimeOwner: { invokeWithReceipt: unavailableTransport, invokeDirectMaterial: unavailableTransport },
@@ -721,20 +1268,9 @@ describe('managed acquisition durable custody', () => {
                 release: async () => {},
             }) },
             qualifiedApi: {
-                listAccounts: async service => {
-                    if (availability === 'unavailable') throw new Error('An unauthorized purpose must not read account inventory');
-                    if (availability === 'retired') native.retire();
-                    if (availability === 'available' || availability === 'targeted') {
-                        requestedServices.push(service.localId);
-                        await inventoryReady;
-                    }
-                    return { service, accounts: (['connected', 'needs_reauth'] as const).map(status => ({
-                        ref: { service, accountId: `${service.localId}-${status}` }, status,
-                        authenticationModeId: 'token', revisionSemantics: 'revisioned' as const, credentialRevision: 'csr_abcdefghijklmnopqrstuv',
-                        configurationReady: true, configurationRevision: null, kind: 'token' as const, expiresAt: null,
-                        providerIdentity: { accountId: service.localId, email: null }, displayName: `${service.localId} account`, scopes: [],
-                    })) };
-                },
+                listAccountsForServices: async services => ({ services,
+                    accounts: (await Promise.all(services.map(listAccounts))).flatMap(response => response.accounts) }),
+                listAccounts,
                 listGroups: async () => ({ groups: [] }), readGroup: async () => null,
             },
         });
@@ -798,8 +1334,11 @@ describe('managed acquisition durable custody', () => {
                 console.info(`QB91 full catalog still pending after ${Math.round(performance.now() - started)} ms with inventory held`);
             } finally { releaseInventory(); }
         }
-        if (availability === 'retired') await expect(result).rejects.toMatchObject({ code: 'provider_unavailable' });
-        else if (availability === 'unavailable') {
+        if (availability === 'retired') {
+            await expect(result).resolves.toMatchObject({ controller, provisioners: [{
+                contribution: input.selection.launch.provider, credentialPurposes: expect.any(Array),
+            }] });
+        } else if (availability === 'unavailable') {
             const catalog = await result;
             expect(catalog).toMatchObject({ controller, provisioners: [{
                 contribution: input.selection.launch.provider, occurrenceId: expect.any(String), descriptor: expect.any(Object),
@@ -938,10 +1477,391 @@ describe('managed acquisition durable custody', () => {
         expect(ordinaryEntered).toBe(true);
     });
 
+    it.each([false, true])('keeps the public-author lost-response allocation on the same uncertain row (correlation-only: %s)', async correlationOnly => {
+        const manifest = normalizePluginManifestV2(machineProvisionerAuthorFixture.manifest);
+        const pluginId = manifest.id;
+        const occurrenceId = createPluginRuntimeOccurrenceId(pluginId);
+        const activated = await activateContributionModule({ pluginId, occurrenceId, manifest,
+            moduleNamespace: { activate: machineProvisionerAuthorFixture.activate }, isOccurrenceCurrent: () => true });
+        const effects: string[] = [];
+        const actionHandlers = new Map(activated.registrations.flatMap((registration): [string, TargetActionInvocationRegistration['handler']][] =>
+            registration.family === 'actions' ? [[registration.localId, (body, context) => {
+                effects.push(registration.localId);
+                return Reflect.apply(registration.value, undefined, [body, context]);
+            }]] : []));
+        const native = nativeFixture({ fixtureManifest: manifest, reconciliation: true, actionHandlers });
+        const homeId = 'srv_author_recovery';
+        const provider = { pluginId, localId: 'guest' };
+        const producer = await createPluginTestkit({ manifest: machineProvisionerAuthorFixture.manifest, module: machineProvisionerAuthorFixture });
+        let submitted: ReturnType<typeof AcquireResultV1Schema.parse>;
+        try { submitted = AcquireResultV1Schema.parse(await producer.invokeAction('acquire', { launch: { name: 'lost-response' } })); }
+        finally { await producer.dispose(); }
+        if (submitted.kind !== 'pending') throw new Error('Expected the author fixture to retain its submission');
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId,
+            launch: { ...machine.launch, provider, choices: { name: 'lost-response' } },
+            ...(!correlationOnly ? { nativeOperationRef: submitted.nativeOperationRef } : {}),
+        });
+        const reports: unknown[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/actions/get')) return { status: 200, data: retained };
+            if (String(url).endsWith('/report')) reports.push(ManagedControllerReportV1Schema.parse(body));
+            return { status: 200, data: String(url).endsWith('/context') ? { machine: retained, requestId: 'creation' } : { machine: retained } };
+        });
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' });
+        const recovery = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+        await expect(recovery.execute('machines.managed.inspect', { homeId, managedId: retained.id }, { requestId: 'retry' }))
+            .resolves.toMatchObject({ machine: { id: retained.id, allocation: 'may-exist' } });
+        expect(effects).toEqual(['reconcile']);
+        expect(reports).toEqual([expect.objectContaining({ managedId: retained.id,
+            result: { kind: 'unknown', recovery: { reference: correlationOnly ? retained.id : 'lost-response', reason: 'native_identity_unavailable' } } })]);
+        expect(retained.resource).toBeUndefined();
+    });
+
+    it.each(['native-new', 'native-cancel', 'native-nonssh-cancel', 'native-hetzner', 'native-hetzner-off', 'native-hetzner-unknown', 'native-hetzner-poweroff', 'native-off', 'native-refused', 'delayed', 'opens', 'off', 'errored', 'absent', 'cancel', 'cancel-scan', 'missing'] as const)('publishes cloud SSH trust or a typed settlement through real reconciliation (%s host key)', async delivery => {
+        const nativePending = delivery.startsWith('native-');
+        const hetzner = delivery.startsWith('native-hetzner');
+        const terminalNative = delivery === 'native-off' || delivery === 'native-refused'
+            || delivery === 'native-hetzner-off' || delivery === 'native-hetzner-unknown';
+        const nativeCancellation = delivery === 'native-cancel' || delivery === 'native-nonssh-cancel';
+        const root = await filesystem.mkdtemp(join(tmpdir(), 'managed-cloud-trust-'));
+        const homeId = 'srv_cloud_trust';
+        const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const reference = { kind: 'shared_resource' as const, resourceId: 'cloud-trust-key' };
+        const privateKey = generateKeyPairSync('rsa', { modulusLength: 1024,
+            privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey;
+        const storedContent = sealSavedSecretResourceStoredContentV1({ resourceId: reference.resourceId, mode: 'plain',
+            content: { v: 1, name: 'Bootstrap key', kind: 'other', value: privateKey } });
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', bootstrapCredentialRef: reference,
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const hostKeyLine = '203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest';
+        let releaseKey!: () => void;
+        const keyDelivery = new Promise<void>(resolve => { releaseKey = resolve; });
+        let keyRequested = false;
+        let keyScans = 0;
+        let hostTaskKeyScans = 0;
+        let nativeReads = 0;
+        let guestCommands = 0;
+        let guestSshArgs: readonly string[] = [];
+        let guestKnownHostsText: string | undefined;
+        const scanTimes: number[] = [];
+        const nativeReports: ReturnType<typeof ManagedControllerReportV1Schema.parse>[] = [];
+        const nativeCause = { httpStatusClass: '5xx', code: 'service_error' } as const;
+        let bootstrapFailure: unknown;
+        const results: Partial<Record<'bootstrap' | 'inspect', JsonValue>> = {};
+        let nativeBootstraps = 0;
+        const nativeHttp: string[] = [];
+        const digitalOceanHandlers = new Map<string, TargetActionInvocationRegistration['handler']>();
+        if (nativePending) {
+            const PLUGIN = hetzner ? HETZNER_PLUGIN
+                : (await import('../../../../../packages/plugins/machine-digitalocean/src/manifest')).PLUGIN;
+            await PLUGIN.activateAccount({ actions: { register(id: string, handler: TargetActionInvocationRegistration['handler']) {
+                digitalOceanHandlers.set(id, handler); return { dispose() {} };
+            } }, connectedAccounts: { register() {} } } as unknown as Parameters<typeof PLUGIN.activateAccount>[0]);
+        }
+        const invokeDigitalOcean = async (role: 'bootstrap' | 'inspect', context: PluginInvocationContext) => {
+            const resource: JsonValue = hetzner ? { serverId: 41, owned: { volumeIds: [], primaryIpIds: [] } }
+                : { dropletId: 42, ownedVolumeIds: [] };
+            return digitalOceanHandlers.get(role)!({ resource, ...(role === 'bootstrap' ? { credentialRef: reference } : {}) }, {
+                ...context, services: { ...context.services,
+                    connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture' } }) },
+                    http: { request: async ({ url }: { url: string }) => {
+                        nativeHttp.push(new URL(url).pathname);
+                        if (delivery === 'native-refused') return { status: 403, finalUrl: url, headers: {},
+                            body: new TextEncoder().encode(JSON.stringify({ id: 'forbidden', message: 'private native body' })) };
+                        if (hetzner) return { status: 200, finalUrl: url, headers: {},
+                            body: new TextEncoder().encode(JSON.stringify({ server: { id: 41,
+                                status: delivery === 'native-hetzner-off' || delivery === 'native-hetzner-poweroff' && nativeBootstraps > 1 ? 'off'
+                                    : delivery === 'native-hetzner-unknown' ? 'unknown' : nativeBootstraps < 2 ? 'initializing' : 'running', labels: {}, volumes: [],
+                                public_net: { ipv4: nativeBootstraps < 4 ? null : { id: 9, ip: '203.0.113.10' }, ipv6: null } } })) };
+                        const body = url.includes('/actions') ? { actions: [{ id: 9, resource_id: 42, resource_type: 'droplet', type: 'create',
+                            status: delivery === 'native-off' || nativeBootstraps >= 2 ? 'completed' : 'in-progress' }] }
+                            : { droplet: { id: 42, name: 'managed-42', status: delivery === 'native-off' ? 'off' : nativeBootstraps < 3 ? 'new' : 'active',
+                                networks: { v4: nativeBootstraps < 4 ? [] : [{ type: 'public', ip_address: '203.0.113.10' }], v6: [] } } };
+                        return { status: 200, finalUrl: url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+                    } },
+                    exec: { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'ssh-keyscan' } }) },
+                        run: async () => {
+                            keyScans++;
+                            return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+                                stdout: new TextEncoder().encode(`${hostKeyLine}\n`), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+                        } },
+                },
+            } as unknown as PluginInvocationContext); // Native HTTP, credential and OS services are the only substituted systems.
+        };
+        // Only cloud/SSH process IO and Home HTTP are substituted. The SDK key
+        // carrier, real reconcile, task, prompt and operation owners are composed.
+        const native = nativeFixture({ privateNative: true, nativeTransport: delivery === 'native-nonssh-cancel',
+            ...(delivery === 'native-nonssh-cancel' ? { bootstrapCredential: 'native-token' as const } : {}), credentialPurposes: [],
+            onInspect: async (_input, context) => {
+                nativeReads++;
+                if (nativePending) { results.inspect = await invokeDigitalOcean('inspect', context) as JsonValue; return; }
+                const unavailable = delivery === 'missing' || delivery === 'errored' && nativeReads > 1;
+                const absent = delivery === 'absent' && nativeReads > 1;
+                results.inspect = { observedAt: Date.now(), availability: unavailable ? 'unavailable' : absent ? 'absent' : 'present',
+                    ...(unavailable ? { reason: 'provider_unavailable', ...(delivery === 'errored' ? { nativeCause } : {}) }
+                        : absent ? {} : { power: delivery === 'off' && nativeReads > 1 ? 'stopped' : 'running' }) };
+            },
+            nativeRoleResults: results, onNativeRole: async (role, _input, context) => {
+                if (role !== 'bootstrap') return;
+                if (nativePending) {
+                    nativeBootstraps++;
+                    keyRequested = true;
+                    if (nativeBootstraps === 1 && !terminalNative) await keyDelivery;
+                    results.bootstrap = await invokeDigitalOcean('bootstrap', context) as JsonValue;
+                    return;
+                }
+                const exec = { systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'ssh-keyscan' } }) },
+                    run: async () => {
+                        keyRequested = true;
+                        keyScans++;
+                        scanTimes.push(Date.now());
+                        await keyDelivery;
+                        const available = delivery === 'delayed' || delivery === 'opens' && keyScans >= 15;
+                        return { termination: { observed: { kind: 'exit', exitCode: available ? 0 : 1 }, requestedBy: { kind: 'none' } },
+                            stdout: new TextEncoder().encode(available ? `${hostKeyLine}\n` : ''), stderr: new Uint8Array(),
+                            stdoutTruncated: false, stderrTruncated: false };
+                    } } as unknown as PluginServices['exec']; // OS boundary fixture supplies only used process ports.
+                try {
+                    results.bootstrap = await resolveMachineProvisionerSshBootstrap({ exec,
+                        connection: { address: '203.0.113.10', user: 'root' }, credentialRef: reference, signal: context.signal });
+                } catch (error) { bootstrapFailure = error; throw error; }
+            } });
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+            resolveAccountId: async () => 'owner', generateOperationId: () => `cloud-trust-${delivery}` });
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'trusted_enrollment' });
+        const { reloadConfiguration } = await import('@/configuration');
+        const oldHome = process.env.HAPPIER_HOME_DIR;
+        let work: Promise<unknown> | undefined;
+        try {
+            vi.stubEnv('HAPPIER_HOME_DIR', root);
+            reloadConfiguration();
+            vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ features: { teams: { enabled: true } }, capabilities: {} }), { status: 200 })));
+            const stopGuestTransport = (args: readonly string[]) => {
+                guestCommands++;
+                guestSshArgs = args;
+                const knownHosts = args.find(arg => arg.startsWith('UserKnownHostsFile='));
+                guestKnownHostsText = knownHosts ? readFileSync(knownHosts.slice('UserKnownHostsFile='.length), 'utf8') : undefined;
+                throw new Error('Fake guest transport stops after approved trust');
+            };
+            const spawn = childProcesses.spawnSync;
+            vi.spyOn(childProcesses, 'spawnSync').mockImplementation((...args: Parameters<typeof childProcesses.spawnSync>) => {
+                if (args[0] === 'ssh') {
+                    return stopGuestTransport(Array.isArray(args[1]) ? args[1] : []);
+                }
+                if (args[0] !== 'ssh-keyscan') return spawn(...args);
+                hostTaskKeyScans++;
+                return { pid: 1, status: 0, signal: null, stdout: `${hostKeyLine}\n`, stderr: '', output: [] };
+            });
+            vi.spyOn(childProcesses, 'spawn').mockImplementation((...args: Parameters<typeof childProcesses.spawn>) =>
+                stopGuestTransport(Array.isArray(args[1]) ? args[1] : []));
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = String(url);
+                if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+                if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+                    settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
+                if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+                if (path.endsWith('/resources/materials')) return { status: 200, data: { resources: [{ resourceId: reference.resourceId,
+                    encryptionMode: 'plain', storedContent, recipientEnvelope: null, entry: { ref: formatSharedSavedSecretRefV1(reference.resourceId),
+                        source: 'shared_resource', relationship: 'owner', name: 'Bootstrap key', kind: 'other', ownerAccountId: 'owner', revision: 1,
+                        materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } };
+                throw new Error(`Unexpected cloud trust GET ${new URL(path).pathname}`);
+            });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                if (String(url).endsWith('/report')) {
+                    const report = ManagedControllerReportV1Schema.parse(body);
+                    nativeReports.push(report);
+                    retained = ManagedMachineV1Schema.parse({ ...retained,
+                        ...(report.observation ? { observation: report.observation } : {}) });
+                }
+                return { status: 200, data: { machine: retained,
+                    ...(String(url).endsWith('/context') ? { requestId: 'cloud-creation' } : {}) } };
+            });
+            const recovery = createManagedMachineAcquisitionDriver({ token, serverUrl: 'https://home.example', homeId, controller,
+                ...accountInputs, credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget });
+            const retry = { homeId, managedId: retained.id, expectedIntentRevision: retained.intentRevision };
+            const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) => {
+                const execution = recovery.execute(actionId, input, { requestId: 'cloud-retry', signal: context.signal, context });
+                work = execution;
+                return await execution;
+            } } as ActionExecutorDeps);
+            await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry, actionRequestId: 'cloud-retry',
+                execute: async context => {
+                    if (nativePending) return executor.execute('machines.managed.bootstrap.retry', retry, { ...context, surface: 'cli', authority: 'present_user',
+                        presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
+                    const execution = recovery.execute('machines.managed.bootstrap.retry', retry,
+                        { requestId: 'cloud-retry', signal: context.signal, context });
+                    work = execution;
+                    return { ok: true, result: await execution };
+                } });
+            work?.catch(() => undefined);
+            if (terminalNative) {
+                await expect.poll(async () => {
+                    const found = await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` });
+                    return found.kind === 'found' ? { state: found.operation.state, error: found.operation.error } : found;
+                }).toMatchObject({ state: 'failed', error: { errorCode: delivery === 'native-refused' ? 'provider_unavailable' : 'native_resource_unavailable',
+                    ...(delivery === 'native-refused' ? { details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } } } : {}) } });
+                await expect(work).rejects.toMatchObject({ code: delivery === 'native-refused' ? 'provider_unavailable' : 'native_resource_unavailable' });
+                vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+                const reads = nativeHttp.length;
+                await vi.advanceTimersByTimeAsync(180_000);
+                expect(nativeHttp).toHaveLength(reads);
+                expect(nativeBootstraps).toBe(1);
+                expect(nativeReads).toBe(0);
+                expect(keyScans).toBe(0);
+                return;
+            }
+            await expect.poll(async () => {
+                const found = await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` });
+                return found.kind === 'found' && found.operation.state === 'failed' ? found.operation.error : keyRequested;
+            }, { timeout: 20_000 }).toBe(true);
+            expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` })).toMatchObject({ kind: 'found', operation: {
+                state: 'running', domainRef: { kind: 'managedMachine', id: retained.id,
+                    controller: retained.controller, resource: retained.resource },
+            } });
+            work?.catch(() => undefined);
+            if (delivery === 'cancel-scan') {
+                await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
+                releaseKey();
+                await expect(work).rejects.toMatchObject({ code: 'cancelled' });
+                expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
+                    .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+                expect(keyScans).toBe(1);
+                expect(nativeReads).toBe(0);
+                return;
+            }
+            if (delivery !== 'delayed' && delivery !== 'missing') {
+                vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+                vi.setSystemTime(0);
+                scanTimes[0] = 0;
+            }
+            releaseKey();
+            if (delivery !== 'delayed' && delivery !== 'missing') {
+                await expect.poll(async () => {
+                    const found = await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` });
+                    return found.kind === 'found' ? found.operation.state === 'failed' ? found.operation.error : found.operation.progress : undefined;
+                }).toMatchObject(nativePending ? { kind: 'phase', phase: 'native.readiness.wait', label: 'Waiting for machine' }
+                    : { kind: 'phase', phase: 'ssh.readiness.wait', label: 'Waiting for SSH' });
+                await expect.poll(() => vi.getTimerCount()).toBe(1);
+                if (delivery === 'cancel' || nativeCancellation) {
+                    await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
+                    expect((await Promise.allSettled([work]))[0]?.status).toBe('rejected');
+                    expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
+                        .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } });
+                    expect(keyScans).toBe(nativePending ? 0 : 1);
+                    expect(vi.getTimerCount()).toBe(0);
+                } else {
+                    // Continue beyond the host enrollment recipe's ten-minute
+                    // budget: SSH readiness precedes that recipe, with no deadline.
+                    const cadence = delivery === 'native-new' || delivery === 'native-hetzner' ? [5_000, 10_000, 20_000]
+                        : delivery === 'opens' ? [5_000, 10_000, 20_000, 40_000, ...Array.from({ length: 10 }, () => 60_000)] : [5_000];
+                    for (const [index, waitMs] of cadence.entries()) {
+                        await vi.advanceTimersByTimeAsync(waitMs - 1);
+                        expect(nativePending ? nativeBootstraps : keyScans).toBe(index + 1);
+                        await vi.advanceTimersByTimeAsync(1);
+                        if (delivery === 'opens') {
+                            await expect.poll(() => keyScans).toBe(index + 2);
+                            if (index < cadence.length - 1) await expect.poll(() => vi.getTimerCount()).toBe(1);
+                        }
+                        if (nativePending) {
+                            await expect.poll(() => nativeBootstraps).toBe(index + 2);
+                            if (index < cadence.length - 1) await expect.poll(() => vi.getTimerCount()).toBe(1);
+                        }
+                    }
+                    if (delivery === 'opens') expect(scanTimes).toEqual([0, 5_000, 15_000, 35_000, 75_000,
+                        ...Array.from({ length: 10 }, (_, index) => 135_000 + index * 60_000)]);
+                }
+                vi.useRealTimers();
+            }
+            if (delivery === 'cancel' || nativeCancellation) {
+                // Cancellation already settled above, before another network attempt.
+            } else if (delivery === 'native-hetzner-poweroff') {
+                await expect(work).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+                expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
+                    .toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'native_resource_unavailable' } } });
+                expect(nativeBootstraps).toBe(2);
+                vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+                const reads = nativeHttp.length;
+                await vi.advanceTimersByTimeAsync(180_000);
+                expect(nativeHttp).toHaveLength(reads);
+                expect(keyScans).toBe(0);
+                return;
+            } else if (delivery === 'missing' || delivery === 'off' || delivery === 'errored' || delivery === 'absent') {
+                await expect(work).rejects.toMatchObject({ code: 'native_resource_unavailable' });
+                expect(bootstrapFailure).toMatchObject({ name: 'PluginError', code: 'native_ssh_host_key_unavailable' });
+                expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
+                    .toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'native_resource_unavailable' },
+                        domainRef: { kind: 'managedMachine', id: retained.id, controller: retained.controller, resource: retained.resource } } });
+                const readinessReports = nativeReports.filter(report => !report.observation?.reason?.startsWith('bootstrap.'));
+                expect(readinessReports).toHaveLength(1);
+                expect(readinessReports[0]).toMatchObject({ result: { kind: 'bound', resource: retained.resource },
+                    observation: delivery === 'off' ? { availability: 'present', power: 'stopped' }
+                        : delivery === 'absent' ? { availability: 'absent' } : { availability: 'unavailable' } });
+                if (delivery === 'errored') expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` }))
+                    .toMatchObject({ kind: 'found', operation: { error: { details: { kind: 'managedNative', nativeCause } } } });
+            } else {
+                let taskId = '';
+                await expect.poll(async () => {
+                    const found = await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` });
+                    if (found.kind === 'found' && found.operation.state === 'failed') throw new Error(`Bootstrap failed: ${found.operation.error?.errorCode}`);
+                    const domain = found.kind === 'found' ? found.operation.domainRef : undefined;
+                    if (domain?.kind === 'managedMachine' && domain.bootstrapTask) taskId = domain.bootstrapTask.id;
+                    return taskId;
+                }, { timeout: 20_000 }).not.toBe('');
+                const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
+                expect(await getLiveSystemTasksRunnerAdapter().poll({ taskId, cursor: 0 })).toMatchObject({ pendingPrompt: { kind: 'ssh.trustHost' } });
+                expect(hostTaskKeyScans).toBeGreaterThan(0);
+                expect(guestCommands).toBe(0);
+                expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}` }))
+                    .toMatchObject({ kind: 'found', operation: { state: 'running', domainRef: { bootstrapTask: { id: taskId,
+                        prompt: { kind: 'ssh.trustHost', host: expect.any(String), fingerprint: expect.stringMatching(/^SHA256:/), keyType: 'ssh-ed25519' } } } } });
+                if (nativePending) {
+                    await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
+                    await expect(work).rejects.toMatchObject({ code: 'cancelled' });
+                    expect(guestCommands).toBe(0);
+                } else if (delivery === 'opens') {
+                    await getLiveSystemTasksRunnerAdapter().respond({ taskId, answer: { trusted: true } });
+                    await expect(work).rejects.toThrow();
+                    expect(guestCommands).toBe(1); // Approval advances to real host installation's OS boundary.
+                    expect(guestSshArgs).toContain('StrictHostKeyChecking=yes');
+                    expect(guestKnownHostsText?.trim()).toBe(hostKeyLine);
+                } else {
+                    await getLiveSystemTasksRunnerAdapter().respond({ taskId, answer: { trusted: false } });
+                    await expect(work).rejects.toMatchObject({ code: 'host_trust_declined' });
+                    expect(await operations.handlers.getV2({ operationId: `cloud-trust-${delivery}`, waitForTerminal: true }))
+                        .toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'host_trust_declined' } } });
+                }
+            }
+            if (nativeCancellation) expect(keyScans + hostTaskKeyScans).toBe(0);
+            else if (!nativePending) expect(keyScans).toBe(delivery === 'opens' ? 15 : 1);
+            if (nativePending) {
+                expect(nativeBootstraps).toBe(nativeCancellation ? 1 : 4);
+                expect(nativeHttp.filter(path => path.endsWith('/actions'))).toHaveLength(delivery === 'native-hetzner' ? 0 : nativeBootstraps);
+                expect(nativeReads).toBe(0); // Native bootstrap already reads exact creation/connection facts.
+            } else expect(nativeReads).toBe(delivery === 'delayed' ? 0 : delivery === 'opens' ? 15 : delivery === 'missing' || delivery === 'cancel' ? 1 : 2);
+            if (nativePending || delivery === 'opens' || delivery === 'delayed' || delivery === 'cancel') expect(nativeReports.filter(report => !report.observation?.reason?.startsWith('bootstrap.'))).toEqual([]);
+            expect(retained).toMatchObject({ allocation: 'bound', resource: { value: {} } });
+            expect(retained.enrolledMachineId).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+            releaseKey();
+            await operations.handlers.cancel({ operationId: `cloud-trust-${delivery}` });
+            if (work) await Promise.allSettled([work]);
+            await native.runtimeRegistry.targetActionInvocations?.dispose();
+            vi.restoreAllMocks();
+            vi.unstubAllEnvs();
+            if (oldHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+            else process.env.HAPPIER_HOME_DIR = oldHome;
+            reloadConfiguration();
+            await filesystem.rm(root, { recursive: true, force: true });
+        }
+    });
     it.each([
         ['configuration-1', 'reconfigure'], [null, 'reconfigure'],
         ['configuration-1', 'refresh'], [null, 'refresh'],
-    ] as const)('captures the connection basis at submit and preserves paid settlement (%s, %s)', async (initialConfigurationRevision, change) => {
+    ] as const)('keeps selected account custody and paid settlement through credential rotation (%s, %s)', async (initialConfigurationRevision, change) => {
         const homeId = 'srv_managed_connection_basis';
         const account = { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'selected' };
         const credential = { purpose: { consumer: input.selection.launch.provider, purpose: 'upstream' }, account };
@@ -991,10 +1911,9 @@ describe('managed acquisition durable custody', () => {
         const options = { requestId: 'native-connection', context: { operationOwnerUpdate: { update() {} } } };
         const client = createManagedMachineControllerClient(driverInput, options, 'machines.managed.acquire');
         await client.submit(unsubmitted);
-        expect(submittedBodies).toEqual([{ ...client.correlation(unsubmitted), credentials: [{ ...credential, configurationRevision: initialConfigurationRevision }] }]);
-        // Refreshing only bearer material must not revoke the retained
-        // connection. Reconfiguration while paid IO is already issued fences
-        // subsequent work, not the validated identity that IO returns.
+        expect(submittedBodies).toEqual([client.correlation(unsubmitted)]);
+        // Rotation takes effect at secret acquisition, without withdrawing
+        // the admitted operation or selecting another connected account.
         credentialRevision = 'csr_ZYXWVUTSRQPONMLKJHGFEDCBA1';
         const acquireInvocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: submitted,
             action: 'machines.managed.acquire' }, () => submitted);
@@ -1004,15 +1923,10 @@ describe('managed acquisition durable custody', () => {
         expect(settledFacts).toEqual([{ ...client.correlation(submitted), result: { kind: 'bound', resource } }]);
         credentialRevision = 'csr_ABCDEFGHJKMNPQRS0123456789';
         const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action: 'machines.managed.delete' }, () => retained);
-        if (change === 'reconfigure') {
-            await expect(invocation.invoke('destroy', { resource: {} })).rejects.toMatchObject({ code: 'credential_unavailable' });
-            expect(native.effects()).toBe(1);
-        } else {
-            await expect(invocation.invoke('destroy', { resource: {} })).resolves.toEqual({ kind: 'confirmed' });
-            expect(native.effects()).toBe(2);
-        }
+        await expect(invocation.invoke('destroy', { resource: {} })).resolves.toEqual({ kind: 'confirmed' });
+        expect(native.effects()).toBe(2);
     });
-    it('records the actual credential used by a managed native provider HTTP effect', async () => {
+    it.each(['daemon', 'account'] as const)('records the actual credential used by a managed %s provider HTTP effect on a Machine controller', async realm => {
         const homeId = 'srv_managed_credential_receipt';
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
         const credential = { purpose: { consumer: input.selection.launch.provider, purpose: 'cloud' },
@@ -1033,7 +1947,7 @@ describe('managed acquisition durable custody', () => {
         // dispatch, SDK materialization and the binding owner remain real.
         const providerHttp = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }));
         vi.stubGlobal('fetch', providerHttp);
-        const native = nativeFixture({ privateNative: true, credentialOwner,
+        const fixtureOptions = { privateNative: true, credentialOwner,
             credentialPurposes: [{ purpose: 'cloud', service }], referenceManifests: [nativeAccountReferenceManifest(['cloud'])],
             nativeRoleResults: { destroy: { kind: 'confirmed' } },
             onNativeRole: async (role, _body, context) => {
@@ -1042,11 +1956,20 @@ describe('managed acquisition durable custody', () => {
                 if (material.kind !== 'environment') throw new Error('Expected native credential');
                 await fetch('https://provider.example/resources/managed', { method: 'DELETE', headers: { authorization: `Bearer ${material.env.TOKEN}` } });
             },
-        });
+        } satisfies NonNullable<Parameters<typeof nativeFixture>[0]>;
+        const base = nativeFixture(fixtureOptions);
+        const manifest = realm === 'account' ? normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
+            actions: base.manifest.contributes.actions.map(action => ({ ...action,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } })),
+        } }) : base.manifest;
+        const native = realm === 'account' ? nativeFixture({ ...fixtureOptions, fixtureManifest: manifest }) : base;
+        const account = realm === 'account' ? nativeFixture({ ...fixtureOptions, fixtureManifest: manifest, executionRealm: 'account' }) : null;
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
             launch: { ...machine.launch, credentials: [credential] }, resource: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} } });
         const driverInput = { token: 'token', serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
-            ...accountInputs, managedProviderOperationAuthority: authority,
+            ...accountInputs, managedProviderOperationAuthority: account ? managedProviderOperationAuthority : authority,
+            ...(account ? { resolveAccountRuntime: async () => ({ runtimeRegistry: account.runtimeRegistry,
+                managedProviderOperationAuthority: managedProviderOperationAuthority.forPurposeBindingOwner(credentialOwner) }) } : {}),
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://home.example', revision: 1,
                 endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) };
         const recordOperationCredentialUse = vi.fn();
@@ -1063,8 +1986,12 @@ describe('managed acquisition durable custody', () => {
             why: { kind: 'purpose_binding', purpose: { consumer: { pluginId: 'acme.compute', localId: 'destroy' }, purpose: 'cloud' }, target: 'account' },
             currentness: { kind: 'current_at_materialization' },
         }]]);
+        if (account) {
+            expect(native.effects()).toBe(0);
+            expect(account.effects()).toBe(1);
+        }
     });
-    it('materializes both captured native purposes after default changes and refuses a changed secondary connection', async () => {
+    it('keeps selected native accounts but refuses a changed retained configuration before another effect', async () => {
         const homeId = 'srv_managed_plural_credentials';
         const credentialPurposes = ['cloud', 'cua'].map(purpose => ({ purpose,
             service: { pluginId: 'acme.accounts', localId: purpose } }));
@@ -1084,7 +2011,7 @@ describe('managed acquisition durable custody', () => {
             resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: target.account.accountId } : null,
             materializeAccount: async ({ account, expectedConfigurationRevision }) => {
                 const actual = account.service.localId === 'cua' ? secondaryRevision : 'cloud-configuration';
-                if (actual !== expectedConfigurationRevision) throw new Error('Changed native configuration');
+                if (expectedConfigurationRevision !== undefined && actual !== expectedConfigurationRevision) throw new Error('Changed native configuration');
                 return { kind: 'environment', env: { TOKEN: account.accountId } };
             },
             resolveCredentialConfigurationRevision: async account => account.service.localId === 'cua' ? secondaryRevision : 'cloud-configuration',
@@ -1093,8 +2020,23 @@ describe('managed acquisition durable custody', () => {
         const authority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(), purposeBindingOwner: credentialOwner,
             requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }) });
+        const materializedAccounts: string[] = [];
+        // Count the remote effect, not entry into the real handler before it
+        // acquires its credentials. Only the provider HTTP boundary is replaced.
+        const providerHttp = vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 }));
+        vi.stubGlobal('fetch', providerHttp);
         const native = nativeFixture({ privateNative: true, credentialOwner, credentialPurposes,
-            referenceManifests: [nativeAccountReferenceManifest(credentialPurposes.map(({ service }) => service.localId))] });
+            referenceManifests: [nativeAccountReferenceManifest(credentialPurposes.map(({ service }) => service.localId))],
+            nativeRoleResults: { destroy: { kind: 'confirmed' } },
+            onNativeRole: async (role, _body, context) => {
+                if (role !== 'destroy') return;
+                for (const { purpose } of credentialPurposes) {
+                    const material = await context.services.connectedAccounts.materialize(purpose, { kind: 'environment', keys: ['TOKEN'] });
+                    if (material.kind !== 'environment') throw new Error('Expected native credential');
+                    materializedAccounts.push(material.env.TOKEN!);
+                }
+                await fetch('https://provider.example/resources/managed', { method: 'DELETE' });
+            } });
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
             launch: { ...machine.launch, credentials }, resource: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} } });
         const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
@@ -1108,15 +2050,73 @@ describe('managed acquisition durable custody', () => {
             action: 'machines.managed.delete' }, () => retained);
         standingDefault = 'replacement';
         await expect(invocation.invoke('destroy', { resource: {} })).resolves.toEqual({ kind: 'confirmed' });
-        expect(native.materializedAccounts).toEqual(['selected-cloud', 'selected-cua']);
+        expect(materializedAccounts).toEqual(['selected-cloud', 'selected-cua']);
         const missing = { ...retained, launch: { ...retained.launch, credentials: credentials.slice(0, 1) } };
         vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { machine: missing } });
         await expect(createManagedNativeInvocation({ input: driverInput, options, client, machine: missing,
             action: 'machines.managed.delete' }, () => missing).invoke('destroy', { resource: {} })).rejects.toMatchObject({ code: 'credential_unavailable' });
         vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { machine: retained } });
         secondaryRevision = 'reconfigured-cua';
-        await expect(invocation.invoke('destroy', { resource: {} })).rejects.toMatchObject({ code: 'credential_unavailable' });
+        await expect(invocation.invoke('destroy', { resource: {} })).rejects.toThrow();
+        expect(providerHttp).toHaveBeenCalledTimes(1);
+    });
+    it.each(['check', 'options'] as const)('retains a contributed %s PluginError native cause through the safe read driver', async role => {
+        const nativeCause = { localCause: 'native_options_changed' } as const;
+        const handlers = new Map<string, TargetActionInvocationRegistration['handler']>([
+            ...nativeRoles.map(roleActionId), 'check', 'options', 'inspect', 'ordinary',
+        ].map((localId): [string, TargetActionInvocationRegistration['handler']] => [localId, async () => {
+            if (localId === role) throw new PluginError({ code: 'native_options_refused', details: { nativeCause, message: 'private response body' } });
+            return roleResult(localId);
+        }]));
+        const native = nativeFixture({ privateNative: true, actionHandlers: handlers });
+        const probe = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs });
+        await expect(probe.execute(`machines.provisioners.${role}`, { homeId: 'home', controller,
+            contribution: input.selection.launch.provider, ...(role === 'options' ? { selectors: {} } : {}) }, { requestId: `native-${role}` }))
+            .rejects.toMatchObject({ code: 'native_options_refused', details: { kind: 'managedNative', nativeCause } });
+    });
+    it.each(['bootstrap', 'exec', 'putFile', 'power', 'destroy'] as const)('retains a contributed %s PluginError native cause in operation Details', async role => {
+        const homeId = 'srv_managed_plugin_error_cause';
+        const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
+        let reportedCause: JsonValue = nativeCause;
+        const native = nativeFixture({ privateNative: true, onNativeRole: () => {
+            throw new PluginError({ code: 'native_access_refused', details: { nativeCause: reportedCause, message: 'private response body' } });
+        } });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine: retained } });
+        const driverInput = { token: 'token', serverUrl: 'https://home.example', homeId, controller,
+            runtimeRegistry: native.runtimeRegistry, ...accountInputs,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) };
+        const options = { requestId: 'native-error', context: { operationOwnerUpdate: { update() {} } } };
+        const action = 'machines.managed.bootstrap.retry' as const;
+        const client = createManagedMachineControllerClient(driverInput, options, action);
+        const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action }, () => retained);
+        const body = role === 'exec' ? { resource: {}, argv: ['fixture'] }
+            : role === 'putFile' ? { resource: {}, guestPath: '/fixture', bytesBase64: '' }
+                : role === 'power' ? { resource: {}, intent: 'stop' } : { resource: {} };
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
+            generateOperationId: () => 'plugin-native-cause' });
+        await expect(operations.observeExecution({ actionId: action, input: { homeId, managedId: retained.id }, actionRequestId: 'native-error',
+            execute: async () => ({ ok: true, result: await invocation.invoke(role, body) }) })).rejects.toMatchObject({
+            code: 'native_access_refused', details: { kind: 'managedNative', nativeCause },
+        });
+        const settled = await operations.handlers.getV2({ operationId: 'plugin-native-cause', waitForTerminal: true });
+        expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+            errorCode: 'native_access_refused', details: { kind: 'managedNative', nativeCause },
+        } } });
+        if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
+        expect(describeManagedOperationDiagnostic(settled.operation.error)).toBe('native_access_refused · HTTP 4xx · forbidden');
+        expect(JSON.stringify(settled)).not.toContain('private response body');
         expect(native.effects()).toBe(1);
+        if (role === 'bootstrap') {
+            reportedCause = { localCause: 'native_options_changed' };
+            await expect(invocation.invoke(role, body)).rejects.toMatchObject({ code: 'native_access_refused',
+                details: { kind: 'managedNative', nativeCause: reportedCause } });
+            reportedCause = { httpStatusClass: '4xx', code: 'private-account-token' };
+            await expect(invocation.invoke(role, body)).rejects.toMatchObject({ code: 'native_access_refused', details: undefined });
+        }
     });
     it.each([301000, null])('carries the host exec budget %s to in-process native roles under current row custody', async timeoutMs => {
         const homeId = 'srv_managed_exec_budget';
@@ -1360,6 +2360,7 @@ describe('managed acquisition durable custody', () => {
             throw new Error(`Unexpected managed credential GET ${new URL(path).pathname}`);
         });
         let leasePublished = false;
+        let restartLifetime: AbortController | undefined;
         const createdFiles: string[] = [];
         const write = privateFiles.writePrivateOwnerFile;
         // Observe the real protected filesystem write; all credential opening,
@@ -1370,6 +2371,9 @@ describe('managed acquisition durable custody', () => {
             if (process.platform !== 'win32') expect((await stat(request.path)).mode & 0o777).toBe(0o600);
             createdFiles.push(request.path);
             leasePublished = true;
+            // Retiring Home state does not revoke an already admitted phase.
+            // The owning execution signal cancels before the next SSH phase.
+            restartLifetime?.abort(Object.assign(new Error('Managed enrollment retired'), { code: 'enrollment_retired' }));
         });
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url) => {
@@ -1384,12 +2388,14 @@ describe('managed acquisition durable custody', () => {
         resetActiveAccountSettingsSnapshotForTests();
         for (const ambient of change === null ? ['absent', 'other-account'] as const : []) {
             leasePublished = false;
+            restartLifetime = new AbortController();
             if (ambient === 'other-account') setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}),
                 settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken('other-account') });
             const before = getActiveAccountSettingsSnapshot();
             const restarted = createManagedMachineAcquisitionDriver({ token, serverUrl: 'https://home.example', homeId: nativeHomeId,
                 controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, credentials: { token, encryption }, homeTarget });
             await expect(restarted.execute('machines.managed.bootstrap.retry', retry, { requestId: ambient,
+                signal: restartLifetime.signal,
                 context: { operationAcceptance: { operationId: ambient, accept() {} }, operationOwnerUpdate: { update() {} } },
             })).rejects.toMatchObject({ code: 'enrollment_retired' });
             expect(getActiveAccountSettingsSnapshot()).toBe(before);
@@ -1413,8 +2419,10 @@ describe('managed acquisition durable custody', () => {
             const work = restarted.execute('machines.managed.bootstrap.retry', retry, { requestId: changed,
                 context: { operationAcceptance: { operationId: changed, accept() {} }, operationOwnerUpdate: { update() {} } },
             });
-            await expect(work).rejects.toMatchObject(changed === 'mode-changed' ? { code: 'credential_unavailable' }
-                : { reason: changed === 'stale' ? 'reference_stale' : 'reference_forbidden' });
+            // Owner ruling A′ preserves active E2EE custody and names an unverified downgrade explicitly.
+            await expect(work).rejects.toMatchObject(changed === 'mode-changed' ? {
+                code: mode === 'e2ee' ? 'account_mode_downgrade_unverified' : 'credential_unavailable',
+            } : { reason: changed === 'stale' ? 'reference_stale' : 'reference_forbidden' });
             expect(createdFiles).toHaveLength(0);
         }
         expect(writes.some((path) => /\/(submit|create-bootstrap-credential)$/u.test(path))).toBe(false);
@@ -1477,19 +2485,18 @@ describe('managed acquisition durable custody', () => {
         }, { requestId: 'request' }, 'machines.managed.bootstrap.retry');
         expect(await client.isCurrent(bound)).toBe(false);
     });
-    it.each(['permission_denied', 'server-conflict', 'server-validation', 'global-code', 'fastify-code', 'rejected-http', 'typed-transport', 'transport', 'replaced-resource'] as const)('keeps the native currentness refusal typed before handler IO (%s)', async refusal => {
+    it.each(['permission_denied', 'server-conflict', 'server-validation', 'global-code', 'fastify-code', 'rejected-http', 'typed-transport', 'transport', 'replaced-resource', 'unsupported-endpoint'] as const)('preserves the controller observation refusal without creating native effects (%s)', async refusal => {
         const homeId = 'srv_native_currentness';
         const native = nativeFixture({ credentialPurposes: [] });
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
         } });
-        let reads = 0;
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             expect(String(url)).toBe('https://home.example/v1/machines/managed/controller/current');
             expect(ManagedControllerCurrentInputV1Schema.parse(body)).toEqual({ homeId, managedId: retained.id,
                 expectedIntentRevision: retained.intentRevision, controller, requestId: 'retained-creation' });
-            if (++reads === 1) return { status: 200, data: { machine: retained } };
             if (refusal === 'permission_denied') return { status: 403, data: { code: 'permission_denied' } };
+            if (refusal === 'unsupported-endpoint') return { status: 404, data: {} };
             if (refusal === 'server-conflict') return { status: 503, data: { error: 'database_transaction_conflict_exhausted', statusCode: 503 } };
             if (refusal === 'server-validation') return { status: 400, data: { error: 'invalid-params' } };
             if (refusal === 'global-code') return { status: 503, data: { code: 'database_transaction_conflict_exhausted', statusCode: 503 } };
@@ -1509,14 +2516,16 @@ describe('managed acquisition durable custody', () => {
         const action = 'machines.managed.bootstrap.retry' as const;
         const client = createManagedMachineControllerClient(driverInput, options, action);
         const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action }, () => retained);
-        const code = refusal === 'transport' ? 'managed_controller_request_failed' : refusal === 'replaced-resource' ? 'intent_changed'
+        const code = refusal === 'transport' || refusal === 'unsupported-endpoint' ? 'managed_controller_request_failed' : refusal === 'replaced-resource' ? 'intent_changed'
             : refusal === 'server-conflict' || refusal === 'global-code' || refusal === 'rejected-http' ? 'database_transaction_conflict_exhausted'
             : refusal === 'typed-transport' ? 'ECONNABORTED'
             : refusal === 'fastify-code' ? 'FST_ERR_RESPONSE_SERIALIZATION' : refusal === 'server-validation' ? 'invalid-params' : refusal;
-        await expect(invocation.invoke('exec', { resource: {}, argv: ['true'] })).rejects.toMatchObject({
+        if (refusal === 'replaced-resource') expect(await client.readCurrent(retained)).toBeNull();
+        else await expect(client.readCurrent(retained)).rejects.toMatchObject({
             name: 'ManagedMachineControllerError', code, message: code,
             ...(refusal === 'server-conflict' || refusal === 'global-code' || refusal === 'rejected-http' ? { status: 503 } : refusal === 'fastify-code' ? { status: 500 }
-                : refusal === 'server-validation' ? { status: 400 } : refusal === 'permission_denied' ? { status: 403 } : {}),
+                : refusal === 'server-validation' ? { status: 400 } : refusal === 'permission_denied' ? { status: 403 }
+                : refusal === 'unsupported-endpoint' ? { status: 404 } : {}),
         });
         expect(native.effects()).toBe(0);
         expect(native.activations()).toBe(0);
@@ -1526,26 +2535,19 @@ describe('managed acquisition durable custody', () => {
         expect(recovered).toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
         expect(native.effects()).toBe(1);
     });
-    it.each(['status', 'schema', 'transport'] as const)('persists typed managed currentness failure through the real enrollment task and operation (%s)', async category => {
+    it.each(['status', 'schema', 'transport'] as const)('persists typed controller admission failure through the real HTTP and operation owners (%s)', async category => {
         const homeId = 'srv_native_currentness_task';
         const native = nativeFixture({ credentialPurposes: [] });
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
         } });
-        let installing = false;
         let failedReads = 0;
-        const startedAt = Date.now();
-        let nowMs = startedAt;
-        const clock = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
         const warning = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-        // Real HTTP producer, installer/task runner and operation store. Only
-        // the unavailable native process boundary comes from nativeFixture.
+        // Admission is a real request boundary. A refused admission settles
+        // without invoking a provider or retrying an admitted native role.
         const server = createServer((request, response) => {
-            if (request.url?.endsWith('/current') && installing) {
+            if (request.url?.endsWith('/context')) {
                 failedReads++;
-                // Currentness reads now share the install/sign-in budget.
-                // Expire that real owner after one retry; schema errors stay terminal.
-                if (category !== 'schema' && failedReads === 2) nowMs = startedAt + 10 * 60_000 + 1;
                 if (category === 'transport') { request.socket.destroy(); return; }
                 response.writeHead(category === 'status' ? 500 : 200, { 'Content-Type': 'application/json' });
                 response.end(JSON.stringify(category === 'status'
@@ -1571,10 +2573,7 @@ describe('managed acquisition durable custody', () => {
         const retry = { homeId, managedId: retained.id, expectedIntentRevision: retained.intentRevision };
         const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) => {
             return await recovery.execute(actionId, input, { requestId: 'fresh-retry', signal: context.signal,
-                context: { ...context, operationOwnerUpdate: { update(value: Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0]) {
-                    if (value.progress?.phase === 'ssh.installCli') installing = true;
-                    context.operationOwnerUpdate?.update(value);
-                } } } });
+                context });
         } } as ActionExecutorDeps);
         try {
             await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry,
@@ -1585,14 +2584,14 @@ describe('managed acquisition durable custody', () => {
             const result = await operations.handlers.getV2({ operationId: `typed-currentness-${category}`, waitForTerminal: true });
             expect(result).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
                 errorCode: category === 'status' ? 'P2024' : category === 'transport' ? 'ECONNRESET' : 'managed_controller_request_failed',
-                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/current', category,
+                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/context', category,
                     ...(category === 'status' ? { status: 500, code: 'P2024' } : category === 'schema' ? { status: 200 } : { code: 'ECONNRESET' }) },
             } } });
             expect(JSON.stringify(result)).not.toMatch(/private-|database diagnostic/);
             expect(warning).toHaveBeenCalledWith('[MANAGED MACHINE] Controller request failed', {
                 managedId: retained.id,
                 operationId: `typed-currentness-${category}`,
-                path: '/v1/machines/managed/controller/current',
+                path: '/v1/machines/managed/controller/context',
                 category,
                 httpStatus: category === 'transport' ? null : category === 'status' ? 500 : 200,
             });
@@ -1600,10 +2599,9 @@ describe('managed acquisition durable custody', () => {
             const legacy = await operations.handlers.get({ operationId: `typed-currentness-${category}` });
             if (result.kind !== 'found' || legacy.kind !== 'found') throw new Error('Operation read did not retain its terminal failure');
             expect(legacy.operation.error).toEqual({ errorCode: result.operation.error!.errorCode, error: result.operation.error!.error });
-            expect(installing).toBe(true);
-            expect(failedReads).toBe(category === 'schema' ? 1 : 2);
+            expect(native.effects()).toBe(0);
+            expect(failedReads).toBe(1);
         } finally {
-            clock.mockRestore();
             server.closeAllConnections();
             await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
         }
@@ -1700,13 +2698,15 @@ describe('managed acquisition durable custody', () => {
         const paths: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url) => {
             paths.push(String(url));
-            return { status: 200, data: String(url).endsWith('/context') ? { machine: enrolled, requestId: 'creation-request' } : enrolled };
+            return { status: 200, data: { machine: enrolled,
+                ...(String(url).endsWith('/context') ? { requestId: 'creation-request' } : {}) } };
         });
         const result = await driver().execute('machines.managed.bootstrap.retry', { homeId: 'home', managedId: 'managed', expectedIntentRevision: 0 }, {
             requestId: 'retry-request', context: { operationAcceptance: { operationId: 'retry-operation', accept: () => {} } },
         });
         expect(result).toEqual({ managedId: 'managed', operation: { operationId: 'retry-operation' } });
-        expect(paths).toEqual(['https://home.example/v1/machines/managed/controller/context']);
+        expect(paths).toEqual(['https://home.example/v1/machines/managed/controller/context',
+            'https://home.example/v1/machines/managed/controller/current']);
     });
     it('lists the controller contribution catalog without relying on a server-side provider registry', async () => {
         const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { provisioners: [] } });
@@ -1714,13 +2714,58 @@ describe('managed acquisition durable custody', () => {
             .resolves.toEqual({ controller, provisioners: [] });
         expect(post).not.toHaveBeenCalled();
     });
+    it.each([true, false])('refuses a loopback-only Home during guest qualification and before purchase (native=%s)', async nativeTransport => {
+        const native = nativeFixture({ credentialPurposes: [], nativeTransport });
+        const homeId = 'srv_qb255_home';
+        const guestInput = { ...input, selection: { ...input.selection, homeId } };
+        const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+            canonicalServerUrl: 'http://qa.localhost:3039', revision: 1,
+            endpoints: [{ kind: 'https', url: 'http://qa.localhost:3039' }],
+        }, authority: 'current_connection' });
+        const reader = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId,
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, homeTarget });
+        await expect.soft(reader.execute('machines.provisioners.check', { homeId, controller,
+            contribution: input.selection.launch.provider }, { requestId: 'local-home-check' }))
+            .resolves.toMatchObject({ available: true, code: 'home_not_guest_reachable', status: expect.any(String) });
+        // Native availability also serves retained-machine operations. The Home
+        // warning must preserve that fact, while acquisition refuses before spend.
+        const effectsBeforePurchase = native.effects();
+        const unsubmitted = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'unsubmitted' });
+        const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/admit')) return { status: 200, data: { machine: unsubmitted, replayed: false } };
+            if (String(url).endsWith('/current')) return { status: 200, data: { machine: unsubmitted } };
+            throw new Error('Home allocation submission must not be reached');
+        });
+        await expect(reader.execute('machines.managed.acquire', guestInput, { requestId: 'local-home-acquire', context: {
+            operationAcceptance: { operationId: 'local-home-operation', accept() {} }, operationOwnerUpdate: { update() {} },
+        } })).rejects.toMatchObject({ code: 'home_not_guest_reachable' });
+        expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
+        expect(native.effects()).toBe(effectsBeforePurchase);
+        post.mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/context')
+            ? { machine: unsubmitted, requestId: 'local-home-acquire' } : { machine: unsubmitted } }));
+        await expect(reader.execute('machines.managed.bootstrap.retry', { homeId, managedId: machine.id, expectedIntentRevision: 0 }, {
+            requestId: 'local-home-retry', context: {
+                operationAcceptance: { operationId: 'local-home-retry-operation', accept() {} }, operationOwnerUpdate: { update() {} },
+            },
+        })).rejects.toMatchObject({ code: 'home_not_guest_reachable' });
+        expect(native.effects()).toBe(effectsBeforePurchase);
+        // Home routing must not prevent inspecting and recovering paid resources.
+        const bound = ManagedMachineV1Schema.parse({ ...unsubmitted, allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        post.mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/get') ? bound
+            : String(url).endsWith('/context') ? { machine: bound, requestId: 'local-home-acquire' } : { machine: bound } }));
+        await expect(reader.execute('machines.managed.inspect', { homeId, managedId: bound.id }, { requestId: 'local-home-inspect' }))
+            .resolves.toMatchObject({ machine: { allocation: 'bound', resource: bound.resource } });
+        expect(post.mock.calls.some(([url]) => String(url).endsWith('/submit'))).toBe(false);
+    });
     it('lists only provisioners declared for the platform the controller runs on', async () => {
         const other = process.platform === 'darwin' ? 'linux' : 'darwin';
         const mine = nativeFixture({ credentialPurposes: [] });
         const foreign = nativeFixture({ credentialPurposes: [], platforms: [other] });
         const list = (native: typeof mine) => createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
             controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs }).execute('machines.provisioners.list', { homeId: 'home', controller }, { requestId: 'platform' });
-        expect(MachineProvisionersListResultV1Schema.parse(await list(mine)).provisioners).toHaveLength(1);
+        expect(MachineProvisionersListResultV1Schema.parse(await list(mine)).provisioners)
+            .toMatchObject([{ acquireExecutionTarget: 'daemon' }]);
         expect(MachineProvisionersListResultV1Schema.parse(await list(foreign))).toEqual({ controller, provisioners: [] });
         expect(foreign.activations()).toBe(0);
     });
@@ -1755,8 +2800,40 @@ describe('managed acquisition durable custody', () => {
             homeId: 'home', controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs });
         await expect(probeDriver.execute('machines.provisioners.options', { homeId: 'home', controller,
             contribution: input.selection.launch.provider, selectors: {},
-        }, { requestId: 'options' })).resolves.toEqual({ choices: [] });
+        }, { requestId: 'options' })).resolves.toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
         expect(post).not.toHaveBeenCalled();
+    });
+    it('runs Account-declared provisioner options on an explicitly selected Machine controller', async () => {
+        const service = { pluginId: 'acme.accounts', localId: 'cloud' };
+        const credentialOwner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableTransport, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unavailableTransport,
+            resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: 'Selected cloud account' } : null,
+            materializeAccount: async ({ account }) => ({ kind: 'environment', env: { TOKEN: account.accountId } }),
+            projectTargetAccounts: unavailableTransport, assertTargetAccountMaterializable: unavailableTransport,
+        });
+        const fixtureOptions = { privateNative: true, credentialOwner,
+            credentialPurposes: [{ purpose: 'upstream', service }], referenceManifests: [nativeAccountReferenceManifest(['cloud'])] };
+        const base = nativeFixture(fixtureOptions);
+        const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
+            actions: base.manifest.contributes.actions.map(action => ({ ...action,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } } })),
+        } });
+        const native = nativeFixture({ ...fixtureOptions, fixtureManifest: manifest });
+        // Installed module acquisition is the boundary; both registry/dispatch owners stay real.
+        const account = nativeFixture({ ...fixtureOptions, fixtureManifest: manifest, executionRealm: 'account' });
+        const probeDriver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example',
+            homeId: 'home', controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs,
+            resolveAccountRuntime: async () => ({ runtimeRegistry: account.runtimeRegistry,
+                managedProviderOperationAuthority: managedProviderOperationAuthority.forPurposeBindingOwner(credentialOwner) }) });
+        await expect(probeDriver.execute('machines.provisioners.options', { homeId: 'home', controller,
+            contribution: input.selection.launch.provider, selectors: {}, credentials: [{
+                purpose: { consumer: input.selection.launch.provider, purpose: 'upstream' }, account: { service, accountId: 'selected-cloud' },
+            }],
+        }, { requestId: 'account-options' })).resolves.toEqual({ dimensions: { size: [], image: [], location: [], network: [], duration: [] } });
+        expect(native.effects()).toBe(0);
+        expect(account.effects()).toBe(1);
+        expect(account.materializedAccounts).toEqual(['selected-cloud']);
     });
     it.each(['valid', 'no-schema', 'unknown-action', 'invalid-input'] as const)('validates the %s prerequisite repair against the current ordinary Action without running it', async repair => {
         const result = { available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'fixture-tool' },
@@ -1877,6 +2954,74 @@ describe('managed acquisition durable custody', () => {
         if (!passive) expect(await operations.handlers.getV2({ operationId: 'pending-recovery', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: {
             domainRef: { kind: 'managedMachine', id: retained.id },
         } });
+    });
+    it.each(['owner', 'creator'] as const)('reads a retained native guest log only for its custodian through inspect (%s)', async actor => {
+        const retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest-enrolled',
+            resource: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} } });
+        const diagnostic = { daemonState: { pid: 1, httpPort: 1, startedAt: 1, startedWithCliVersion: 'guest-fixture',
+            machineId: retained.enrolledMachineId, hasControlToken: true, daemonLogPath: null }, daemonLogs: [],
+            doctorSnapshot: null, stackContext: null, runtime: { cwd: '', platform: 'linux', nodeVersion: '' },
+            sessionDiagnostics: { context: { sessionId: '', metadataStatus: 'unavailable' }, logs: [{ kind: 'daemon', status: 'collected',
+                artifact: { filename: 'daemon.log', sourceKind: 'daemon', contentType: 'text/plain', content: 'guest redacted log' } }] } };
+        const roles: string[] = [];
+        const native = nativeFixture({ privateNative: true, nativeTransport: true, onNativeRole(role, body) {
+            roles.push(role);
+            if (role === 'exec') expect(body).toMatchObject({ resource: {}, argv: ['sh', '-c', expect.stringContaining("'doctor' '--json' '--include-daemon-log'")] });
+        }, nativeRoleResults: { exec: { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+            stdoutBase64: Buffer.from(JSON.stringify(diagnostic)).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false } } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = String(url);
+            if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
+            if (path.endsWith('/actions/get')) {
+                expect(body).toEqual({ homeId: 'home', managedId: retained.id });
+                return { status: 200, data: retained };
+            }
+            return { status: 200, data: path.endsWith('/context') ? { machine: retained, requestId: 'creation' } : { machine: retained } };
+        });
+        const original = originAuthorization('home', 'inspect-logs');
+        const wire = { ...original, binding: { ...original.binding, actionId: 'machines.managed.inspect', accountId: actor === 'owner' ? 'owner' : 'requester' } };
+        const keys = tweetnacl.sign.keyPair();
+        const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: wire, serverId: 'profile',
+            serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example', target: wire.binding.target,
+            installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
+        if (!projected) throw new Error('Missing requester projection');
+        const driver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, externalActionMachineRequestPrivateKey: keys.secretKey });
+        const result = await driver.execute('machines.managed.inspect', { homeId: 'home', managedId: retained.id, includeGuestDiagnostics: true },
+            { requestId: 'inspect-logs', context: { externalActionExecutionAuthorization: projected, externalActionTarget: wire.binding.target } });
+        expect(result).toMatchObject({ guestDiagnostics: actor === 'owner'
+            ? { status: 'collected', snapshot: { daemonState: { machineId: 'guest-enrolled' } } }
+            : { status: 'unavailable', code: 'permission_denied' } });
+        expect(roles).toEqual(actor === 'owner' ? ['exec'] : []);
+        expect(JSON.stringify(result).includes('guest redacted log')).toBe(actor === 'owner');
+    });
+    it.each(['owner', 'creator'] as const)('keeps private retained credential selectors out of %s inspect output', async actor => {
+        const retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'confirmed-absent',
+            bootstrapCredentialRef: { kind: 'shared_resource', resourceId: 'private-bootstrap' },
+            launch: { ...machine.launch, credentials: [{ purpose: { consumer: machine.launch.provider, purpose: 'upstream' },
+                account: { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'private-cloud' } }] } });
+        const native = nativeFixture({ privateNative: true });
+        vi.spyOn(axios, 'post').mockImplementation(async url => ({ status: 200,
+            data: String(url).endsWith('/verify') ? { ok: true } : String(url).endsWith('/context')
+                ? { machine: retained, requestId: 'creation' } : retained }));
+        const original = originAuthorization('home', 'inspect-private');
+        const wire = { ...original, binding: { ...original.binding, actionId: 'machines.managed.inspect',
+            accountId: actor === 'creator' ? 'requester' : 'owner' } };
+        const keys = tweetnacl.sign.keyPair();
+        const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: wire, serverId: 'profile',
+            serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example', target: wire.binding.target,
+            installationId: controller.installationId, privateKey: keys.secretKey, isCurrent: async () => true });
+        if (!projected) throw new Error('Missing requester projection');
+        const driver = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, externalActionMachineRequestPrivateKey: keys.secretKey });
+        const result = await driver.execute('machines.managed.inspect', { homeId: 'home', managedId: retained.id },
+            { requestId: 'inspect-private', context: { externalActionExecutionAuthorization: projected, externalActionTarget: wire.binding.target } });
+        expect(result).toMatchObject({ machine: { id: retained.id, allocation: 'confirmed-absent' } });
+        expect(JSON.stringify(result).includes('private-cloud')).toBe(actor === 'owner');
+        expect(JSON.stringify(result).includes('private-bootstrap')).toBe(actor === 'owner');
+        expect(retained.launch.credentials).toBeDefined();
+        expect(retained.bootstrapCredentialRef).toBeDefined();
+        expect(native.effects()).toBe(0);
     });
     it.each(['pending', 'bound', 'inspect', 'unknown', 'mismatch', 'withdrawn', 'fresh'] as const)(
         'completes declared same-resource acquisition continuation before bootstrap with %s custody', async scenario => {
@@ -2466,13 +3611,14 @@ describe('managed acquisition durable custody', () => {
         machineKey.fill(0);
     });
 
-    it.each(['plain', 'e2ee'] as const)('retains one canonical %s SavedSecret before spend and reopens its same reference after its own Settings import advances on retry', async (mode) => {
+    it.each(['plain', 'e2ee'] as const)('retains one canonical %s SavedSecret before spend and reopens its same reference after its own Settings import advances the Account sequence on retry', async (mode) => {
         const nativeHomeId = `srv_managed_key_${mode}`;
         const nativeInput = { ...input, selection: { ...input.selection, homeId: nativeHomeId } };
         const nativeCalls: string[] = [];
         let catalogReady = false;
         let materialRevision = 1;
         let disclosedContent: ReturnType<typeof openSavedSecretResourceStoredContentV1>;
+        let loginPrivateKey = '';
         const sshLeaseFiles: string[] = [];
         const nativeKeyFiles: string[] = [];
         const native = nativeFixture({ privateNative: true, nativeTransport: false, nativeCredentialService: true,
@@ -2481,27 +3627,26 @@ describe('managed acquisition durable custody', () => {
                 if (disclosedContent?.v !== 1) throw new Error('Retained SSH material value was not admitted');
                 const lease = await context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' });
                 if (lease.kind !== 'bytes') throw new Error('SSH bytes lease was not returned');
-                expect(new TextDecoder().decode(lease.bytes)).toBe(disclosedContent.value);
+                expect(new TextDecoder().decode(lease.bytes)).toBe(loginPrivateKey);
                 expect(JSON.stringify(body)).not.toContain(disclosedContent.value);
                 await lease.dispose();
                 expect(lease.bytes.every(byte => byte === 0)).toBe(true);
                 const fileLease = await context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'file' });
                 if (fileLease.kind !== 'file') throw new Error('SSH file lease was not returned');
                 sshLeaseFiles.push(fileLease.path);
-                expect(await readFile(fileLease.path, 'utf8')).toBe(disclosedContent.value);
+                expect(await readFile(fileLease.path, 'utf8')).toBe(loginPrivateKey);
                 if (!body || typeof body !== 'object' || Array.isArray(body)
                     || !('bootstrapPublicKey' in body) || typeof body.bootstrapPublicKey !== 'string') {
                     throw new Error('The retained SSH public carrier was not admitted');
                 }
                 const bootstrapPublicKey = body.bootstrapPublicKey;
-                const content = disclosedContent;
                 const fixedKey = { relativePath: `state/crabbox/testboxes/${mode === 'plain' ? 'cbx_abcdef123456' : 'cbx_abcdef123457'}/id_ed25519` };
                 let claimPath = '';
                 // The real reconciliation binding reopens and decrypts the
                 // retained SavedSecret; no private binding callback is replaced.
                 await context.services.machineProvisioners.withBootstrapCredentialFile(fixedKey, async lease => {
                     nativeKeyFiles.push(lease.path);
-                    expect(await readFile(lease.path, 'utf8')).toBe(content.value);
+                    expect(await readFile(lease.path, 'utf8')).toBe(loginPrivateKey);
                     expect(await readFile(lease.path + '.pub', 'utf8')).toBe(bootstrapPublicKey);
                     claimPath = join(dirname(lease.path), 'claim.json');
                     await writeFile(claimPath, mode);
@@ -2509,18 +3654,20 @@ describe('managed acquisition durable custody', () => {
                 await expect(stat(nativeKeyFiles[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
                 await expect(stat(nativeKeyFiles[0]! + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
                 expect(await readFile(claimPath, 'utf8')).toBe(mode);
+                const admittedMaterialReads = paths.filter(path => path.endsWith('/resources/materials')).length;
                 let anotherReaderEntered = false;
                 const anotherReader = async () => { anotherReaderEntered = true; };
                 materialRevision = 2;
                 await expect(context.services.machineProvisioners.withBootstrapCredentialFile(fixedKey, anotherReader))
-                    .rejects.toMatchObject({ reason: 'reference_stale' });
+                    .resolves.toBeUndefined();
                 materialRevision = 1;
-                // Withdrawal while the paid handler is entered cannot erase
-                // its returned identity, but cannot authorize another reader.
+                // An admitted native Action retains its credential. Withdrawal
+                // is checked at the next role admission, after acquire settles.
                 catalogReady = false;
                 await expect(context.services.machineProvisioners.withBootstrapCredentialFile(fixedKey, anotherReader))
-                    .rejects.toMatchObject({ reason: 'reference_stale' });
-                expect(anotherReaderEntered).toBe(false);
+                    .resolves.toBeUndefined();
+                expect(anotherReaderEntered).toBe(true);
+                expect(paths.filter(path => path.endsWith('/resources/materials'))).toHaveLength(admittedMaterialReads);
                 expect(await readFile(claimPath, 'utf8')).toBe(mode);
                 nativeCalls.push(role);
             } });
@@ -2533,6 +3680,9 @@ describe('managed acquisition durable custody', () => {
         const created: SharedSavedSecretCreateInputV1[] = [];
         const paths: string[] = [];
         let settingsVersion = 1;
+        let accountSequence = 1;
+        let encryptionIdentityTimestamp = 0;
+        let changeIdentityOnMaterialRead = false;
         let settingsRaw: Readonly<Record<string, unknown>> | null = null;
         const imported: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
         let currentMode: 'plain' | 'e2ee' = mode;
@@ -2540,9 +3690,9 @@ describe('managed acquisition durable custody', () => {
         vi.spyOn(axios, 'get').mockImplementation(async (url) => {
             const path = String(url);
             if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
-            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: currentMode, version: currentMode === mode ? 1 : 2, settingsVersion,
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: currentMode, version: accountSequence, settingsVersion,
                 signingKeyFingerprint: null, contentKeyFingerprint: currentMode === 'plain' ? null
-                    : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey), updatedAt: 0 } };
+                    : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey), updatedAt: encryptionIdentityTimestamp } };
             if (path.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: currentMode, updatedAt: 0 } };
             if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: settingsRaw === null ? null : mode === 'plain'
                 ? { t: 'plain', v: settingsRaw } : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
@@ -2568,6 +3718,10 @@ describe('managed acquisition durable custody', () => {
             if (path.endsWith('/v1/artifacts')) return { status: 200, data: [] };
             if (path.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
             if (path.endsWith('/resources/materials')) {
+                if (changeIdentityOnMaterialRead) {
+                    encryptionIdentityTimestamp += 1;
+                    changeIdentityOnMaterialRead = false;
+                }
                 const credential = created[0];
                 const envelope = credential?.keyEnvelopes?.[0];
                 return { status: 200, data: { resources: catalogReady && credential && disclosedContent ? [{
@@ -2598,6 +3752,9 @@ describe('managed acquisition durable custody', () => {
                     openAccountScopedBlobCiphertext({ kind: 'account_settings', material: encryption, ciphertext: mutation.nextSettings.c })?.value);
                 else throw new Error('Missing captured Settings import content');
                 imported.push(mutation);
+                // The Home projects Account.seq, not an encryption generation.
+                // A successful SavedSecret import publishes an Account change.
+                accountSequence += 1;
                 return { status: 200, data: { resourceId: mutation.resourceId, settingsVersion: ++settingsVersion } };
             }
             if (path.endsWith('/create-bootstrap-credential')) {
@@ -2652,7 +3809,15 @@ describe('managed acquisition durable custody', () => {
             dataKey.fill(0);
         }
         if (content?.v !== 1) throw new Error('Bootstrap SavedSecret value could not be opened');
-        expect(createPublicKey(content.value).asymmetricKeyType).toBe('rsa');
+        const bundle: unknown = JSON.parse(content.value);
+        expect(bundle).toMatchObject({ v: 1, bootstrapPrivateKey: expect.any(String), guestHostPrivateKey: expect.any(String) });
+        if (!bundle || typeof bundle !== 'object' || !('bootstrapPrivateKey' in bundle)
+            || typeof bundle.bootstrapPrivateKey !== 'string' || !('guestHostPrivateKey' in bundle)
+            || typeof bundle.guestHostPrivateKey !== 'string') throw new Error('Bootstrap key bundle was not retained');
+        loginPrivateKey = bundle.bootstrapPrivateKey;
+        expect(createPublicKey(loginPrivateKey).asymmetricKeyType).toBe('rsa');
+        expect(bundle.guestHostPrivateKey).toMatch(/^-----BEGIN OPENSSH PRIVATE KEY-----\n/);
+        expect(bundle.guestHostPrivateKey).not.toBe(loginPrivateKey);
         const retry = { homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0 };
         let retryWork: Promise<JsonValue | null> | undefined;
         await operations.observeExecution({ actionId: 'machines.managed.bootstrap.retry', input: retry, actionRequestId: 'retry', execute: async (context) => {
@@ -2683,6 +3848,15 @@ describe('managed acquisition durable custody', () => {
         await expect(stat(sshLeaseFiles[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(stat(nativeKeyFiles[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
         await expect(stat(nativeKeyFiles[0]! + '.pub')).rejects.toMatchObject({ code: 'ENOENT' });
+        // The same mode and key after an encryption transition is a new
+        // identity. Unlike an unrelated Account sequence advance, it retires
+        // the in-flight reader before another native invocation.
+        catalogReady = true;
+        changeIdentityOnMaterialRead = true;
+        await expect(keyDriver.execute('machines.managed.bootstrap.retry', retry, { requestId: 'identity-changed',
+            context: { operationAcceptance: { operationId: 'identity-changed', accept() {} }, operationOwnerUpdate: { update() {} } },
+        })).rejects.toThrow('saved_secret_account_lifetime_changed');
+        expect(nativeCalls).toEqual(['acquire']);
         const wrongToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'different-account', testMode: mode })).toString('base64url')}.signature`;
         retained = ManagedMachineV1Schema.parse({ ...machine, id: 'managed-other', homeId: nativeHomeId, allocation: 'unsubmitted' });
         const wrongAccountDriver = createManagedMachineAcquisitionDriver({ token: wrongToken, serverUrl: 'https://home.example', homeId: nativeHomeId,

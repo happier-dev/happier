@@ -6,19 +6,19 @@ import type { PluginJsonValueV2 } from '../../identity.js';
 export type AccountPluginDataActionInputById = {
     readonly "account.plugins.data.erase": {
         pluginId: string;
-        managedResourceDispositions?: {
+        managedResourceDispositions?: undefined | {
             managedId: string;
             expectedIntentRevision: number;
-            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
-            expectedResource?: {
+            expectedResource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: unknown;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -30,61 +30,70 @@ export type AccountPluginDataActionInputById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            expectedNativeOperationRef?: {
+                };
+            };
+            expectedNativeOperationRef?: undefined | {
                 value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            expectedRecovery?: {
+            };
+            expectedRecovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
     };
 };
 export type AccountPluginDataActionResultById = {
     readonly "account.plugins.data.erase": {
-        status: 'failed' | 'completed' | 'partial';
+        status: 'completed' | 'failed' | 'partial';
         settings: {
             status: 'completed';
             changed: boolean;
         } | {
-            status: 'pending';
-            reason: 'unavailable' | 'conflict' | 'outcome-unknown';
-        } | {
             status: 'failed';
             reason: 'unexpected';
+        } | {
+            status: 'pending';
+            reason: 'conflict' | 'outcome-unknown' | 'unavailable';
         };
         data: {
+            status: 'completed';
+            changed: boolean;
+        } | {
+            status: 'failed';
+            reason: 'account-not-found' | 'invalid-response' | 'request-rejected';
+        } | {
+            status: 'pending';
+            reason: 'outcome-unknown' | 'transition-cleanup' | 'unavailable';
+        } | {
             status: 'reviewRequired';
             resources: {
                 managedId: string;
                 homeId: string;
                 custodianAccountId: string;
                 intentRevision: number;
-                controller: {
-                    machineId: string;
-                    installationId: string;
-                };
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
-                allocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
-                resource?: {
+                allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
+                };
+                resource?: undefined | {
                     contributionRef: {
                         pluginId: string;
                         localId: string;
                     };
                     schemaVersion: number;
                     value: PluginJsonValueV2;
-                    devcontainerObservation?: {
+                    devcontainerObservation?: undefined | {
                         nativeResourceId: string;
                         user: string;
                         workspaceFolder: string;
@@ -96,96 +105,98 @@ export type AccountPluginDataActionResultById = {
                             kind: 'child';
                             childPath: string;
                         };
-                    } | undefined;
-                } | undefined;
-                nativeOperationRef?: {
+                    };
+                };
+                nativeOperationRef?: undefined | {
                     value: PluginJsonValueV2;
                     contributionRef: {
                         pluginId: string;
                         localId: string;
                     };
                     schemaVersion: number;
-                } | undefined;
-                recovery?: {
+                };
+                recovery?: undefined | {
                     reference: string;
                     reason: string;
                     consoleUrl?: string | undefined;
-                } | undefined;
-                observation?: {
+                };
+                observation?: undefined | {
                     observedAt: number;
-                    availability: 'unavailable' | 'present' | 'absent';
-                    power?: 'unknown' | 'running' | 'stopped' | 'suspended' | undefined;
-                    storage?: 'unknown' | 'retained' | 'lost' | undefined;
-                    daemon?: 'unknown' | 'connected' | 'disconnected' | undefined;
-                    billing?: {
-                        location: 'unknown' | 'local' | 'cloud';
-                        stoppedBilling: 'unknown' | 'billed' | 'not-billed';
-                        storageCharges?: {
+                    availability: 'absent' | 'present' | 'unavailable';
+                    power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                    storage?: 'lost' | 'retained' | 'unknown' | undefined;
+                    billing?: undefined | {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
                             amount: string;
                             currency: string;
                             unit: string;
                             source: string;
                             observedAt: number;
-                            label?: string | {
+                            label?: string | undefined | {
                                 key: string;
                                 fallback: string;
-                                params?: Record<string, string | number> | undefined;
-                            } | undefined;
-                        }[] | undefined;
-                    } | undefined;
-                    prices?: {
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prices?: undefined | {
                         amount: string;
                         currency: string;
                         unit: string;
                         source: string;
                         observedAt: number;
-                        label?: string | {
+                        label?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    }[] | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
                     nativeExpiry?: number | undefined;
+                    deletionNotices?: undefined | {
+                        kind: 'stopped-storage';
+                        rule: {
+                            kind: 'after-stop';
+                            afterMs: number;
+                        };
+                        consequence: 'disk-deleted';
+                        at?: number | undefined;
+                    }[];
                     reason?: string | undefined;
-                    nativeCause?: {
+                    nativeCause?: undefined | {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
                         httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
-                        code?: 'unknown' | 'unavailable' | 'json_error' | 'unauthorized' | 'forbidden' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'conflict' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
-                        fields?: ('name' | 'location' | 'image' | 'server_type' | 'start_after_create' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                     } | {
                         localCause: 'native_command_failed';
-                        command: 'start' | 'stop' | 'restart' | 'create' | 'run' | 'up';
-                        exitCode: number | null;
+                        command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                        exitCode: null | number;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
-                    } | {
-                        localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
-                    } | {
-                        localCause: 'native_route_not_found';
-                        route: 'stop' | 'delete' | 'run' | 'inspect' | 'pull' | 'configure';
-                        httpStatus: 404;
                     } | {
                         localCause: 'native_configure_refused' | 'native_delete_refused';
                         httpStatus: 400;
                     } | {
-                        grpcStatusCode: 1 | 4 | 6 | 2 | 3 | 5 | 14 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 15 | 16;
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
                     } | {
-                        sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
-                    } | undefined;
-                } | undefined;
-                cleanup?: {
-                    disposition: 'unavailable' | 'pending';
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
+                };
+                cleanup?: undefined | {
+                    disposition: 'pending' | 'unavailable';
                     reason: string;
-                } | undefined;
+                };
             }[];
-        } | {
-            status: 'completed';
-            changed: boolean;
-        } | {
-            status: 'pending';
-            reason: 'unavailable' | 'outcome-unknown' | 'transition-cleanup';
-        } | {
-            status: 'failed';
-            reason: 'account-not-found' | 'request-rejected' | 'invalid-response';
         };
     } | {
         status: 'reviewRequired';
@@ -194,23 +205,23 @@ export type AccountPluginDataActionResultById = {
             homeId: string;
             custodianAccountId: string;
             intentRevision: number;
-            controller: {
-                machineId: string;
-                installationId: string;
-            };
             provider: {
                 pluginId: string;
                 localId: string;
             };
-            allocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
-            resource?: {
+            allocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
+            };
+            resource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: PluginJsonValueV2;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -222,86 +233,97 @@ export type AccountPluginDataActionResultById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            nativeOperationRef?: {
+                };
+            };
+            nativeOperationRef?: undefined | {
                 value: PluginJsonValueV2;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            recovery?: {
+            };
+            recovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-            observation?: {
+            };
+            observation?: undefined | {
                 observedAt: number;
-                availability: 'unavailable' | 'present' | 'absent';
-                power?: 'unknown' | 'running' | 'stopped' | 'suspended' | undefined;
-                storage?: 'unknown' | 'retained' | 'lost' | undefined;
-                daemon?: 'unknown' | 'connected' | 'disconnected' | undefined;
-                billing?: {
-                    location: 'unknown' | 'local' | 'cloud';
-                    stoppedBilling: 'unknown' | 'billed' | 'not-billed';
-                    storageCharges?: {
+                availability: 'absent' | 'present' | 'unavailable';
+                power?: 'running' | 'stopped' | 'suspended' | 'unknown' | undefined;
+                storage?: 'lost' | 'retained' | 'unknown' | undefined;
+                billing?: undefined | {
+                    location: 'cloud' | 'local' | 'unknown';
+                    stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                    storageCharges?: undefined | {
                         amount: string;
                         currency: string;
                         unit: string;
                         source: string;
                         observedAt: number;
-                        label?: string | {
+                        label?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    }[] | undefined;
-                } | undefined;
-                prices?: {
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                };
+                prices?: undefined | {
                     amount: string;
                     currency: string;
                     unit: string;
                     source: string;
                     observedAt: number;
-                    label?: string | {
+                    label?: string | undefined | {
                         key: string;
                         fallback: string;
-                        params?: Record<string, string | number> | undefined;
-                    } | undefined;
-                }[] | undefined;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                }[];
                 nativeExpiry?: number | undefined;
+                deletionNotices?: undefined | {
+                    kind: 'stopped-storage';
+                    rule: {
+                        kind: 'after-stop';
+                        afterMs: number;
+                    };
+                    consequence: 'disk-deleted';
+                    at?: number | undefined;
+                }[];
                 reason?: string | undefined;
-                nativeCause?: {
+                nativeCause?: undefined | {
+                    grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                } | {
                     httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
-                    code?: 'unknown' | 'unavailable' | 'json_error' | 'unauthorized' | 'forbidden' | 'maintenance' | 'resource_limit_exceeded' | 'not_found' | 'method_not_allowed' | 'uniqueness_error' | 'conflict' | 'deprecated_api_endpoint' | 'resource_unavailable' | 'invalid_input' | 'service_error' | 'unsupported_error' | 'locked' | 'protected' | 'rate_limit_exceeded' | 'server_error' | 'bad_gateway' | 'timeout' | 'placement_error' | 'bad_request' | 'unprocessable_entity' | 'too_many_requests' | 'insufficient_capacity' | 'volume_placement_capacity' | 'name_taken' | undefined;
-                    fields?: ('name' | 'location' | 'image' | 'server_type' | 'start_after_create' | 'placement_group' | 'ssh_keys' | 'volumes' | 'networks' | 'firewalls' | 'user_data' | 'labels' | 'automount' | 'public_net')[] | undefined;
+                    code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                    fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
                 } | {
                     localCause: 'native_command_failed';
-                    command: 'start' | 'stop' | 'restart' | 'create' | 'run' | 'up';
-                    exitCode: number | null;
+                    command: 'create' | 'restart' | 'run' | 'start' | 'stop' | 'up';
+                    exitCode: null | number;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
-                } | {
-                    localCause: 'native_options_changed' | 'native_ssh_network_unavailable' | 'native_route_unavailable' | 'native_lease_ended';
-                } | {
-                    localCause: 'native_route_not_found';
-                    route: 'stop' | 'delete' | 'run' | 'inspect' | 'pull' | 'configure';
-                    httpStatus: 404;
                 } | {
                     localCause: 'native_configure_refused' | 'native_delete_refused';
                     httpStatus: 400;
                 } | {
-                    grpcStatusCode: 1 | 4 | 6 | 2 | 3 | 5 | 14 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 15 | 16;
+                    localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
                 } | {
-                    sdkError: 'AlreadyExistsError' | 'NotFoundError' | 'InvalidError' | 'ResourceExhaustedError' | 'TimeoutError' | 'SandboxTimeoutError' | 'InternalFailure' | 'ExecutionError' | 'RemoteError' | 'ConflictError' | 'ClientClosedError';
-                } | undefined;
-            } | undefined;
-            cleanup?: {
-                disposition: 'unavailable' | 'pending';
+                    localCause: 'native_route_not_found';
+                    route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                    httpStatus: 404;
+                } | {
+                    localCause: 'ssh_keyscan_failed';
+                    resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                } | {
+                    sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                };
+            };
+            cleanup?: undefined | {
+                disposition: 'pending' | 'unavailable';
                 reason: string;
-            } | undefined;
+            };
         }[];
     };
 };

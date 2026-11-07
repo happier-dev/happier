@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readNativeSshTaskCredentials, runNativeRemoteSshBootstrapTask } from './nativeTask';
 
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type { NativeSshModule } from '@happier-dev/ssh-native';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -12,11 +12,16 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { buildRemoteSelfDownloadFirstPartyInstallCommand } from '@happier-dev/cli-common/systemTasks';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
+import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { checkMachineSetupEffectPlan, applyMachineSetupEffectPlans, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { MachineEffectInternalRequestSchema, MachineAdministratorEstablishFrameSchema } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { firstPartyRuntime } from '@happier-dev/cli-common';
+import { createCliPayloadFixture } from '../../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture.js';
 
 const HOME_TARGET = {
     profileId: 'home-profile',
@@ -168,6 +173,117 @@ function createRemoteBootstrapSpec(overrides: Partial<SystemTaskSpec> = {}): Sys
 }
 
 describe('runNativeRemoteSshBootstrapTask', () => {
+    it.each(['none', 'ask'] as const)('runs admitted dedicated %s CHECK and APPLY through native SSH', async (adminAccessAtCreation) => {
+        const identity = ManagedMachineEnrollmentIdentityV1Schema.parse({
+            kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation,
+            ...(adminAccessAtCreation === 'ask' ? { administrator: { username: 'operator' } } : {}),
+        });
+        const spec = createRemoteBootstrapSpec({ params: {
+            ...createRemoteBootstrapSpec().params as Record<string, unknown>,
+            enrollmentIdentity: identity, serviceMode: 'user',
+        } });
+        const taskId = 'native-admitted-dedicated';
+        const password = 'transient-native-administrator';
+        const phases: string[] = [];
+        const commands: string[] = [];
+        const events: unknown[] = [];
+        const applied = new Set<string>();
+        let administratorEstablished = false;
+        const stdoutListeners = new Set<Parameters<NonNullable<NativeSshModule['addListener']>>[1]>();
+        // The native command channel is the OS boundary; task, IPC and interpreter remain real.
+        const backend: MachineSetupBackend = {
+            observe: async step => ({ stepId: step.id, status: applied.has(step.id) ? 'satisfied' : 'drifted',
+                facts: step.kind === 'user' ? applied.has(step.id) ? { present: true, username: step.username, uid: 1002 } : { present: false } : {} }),
+            apply: async step => {
+                const createdUser = step.kind === 'user' && !applied.has(step.id);
+                applied.add(step.id);
+                return createdUser ? { createdUser: true } : undefined;
+            },
+            establishAdministrator: async credential => {
+                expect(new TextDecoder().decode(credential.password)).toBe(password);
+                administratorEstablished = true;
+            },
+        };
+        const nativeModule = {
+            getAvailability: () => ({ available: true, platform: 'android', engine: 'russh', moduleVersion: '0.0.0',
+                supportsLoopbackTunnel: true, supportsPersistentHostKeyStorage: false } as const),
+            addListener: (eventName, listener) => {
+                if (eventName === 'stdout') stdoutListeners.add(listener);
+                return { remove: () => { stdoutListeners.delete(listener); } };
+            },
+            cancelRequest: vi.fn(async () => undefined),
+            exec: async request => {
+                commands.push(request.command);
+                if (request.input) {
+                    const [requestLine, credentialLine] = request.input.trimEnd().split('\n');
+                    const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(requestLine!));
+                    phases.push(frame.mode);
+                    if (frame.mode === 'check' && 'steps' in frame) {
+                        expect(frame.basis).toMatchObject({ kind: 'sshBootstrap', operationId: taskId });
+                        expect(credentialLine).toBeUndefined();
+                        const plan = await checkMachineSetupEffectPlan({ basis: frame.basis, steps: frame.steps, backend });
+                        return { exitCode: 0, stdout: JSON.stringify({ type: 'result', result: { status: 'checked', plan } }) + '\n', stderr: '' };
+                    }
+                    if (frame.mode !== 'apply' || !('plans' in frame)) throw new Error('Expected reviewed native Apply');
+                    expect(frame.plans[0]?.plan.basis).toMatchObject({ kind: 'sshBootstrap', operationId: taskId });
+                    const establishment = credentialLine ? MachineAdministratorEstablishFrameSchema.parse(JSON.parse(credentialLine)) : undefined;
+                    expect(Boolean(establishment)).toBe(adminAccessAtCreation === 'ask');
+                    if (establishment) expect(establishment).toMatchObject({ operationId: taskId, username: 'operator' });
+                    const result = await applyMachineSetupEffectPlans({ plans: frame.plans, backend,
+                        ...(establishment ? { administratorEstablishment: { stepId: establishment.stepId,
+                            username: establishment.username, password: new TextEncoder().encode(establishment.password) } } : {}),
+                    });
+                    const stdout = JSON.stringify({ type: 'progress', stepId: 'native-dedicated-ready', phase: 'verify', status: 'satisfied' }) + '\n'
+                        + JSON.stringify({ type: 'result', result }) + '\n';
+                    for (const listener of stdoutListeners) {
+                        listener({ requestId: request.requestId, chunk: stdout.slice(0, 13) });
+                        listener({ requestId: request.requestId, chunk: stdout.slice(13) });
+                    }
+                    return { exitCode: 0, stdout, stderr: '' };
+                }
+                if (request.command === 'uname -s') return { exitCode: 0, stdout: 'Linux\n', stderr: '' };
+                if (request.command.includes('/etc/os-release')) return { exitCode: 0, stdout: 'ubuntu\nnoble\namd64\n', stderr: '' };
+                if (request.command === 'id -u happier') return { exitCode: 0, stdout: '1001\n', stderr: '' };
+                if (request.command.includes('useradd --create-home')) return { exitCode: 0, stdout: '', stderr: '' };
+                if (request.command.includes(VERIFIED_INSTALL_COMMAND)) return { exitCode: 0, stdout: '', stderr: '' };
+                const installation = readInstallationTextResult(request.command);
+                if (installation) return { exitCode: installation.status, stdout: installation.stdout, stderr: installation.stderr };
+                if (request.command.includes('daemon status')) return { exitCode: 0,
+                    stdout: JSON.stringify({ daemon: { running: true, healthy: true }, service: { installed: true },
+                        auth: { needsAuth: false, credentialState: 'valid', machineRegistrationState: 'server-confirmed',
+                            machineId: 'native-dedicated-machine' } }), stderr: '' };
+                return { exitCode: 0, stdout: JSON.stringify({ ok: true, data: request.command.includes('auth status')
+                    ? { authenticated: true, credentialState: 'valid', machineRegistered: true,
+                        machineRegistrationState: 'server-confirmed', machineId: 'native-dedicated-machine' } : {} }), stderr: '' };
+            },
+        } satisfies NativeSshModule;
+        const installPlacements: Array<string | undefined> = [];
+        await expect(runNativeRemoteSshBootstrapTask({ taskId, nativeModule, spec,
+            resolveInstallPlan: async placement => {
+                installPlacements.push(placement.remoteHomeDir);
+                return { ...await resolveInstallPlan(), binaryPath: `${placement.remoteHomeDir ?? '$HOME'}/cli/current/happier` };
+            },
+            events: { event: event => { events.push(event); } },
+            prompt: async question => {
+                phases.push('prompt');
+                expect(question).toMatchObject({ kind: 'administrator.establish', data: { administratorUsername: 'operator' } });
+                return { password };
+            },
+        })).resolves.toMatchObject({ machineId: 'native-dedicated-machine' });
+        expect(phases).toEqual(adminAccessAtCreation === 'ask' ? ['check', 'prompt', 'apply'] : ['check', 'apply']);
+        expect(installPlacements).toEqual(['/opt/happier']);
+        expect(applied.has('docker-membership')).toBe(true);
+        expect(administratorEstablished).toBe(adminAccessAtCreation === 'ask');
+        expect(commands.find(command => command.includes(VERIFIED_INSTALL_COMMAND))).toContain('runuser -u happier');
+        const inventories = commands.filter(command => command.includes('for version_path in'));
+        expect(inventories).toHaveLength(2);
+        expect(inventories.every(command => command.includes('/opt/happier/cli/versions'))).toBe(true);
+        expect(commands.find(command => command.includes('auth status'))).toContain('runuser -u happier');
+        expect(events.filter(event => event && typeof event === 'object' && 'stepId' in event && event.stepId === 'native-dedicated-ready')).toHaveLength(1);
+        expect(JSON.stringify([spec, commands, events])).not.toContain(password);
+        expect(stdoutListeners.size).toBe(0);
+    });
+
     it('runs the shared bootstrap recipe over native SSH for remotes with an installed Happier CLI', async () => {
 
         const commands: string[] = [];
@@ -252,11 +368,13 @@ describe('runNativeRemoteSshBootstrapTask', () => {
         }
         await symlink('versions/1.1.0', join(installRoot, 'current'));
         await symlink('versions/1.0.0', join(installRoot, 'previous'));
-        const payload = join(home, 'payload');
-        await mkdir(payload);
-        await writeFile(join(payload, 'happier'), '#!/bin/sh\nexit 0\n');
+        const layout = firstPartyRuntime.resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel: 'stable',
+            processEnv: { ...process.env, HAPPIER_FIRST_PARTY_INSTALL_HOME: join(home, '.happier') } });
+        await firstPartyRuntime.writeInstalledVersionMarker({ layout, marker: 'current', versionId: '1.1.0' });
+        await firstPartyRuntime.writeInstalledVersionMarker({ layout, marker: 'previous', versionId: '1.0.0' });
+        const payload = await createCliPayloadFixture();
         const archive = join(home, 'payload.tar.gz');
-        await promisify(execFile)('tar', ['-czf', archive, '-C', home, 'payload']);
+        await promisify(execFile)('tar', ['-czf', archive, '-C', dirname(payload.payloadRoot), basename(payload.payloadRoot)]);
         const installCommand = buildRemoteSelfDownloadFirstPartyInstallCommand({
             componentId: 'happier-cli', versionId: '1.2.3',
             archive: { name: 'payload.tar.gz', url: pathToFileURL(archive).href },
@@ -317,7 +435,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             expect(commands).toContain(installCommand);
             expect((await readdir(join(installRoot, 'versions'))).sort()).toEqual(['1.1.0', '1.2.3']);
             expect(await readFile(join(installRoot, 'previous', 'happier'), 'utf8')).toBe('1.1.0');
-        } finally { await rm(home, { recursive: true, force: true }); }
+        } finally { await payload.cleanup(); await rm(home, { recursive: true, force: true }); }
     });
 
     it('approves local terminal auth after the user accepts remote provisioning', async () => {
@@ -482,7 +600,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
     });
 
     it('posts a pairing-bound data-key v3 response to the exact Home target', async () => {
-        vi.resetModules();
         const boundary = await prepareApprovalBoundary(HOME_TARGET.applicationUrl);
 
         try {
@@ -598,12 +715,10 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             expect(boundary.approvals).toHaveLength(1);
         } finally {
             boundary.dispose();
-            vi.resetModules();
         }
     });
 
     it('acquires and releases the canonical Iroh enrollment transport for an Iroh-only Home target', async () => {
-        vi.resetModules();
         const irohEndpointId = 'a'.repeat(64);
         const release = vi.fn(async () => undefined);
         const ensureHomeTunnel = vi.fn(async () => ({
@@ -712,7 +827,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
         } finally {
             await disposeIrohHomeTunnelRuntime();
             boundary.dispose();
-            vi.resetModules();
         }
     });
 

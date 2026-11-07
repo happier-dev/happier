@@ -1,4 +1,4 @@
-import { buildSshHostKeyPromptBody } from '@/components/ssh/buildSshHostKeyPromptBody';
+import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { Modal } from '@/modal';
 import { t, tLoose } from '@/text';
 
@@ -14,7 +14,7 @@ function personalHomeCopy(key: string, fallback: string): string {
 /** Presents human decisions; the runner owns response delivery and task lifetime. */
 export async function answerSshSystemTaskPrompt(
     prompt: SystemTaskPromptEnvelope,
-    options: Readonly<{ isCurrent: () => boolean; cancel: () => Promise<void> }>,
+    options: Readonly<{ isCurrent: () => boolean; cancel: () => Promise<void>; supportsRememberHostKey?: boolean }>,
 ): Promise<unknown> {
     const { isCurrent } = options;
     if (!isCurrent()) return undefined;
@@ -39,7 +39,7 @@ export async function answerSshSystemTaskPrompt(
         const accepted = await Modal.confirm(
             prompt.message || personalHomeCopy('eraseDataTitle', 'Delete Personal Home data?'),
             [
-                `${t('settings.machineSetupRemoteSshHostLabel')}: ${sshHost}`,
+                `${t('settings.machineEnrollRemoteSshHostLabel')}: ${sshHost}`,
                 `${personalHomeCopy('canonicalServerUrl', 'Home URL')}: ${canonicalServerUrl}`,
                 `${personalHomeCopy('identityTitle', 'Home identity')}: ${homeServerIdentityId || personalHomeCopy('notAvailable', 'Not available')}`,
                 `${personalHomeCopy('estimatedSize', 'Estimated size')}: ${estimatedBytes === null ? personalHomeCopy('unknownSize', 'Unknown size') : String(estimatedBytes)}`,
@@ -56,17 +56,14 @@ export async function answerSshSystemTaskPrompt(
         const fingerprint = typeof prompt.data.fingerprint === 'string' ? prompt.data.fingerprint.trim() : '';
         const existingFingerprint = typeof prompt.data.existingFingerprint === 'string' ? prompt.data.existingFingerprint.trim() : '';
         const host = typeof prompt.data.host === 'string' ? prompt.data.host.trim() : '';
+        const keyType = typeof prompt.data.keyType === 'string' ? prompt.data.keyType.trim() : '';
         const isReplacement = prompt.kind === 'ssh.replaceHostKey';
-        const accepted = await Modal.confirm(
-            isReplacement ? t('settings.remoteHostsReplaceHostKeyTitle') : t('settings.remoteHostsHostTrustTitle'),
-            buildSshHostKeyPromptBody({ host, fingerprint, existingFingerprint: isReplacement ? existingFingerprint : null }),
-            {
-                confirmText: isReplacement ? t('settings.remoteHostsReplaceHostKeyAction') : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
-                cancelText: t('common.cancel'),
-            },
-        );
+        const accepted = await confirmSshHostKey({
+            host, fingerprint, keyType: keyType || null, existingFingerprint: isReplacement ? existingFingerprint || null : null,
+        });
         if (!isCurrent()) return undefined;
         if (!accepted) return cancel();
+        if (options.supportsRememberHostKey === false) return { trusted: true };
         const remember = isReplacement || await Modal.confirm(
             t('settings.remoteHostsRememberHostKeyTitle'), host || undefined,
             { confirmText: t('settings.remoteHostsRememberHostKeyAction'), cancelText: t('settings.remoteHostsTrustOnceAction') },

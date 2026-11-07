@@ -89,6 +89,14 @@ export async function handleDoctorCliCommand(context: CommandContext): Promise<v
   }
 
   if (args.includes('--json')) {
+    if (args.includes('--include-daemon-log')) {
+      const { collectBugReportMachineDiagnosticsSnapshotForBugReport } = await import('@/diagnostics/bugReportMachineDiagnosticsRecipe');
+      const snapshot = await collectBugReportMachineDiagnosticsSnapshotForBugReport({
+        logSelection: { daemon: true, session: false, provider: false },
+      }, { signal: context.signal });
+      await writeJsonStdout(snapshot, { pretty: true });
+      return;
+    }
     const snapshot = await buildDoctorSnapshot();
     await writeJsonStdout(snapshot, { pretty: true });
     return;

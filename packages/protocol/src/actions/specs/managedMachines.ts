@@ -1,3 +1,4 @@
+import { lazyActionSpecArray , type ActionSpecArrayConcat } from '../lazyActionSpecValue.js';
 import { MACHINE_PRESET_INPUT_FIELDS, MACHINE_POOL_INPUT_FIELDS } from './machineInputHints.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_ACTION_IDS_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
@@ -7,27 +8,31 @@ import {
   ManagedMachineActionInputSchemasV1,
   ManagedMachineActionOutputSchemasV1,
   managedMachineActionEndpointPathV1,
+  type ManagedAcquireInputV1,
   type ManagedMachineActionIdV1,
 } from '../../machines/managed/actionsV1.js';
+import { resolveManagedMachineEnrollmentAdminAccessV1, resolveManagedMachineEnrollmentAgentIsolationV1 } from '../../machines/managed/enrollmentIdentityV1.js';
+import { readMachineProvisionerActionRolesV1 } from '../../plugins/contributions/machineProvisioners.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { MANAGED_MACHINE_INPUT_FIELDS } from './machineInputHints.js';
+import { managedAcquireApprovalPresentation } from './managedAcquireApproval.js';
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
-'machines.setup.remove': 'Remove machine setup items',
-'machines.managed.credentials.install': 'Install credential delivery',
   'machines.provisioners.list': 'List machine provisioners',
   'machines.provisioners.check': 'Check machine provisioner',
   'machines.provisioners.options': 'Get machine provisioner choices',
   'machines.managed.acquire': 'Create managed machine',
+  'machines.managed.credentials.install': 'Install credential delivery',
   'machines.managed.list': 'List managed machines',
   'machines.managed.get': 'Get managed machine',
+  'machines.managed.birth.get': 'Read managed machine creation source',
   'machines.managed.references.get': 'Review managed machine dependencies',
   'machines.managed.inspect': 'Check managed machine now',
   'machines.managed.bootstrap.retry': 'Retry Happier installation',
   'machines.managed.setup.skip': 'Continue without setup',
-  'machines.environment.apply': 'Apply machine setup',
   'machines.setup.plan': 'Review machine setup',
   'machines.setup.apply': 'Apply machine setup',
+  'machines.setup.remove': 'Remove machine setup items',
   'machines.setup.updates.apply': 'Install machine updates',
   'machines.managed.cancel': 'Cancel managed machine creation',
   'machines.managed.power.set': 'Change machine power',
@@ -38,17 +43,44 @@ const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.managed.retire': 'Hide managed machine with manual responsibility',
 };
 
-export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
+function createManagedMachineActionSpecs() {
+  return MANAGED_MACHINE_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
   const effect = actionId === 'machines.managed.acquire'
-    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' || actionId === 'machines.managed.setup.skip'
+    || actionId === 'machines.managed.credentials.install'
+    || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' || actionId === 'machines.managed.setup.skip'
     || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.cancel'
     || ['machines.managed.power.set', 'machines.managed.rebuild', 'machines.managed.retention.update', 'machines.managed.delete', 'machines.managed.controller.update', 'machines.managed.retire'].includes(actionId);
   const account = actionId === 'machines.provisioners.list'
-    || actionId === 'machines.managed.list' || actionId === 'machines.managed.get'
+    || actionId === 'machines.provisioners.check' || actionId === 'machines.provisioners.options' || actionId === 'machines.managed.acquire'
+    || actionId === 'machines.managed.list' || actionId === 'machines.managed.get' || actionId === 'machines.managed.birth.get'
     || actionId === 'machines.managed.cancel' || actionId === 'machines.managed.references.get' || actionId === 'machines.managed.setup.skip'
-    || actionId === 'machines.managed.delete';
+    || actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
+    || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete';
   return {
     id: actionId, approval: { result: 'required' }, originalExecution: { terminalRoot: 'allowed' },
+    ...(actionId === 'machines.setup.apply' ? { requesterAccountContentDemandForInput: () => true } : {}),
+    ...(actionId === 'machines.managed.acquire' ? { hostReviewedChildren: (normalizedInput: unknown) => {
+      const input = normalizedInput as ManagedAcquireInputV1;
+      // The guest operands arrive after enrollment. Declare only work already
+      // demanded by this normalized creation, without inventing guest inputs.
+      return [
+        ...(input.reviewedFacts?.provisioner
+          ? readMachineProvisionerActionRolesV1(input.reviewedFacts.provisioner)
+            .filter(({ role }) => role === 'acquire' || role === 'bootstrap' || role === 'inspect' || role === 'destroy'
+              || role === 'exec' || role === 'putFile' || role === 'reconcile' || role === 'cleanup')
+            .map(({ action, role }) => ({ action: { pluginId: input.reviewedFacts!.launch.provider.pluginId, localId: action }, role }))
+          : []),
+        ...(resolveManagedMachineEnrollmentAdminAccessV1(input.enrollmentIdentity)
+          ? [{ action: 'machines.setup.adminAccess.set' as const, role: 'machines.setup.adminAccess.set' }] : []),
+        ...(resolveManagedMachineEnrollmentAgentIsolationV1(input.enrollmentIdentity)
+          ? [{ action: 'machines.agentIsolation.preview' as const, role: 'machines.agentIsolation.preview' },
+            { action: 'machines.agentIsolation.set' as const, role: 'machines.agentIsolation.set' }] : []),
+        ...(input.selection.kind === 'preset' && input.reviewedFacts?.setup !== undefined
+          ? [{ action: 'machines.setup.plan' as const, role: 'machines.setup.plan' },
+            { action: 'machines.setup.apply' as const, role: 'machines.setup.apply' }] : []),
+        ...(input.agentStart ? [{ action: 'session.spawn_new' as const, role: 'session.spawn_new' }] : []),
+      ];
+    } } : {}),
     ...(actionId === 'machines.managed.acquire' || actionId === 'machines.managed.bootstrap.retry'
       || actionId === 'machines.managed.power.set'
       || actionId === 'machines.managed.retention.update' || actionId === 'machines.managed.controller.update'
@@ -56,33 +88,54 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
       ? { approvalPolicy: { uiConfirmation: 'direct' as const } }
       : effect ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
     title: titles[actionId],
-    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' ? { approvalScope: 'machine' as const } : {}),
+    ...(actionId === 'machines.managed.acquire' ? { approvalPresentation: managedAcquireApprovalPresentation } : {}),
+    ...(actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' ? { approvalScope: 'machine' as const } : {}),
     ...({
       'machines.managed.bootstrap.retry': { confirmVerb: { key: 'common.retry', fallback: 'Retry' } },
       // Its own words, not "Cancel": the dialog's dismiss button already says Cancel.
       'machines.managed.cancel': { confirmVerb: { key: 'managedMachines.actions.cancelCreation', fallback: 'Cancel creation' } },
       'machines.setup.apply': { confirmVerb: { key: 'common.run', fallback: 'Run' } },
+      'machines.setup.remove': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
       'machines.setup.updates.apply': { confirmVerb: { key: 'common.install', fallback: 'Install' } },
       'machines.managed.rebuild': { confirmVerb: { key: 'common.update', fallback: 'Update' } },
       'machines.managed.delete': { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true },
       'machines.managed.retire': { confirmVerb: { key: 'common.remove', fallback: 'Remove' } },
     } as Partial<Record<typeof actionId, Pick<PreNormalizedActionSpec, 'confirmVerb' | 'irreversible'>>>)[actionId],
     description: actionId === 'machines.managed.acquire'
-      ? 'Create compute and install Happier using the reviewed selection on the exact Home and controller.'
+      ? 'Create Account-owned compute and install Happier using the reviewed provider, price and lifetime on the selected Home.'
       : actionId === 'machines.managed.bootstrap.retry'
         ? 'Retry installation on the same managed resource using its current enrollment attempt.'
         : actionId === 'machines.managed.cancel'
           ? 'Cancel the admitted creation request and retain the resulting resource cleanup disposition.'
           : actionId === 'machines.setup.apply'
             ? 'Apply the reviewed setup sources on the exact Machine through current approval and native admission; acceptance does not confirm a native effect.'
+          : actionId === 'machines.setup.remove'
+            ? 'Remove only reviewed, declared, native-owned setup or software effects on this Machine; apps, scripts, toolchains and user data are not removal operands.'
           : actionId === 'machines.setup.updates.apply'
             ? 'Install the exact reviewed security or all OS package updates through native setup admission. Package updates may restart services; this operation never reboots the Machine.'
-          : effect ? `${titles[actionId]} on the retained resource through current approval and controller admission; acceptance does not confirm a native effect.`
+          : actionId === 'machines.managed.power.set'
+            ? 'Apply the admitted power intent to the retained native resource; acceptance does not confirm a native effect.'
+          : actionId === 'machines.managed.inspect'
+            ? 'Check the retained resource without starting or waking compute. Set includeGuestDiagnostics to read redacted daemon logs as its custodian; unavailable transport or guest identity is returned explicitly.'
+          : effect ? `${titles[actionId]} on the retained resource through its admitted operation; acceptance does not confirm a native effect.`
             : `${titles[actionId]} on the exact Home without starting or waking compute.`,
     safety: effect ? 'danger' : 'safe',
     sideEffectClass: effect ? 'danger' : 'read',
     executionPlacement: account ? 'account' : 'machine',
-    ...(actionId === 'machines.managed.delete' ? { executionPlacements: ['account', 'machine'] as const } : {}),
+    ...(actionId === 'machines.managed.power.set' || actionId === 'machines.managed.inspect'
+      || actionId === 'machines.managed.bootstrap.retry' || actionId === 'machines.managed.delete'
+      ? { executionPlacements: ['account', 'machine'] as const } : {}),
+    ...(actionId === 'machines.provisioners.list' || actionId === 'machines.provisioners.check'
+      || actionId === 'machines.provisioners.options' || actionId === 'machines.managed.acquire' ? {
+      executionPlacements: ['account', 'machine'] as const,
+      executionPlacementForInput: (input: unknown) => {
+        if (!input || typeof input !== 'object') return 'account' as const;
+        if ('controller' in input && input.controller !== undefined) return 'machine' as const;
+        const selection = 'selection' in input ? input.selection : undefined;
+        return selection && typeof selection === 'object' && 'controller' in selection && selection.controller !== undefined
+          ? 'machine' as const : 'account' as const;
+      },
+    } : {}),
     placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     bindings: { mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_'), rpcMethod: actionId },
@@ -92,7 +145,8 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     outputSchema: ManagedMachineActionOutputSchemasV1[actionId],
     // This requester-private census is assembled by the Account's existing
     // readers; it has no server endpoint that could read E2EE references.
-    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan' || actionId === 'machines.setup.apply' || actionId === 'machines.setup.updates.apply' ? {} : {
+    ...(actionId === 'machines.managed.references.get' || actionId === 'machines.setup.plan'
+      || actionId === 'machines.setup.apply' || actionId === 'machines.setup.remove' || actionId === 'machines.setup.updates.apply' ? {} : {
       serverTransport: { method: 'POST' as const, path: managedMachineActionEndpointPathV1(actionId) },
     }),
     ...(effect ? { operation: {
@@ -107,15 +161,20 @@ export const MANAGED_MACHINE_ACTION_SPECS = MANAGED_MACHINE_ACTION_IDS_V1.map((a
     ) } : {}),
   };
 });
+}
+
+export const MANAGED_MACHINE_ACTION_SPECS: ReturnType<typeof createManagedMachineActionSpecs> = lazyActionSpecArray(createManagedMachineActionSpecs);
 
 
-export const MACHINE_PRESET_ACTION_SPECS = Object.freeze([
+export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => Object.freeze([
   ...(MACHINE_PRESET_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => {
     const verb = id.slice('machines.presets.'.length);
     const read = id === 'machines.presets.list' || id === 'machines.presets.get';
     const title = `${verb[0]!.toUpperCase()}${verb.slice(1)} Machine preset`;
     return {
-      id, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' }, title, description: `${title} on the exact authenticated Home. Preset changes affect future machines only.`,
+      id, executionPlacement: 'account', approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'direct' }, title, description: `${title} on the exact authenticated Home. Preset changes affect future machines only.`,
       safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger', placements: [],
       bindings: { mcpToolName: `machines_presets_${verb}`, voiceClientToolName: `machines_presets_${verb}` },
       surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -125,10 +184,12 @@ export const MACHINE_PRESET_ACTION_SPECS = Object.freeze([
       serverTransport: { method: 'POST', path: machinePresetActionEndpointPathV1(id) },
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
-] as const);
+] as const));
 
 
-export const EPHEMERAL_RUNNER_ACTION_SPECS = Object.freeze([
+export const EPHEMERAL_RUNNER_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => Object.freeze([
   ...(EPHEMERAL_RUNNER_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
     const titles: Record<EphemeralRunnerActionIdV1, string> = {
       'sessions.runner.activation.create': 'Create Temporary computer request',
@@ -137,7 +198,7 @@ export const EPHEMERAL_RUNNER_ACTION_SPECS = Object.freeze([
     };
     const isRead = actionId === 'sessions.runner.activation.get';
     return {
-      id: actionId, approval: isRead ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
+      id: actionId, executionPlacement: 'account', approval: isRead ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
       title: titles[actionId],
       description: `${titles[actionId]} on the exact authenticated Home.`,
       safety: actionId === 'sessions.runner.activation.cancel' ? 'danger' : 'safe',
@@ -151,10 +212,12 @@ export const EPHEMERAL_RUNNER_ACTION_SPECS = Object.freeze([
       serverTransport: EPHEMERAL_RUNNER_ACTION_TRANSPORTS_V1[actionId],
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
-] as const);
+] as const));
 
 
-export const MACHINE_POOL_ACTION_SPECS = Object.freeze([
+export const MACHINE_POOL_ACTION_SPECS: ActionSpecArrayConcat<readonly [
+  PreNormalizedActionSpec[],
+]> = lazyActionSpecArray(() => Object.freeze([
   ...(MACHINE_POOL_ACTION_IDS_V1.map((actionId): PreNormalizedActionSpec => {
     const verb = actionId.slice('machines.pools.'.length);
     const isDelete = actionId === 'machines.pools.delete';
@@ -170,7 +233,7 @@ export const MACHINE_POOL_ACTION_SPECS = Object.freeze([
       'machines.pools.resolve': 'Resolve Machine Pool target',
     };
     return {
-      id: actionId, approval: isRead ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
+      id: actionId, executionPlacement: 'account', approval: isRead ? { result: 'required' } : { result: 'optional', flow: 'deferred' },
       ...(isDelete ? { approvalPolicy: { uiConfirmation: 'policy' as const } } : {}),
       ...(isDelete ? { confirmVerb: { key: 'common.delete', fallback: 'Delete' }, irreversible: true as const } : {}),
       title: titles[actionId],
@@ -203,4 +266,4 @@ export const MACHINE_POOL_ACTION_SPECS = Object.freeze([
       },
     };
   }) satisfies readonly PreNormalizedActionSpec[]),
-] as const);
+] as const));

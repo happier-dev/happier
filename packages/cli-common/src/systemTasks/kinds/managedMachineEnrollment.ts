@@ -26,7 +26,7 @@ import { parseSshKnownHostLine } from './sshKnownHostLine.js';
 import { buildManagedNativeGuestCommand, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 
 export type ManagedNativeBootstrapIO = Readonly<{
-  exec(input: Readonly<{ command: string; input?: string; signal?: AbortSignal; timeoutMs?: number | null;
+  exec(input: Readonly<{ command: string; input?: string; signal?: AbortSignal; timeoutMs?: number | null; allowWake?: false;
     onStdoutChunk?: (text: string) => void; processConfig?: MachineProvisionerProcessConfigV1 }>): Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
   putFile(input: Readonly<{ path: string; bytes: Uint8Array; signal?: AbortSignal }>): Promise<void>;
 }>;

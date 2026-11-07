@@ -96,6 +96,7 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
     daemonState: daemonState ? {
       pid: daemonState.pid, httpPort: daemonState.httpPort, startedAt: daemonState.startedAt,
       startedWithCliVersion: daemonState.startedWithCliVersion,
+      ...(daemonState.machineId ? { machineId: daemonState.machineId } : {}),
       hasControlToken: Boolean(daemonState.controlToken), daemonLogPath: null,
     } : null,
     daemonLogs: [], doctorSnapshot: null, stackContext: null,

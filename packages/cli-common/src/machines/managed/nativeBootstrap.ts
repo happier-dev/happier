@@ -47,6 +47,7 @@ export function createManagedNativeBootstrapIO(correlation: Pick<ManagedEnrollme
         exec: async request => {
             const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
                 resource: correlation.resource.value, argv: ['sh', '-c', request.command],
+                ...(request.allowWake === false ? { allowWake: false } : {}),
                 ...(request.input === undefined ? {} : { inputBase64: encodeBase64(new TextEncoder().encode(request.input)) }),
                 ...(request.processConfig ? { processConfig: request.processConfig } : {}),
             }, request));

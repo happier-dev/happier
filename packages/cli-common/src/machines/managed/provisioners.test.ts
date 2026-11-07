@@ -17,6 +17,31 @@ const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', cu
 
 describe('Account managed power role preparation', () => {
     const selected = [{ contribution: launch.provider, occurrenceId: 'selected', descriptor: provisioner, acquireExecutionTarget: 'account' as const }];
+    it('reviews native diagnostics roles only for an explicit inspection read', async () => {
+        const nativeProvisioner = { ...provisioner, bootstrapTransport: { kind: 'native' as const, exec: 'exec', putFile: 'put-file' } };
+        const nativeMachine = { ...machine, reviewedFacts: { ...machine.reviewedFacts!, provisioner: nativeProvisioner } };
+        const readSelected = async () => [{ ...selected[0]!, descriptor: nativeProvisioner }];
+        expect(await prepareManagedPowerProvisionerAdmissionV1(nativeMachine, readSelected, 'machines.managed.inspect'))
+            .toEqual({ children: [{ action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' }] });
+        expect(await prepareManagedPowerProvisionerAdmissionV1(nativeMachine, readSelected, 'machines.managed.inspect',
+            { includeGuestDiagnostics: true })).toEqual({ children: [
+                { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
+                { action: { pluginId: 'acme.compute', localId: 'exec' }, role: 'exec' },
+            ] });
+    });
+    it('reviews retained native guest startup with power, excluding installer file delivery', async () => {
+        const nativeProvisioner = { ...provisioner, bootstrapTransport: { kind: 'native' as const, exec: 'exec', putFile: 'put-file' } };
+        const nativeMachine = { ...machine, enrolledMachineId: 'same-machine',
+            reviewedFacts: { ...machine.reviewedFacts!, provisioner: nativeProvisioner } };
+        const prepared = await prepareManagedPowerProvisionerAdmissionV1(nativeMachine,
+            async () => [{ ...selected[0]!, descriptor: nativeProvisioner }]);
+        expect(prepared).toEqual({ children: [
+            { action: { pluginId: 'acme.compute', localId: 'bootstrap' }, role: 'bootstrap' },
+            { action: { pluginId: 'acme.compute', localId: 'observe' }, role: 'inspect' },
+            { action: { pluginId: 'acme.compute', localId: 'change-power' }, role: 'power' },
+            { action: { pluginId: 'acme.compute', localId: 'exec' }, role: 'exec' },
+        ] });
+    });
     it.each(['permission_denied', 'server_unreachable', 'managed_response_invalid', 'cancelled'] as const)(
         'prepares no roles from a failed snapshot read without hiding control admission (%s)', async errorCode => {
         const failure = { ok: false as const, errorCode, error: errorCode };
@@ -60,14 +85,29 @@ describe('Account managed power role preparation', () => {
 });
 
 describe('provisioner host availability before acquisition', () => {
+    it.each([
+        { host: 'browser', browserReachable: false, selected: true, declared: 'account', target: 'daemon', available: true },
+        { host: 'browser', browserReachable: false, selected: false, declared: 'account', target: 'account', available: false },
+        { host: 'browser', browserReachable: true, selected: true, declared: 'account', target: 'account', available: true },
+        { host: 'native', browserReachable: false, selected: true, declared: 'account', target: 'account', available: true },
+        { host: 'browser', browserReachable: false, selected: true, declared: 'daemon', target: 'daemon', available: true },
+        { host: 'browser', browserReachable: false, selected: false, declared: 'daemon', target: 'daemon', available: false },
+    ] as const)('places $declared on $target with $host, reachable=$browserReachable, selected=$selected', value => {
+        const controller = { machineId: 'selected', installationId: 'installation' };
+        const input = { host: value.host, provisioner: { browserReachable: value.browserReachable },
+            acquireExecutionTarget: value.declared, ...(value.selected ? { controller } : {}) };
+        const result = readMachineProvisionerHostAvailability(input);
+        expect(result).toMatchObject({ available: value.available, executionTarget: value.target });
+        expect(result.controller).toEqual(value.target === 'daemon' && value.selected ? controller : undefined);
+    });
     it.each([undefined, false])('refuses browser allocation without a positively reachable recipe (%s)', browserReachable => {
         expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: { browserReachable } }))
-            .toEqual({ available: false, code: 'provider_unavailable' });
+            .toEqual({ available: false, code: 'provider_unavailable', executionTarget: 'account' });
     });
     it('keeps browser-reachable recipes and native host recipes available', () => {
         expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: { browserReachable: true } }))
-            .toEqual({ available: true });
+            .toEqual({ available: true, executionTarget: 'account' });
         expect(readMachineProvisionerHostAvailability({ host: 'native', provisioner: {} }))
-            .toEqual({ available: true });
+            .toEqual({ available: true, executionTarget: 'account' });
     });
 });

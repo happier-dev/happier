@@ -6,7 +6,7 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import type { MachineRetentionDefaultsV1, MachineRetentionOverrideV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
 import {
   createValidatedLaunchSnapshotV1Schema, ManagedControllerV1Schema, RetentionV1Schema,
-  type ManagedControllerV1,
+  type ManagedControllerV1, type ValidatedLaunchSnapshotV1,
 } from './managedMachineV1.js';
 import {
   ProviderPriceV1Schema, BillingCapabilitiesV1Schema, RetentionCapabilitiesV1Schema,
@@ -17,8 +17,10 @@ import {
   type ProviderNativeOptionFactsV1,
 } from './providerFactsV1.js';
 import { resolveMachineRetentionPolicyV1 } from './resolveMachineRetentionPolicyV1.js';
-import { MachineEnvironmentV1Schema, type MachineEnvironmentV1 } from './machineEnvironmentV1.js';
-import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from '../../plugins/contributions/machineProvisioners.js';
+import { MachineSetupV1Schema, type MachineSetupV1 } from './machineSetupV1.js';
+import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1,
+  type MachineProvisionerSelectionProjectionV1 } from '../../plugins/contributions/machineProvisioners.js';
+import { pluginJsonValuesEqual } from '../../plugins/contributions/jsonSchemaValues.js';
 
 export { resolveManagedConfigurationCost, formatProviderAmount, formatPriceUnit, presentManagedCost, presentManagedAcquireStep,
   formatRetentionDuration, describeRetention, formatManagedSizeBytes, managedSizeDimensions, describeManagedSize,
@@ -33,7 +35,7 @@ export const ManagedPresetSelectionV1Schema = lazyZodSchema(() => z.strictObject
 export function createManagedOneOffSelectionV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
   return z.strictObject({
     kind: z.literal('one-off'), homeId: id(), launch: createValidatedLaunchSnapshotV1Schema(choices),
-    controller: ManagedControllerV1Schema, retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
+    controller: z.optional(ManagedControllerV1Schema), retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
   });
 }
 export const ManagedOneOffSelectionV1Schema = lazyZodSchema(() => createManagedOneOffSelectionV1Schema(PluginJsonValueV2Schema));
@@ -43,7 +45,7 @@ export function createManagedCreationSelectionV1Schema<Choices extends z.core.$Z
 export const ManagedCreationSelectionV1Schema = lazyZodSchema(() => createManagedCreationSelectionV1Schema(PluginJsonValueV2Schema));
 export type ManagedCreationSelectionV1 = z.infer<typeof ManagedCreationSelectionV1Schema>;
 
-/** Presentation facts never become an acquisition or credential authority. */
+/** Reviewed facts retain the selected declaration; Account admission owns authority. */
 export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
   return z.strictObject({
     launch: createValidatedLaunchSnapshotV1Schema(choices), controller: z.optional(ManagedControllerV1Schema),
@@ -55,7 +57,7 @@ export function createManagedConfigurationFactsV1Schema<Choices extends z.core.$
     nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
     prerequisites: z.array(ManagedPrerequisiteV1Schema), retentionCapabilities: RetentionCapabilitiesV1Schema,
     retention: RetentionV1Schema, wakeOnAcceptedMessage: z.boolean(),
-    environment: z.optional(MachineEnvironmentV1Schema),
+    setup: z.optional(MachineSetupV1Schema),
     preset: z.optional(z.strictObject({ id: id(), revision: revision(), name: z.optional(id()) })),
   });
 }
@@ -68,7 +70,7 @@ export type ManagedConfigurationFactsV1 = z.infer<typeof ManagedConfigurationFac
 /** Call the sole category-policy owner once, then snapshot its concrete output. */
 export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType>(input: Readonly<{
   choicesSchema: Choices;
-  launch: z.infer<ReturnType<typeof createValidatedLaunchSnapshotV1Schema<Choices>>>;
+  launch: ValidatedLaunchSnapshotV1 & z.infer<ReturnType<typeof createValidatedLaunchSnapshotV1Schema<Choices>>>;
   controller?: ManagedControllerV1; optionStatus: ManagedConfigurationFactsV1['optionStatus'];
   provisioner?: MachineProvisionerContributionV1;
   prerequisites: readonly ManagedPrerequisiteV1[]; billing: BillingCapabilitiesV1;
@@ -76,24 +78,34 @@ export function buildManagedConfigurationFactsV1<Choices extends z.core.$ZodType
   prices?: readonly ProviderPriceFactV1[];
   localResources?: ManagedLocalResourceFactsV1;
   nativeFacts?: ProviderNativeOptionFactsV1;
-  environment?: MachineEnvironmentV1;
+  optionProjection?: MachineProvisionerSelectionProjectionV1;
+  setup?: MachineSetupV1;
   preset?: Readonly<{ id: string; revision: number; name?: string }> & MachineRetentionOverrideV1;
   machineOverride?: MachineRetentionOverrideV1; categoryPreferences?: MachineRetentionDefaultsV1;
-}>): z.infer<ReturnType<typeof createManagedConfigurationFactsV1Schema<Choices>>> {
-  const policy = resolveMachineRetentionPolicyV1({ billing: input.billing,
-    nativeCapabilities: input.retentionCapabilities, presetOverride: input.preset,
+}>): ManagedConfigurationFactsV1 & z.infer<ReturnType<typeof createManagedConfigurationFactsV1Schema<Choices>>> {
+  const projection = input.optionProjection;
+  const selected = projection?.kind === 'ready' && pluginJsonValuesEqual(projection.launch, input.launch.choices) ? projection : undefined;
+  const billing = selected?.billing ?? input.billing;
+  const retentionCapabilities = selected?.retention ?? input.retentionCapabilities;
+  const prices = selected ? selected.prices.length ? selected.prices : undefined : input.prices;
+  const nativeFacts = selected?.nativeFacts ?? input.nativeFacts;
+  const policy = resolveMachineRetentionPolicyV1({ billing,
+    nativeCapabilities: retentionCapabilities, presetOverride: input.preset,
     machineOverride: input.machineOverride, categoryPreferences: input.categoryPreferences });
-  return createManagedConfigurationFactsV1Schema(input.choicesSchema).parse({
+  const facts = createManagedConfigurationFactsV1Schema(input.choicesSchema).parse({
     launch: input.launch, ...(input.controller === undefined ? {} : { controller: input.controller }),
-    optionStatus: input.optionStatus,
+    optionStatus: input.optionStatus === 'current' && projection && !selected ? 'unavailable' : input.optionStatus,
     ...(input.provisioner === undefined ? {} : { provisioner: input.provisioner }),
-    prerequisites: input.prerequisites, billing: input.billing, retentionCapabilities: input.retentionCapabilities,
+    prerequisites: input.prerequisites, billing, retentionCapabilities,
     retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage,
-    ...(input.prices !== undefined ? { prices: input.prices } : {}),
+    ...(prices !== undefined ? { prices } : {}),
     ...(input.localResources !== undefined ? { localResources: input.localResources } : {}),
-    ...(input.nativeFacts !== undefined ? { nativeFacts: input.nativeFacts } : {}),
-    ...(input.environment !== undefined ? { environment: input.environment } : {}),
+    ...(nativeFacts !== undefined ? { nativeFacts } : {}),
+    ...(input.setup !== undefined ? { setup: input.setup } : {}),
     ...(input.preset ? { preset: { id: input.preset.id, revision: input.preset.revision,
       ...(input.preset.name !== undefined ? { name: input.preset.name } : {}) } } : {}),
   });
+  // Native adapters may retain frozen choices. Project the admitted JSON receipt
+  // without another validation or a runtime-specific structuredClone global.
+  return JSON.parse(JSON.stringify(facts)) as ManagedConfigurationFactsV1 & typeof facts;
 }

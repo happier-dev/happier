@@ -12,6 +12,156 @@
       "import": "./dist/organizationPolicy/readOrganizationPolicyFile.js",
       "default": "./dist/organizationPolicy/readOrganizationPolicyFile.js"
     },
+    "./machines/managed": {
+      "happier-source": "./src/machines/managed/index.ts",
+      "types": "./dist/machines/managed/index.d.ts",
+      "import": "./dist/machines/managed/index.js",
+      "default": "./dist/machines/managed/index.js"
+    },
+    "./connectedAccounts": {
+      "happier-source": "./src/connectedAccounts/index.ts",
+      "types": "./dist/connectedAccounts/index.d.ts",
+      "import": "./dist/connectedAccounts/index.js",
+      "default": "./dist/connectedAccounts/index.js"
+    },
+    "./plugins/http": {
+      "happier-source": "./src/plugins/http/index.ts",
+      "types": "./dist/plugins/http/index.d.ts",
+      "import": "./dist/plugins/http/index.js",
+      "default": "./dist/plugins/http/index.js"
+    },
+    "./plugins/http/contracts": {
+      "happier-source": "./src/plugins/http/contracts.ts",
+      "types": "./dist/plugins/http/contracts.d.ts",
+      "import": "./dist/plugins/http/contracts.js",
+      "default": "./dist/plugins/http/contracts.js"
+    },
+    "./machines/managed/provisioners": {
+      "happier-source": "./src/machines/managed/provisioners.ts",
+      "types": "./dist/machines/managed/provisioners.d.ts",
+      "import": "./dist/machines/managed/provisioners.js",
+      "default": "./dist/machines/managed/provisioners.js"
+    },
+    "./machines/managed/reconcile": {
+      "happier-source": "./src/machines/managed/reconcile.ts",
+      "types": "./dist/machines/managed/reconcile.d.ts",
+      "import": "./dist/machines/managed/reconcile.js",
+      "default": "./dist/machines/managed/reconcile.js"
+    },
+    "./plugins/registration/cleanupTimeout": {
+      "happier-source": "./src/plugins/registration/cleanupTimeout.ts",
+      "types": "./dist/plugins/registration/cleanupTimeout.d.ts",
+      "import": "./dist/plugins/registration/cleanupTimeout.js",
+      "default": "./dist/plugins/registration/cleanupTimeout.js"
+    },
+    "./plugins/registration": {
+      "happier-source": "./src/plugins/registration/index.ts",
+      "types": "./dist/plugins/registration/index.d.ts",
+      "import": "./dist/plugins/registration/index.js",
+      "default": "./dist/plugins/registration/index.js"
+    },
+    "./plugins/registration/actionInputParser": {
+      "happier-source": "./src/plugins/registration/actionInputParser.ts",
+      "types": "./dist/plugins/registration/actionInputParser.d.ts",
+      "import": "./dist/plugins/registration/actionInputParser.js",
+      "default": "./dist/plugins/registration/actionInputParser.js"
+    },
+    "./plugins/registration/staticCapture": {
+      "happier-source": "./src/plugins/registration/staticCapture.ts",
+      "types": "./dist/plugins/registration/staticCapture.d.ts",
+      "import": "./dist/plugins/registration/staticCapture.js",
+      "default": "./dist/plugins/registration/staticCapture.js"
+    },
+    "./plugins/registration/contracts": {
+      "happier-source": "./src/plugins/registration/contracts.ts",
+      "types": "./dist/plugins/registration/contracts.d.ts",
+      "import": "./dist/plugins/registration/contracts.js",
+      "default": "./dist/plugins/registration/contracts.js"
+    },
+    "./plugins/registration/targetedContributions": {
+      "happier-source": "./src/plugins/registration/targetedContributions.ts",
+      "types": "./dist/plugins/registration/targetedContributions.d.ts",
+      "import": "./dist/plugins/registration/targetedContributions.js",
+      "default": "./dist/plugins/registration/targetedContributions.js"
+    },
+    "./plugins/registration/targetedContributionAdmission": {
+      "happier-source": "./src/plugins/registration/targetedContributionAdmission.ts",
+      "types": "./dist/plugins/registration/targetedContributionAdmission.d.ts",
+      "import": "./dist/plugins/registration/targetedContributionAdmission.js",
+      "default": "./dist/plugins/registration/targetedContributionAdmission.js"
+    },
+    "./plugins/registration/admittedTargetedOperation": {
+      "happier-source": "./src/plugins/registration/admittedTargetedOperation.ts",
+      "types": "./dist/plugins/registration/admittedTargetedOperation.d.ts",
+      "import": "./dist/plugins/registration/admittedTargetedOperation.js",
+      "default": "./dist/plugins/registration/admittedTargetedOperation.js"
+    },
+    "./plugins/registration/targetedOperationInput": {
+      "happier-source": "./src/plugins/registration/targetedOperationInput.ts",
+      "types": "./dist/plugins/registration/targetedOperationInput.d.ts",
+      "import": "./dist/plugins/registration/targetedOperationInput.js",
+      "default": "./dist/plugins/registration/targetedOperationInput.js"
+    },
+    "./plugins/registration/targetedOperationValidation": {
+      "happier-source": "./src/plugins/registration/targetedOperationValidation.ts",
+      "types": "./dist/plugins/registration/targetedOperationValidation.d.ts",
+      "import": "./dist/plugins/registration/targetedOperationValidation.js",
+      "default": "./dist/plugins/registration/targetedOperationValidation.js"
+    },
+    "./plugins/registration/staticRegistrationSnapshots": {
+      "happier-source": "./src/plugins/registration/staticRegistrationSnapshots.ts",
+      "types": "./dist/plugins/registration/staticRegistrationSnapshots.d.ts",
+      "import": "./dist/plugins/registration/staticRegistrationSnapshots.js",
+      "default": "./dist/plugins/registration/staticRegistrationSnapshots.js"
+    },
+    "./plugins/registration/targetedContributionRendererChain": {
+      "happier-source": "./src/plugins/registration/targetedContributionRendererChain.ts",
+      "types": "./dist/plugins/registration/targetedContributionRendererChain.d.ts",
+      "import": "./dist/plugins/registration/targetedContributionRendererChain.js",
+      "default": "./dist/plugins/registration/targetedContributionRendererChain.js"
+    },
+    "./plugins/registration/authoringProjections": {
+      "happier-source": "./src/plugins/registration/authoringProjections.ts",
+      "types": "./dist/plugins/registration/authoringProjections.d.ts",
+      "import": "./dist/plugins/registration/authoringProjections.js",
+      "default": "./dist/plugins/registration/authoringProjections.js"
+    },
+    "./plugins/registration/scope": {
+      "happier-source": "./src/plugins/registration/scope.ts",
+      "types": "./dist/plugins/registration/scope.d.ts",
+      "import": "./dist/plugins/registration/scope.js",
+      "default": "./dist/plugins/registration/scope.js"
+    },
+    "./plugins/registration/actionHandlerInvocation": {
+      "happier-source": "./src/plugins/registration/actionHandlerInvocation.ts",
+      "types": "./dist/plugins/registration/actionHandlerInvocation.d.ts",
+      "import": "./dist/plugins/registration/actionHandlerInvocation.js",
+      "default": "./dist/plugins/registration/actionHandlerInvocation.js"
+    },
+    "./plugins/registration/accountActionSettings": {
+      "happier-source": "./src/plugins/registration/accountActionSettings.ts",
+      "types": "./dist/plugins/registration/accountActionSettings.d.ts",
+      "import": "./dist/plugins/registration/accountActionSettings.js",
+      "default": "./dist/plugins/registration/accountActionSettings.js"
+    },
+    "./plugins/errors": {
+      "happier-source": "./src/plugins/errors.ts",
+      "types": "./dist/plugins/errors.d.ts",
+      "import": "./dist/plugins/errors.js",
+      "default": "./dist/plugins/errors.js"
+    },
+    "./plugins/ui": {
+      "happier-source": "./src/plugins/ui/index.ts",
+      "types": "./dist/plugins/ui/index.d.ts",
+      "import": "./dist/plugins/ui/index.js",
+      "default": "./dist/plugins/ui/index.js"
+    },
+    "./fs/jsonOwnerFileLock": {
+      "happier-source": "./src/fs/jsonOwnerFileLock.ts",
+      "types": "./dist/fs/jsonOwnerFileLock.d.ts",
+      "import": "./dist/fs/jsonOwnerFileLock.js",
+      "default": "./dist/fs/jsonOwnerFileLock.js"
+    },
     "./machineSetup/dockerEngine": {
       "happier-source": "./src/machineSetup/dockerEngine.ts",
       "types": "./dist/machineSetup/dockerEngine.d.ts",
@@ -29,24 +179,6 @@
       "types": "./dist/machineSetup/index.d.ts",
       "import": "./dist/machineSetup/index.js",
       "default": "./dist/machineSetup/index.js"
-    },
-    "./plugins/registration/staticCapture": {
-      "happier-source": "./src/plugins/registration/staticCapture.ts",
-      "types": "./dist/plugins/registration/staticCapture.d.ts",
-      "import": "./dist/plugins/registration/staticCapture.js",
-      "default": "./dist/plugins/registration/staticCapture.js"
-    },
-    "./plugins/registration/scope": {
-      "happier-source": "./src/plugins/registration/scope.ts",
-      "types": "./dist/plugins/registration/scope.d.ts",
-      "import": "./dist/plugins/registration/scope.js",
-      "default": "./dist/plugins/registration/scope.js"
-    },
-    "./connectedAccounts": {
-      "happier-source": "./src/connectedAccounts/index.ts",
-      "types": "./dist/connectedAccounts/index.d.ts",
-      "import": "./dist/connectedAccounts/index.js",
-      "default": "./dist/connectedAccounts/index.js"
     },
     "./machineLima": {
       "types": "./machineLima.d.mts",
@@ -427,6 +559,12 @@
       "import": "./dist/ssh/index.js",
       "default": "./dist/ssh/index.js"
     },
+    "./ssh/keyscanInvocation": {
+      "happier-source": "./src/ssh/keyscanInvocation.ts",
+      "types": "./dist/ssh/keyscanInvocation.d.ts",
+      "import": "./dist/ssh/keyscanInvocation.js",
+      "default": "./dist/ssh/keyscanInvocation.js"
+    },
     "./output": {
       "happier-source": "./src/output/index.ts",
       "types": "./dist/output/index.d.ts",
@@ -451,84 +589,23 @@
       "import": "./dist/systemTasks/nativeRemoteSshBootstrap.js",
       "default": "./dist/systemTasks/nativeRemoteSshBootstrap.js"
     },
+    "./systemTasks/kinds/sshKnownHostLine": {
+      "happier-source": "./src/systemTasks/kinds/sshKnownHostLine.ts",
+      "types": "./dist/systemTasks/kinds/sshKnownHostLine.d.ts",
+      "import": "./dist/systemTasks/kinds/sshKnownHostLine.js",
+      "default": "./dist/systemTasks/kinds/sshKnownHostLine.js"
+    },
     "./windowsCommandInvocation": {
       "types": "./windowsCommandInvocation.d.mts",
       "import": "./windowsCommandInvocation.mjs",
       "default": "./windowsCommandInvocation.mjs"
-    },
-    "./plugins/errors": {
-      "happier-source": "./src/plugins/errors.ts",
-      "types": "./dist/plugins/errors.d.ts",
-      "import": "./dist/plugins/errors.js",
-      "default": "./dist/plugins/errors.js"
-    },
-    "./plugins/ui": {
-      "happier-source": "./src/plugins/ui/index.ts",
-      "types": "./dist/plugins/ui/index.d.ts",
-      "import": "./dist/plugins/ui/index.js",
-      "default": "./dist/plugins/ui/index.js"
-    },
-    "./plugins/registration/contracts": {
-      "happier-source": "./src/plugins/registration/contracts.ts",
-      "types": "./dist/plugins/registration/contracts.d.ts",
-      "import": "./dist/plugins/registration/contracts.js",
-      "default": "./dist/plugins/registration/contracts.js"
-    },
-    "./plugins/registration/actionHandlerInvocation": {
-      "happier-source": "./src/plugins/registration/actionHandlerInvocation.ts",
-      "types": "./dist/plugins/registration/actionHandlerInvocation.d.ts",
-      "import": "./dist/plugins/registration/actionHandlerInvocation.js",
-      "default": "./dist/plugins/registration/actionHandlerInvocation.js"
-    },
-    "./plugins/registration/cleanupTimeout": {
-      "happier-source": "./src/plugins/registration/cleanupTimeout.ts",
-      "types": "./dist/plugins/registration/cleanupTimeout.d.ts",
-      "import": "./dist/plugins/registration/cleanupTimeout.js",
-      "default": "./dist/plugins/registration/cleanupTimeout.js"
-    },
-    "./machines/managed": {
-      "happier-source": "./src/machines/managed/index.ts",
-      "types": "./dist/machines/managed/index.d.ts",
-      "import": "./dist/machines/managed/index.js",
-      "default": "./dist/machines/managed/index.js"
-    },
-    "./plugins/registration": {
-      "happier-source": "./src/plugins/registration/index.ts",
-      "types": "./dist/plugins/registration/index.d.ts",
-      "import": "./dist/plugins/registration/index.js",
-      "default": "./dist/plugins/registration/index.js"
-    },
-    "./plugins/registration/actionInputParser": {
-      "happier-source": "./src/plugins/registration/actionInputParser.ts",
-      "types": "./dist/plugins/registration/actionInputParser.d.ts",
-      "import": "./dist/plugins/registration/actionInputParser.js",
-      "default": "./dist/plugins/registration/actionInputParser.js"
-    },
-    "./plugins/http": {
-      "happier-source": "./src/plugins/http/index.ts",
-      "types": "./dist/plugins/http/index.d.ts",
-      "import": "./dist/plugins/http/index.js",
-      "default": "./dist/plugins/http/index.js"
-    },
-    "./plugins/http/contracts": {
-      "happier-source": "./src/plugins/http/contracts.ts",
-      "types": "./dist/plugins/http/contracts.d.ts",
-      "import": "./dist/plugins/http/contracts.js",
-      "default": "./dist/plugins/http/contracts.js"
-    },
-    "./fs/jsonOwnerFileLock": {
-      "happier-source": "./src/fs/jsonOwnerFileLock.ts",
-      "types": "./dist/fs/jsonOwnerFileLock.d.ts",
-      "import": "./dist/fs/jsonOwnerFileLock.js",
-      "default": "./dist/fs/jsonOwnerFileLock.js"
-    },
-    "./plugins/registration/accountActionSettings": {
-      "happier-source": "./src/plugins/registration/accountActionSettings.ts",
-      "types": "./dist/plugins/registration/accountActionSettings.d.ts",
-      "import": "./dist/plugins/registration/accountActionSettings.js",
-      "default": "./dist/plugins/registration/accountActionSettings.js"
     }
   },
+  "files": [
+    "dist",
+    "native/windows",
+    "sourceRuntimeDependencies.mjs", "workspaceBundleLockPriority.mjs"
+  ],
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/build.mjs",
@@ -543,6 +620,7 @@
     "test:local": "node ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts && pnpm --silent run test:dist:local",
     "test:mutagen-engine:live": "../../apps/stack/bin/hstack-exec --script=test:mutagen-engine:live:local",
     "test:mutagen-engine:live:local": "node scripts/runMutagenEngineLiveTest.mjs",
+    "test:native:windows-service-launcher": "../../apps/stack/bin/hstack-exec -- powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File native/windows/service-launcher.test.ps1",
     "test:dist:local": "node --import ../../scripts/testing/nodeHomeSetup.mjs --test fileChangeObserver.test.mjs processInstance.test.mjs tests/componentArtifacts.cliDistBuildLock.test.mjs tests/componentArtifacts.test.mjs tests/downloadGitHubReleaseAsset.test.mjs tests/exports.test.mjs tests/firstPartyRuntime.componentCatalog.test.mjs tests/firstPartyRuntime.installLayout.test.mjs tests/firstPartyRuntime.installVersionedPayload.test.mjs tests/firstPartyRuntime.promoteVersionedPayload.test.mjs tests/firstPartyRuntime.pruneRetainedVersions.test.mjs tests/firstPartyRuntime.relayRuntime.test.mjs tests/firstPartyRuntime.retentionPolicy.test.mjs tests/firstPartyRuntime.syncInstalledShims.test.mjs tests/links.test.mjs tests/nodeRelease.test.mjs tests/pinnedRunnerSnapshot.test.mjs tests/service.test.mjs tests/update.test.mjs tests/vendorBundledPackageRuntimeDependencies.test.mjs tests/workspaces.test.mjs"
   },
   "devDependencies": {

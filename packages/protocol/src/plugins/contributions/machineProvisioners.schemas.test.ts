@@ -18,6 +18,97 @@ import { RetentionCapabilitiesV1Schema } from '../../machines/managed/providerFa
 import { PluginManifestV2Schema } from '../manifest/v2.js';
 import { PluginContributesV2Schema } from './v2.js';
 import { compilePluginJsonSchema } from '../actions/jsonSchemaValidation.js';
+import { ManagedControllerIntentReportV1Schema, ManagedControllerReportV1Schema } from '../../machines/managed/actionsV1.js';
+
+it('carries only the generated guest public host key through closed acquire and bootstrap roles', () => {
+  const native = defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' });
+  const roles = defineMachineProvisionerSchemas({ launch: native, resource: native });
+  const guestHostPublicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const acquireWithPin = { launch: { name: 'guest' }, guestHostPublicKey };
+  const bootstrapWithPin = { resource: { name: 'guest' }, guestHostPublicKey };
+  expect(roles.acquireInput.parse(acquireWithPin)).toEqual(acquireWithPin);
+  expect(compilePluginJsonSchema(roles.acquireInput.jsonSchema)(acquireWithPin)).toBe(true);
+  expect(roles.bootstrapInput.parse(bootstrapWithPin)).toEqual(bootstrapWithPin);
+  expect(compilePluginJsonSchema(roles.bootstrapInput.jsonSchema)(bootstrapWithPin)).toBe(true);
+  expect(roles.acquireInput.safeParse({ ...acquireWithPin, guestHostPrivateKey: 'private' }).success).toBe(false);
+  expect(roles.bootstrapInput.safeParse({ ...bootstrapWithPin, guestHostPublicKey: `${guestHostPublicKey}\nruncmd: injected` }).success).toBe(false);
+});
+
+it('carries closed pending deletion through authored roles and the strict Home intent report', () => {
+  const empty = defineProtocolObject({}, { policy: 'closed' });
+  const roles = provisioners.defineMachineProvisionerReconciliationSchemas({ launch: empty, resource: empty, nativeOperation: empty });
+  const result = roles.destroyResult.parse({ kind: 'pending' });
+  expect(compilePluginJsonSchema(roles.destroyResult.jsonSchema)(result)).toBe(true);
+  expect(provisioners.MachineProvisionerDestroyResultV1Schema.parse(result)).toEqual({ kind: 'pending' });
+  expect(ManagedControllerIntentReportV1Schema.parse({ homeId: 'home', managedId: 'managed', requestId: 'delete',
+    expectedIntentRevision: 1, controller: { machineId: 'controller', installationId: 'installation' }, result }).result).toEqual(result);
+  for (const invalid of [{ kind: 'pending', code: 'provider_unavailable' },
+    { kind: 'pending', nativeCause: { httpStatusClass: '5xx' } }]) {
+    expect(roles.destroyResult.safeParse(invalid).success).toBe(false);
+    expect(compilePluginJsonSchema(roles.destroyResult.jsonSchema)(invalid)).toBe(false);
+  }
+  expect(provisioners.MachineProvisionerPowerResultV1Schema.safeParse(result).success).toBe(false);
+});
+
+it('carries positive accepted startup from the authored acquisition result through the strict Home report reader', () => {
+  const roles = defineMachineProvisionerSchemas({ launch: defineProtocolObject({}, { policy: 'closed' }),
+    resource: defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }) });
+  const result = { kind: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'guest' },
+    schemaVersion: 1, value: { name: 'accepted-start' } }, startPending: true };
+  const produced = roles.acquireResult.parse(result);
+  expect(produced).toEqual(result);
+  expect(compilePluginJsonSchema(roles.acquireResult.jsonSchema)(produced)).toBe(true);
+  const report = ManagedControllerReportV1Schema.parse({ homeId: 'home', managedId: 'managed', requestId: 'creation',
+    expectedIntentRevision: 1, controller: { machineId: 'controller', installationId: 'installation' }, result: produced });
+  expect(report.result).toEqual(result);
+  expect(roles.acquireResult.safeParse({ ...result, startPending: false }).success).toBe(false);
+  expect(roles.acquireResult.safeParse({ ...result, startPending: { nativeMessage: 'private' } }).success).toBe(false);
+});
+
+it('admits declared native header delivery and demanded qualification without granting undeclared roles', () => {
+  const descriptor = nativeDurationManifest().contributes.machineProvisioners[0]!;
+  const native = { ...descriptor, nativeCredentialDelivery: {
+    apply: 'native-apply', transports: ['https_headers'], preservesEndpoint: true, perBindingMatching: true,
+  } };
+  const parsed = provisioners.MachineProvisionerContributionV1Schema.safeParse(native);
+  expect(parsed.success).toBe(true);
+  if (parsed.success) expect(provisioners.readMachineProvisionerActionRolesV1(parsed.data))
+    .toContainEqual({ role: 'nativeCredentialApply', action: 'native-apply' });
+  expect(provisioners.MachineProvisionerCheckResultV1Schema.safeParse({ available: true,
+    nativeCredentialDelivery: { status: 'supported' } }).success).toBe(true);
+  expect(provisioners.MachineProvisionerCheckResultV1Schema.safeParse({ available: true,
+    nativeCredentialDelivery: { status: 'supported', credential: 'forbidden' } }).success).toBe(false);
+  expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...native,
+    nativeCredentialDelivery: { ...native.nativeCredentialDelivery, arbitraryPolicy: true } }).success).toBe(false);
+});
+
+it('admits the native apply role only with its exact closed resource value schema', () => {
+  const base = nativeDurationManifest();
+  const descriptor = base.contributes.machineProvisioners[0]!;
+  const authored = defineMachineProvisionerSchemas({
+    launch: defineProtocolObject({}, { policy: 'closed' }),
+    resource: defineProtocolObject({ name: defineProtocolString() }, { policy: 'closed' }),
+  }).nativeCredentialApplyInput;
+  const inputSchema = authored.jsonSchema;
+  const manifest = { ...base, contributes: { ...base.contributes,
+    machineProvisioners: [{ ...descriptor, nativeCredentialDelivery: {
+      apply: 'native-apply', transports: ['https_headers'], preservesEndpoint: true, perBindingMatching: true,
+    } }],
+    actions: [...base.contributes.actions, { ...base.contributes.actions[0], id: 'native-apply',
+      dangerLevel: 'externalSideEffect', inputSchema,
+      resultSchema: provisioners.MachineProvisionerNativeCredentialApplyResultV1Schema.jsonSchema,
+    }],
+  } };
+  const result = PluginManifestV2Schema.safeParse(manifest);
+  expect(result.success, result.success ? '' : JSON.stringify(result.error.issues)).toBe(true);
+  const validate = compilePluginJsonSchema(authored.jsonSchema);
+  const input = { resource: { contributionRef: { pluginId: base.id, localId: descriptor.id },
+    schemaVersion: 1, value: { name: 'guest' } }, baseline: { kind: 'allow-all' }, bindings: [] };
+  expect(validate(input)).toBe(true);
+  expect(authored.safeParse(input).success).toBe(true);
+  expect(authored.safeParse({ ...input, resource: { ...input.resource, value: { name: 'guest', policy: 'unadmitted' } } }).success).toBe(false);
+  expect(validate({ ...input, resource: { ...input.resource, value: { name: 'guest', policy: 'unadmitted' } } })).toBe(false);
+});
 
 function nativeDurationManifest() {
   const timeout = defineProtocolNumber({
@@ -139,18 +230,36 @@ function nativeDurationManifest() {
 }
 
 describe('public machine provisioner role schemas', () => {
-  it('retains optional declared enrollment roles through strict manifest admission', () => {
+  it('retains older optional result snapshots while rejecting changed retained fields and native values', () => {
     const manifest = nativeDurationManifest();
-    expect(PluginManifestV2Schema.parse(manifest).contributes.machineProvisioners[0]).not.toHaveProperty('enrollmentRole');
-    for (const enrollmentRole of ['server', 'personal', 'sandbox']) {
-      const declared = { ...manifest, contributes: { ...manifest.contributes,
-        machineProvisioners: [{ ...manifest.contributes.machineProvisioners[0], enrollmentRole }] } };
-      expect(PluginManifestV2Schema.parse(declared).contributes.machineProvisioners[0]).toHaveProperty('enrollmentRole', enrollmentRole);
-    }
-    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({
-      ...manifest.contributes.machineProvisioners[0], enrollmentRole: 'guessed',
-    }).success).toBe(false);
+    const snapshot = structuredClone(manifest);
+    const check = snapshot.contributes.actions.find(action => action.id === 'check')!;
+    delete check.resultSchema.properties!.nativeCredentialDelivery;
+    const inspect = snapshot.contributes.actions.find(action => action.id === 'inspect')!;
+    delete inspect.resultSchema.properties!.nativeCause;
+    const options = snapshot.contributes.actions.find(action => action.id === 'options')!.resultSchema;
+    delete options.properties!.base!.properties!.billing;
+    for (const dimension of Object.values(options.properties!.dimensions!.properties!)) delete dimension.items!.properties!.billing;
+    const olderBound = snapshot.contributes.actions.find(action => action.id === 'acquire')!.resultSchema.oneOf!
+      .find(arm => arm.properties?.kind?.const === 'bound')!;
+    delete olderBound.properties!.startPending;
+    expect(PluginManifestV2Schema.safeParse(snapshot).success).toBe(true);
+    const changed = structuredClone(snapshot);
+    changed.contributes.actions.find(action => action.id === 'check')!.resultSchema.properties!.available = { type: 'string' };
+    expect(PluginManifestV2Schema.safeParse(changed).success).toBe(false);
+    const changedNative = structuredClone(snapshot);
+    const acquire = changedNative.contributes.actions.find(action => action.id === 'acquire')!;
+    const bound = acquire.resultSchema.oneOf!.find(arm => arm.properties?.kind?.const === 'bound')!;
+    bound.properties!.resource!.properties!.value = { type: 'object', properties: {}, additionalProperties: false };
+    expect(PluginManifestV2Schema.safeParse(changedNative).success).toBe(false);
+    // Structural manifest parsing admits the array shape; the role admission
+    // must still apply the normalizer's semantic checks to declared documents.
+    const invalid = structuredClone(snapshot);
+    const input = invalid.contributes.actions.find(action => action.id === 'acquire')!.inputSchema;
+    input.required!.push(input.required![0]!);
+    expect(() => PluginManifestV2Schema.safeParse(invalid)).toThrow(Error);
   });
+
   it('admits Account and native provisioner roles through the same strict contribution owner', () => {
     const base = nativeDurationManifest().contributes;
     const portable = { ...base,
@@ -183,34 +292,109 @@ describe('public machine provisioner role schemas', () => {
     }] }).success).toBe(false);
   });
 
-
-  it('retains older optional result snapshots while rejecting changed retained fields and native values', () => {
-    const manifest = nativeDurationManifest();
-    const snapshot = structuredClone(manifest);
-    const check = snapshot.contributes.actions.find(action => action.id === 'check')!;
-    delete check.resultSchema.properties!.nativeCredentialDelivery;
-    const inspect = snapshot.contributes.actions.find(action => action.id === 'inspect')!;
-    delete inspect.resultSchema.properties!.nativeCause;
-    const olderBound = snapshot.contributes.actions.find(action => action.id === 'acquire')!.resultSchema.oneOf!
-      .find(arm => arm.properties?.kind?.const === 'bound')!;
-    delete olderBound.properties!.startPending;
-    expect(PluginManifestV2Schema.safeParse(snapshot).success).toBe(true);
-    const changed = structuredClone(snapshot);
-    changed.contributes.actions.find(action => action.id === 'check')!.resultSchema.properties!.available = { type: 'string' };
-    expect(PluginManifestV2Schema.safeParse(changed).success).toBe(false);
-    const changedNative = structuredClone(snapshot);
-    const acquire = changedNative.contributes.actions.find(action => action.id === 'acquire')!;
-    const bound = acquire.resultSchema.oneOf!.find(arm => arm.properties?.kind?.const === 'bound')!;
-    bound.properties!.resource!.properties!.value = { type: 'object', properties: {}, additionalProperties: false };
-    expect(PluginManifestV2Schema.safeParse(changedNative).success).toBe(false);
-    // Structural manifest parsing admits the array shape; the role admission
-    // must still apply the normalizer's semantic checks to declared documents.
-    const invalid = structuredClone(snapshot);
-    const input = invalid.contributes.actions.find(action => action.id === 'acquire')!.inputSchema;
-    input.required!.push(input.required![0]!);
-    expect(() => PluginManifestV2Schema.safeParse(invalid)).toThrow(Error);
+  it('admits conditional credential routing without acquisition hostAccess permission proof', () => {
+    const base = nativeDurationManifest();
+    const requirement = { purpose: 'native-auth', optionalWhen: { op: 'eq' as const, path: 'timeoutMs', value: 1000 } };
+    const manifest = { ...base, contributes: { ...base.contributes,
+      machineProvisioners: [{ ...base.contributes.machineProvisioners[0], credentialPurposeRequirements: [requirement] }],
+    } };
+    const parsed = PluginManifestV2Schema.safeParse(manifest);
+    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
+    const descriptor = provisioners.MachineProvisionerContributionV1Schema.parse(manifest.contributes.machineProvisioners[0]);
+    expect(provisioners.isMachineProvisionerCredentialPurposeRequiredV1(descriptor, 'native-auth', { timeoutMs: 1000 })).toBe(false);
+    expect(provisioners.isMachineProvisionerCredentialPurposeRequiredV1(descriptor, 'native-auth', { timeoutMs: 2000 })).toBe(true);
+    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({ ...descriptor,
+      credentialPurposeRequirements: [{ ...requirement, optionalWhen: { ...requirement.optionalWhen, path: 'missing' } }],
+    }).success).toBe(false);
   });
 
+  it('retains optional declared enrollment roles through strict manifest admission', () => {
+    const manifest = nativeDurationManifest();
+    expect(PluginManifestV2Schema.parse(manifest).contributes.machineProvisioners[0]).not.toHaveProperty('enrollmentRole');
+    for (const enrollmentRole of ['server', 'personal', 'sandbox']) {
+      const declared = { ...manifest, contributes: { ...manifest.contributes,
+        machineProvisioners: [{ ...manifest.contributes.machineProvisioners[0], enrollmentRole }] } };
+      expect(PluginManifestV2Schema.parse(declared).contributes.machineProvisioners[0]).toHaveProperty('enrollmentRole', enrollmentRole);
+    }
+    expect(provisioners.MachineProvisionerContributionV1Schema.safeParse({
+      ...manifest.contributes.machineProvisioners[0], enrollmentRole: 'guessed',
+    }).success).toBe(false);
+  });
+  it('admits guest platforms on base and dimension facts through both public options readers', () => {
+    for (const guestPlatform of ['linux', 'darwin', 'windows']) {
+      const options = { base: { launch: {}, guestPlatform }, dimensions: {
+        size: [{ id: 'small', title: 'Small', assignments: [], guestPlatform }],
+        image: [{ id: 'native', title: 'Native', assignments: [], guestPlatform }],
+        location: [], network: [], duration: [],
+      } };
+      expect(provisioners.MachineProvisionerOptionsResultV1Schema.parse(options)).toEqual(options);
+      expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse(options)).toEqual(options);
+    }
+    expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ base: { launch: {}, guestPlatform: 'win32' },
+      dimensions: { size: [], image: [], location: [], network: [], duration: [] } }).success).toBe(false);
+  });
+  it('admits optional enrollment roles on base and dimension facts through both public options readers', () => {
+    for (const enrollmentRole of ['server', 'personal', 'sandbox']) {
+      const options = { base: { launch: {}, enrollmentRole }, dimensions: {
+        size: [{ id: 'small', title: 'Small', assignments: [], enrollmentRole }],
+        image: [{ id: 'native', title: 'Native', assignments: [], enrollmentRole }],
+        location: [], network: [], duration: [],
+      } };
+      expect(provisioners.MachineProvisionerOptionsResultV1Schema.parse(options)).toEqual(options);
+      expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse(options)).toEqual(options);
+    }
+    expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ base: { launch: {}, enrollmentRole: 'guessed' },
+      dimensions: { size: [], image: [], location: [], network: [], duration: [] } }).success).toBe(false);
+  });
+  it('projects only declared enrollment role facts and refuses contradictory selected declarations without an ambiguous role', () => {
+    const launch = defineProtocolObject({}, { policy: 'closed' });
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+    const project = (options: provisioners.MachineProvisionerOptionsResultV1, selection: provisioners.MachineProvisionerSelectionV1 = {}) =>
+      provisioners.projectMachineProvisionerSelectionV1({ options, selection, launchSchema: launch.jsonSchema });
+    expect(project({ base: { launch: {} }, dimensions })).not.toHaveProperty('enrollmentRole');
+    const server = { base: { launch: {}, enrollmentRole: 'server' as const }, dimensions };
+    expect(project(server)).toMatchObject({ kind: 'ready', enrollmentRole: 'server' });
+    const sandbox = { id: 'sandbox', title: 'Sandbox', assignments: [], enrollmentRole: 'sandbox' as const };
+    const personal = { ...sandbox, id: 'personal', enrollmentRole: 'personal' as const };
+    const selected = { base: { launch: {} }, dimensions: { ...dimensions, image: [sandbox, personal] } };
+    expect(project(selected)).not.toHaveProperty('enrollmentRole');
+    expect(project(selected, { image: 'sandbox' })).toMatchObject({ kind: 'ready', enrollmentRole: 'sandbox' });
+    expect(project(selected, { image: 'personal' })).toMatchObject({ kind: 'ready', enrollmentRole: 'personal' });
+    const baseConflict = project({ ...server, dimensions: selected.dimensions }, { image: 'sandbox' });
+    expect(baseConflict).toMatchObject({ kind: 'invalid', code: 'conflicting_enrollment_role' });
+    expect(baseConflict).not.toHaveProperty('enrollmentRole');
+    const optionConflict = project({ ...selected, dimensions: { ...selected.dimensions, size: [personal] } },
+      { size: 'personal', image: 'sandbox' });
+    expect(optionConflict).toMatchObject({ kind: 'invalid', code: 'conflicting_enrollment_role' });
+    expect(optionConflict).not.toHaveProperty('enrollmentRole');
+    const matching = { ...sandbox, enrollmentRole: 'server' as const };
+    expect(project({ ...server, dimensions: { ...dimensions, image: [matching] } }, { image: 'sandbox' }))
+      .toMatchObject({ kind: 'ready', enrollmentRole: 'server' });
+    const retainedConflict = project({ ...server, dimensions: { ...dimensions, size: [sandbox], image: [matching] } },
+      { size: 'sandbox', image: 'sandbox' });
+    expect(retainedConflict).toMatchObject({ kind: 'invalid', code: 'conflicting_enrollment_role' });
+    expect(retainedConflict).not.toHaveProperty('enrollmentRole');
+  });
+  it('projects only declared guest platform facts and refuses contradictory selected declarations', () => {
+    const launch = defineProtocolObject({}, { policy: 'closed' });
+    const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
+    const project = (options: provisioners.MachineProvisionerOptionsResultV1, selection: provisioners.MachineProvisionerSelectionV1 = {}) =>
+      provisioners.projectMachineProvisionerSelectionV1({ options, selection, launchSchema: launch.jsonSchema });
+    expect(project({ base: { launch: {} }, dimensions })).not.toHaveProperty('guestPlatform');
+    const linux = { base: { launch: {}, guestPlatform: 'linux' as const }, dimensions };
+    expect(project(linux)).toMatchObject({ kind: 'ready', guestPlatform: 'linux' });
+    const image = { id: 'native', title: 'Native', assignments: [], guestPlatform: 'darwin' as const };
+    const selected = { base: { launch: {} }, dimensions: { ...dimensions, image: [image] } };
+    expect(project(selected)).not.toHaveProperty('guestPlatform');
+    expect(project(selected, { image: 'native' })).toMatchObject({ kind: 'ready', guestPlatform: 'darwin' });
+    expect(project({ ...linux, dimensions: selected.dimensions }, { image: 'native' }))
+      .toMatchObject({ kind: 'invalid', code: 'conflicting_guest_platform' });
+    expect(project({ ...selected, dimensions: { ...selected.dimensions, size: [
+      { id: 'small', title: 'Small', assignments: [], guestPlatform: 'windows' as const },
+    ] } }, { size: 'small', image: 'native' })).toMatchObject({ kind: 'invalid', code: 'conflicting_guest_platform' });
+    expect(project({ ...linux, dimensions: { ...dimensions, image: [{ ...image, guestPlatform: 'linux' as const }] } }, { image: 'native' }))
+      .toMatchObject({ kind: 'ready', guestPlatform: 'linux' });
+  });
   it('admits independent option facts and refuses the retired Cartesian catalog', () => {
     const options = {
       base: { launch: {} },
@@ -233,6 +417,54 @@ describe('public machine provisioner role schemas', () => {
     const optionAction = manifest.contributes.actions.find(action => action.id === 'options')!;
     optionAction.resultSchema = { type: 'object', properties: { choices: { type: 'array', items: { type: 'object', properties: {}, additionalProperties: false } } }, required: ['choices'], additionalProperties: false };
     expect(PluginManifestV2Schema.safeParse(manifest).success).toBe(false);
+  });
+  it('preserves a native refusal and its field through incomplete and invalid launch projections', () => {
+    const launch = defineProtocolObject({ image: defineProtocolString() }, { policy: 'closed' });
+    const unavailableReason = { code: 'vz_driver_unavailable', status: { key: 'native.vz', fallback: 'VZ unavailable' }, fieldPath: 'vmType' };
+    const options = provisioners.MachineProvisionerOptionsResultV1Schema.parse({
+      base: { launch: {}, available: false, unavailableReason },
+      dimensions: { size: [], image: [], location: [], network: [], duration: [] },
+    });
+    const project = (value: provisioners.MachineProvisionerOptionsResultV1, selection: provisioners.MachineProvisionerSelectionV1 = {}) => provisioners.projectMachineProvisionerSelectionV1({
+      options: value, selection, launchSchema: launch.jsonSchema,
+    });
+    expect(project(options)).toMatchObject({ kind: 'unavailable', code: unavailableReason.code, unavailableReason });
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse(options)).toEqual(options);
+    const dimensionRefusal = { ...options, base: { launch: { image: 'valid' } }, dimensions: { ...options.dimensions,
+      size: [{ id: 'refused', title: 'Refused', assignments: [], available: false, unavailableReason }] } };
+    expect(project(dimensionRefusal, { size: 'refused' })).toMatchObject({ kind: 'unavailable', code: unavailableReason.code, unavailableReason });
+    expect(project(dimensionRefusal)).not.toHaveProperty('unavailableReason');
+    expect(project({ ...options, base: { ...options.base!, launch: [] },
+      dimensions: { ...options.dimensions, size: [{ id: 'bad', title: 'Bad', assignments: [{ path: 'image', value: 'image' }] }] } },
+      { size: 'bad' })).toMatchObject({ kind: 'invalid', code: 'invalid_launch', unavailableReason });
+    expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ ...options,
+      base: { ...options.base, unavailableReason: { ...unavailableReason, content: 'forbidden' } } }).success).toBe(false);
+  });
+  it('projects selected compute and storage billing without conflating a retained disk with stopped compute', () => {
+    const launch = defineProtocolObject({ kind: defineProtocolString() }, { policy: 'closed' });
+    const billed = { location: 'cloud', stoppedBilling: 'billed' } as const;
+    const storageOnly = { location: 'cloud', stoppedBilling: 'not-billed', storageCharges: [
+      { amount: '0.08', currency: 'USD', unit: 'GB-month', source: 'https://native.example/pricing', observedAt: 1 },
+    ] } as const;
+    const options = provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({
+      base: { launch: {}, billing: { location: 'cloud', stoppedBilling: 'unknown' } },
+      dimensions: { size: [], image: [
+        { id: 'box', title: 'Box', assignments: [{ path: 'kind', value: 'box' }], billing: billed },
+        { id: 'computer', title: 'Computer', assignments: [{ path: 'kind', value: 'computer' }], billing: storageOnly },
+      ], location: [], network: [], duration: [] },
+    });
+    const project = (selection: provisioners.MachineProvisionerSelectionV1) => provisioners.projectMachineProvisionerSelectionV1({
+      options, selection, launchSchema: launch.jsonSchema,
+    });
+    expect(project({})).toMatchObject({ kind: 'incomplete', billing: { stoppedBilling: 'unknown' } });
+    expect(project({ image: 'box' })).toMatchObject({ kind: 'ready', billing: billed });
+    expect(project({ image: 'computer' })).toMatchObject({ kind: 'ready', billing: storageOnly });
+    const conflicting = { ...options, dimensions: { ...options.dimensions,
+      size: [{ id: 'billed', title: 'Billed', assignments: [], billing: billed }] } };
+    const conflict = provisioners.projectMachineProvisionerSelectionV1({ options: conflicting,
+      selection: { image: 'computer', size: 'billed' }, launchSchema: launch.jsonSchema });
+    expect(conflict).toMatchObject({ kind: 'invalid', code: 'conflicting_billing' });
+    expect(conflict).not.toHaveProperty('billing');
   });
   it('projects selected native facts and applicable prices into one closed validated launch', () => {
     const launch = defineProtocolObject({

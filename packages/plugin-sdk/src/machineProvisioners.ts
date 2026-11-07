@@ -8,14 +8,15 @@ import type { PluginProcessResult } from './services/io.js';
 import type { PluginLocalizedStringV2 } from './manifest.js';
 import type { InputPredicate } from './actions/dtos/pluginActionDtoSupport.generated.js';
 import type { PluginContributionRef } from './identity.js';
+import type { AcquireResultV1, ManagedBootstrapCarrierV1, ProviderDeletionNoticeV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 export { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import type { AcquireResultV1, ManagedBootstrapCarrierV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 
 export type MachineProvisionerContributionV1 = Readonly<{
   id: string;
   title: PluginLocalizedStringV2;
   icon: string;
   resourceKind: string;
+  enrollmentRole?: canonical.MachineProvisionerContributionV1['enrollmentRole'];
   /** Human kind and purpose; resourceKind remains native identity, never copy. */
   kindTitle?: PluginLocalizedStringV2;
   description?: PluginLocalizedStringV2;
@@ -27,8 +28,8 @@ export type MachineProvisionerContributionV1 = Readonly<{
   browserReachable?: boolean;
   prerequisites: readonly Readonly<{ kind: 'managedDependency' | 'systemTool'; id: string | PluginContributionRef }>[];
   billing: Readonly<{ location: 'local' | 'cloud' | 'unknown'; stoppedBilling: 'billed' | 'not-billed' | 'unknown'; storageCharges?: readonly MachineProvisionerPriceV1[] }>;
-  retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: 'poweroff' | 'process-exit'; finiteOnly?: boolean; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
-  actions: Readonly<{ check: string; options?: string; acquire: string; bootstrap: string; inspect: string; power?: string; destroy: string; rebuild?: string }>;
+  retention: Readonly<{ supportedIntents: readonly MachineProvisionerNativeIntentV1[]; guestLocalStop?: canonical.MachineProvisionerContributionV1['retention']['guestLocalStop']; finiteOnly?: boolean; deletionNotices?: readonly MachineProvisionerDeletionNoticeV1[]; nativeExpiry?: Readonly<{ kind: 'unused'; afterMs: number }> | Readonly<{ kind: 'deadline'; at: number }> }>;
+  actions: canonical.MachineProvisionerContributionV1['actions'];
   /** Existing options Action field and its raw native input unit; not actual expiry. */
   nativeDurationInput?: Readonly<{ path: string; unit: 'milliseconds' | 'seconds' }>;
   /** Where the provider's own id lives in the resource value (the id its console shows); display only. */
@@ -44,14 +45,15 @@ export type MachineProvisionerContributionV1 = Readonly<{
 export type MachineProvisionerNativeIntentV1 = 'start' | 'stop' | 'suspend' | 'resume' | 'delete' | 'rebuild';
 export type MachineProvisionerPriceV1 = Readonly<{ label?: PluginLocalizedStringV2; amount: string; currency: string; unit: string; source: string; observedAt: number }>;
 export type MachineProvisionerAuthorDefinitionV1 = Omit<MachineProvisionerContributionV1, 'id'>;
-
 export type MachineProvisionerNativeCauseV1 = canonical.MachineProvisionerNativeCauseV1;
+export type MachineProvisionerDeletionNoticeV1 = ProviderDeletionNoticeV1;
 
-export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; status?: PluginLocalizedStringV2; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: Readonly<{ observedAt: number; availableCpuCores?: number; availableMemoryBytes?: number; availableDiskBytes?: number }> }>;
+export type MachineProvisionerCheckResultV1 = Readonly<{ available: boolean; code?: string; nativeCause?: MachineProvisionerNativeCauseV1; status?: PluginLocalizedStringV2; nativeCredentialDelivery?: Readonly<{ status: 'supported' | 'unsupported' | 'unknown'; code?: string }>; prerequisites?: readonly Readonly<{ requirement: MachineProvisionerContributionV1['prerequisites'][number]; status: 'available' | 'unavailable' | 'unknown'; reason?: string; repairAction?: Readonly<{ action: PluginContributionRef; input: ProtocolJsonValue }> }>[]; localResources?: Readonly<{ observedAt: number; availableCpuCores?: number; availableMemoryBytes?: number; availableDiskBytes?: number }> }>;
 export type MachineProvisionerNativeOptionFactsV1 = Readonly<{
   size?: Readonly<{ id: string; title: PluginLocalizedStringV2; cpuCores?: number; memoryBytes?: number; diskBytes?: number }>;
-  image?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
-  location?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
+  image?: Readonly<{ id: string; title: PluginLocalizedStringV2; description?: PluginLocalizedStringV2;
+    preview?: Readonly<{ resource: PluginContributionRef; accessibilityLabel?: PluginLocalizedStringV2 }> }>;
+  location?: Readonly<{ id: string; title: PluginLocalizedStringV2; countryCode?: string }>;
   network?: Readonly<{ id: string; title: PluginLocalizedStringV2 }>;
   duration?: Readonly<{ id: string; title: PluginLocalizedStringV2; afterMs: number }>;
   monthlyCapStatus?: 'none' | 'unknown';
@@ -67,6 +69,10 @@ export type DevcontainerEffectReviewV1 = Readonly<{
 export type MachineProvisionerOptionsResultV1 = Readonly<{
   code?: 'provider_unavailable'; nativeCause?: MachineProvisionerNativeCauseV1;
   base?: Readonly<{ launch: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerConditionalPriceV1[];
+    unavailableReason?: MachineProvisionerDimensionOptionV1['unavailableReason'];
+    guestPlatform?: MachineProvisionerDimensionOptionV1['guestPlatform'];
+    enrollmentRole?: MachineProvisionerContributionV1['enrollmentRole'];
+    billing?: MachineProvisionerContributionV1['billing'];
     retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>;
   dimensions: Readonly<Record<MachineProvisionerDimensionV1, readonly MachineProvisionerDimensionOptionV1[]>>;
   constraints?: readonly MachineProvisionerOptionConstraintV1[];
@@ -80,10 +86,18 @@ export type MachineProvisionerDimensionOptionV1 = Readonly<{
   id: string; title: PluginLocalizedStringV2;
   assignments: readonly Readonly<{ path: string; value: ProtocolJsonValue }>[];
   available?: boolean; prices?: readonly MachineProvisionerConditionalPriceV1[];
+  unavailableReason?: Readonly<{ code: string; status: PluginLocalizedStringV2; fieldPath?: string }>;
+  guestPlatform?: canonical.MachineProvisionerDimensionOptionV1['guestPlatform'];
+  enrollmentRole?: MachineProvisionerContributionV1['enrollmentRole'];
+  billing?: MachineProvisionerContributionV1['billing'];
   retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1;
 }>;
 export type MachineProvisionerSelectionProjectionV1 = Readonly<{
   prices: readonly MachineProvisionerPriceV1[]; nativeFacts: MachineProvisionerNativeOptionFactsV1;
+  unavailableReason?: MachineProvisionerDimensionOptionV1['unavailableReason'];
+  guestPlatform?: MachineProvisionerDimensionOptionV1['guestPlatform'];
+  enrollmentRole?: MachineProvisionerContributionV1['enrollmentRole'];
+  billing?: MachineProvisionerContributionV1['billing'];
   retention?: MachineProvisionerContributionV1['retention']; effectReview?: DevcontainerEffectReviewV1;
 }> & (Readonly<{ kind: 'ready'; launch: ProtocolJsonValue }>
   | Readonly<{ kind: 'incomplete' | 'unavailable' | 'invalid'; code: string }>);
@@ -98,25 +112,31 @@ export type DevcontainerNativeObservationV1 = Readonly<{
 export type MachineProvisionerResourceV1<TValue = ProtocolJsonValue> = Readonly<{ contributionRef: PluginContributionRef; schemaVersion: number; value: TValue;
   devcontainerObservation?: DevcontainerNativeObservationV1 }>;
 export type MachineProvisionerRefusalCodeV1 = Extract<AcquireResultV1, { kind: 'rejected' }>['code'];
-export type MachineProvisionerAcquireResultV1<TResource = ProtocolJsonValue, TNativeOperation = ProtocolJsonValue> = Readonly<{ kind: 'bound'; resource: MachineProvisionerResourceV1<TResource> }> | Readonly<{ kind: 'pending'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation> }> | Readonly<{ kind: 'unknown'; recovery: Readonly<{ reference: string; reason: string; consoleUrl?: string }> }> | Readonly<{ kind: 'rejected'; code: MachineProvisionerRefusalCodeV1 }>;
+export type MachineProvisionerAcquireResultV1<TResource = ProtocolJsonValue, TNativeOperation = ProtocolJsonValue> = Readonly<{ kind: 'bound'; resource: MachineProvisionerResourceV1<TResource>; startPending?: true }> | Readonly<{ kind: 'pending'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation>; nativeCause?: MachineProvisionerNativeCauseV1 }> | Readonly<{ kind: 'unknown'; recovery: Readonly<{ reference: string; reason: string; consoleUrl?: string }>; nativeCause?: MachineProvisionerNativeCauseV1 }> | Readonly<{ kind: 'rejected'; code: MachineProvisionerRefusalCodeV1; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 export type MachineProvisionerBootstrapCarrierV1 = ManagedBootstrapCarrierV1;
-export type MachineProvisionerObservationV1 = Readonly<{ observedAt: number; availability: 'present' | 'absent' | 'unavailable'; power?: 'running' | 'stopped' | 'suspended' | 'unknown'; storage?: 'retained' | 'lost' | 'unknown'; daemon?: 'connected' | 'disconnected' | 'unknown'; billing?: MachineProvisionerContributionV1['billing']; prices?: readonly MachineProvisionerPriceV1[]; nativeExpiry?: number; reason?: string }>;
-export type MachineProvisionerPowerResultV1 = Readonly<{ kind: 'confirmed' }> | Readonly<{ kind: 'unknown'; code?: string }> | Readonly<{ kind: 'refused'; code: string }>;
+export type MachineProvisionerObservationV1 = Readonly<{ observedAt: number; availability: 'present' | 'absent' | 'unavailable'; power?: 'running' | 'stopped' | 'suspended' | 'unknown'; storage?: 'retained' | 'lost' | 'unknown'; billing?: MachineProvisionerContributionV1['billing']; prices?: readonly MachineProvisionerPriceV1[]; nativeExpiry?: number; deletionNotices?: readonly MachineProvisionerDeletionNoticeV1[]; reason?: string; nativeCause?: MachineProvisionerNativeCauseV1 }>;
+export type MachineProvisionerPowerResultV1 = Readonly<{ kind: 'confirmed' }> | Readonly<{ kind: 'unknown'; code?: string; nativeCause?: MachineProvisionerNativeCauseV1 }> | Readonly<{ kind: 'refused'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 }>;
+export type MachineProvisionerRenewResultV1 = canonical.MachineProvisionerRenewResultV1;
 export type MachineProvisionerNativeCredentialBindingV1 = canonical.MachineProvisionerNativeCredentialBindingV1;
 export type MachineProvisionerNativeCredentialApplyInputV1<TResource = ProtocolJsonValue> = canonical.MachineProvisionerNativeCredentialApplyInputV1<TResource>;
 export type MachineProvisionerNativeCredentialApplyResultV1 = MachineProvisionerPowerResultV1;
 export const MachineProvisionerNativeCredentialApplyInputV1Schema: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyInputV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeCredentialApplyInputProtocolV1Schema);
 export const MachineProvisionerNativeCredentialApplyResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeCredentialApplyResultV1Schema);
 export type MachineProvisionerDestroyResultV1<TNativeOperation = ProtocolJsonValue> = MachineProvisionerPowerResultV1
+  | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'accepted'; nativeOperationRef: MachineProvisionerResourceV1<TNativeOperation> }>;
-export type MachineProvisionerRebuildResultV1<TResource = ProtocolJsonValue> = Extract<MachineProvisionerAcquireResultV1<TResource>, { kind: 'bound' | 'unknown' }> | Readonly<{ kind: 'refused'; code: string }>;
+export type MachineProvisionerRebuildResultV1<TResource = ProtocolJsonValue> = Readonly<{ kind: 'bound'; resource: MachineProvisionerResourceV1<TResource> }>
+  | Extract<MachineProvisionerAcquireResultV1<TResource>, { kind: 'unknown' }>
+  | Readonly<{ kind: 'refused'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 export const MachineProvisionerCheckInputV1Schema: ProtocolComposableSchema<Readonly<Record<string, never>>> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerCheckInputV1Schema);
+export const MachineProvisionerNativeCauseV1Schema: ProtocolComposableSchema<MachineProvisionerNativeCauseV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeCauseProtocolV1Schema);
 export const MachineProvisionerCheckResultV1Schema: ProtocolComposableSchema<MachineProvisionerCheckResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerCheckResultProtocolV1Schema);
 export const MachineProvisionerOptionsResultV1Schema: ProtocolComposableSchema<MachineProvisionerOptionsResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerOptionsResultProtocolV1Schema);
 export const MachineProvisionerAcquireResultV1Schema: ProtocolComposableSchema<MachineProvisionerAcquireResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerAcquireResultV1Schema);
 export const MachineProvisionerBootstrapCarrierV1Schema: ProtocolComposableSchema<MachineProvisionerBootstrapCarrierV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerBootstrapCarrierV1Schema);
 export const MachineProvisionerObservationV1Schema: ProtocolComposableSchema<MachineProvisionerObservationV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerObservationV1Schema);
 export const MachineProvisionerPowerResultV1Schema: ProtocolComposableSchema<MachineProvisionerPowerResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPowerResultV1Schema);
+export const MachineProvisionerRenewResultV1Schema: ProtocolComposableSchema<MachineProvisionerRenewResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerRenewResultV1Schema);
 export const MachineProvisionerDestroyResultV1Schema: ProtocolComposableSchema<MachineProvisionerDestroyResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerDestroyResultV1Schema);
 export const MachineProvisionerRebuildResultV1Schema: ProtocolComposableSchema<MachineProvisionerRebuildResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerRebuildResultV1Schema);
 export const MachineProvisionerPutFileResultV1Schema: ProtocolComposableSchema<MachineProvisionerPowerResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerPutFileResultV1Schema);
@@ -126,22 +146,28 @@ export type MachineProvisionerProcessConfigV1 = canonical.MachineProvisionerProc
 export const MachineProvisionerNativeExecResultV1Schema: ProtocolComposableSchema<MachineProvisionerNativeExecResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerNativeExecResultV1Schema);
 export const defineMachineProvisionerSchemas: <LI, LO, RI, RO, C extends true | undefined = undefined>(schemas: Readonly<{ launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO>; continueAcquire?: C }>) => Readonly<{
   checkInput: typeof MachineProvisionerCheckInputV1Schema;
-  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RI }> : {}),
-    Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RO }> : {})>;
+  nativeCredentialApplyInput: ProtocolComposableSchema<MachineProvisionerNativeCredentialApplyInputV1<RI>, MachineProvisionerNativeCredentialApplyInputV1<RO>>;
+  acquireInput: ProtocolComposableSchema<Readonly<{ launch: LI; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RI }> : {}),
+    Readonly<{ launch: LO; managedId?: string; bootstrapPublicKey?: string; guestHostPublicKey?: string }> & (C extends true ? Readonly<{ resource?: RO }> : {})>;
   acquireResult: ProtocolComposableSchema<Exclude<MachineProvisionerAcquireResultV1<RI>, { kind: 'pending' }>, Exclude<MachineProvisionerAcquireResultV1<RO>, { kind: 'pending' }>>;
   rebuildInput: ProtocolComposableSchema<Readonly<{ resource: RI; reviewedEffectDigest: string }>, Readonly<{ resource: RO; reviewedEffectDigest: string }>>;
   rebuildResult: ProtocolComposableSchema<MachineProvisionerRebuildResultV1<RI>, MachineProvisionerRebuildResultV1<RO>>;
-  bootstrapInput: ProtocolComposableSchema<Readonly<{ resource: RI; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string }>, Readonly<{ resource: RO; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string }>>;
+  bootstrapInput: ProtocolComposableSchema<Readonly<{ resource: RI; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string; guestHostPublicKey?: string }>, Readonly<{ resource: RO; credentialRef?: Readonly<{ kind: 'shared_resource'; resourceId: string }>; bootstrapPublicKey?: string; guestHostPublicKey?: string }>>;
   resourceInput: ProtocolComposableSchema<Readonly<{ resource: RI }>, Readonly<{ resource: RO }>>;
+  renewInput: ProtocolComposableSchema<Readonly<{ resource: RI; deadlineAt?: number }>, Readonly<{ resource: RO; deadlineAt?: number }>>;
   powerInput: ProtocolComposableSchema<Readonly<{ resource: RI; intent: MachineProvisionerNativeIntentV1 }>, Readonly<{ resource: RO; intent: MachineProvisionerNativeIntentV1 }>>;
-  execInput: ProtocolComposableSchema<Readonly<{ resource: RI; argv: readonly string[]; inputBase64?: string; timeoutMs?: number | null; processConfig?: MachineProvisionerProcessConfigV1 }>, Readonly<{ resource: RO; argv: readonly string[]; inputBase64?: string; timeoutMs?: number | null; processConfig?: MachineProvisionerProcessConfigV1 }>>;
+  execInput: ProtocolComposableSchema<Readonly<{ resource: RI; argv: readonly string[]; allowWake?: false; inputBase64?: string; timeoutMs?: number | null; processConfig?: MachineProvisionerProcessConfigV1 }>, Readonly<{ resource: RO; argv: readonly string[]; allowWake?: false; inputBase64?: string; timeoutMs?: number | null; processConfig?: MachineProvisionerProcessConfigV1 }>>;
   /** One bounded fragment at a host-selected private path. Host assembly owns
    * atomic publication of the complete archive; confirmed means all bytes of
    * this fragment were written, including native process settlement. */
   putFileInput: ProtocolComposableSchema<Readonly<{ resource: RI; guestPath: string; bytesBase64: string; mode?: number }>, Readonly<{ resource: RO; guestPath: string; bytesBase64: string; mode?: number }>>;
 }> = /* @__PURE__ */ projectProtocolValue(canonical.defineMachineProvisionerSchemas);
 
-/** Use this result on both acquire and the declared read-only reconciliation Action. */
+/** Use this result on both acquire and the declared read-only reconciliation Action.
+ * Reconciliation observes retained immutable submission facts or the returned
+ * identity; it must never submit/replay an allocation, including under a native
+ * idempotency key. Missing read evidence is unknown, never confirmed absence.
+ */
 export const defineMachineProvisionerReconciliationSchemas: <LI, LO, RI, RO, NI, NO>(schemas: Readonly<{
   launch: ProtocolComposableSchema<LI, LO>; resource: ProtocolComposableSchema<RI, RO>; nativeOperation: ProtocolComposableSchema<NI, NO>;
 }>) => Readonly<{

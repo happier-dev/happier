@@ -26,7 +26,7 @@ export type HomeGovernanceActionInputById = {
         code: string;
     };
     readonly "home.accounts.list": {
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
         limit?: number | undefined;
     };
     readonly "home.accounts.search": {
@@ -43,7 +43,7 @@ export type HomeGovernanceActionInputById = {
     };
     readonly "home.accounts.role.set": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
+        homeRole: 'admin' | 'member' | 'owner';
     };
     readonly "home.accounts.disable": {
         accountId: string;
@@ -53,19 +53,19 @@ export type HomeGovernanceActionInputById = {
     };
     readonly "home.accounts.delete": {
         accountId: string;
-        managedResourceDispositions?: {
+        managedResourceDispositions?: undefined | {
             managedId: string;
             expectedIntentRevision: number;
-            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
-            expectedResource?: {
+            expectedResource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: unknown;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -77,58 +77,58 @@ export type HomeGovernanceActionInputById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            expectedNativeOperationRef?: {
+                };
+            };
+            expectedNativeOperationRef?: undefined | {
                 value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            expectedRecovery?: {
+            };
+            expectedRecovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
     };
     readonly "home.accounts.signOutEverywhere": {
         accountId: string;
     };
     readonly "home.policy.set": {
         expectedRevision: number;
-        teamCreationPolicy?: 'self_service' | 'managed_only' | 'disabled' | undefined;
+        teamCreationPolicy?: 'disabled' | 'managed_only' | 'self_service' | undefined;
         teamsVisibleToMembers?: boolean | undefined;
-        authenticationPolicy?: {
+        authenticationPolicy?: null | undefined | {
             v: 1;
             enabledMethodIds?: string[] | undefined;
             permittedAccountModes?: ('e2ee' | 'plain')[] | undefined;
             recommendedProvisioningMode?: 'e2ee' | 'plain' | undefined;
-            admission?: 'closed' | 'self_service' | 'invitation_only' | undefined;
-            signInService?: {
+            admission?: 'closed' | 'invitation_only' | 'self_service' | undefined;
+            signInService?: null | undefined | {
                 mode: 'disabled';
-            } | null | undefined;
+            };
             anonymousSignup?: boolean | undefined;
-            storagePolicy?: 'optional' | 'required_e2ee' | 'plaintext_only' | undefined;
-        } | null | undefined;
-        teamProviderPolicy?: {
+            storagePolicy?: 'optional' | 'plaintext_only' | 'required_e2ee' | undefined;
+        };
+        teamProviderPolicy?: null | undefined | {
             v: 1;
-            allowedTeamProviderKinds: ('oidc' | 'workos_sso' | 'github_app_identity')[];
+            allowedTeamProviderKinds: ('github_app_identity' | 'oidc' | 'workos_sso')[];
             teamJitAllowed: boolean;
             approvedGitHubEnterpriseOrigins: string[];
-        } | null | undefined;
-        identityNetworkPolicy?: {
-            v: 1;
-            mode: 'public_only';
-        } | {
+        };
+        identityNetworkPolicy?: null | undefined | {
             v: 1;
             mode: 'private_allowlist';
             hostnames: string[];
             cidrs: string[];
             ports: number[];
-        } | null | undefined;
+        } | {
+            v: 1;
+            mode: 'public_only';
+        };
         confirmWidening?: true | undefined;
     };
     readonly "home.settings.get": Record<string, never>;
@@ -136,9 +136,9 @@ export type HomeGovernanceActionInputById = {
         expectedRevision: number;
         values: Record<string, unknown>;
         secrets?: Record<string, {
-            replace: string;
-        } | {
             clear: true;
+        } | {
+            replace: string;
         }> | undefined;
         discardPendingRestart?: true | undefined;
     };
@@ -147,7 +147,7 @@ export type HomeGovernanceActionInputById = {
         to: string;
     };
     readonly "home.audit.list": {
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
         limit?: number | undefined;
         targetId?: string | undefined;
     };
@@ -159,18 +159,18 @@ export type HomeGovernanceActionInputById = {
 };
 export type HomeGovernanceActionResultById = {
     readonly "home.public_profiles.restrict": {
+        kind: 'unavailable';
+        reason: 'asset_unavailable' | 'feature_disabled' | 'invalid_stored_content' | 'not_published' | 'public_ingress_unconfigured' | 'query_mismatch' | 'report_contact_unconfigured' | 'restricted' | 'username_required';
+    } | {
         kind: 'updated';
         record: null;
-    } | {
-        kind: 'unavailable';
-        reason: 'feature_disabled' | 'username_required' | 'report_contact_unconfigured' | 'public_ingress_unconfigured' | 'not_published' | 'restricted' | 'query_mismatch' | 'invalid_stored_content' | 'asset_unavailable';
     };
     readonly "home.public_profiles.restore": {
+        kind: 'unavailable';
+        reason: 'asset_unavailable' | 'feature_disabled' | 'invalid_stored_content' | 'not_published' | 'public_ingress_unconfigured' | 'query_mismatch' | 'report_contact_unconfigured' | 'restricted' | 'username_required';
+    } | {
         kind: 'updated';
         record: null;
-    } | {
-        kind: 'unavailable';
-        reason: 'feature_disabled' | 'username_required' | 'report_contact_unconfigured' | 'public_ingress_unconfigured' | 'not_published' | 'restricted' | 'query_mismatch' | 'invalid_stored_content' | 'asset_unavailable';
     };
     readonly "home.public_profiles.handle_reclaim": {
         username: null;
@@ -182,8 +182,8 @@ export type HomeGovernanceActionResultById = {
     readonly "home.governance.get": {
         viewer: {
             accountId: string;
-            homeRole: 'owner' | 'admin' | 'member';
-            status: 'active' | 'suspended' | 'disabled';
+            homeRole: 'admin' | 'member' | 'owner';
+            status: 'active' | 'disabled' | 'suspended';
         };
         capabilities: {
             viewAdministration: boolean;
@@ -198,52 +198,52 @@ export type HomeGovernanceActionResultById = {
         };
         policy: {
             revision: number;
-            teamCreationPolicy: 'self_service' | 'managed_only' | 'disabled';
+            teamCreationPolicy: 'disabled' | 'managed_only' | 'self_service';
             authentication: {
                 status: 'inherited';
             } | {
                 status: 'narrowed';
-                enabledMethodIds: string[] | null;
+                enabledMethodIds: null | string[];
                 permittedAccountModes: ('e2ee' | 'plain')[] | null;
                 recommendedProvisioningMode: 'e2ee' | 'plain' | null;
-                admission: 'closed' | 'self_service' | 'invitation_only' | null;
+                admission: 'closed' | 'invitation_only' | 'self_service' | null;
                 signInServiceDisabled: boolean;
                 anonymousSignup?: boolean | null | undefined;
-                storagePolicy?: 'optional' | 'required_e2ee' | 'plaintext_only' | null | undefined;
+                storagePolicy?: 'optional' | 'plaintext_only' | 'required_e2ee' | null | undefined;
             } | {
                 status: 'unreadable';
             };
             teamsVisibleToMembers?: boolean | undefined;
-            teamProviders?: {
+            teamProviders?: undefined | {
                 status: 'inherited';
             } | {
                 status: 'narrowed';
                 policy: {
                     v: 1;
-                    allowedTeamProviderKinds: ('oidc' | 'workos_sso' | 'github_app_identity')[];
+                    allowedTeamProviderKinds: ('github_app_identity' | 'oidc' | 'workos_sso')[];
                     teamJitAllowed: boolean;
                     approvedGitHubEnterpriseOrigins: string[];
                 };
             } | {
                 status: 'unreadable';
-            } | undefined;
-            identityNetwork?: {
+            };
+            identityNetwork?: undefined | {
                 status: 'inherited';
             } | {
                 status: 'narrowed';
                 policy: {
                     v: 1;
-                    mode: 'public_only';
-                } | {
-                    v: 1;
                     mode: 'private_allowlist';
                     hostnames: string[];
                     cidrs: string[];
                     ports: number[];
+                } | {
+                    v: 1;
+                    mode: 'public_only';
                 };
             } | {
                 status: 'unreadable';
-            } | undefined;
+            };
         };
         setupState: 'owned' | 'setup_required';
         activeOwnerCount: number;
@@ -252,50 +252,50 @@ export type HomeGovernanceActionResultById = {
             methods: {
                 id: string;
                 actions: {
-                    id: 'login' | 'provision' | 'connect';
+                    id: 'connect' | 'login' | 'provision';
                     enabled: boolean;
-                    mode: 'keyed' | 'keyless' | 'either';
-                    reason?: 'method_not_enabled' | 'provisioning_not_enabled' | 'account_mode_unavailable' | 'email_delivery_unavailable' | undefined;
+                    mode: 'either' | 'keyed' | 'keyless';
+                    reason?: 'account_mode_unavailable' | 'email_delivery_unavailable' | 'method_not_enabled' | 'provisioning_not_enabled' | undefined;
                 }[];
                 displayName?: string | undefined;
-                iconHint?: string | null | undefined;
+                iconHint?: null | string | undefined;
                 fixedBy?: string | undefined;
-                unavailable?: {
+                unavailable?: undefined | {
                     requires: string[];
-                } | undefined;
+                };
             }[];
             permittedAccountModes: ('e2ee' | 'plain')[];
             recommendedProvisioningMode: 'e2ee' | 'plain' | null;
             signInService: {
-                deploymentMode: 'disabled' | 'self' | 'external' | null;
+                deploymentMode: 'disabled' | 'external' | 'self' | null;
                 canDisable: boolean;
             };
-            anonymousSignup?: {
+            anonymousSignup?: undefined | {
                 enabled: boolean;
-                fixedBy: string | null;
-            } | undefined;
-            storagePolicy?: {
-                running: 'optional' | 'required_e2ee' | 'plaintext_only';
-                pending: 'optional' | 'required_e2ee' | 'plaintext_only' | null;
-                fixedBy: string | null;
-            } | undefined;
+                fixedBy: null | string;
+            };
+            storagePolicy?: undefined | {
+                running: 'optional' | 'plaintext_only' | 'required_e2ee';
+                pending: 'optional' | 'plaintext_only' | 'required_e2ee' | null;
+                fixedBy: null | string;
+            };
         };
-        identityServices?: {
-            workos: 'configured' | 'partially_configured' | 'not_configured';
+        identityServices?: undefined | {
+            workos: 'configured' | 'not_configured' | 'partially_configured';
             privateIdentityNetworkAllowed: boolean;
-            teamProviderKinds: ('oidc' | 'workos_sso' | 'github_app_identity')[];
-            deploymentOidcProviders?: {
+            teamProviderKinds: ('github_app_identity' | 'oidc' | 'workos_sso')[];
+            deploymentOidcProviders?: undefined | {
                 id: string;
                 displayName: string;
-                sourceKey: 'AUTH_PROVIDERS_CONFIG_PATH' | 'AUTH_PROVIDERS_CONFIG_JSON';
-            }[] | undefined;
-        } | undefined;
+                sourceKey: 'AUTH_PROVIDERS_CONFIG_JSON' | 'AUTH_PROVIDERS_CONFIG_PATH';
+            }[];
+        };
     };
     readonly "home.governance.eligibility.get": {
         teamsEnabled: boolean;
         createTeam: boolean;
         createTeamForChosenAccount: boolean;
-        teamCreationPolicy?: 'self_service' | 'managed_only' | 'disabled' | undefined;
+        teamCreationPolicy?: 'disabled' | 'managed_only' | 'self_service' | undefined;
         administratorNames?: string[] | undefined;
         showTeams?: boolean | undefined;
     };
@@ -308,18 +308,18 @@ export type HomeGovernanceActionResultById = {
     readonly "home.accounts.list": {
         items: {
             accountId: string;
-            homeRole: 'owner' | 'admin' | 'member';
-            status: 'active' | 'suspended' | 'disabled';
+            homeRole: 'admin' | 'member' | 'owner';
+            status: 'active' | 'disabled' | 'suspended';
             profile: {
-                name: string | null;
-                firstName: string | null;
-                lastName: string | null;
-                username: string | null;
-                avatarUrl: string | null;
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
             };
             createdAt: number;
             authentication: {
-                signInEmail: string | null;
+                signInEmail: null | string;
                 usableMethodIds: string[];
             };
             mutationCapabilities: {
@@ -328,73 +328,73 @@ export type HomeGovernanceActionResultById = {
                         status: 'available';
                     } | {
                         status: 'unavailable';
-                        reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                        reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                     };
                     admin: {
                         status: 'available';
                     } | {
                         status: 'unavailable';
-                        reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                        reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                     };
                     owner: {
                         status: 'available';
                     } | {
                         status: 'unavailable';
-                        reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                        reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                     };
                 };
                 disable: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 reenable: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 delete: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 signOutEverywhere: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
         total?: number | undefined;
     };
     readonly "home.accounts.search": {
         accounts: {
             accountId: string;
             profile: {
-                name: string | null;
-                firstName: string | null;
-                lastName: string | null;
-                username: string | null;
-                avatarUrl: string | null;
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
             };
             eligible: boolean;
         }[];
     };
     readonly "home.accounts.get": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
-        status: 'active' | 'suspended' | 'disabled';
+        homeRole: 'admin' | 'member' | 'owner';
+        status: 'active' | 'disabled' | 'suspended';
         profile: {
-            name: string | null;
-            firstName: string | null;
-            lastName: string | null;
-            username: string | null;
-            avatarUrl: string | null;
+            name: null | string;
+            firstName: null | string;
+            lastName: null | string;
+            username: null | string;
+            avatarUrl: null | string;
         };
         createdAt: number;
         mutationCapabilities: {
@@ -403,55 +403,55 @@ export type HomeGovernanceActionResultById = {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 admin: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 owner: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
             disable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             reenable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             delete: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             signOutEverywhere: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
         };
         authentication: {
-            signInEmail: string | null;
+            signInEmail: null | string;
             usableMethodIds: string[];
             linkedProviderIds: string[];
         };
         teams: {
             teamId: string;
             name: string;
-            role: 'owner' | 'admin' | 'member' | 'guest';
+            role: 'admin' | 'guest' | 'member' | 'owner';
             status: 'active' | 'suspended';
             archived: boolean;
         }[];
@@ -460,9 +460,244 @@ export type HomeGovernanceActionResultById = {
         };
         apiTokens: {
             count: number;
-            lastUsedAt: number | null;
+            lastUsedAt: null | number;
         };
         recentEvents: ({
+            action: 'account.delete';
+            summary: {
+                outcome: 'deleted' | 'disabled_pending_completion';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.role.set';
+            summary: {
+                from: 'admin' | 'member' | 'owner';
+                to: 'admin' | 'member' | 'owner';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.sign_out_everywhere';
+            summary: Record<string, never>;
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.status.set';
+            summary: {
+                from: 'active' | 'disabled' | 'suspended';
+                to: 'active' | 'disabled' | 'suspended';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.create';
+            summary: {
+                name: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.installation.remove';
+            summary: {
+                name: string;
+                organization: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.installation.verify';
+            summary: {
+                name: string;
+                organization: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.update';
+            summary: {
+                name: string;
+                secretsReplaced: boolean;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
             action: 'home.owner.claim';
             summary: {
                 via?: 'claim_code' | undefined;
@@ -471,32 +706,32 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'home.policy.set';
             summary: {
                 revision: number;
                 changes: {
-                    field: 'teamCreationPolicy' | 'teamsVisibleToMembers' | 'authenticationPolicy' | 'teamProviderPolicy' | 'identityNetworkPolicy';
+                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
                     from: unknown;
                     to: unknown;
                 }[];
@@ -506,63 +741,26 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'home.settings.set';
-            summary: {
-                secret: false;
-                key: string;
-                from: unknown;
-                to: unknown;
-            } | {
-                secret: true;
-                key: string;
-                from: 'set' | 'unset';
-                to: 'set' | 'unset';
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         } | {
             action: 'home.settings.discard';
             summary: {
@@ -580,200 +778,237 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.role.set';
+            action: 'home.settings.set';
             summary: {
-                from: 'owner' | 'admin' | 'member';
-                to: 'owner' | 'admin' | 'member';
+                secret: false;
+                key: string;
+                from: unknown;
+                to: unknown;
+            } | {
+                secret: true;
+                key: string;
+                from: 'set' | 'unset';
+                to: 'set' | 'unset';
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.status.set';
+            action: 'identity_provider.create';
             summary: {
-                from: 'active' | 'suspended' | 'disabled';
-                to: 'active' | 'suspended' | 'disabled';
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.delete';
+            action: 'identity_provider.disable';
             summary: {
-                outcome: 'deleted' | 'disabled_pending_completion';
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'account.sign_out_everywhere';
-            summary: Record<string, never>;
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         } | {
-            action: 'public_profile.restricted';
+            action: 'identity_provider.enable';
             summary: {
-                reason: string;
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'public_profile.restored';
+            action: 'identity_provider.remove';
             summary: {
-                reason: string;
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'identity_provider.secret.replace';
+            summary: {
+                displayName: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'identity_provider.update';
+            summary: {
+                displayName: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'public_profile.handle_reclaimed';
             summary: {
@@ -785,26 +1020,84 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'public_profile.restored';
+            summary: {
+                reason: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'public_profile.restricted';
+            summary: {
+                reason: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'teams.members.remove';
             summary: {
@@ -816,335 +1109,51 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.create';
-            summary: {
-                displayName: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.update';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.secret.replace';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.enable';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.disable';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.remove';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.create';
-            summary: {
-                name: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.update';
-            summary: {
-                name: string;
-                secretsReplaced: boolean;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.installation.verify';
-            summary: {
-                name: string;
-                organization: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.installation.remove';
-            summary: {
-                name: string;
-                organization: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         })[];
+        publicProfile?: undefined | {
+            managementCapability: {
+                status: 'available';
+            } | {
+                status: 'unavailable';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+            };
+            restricted: boolean;
+        };
     };
     readonly "home.accounts.role.set": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
-        status: 'active' | 'suspended' | 'disabled';
+        homeRole: 'admin' | 'member' | 'owner';
+        status: 'active' | 'disabled' | 'suspended';
         profile: {
-            name: string | null;
-            firstName: string | null;
-            lastName: string | null;
-            username: string | null;
-            avatarUrl: string | null;
+            name: null | string;
+            firstName: null | string;
+            lastName: null | string;
+            username: null | string;
+            avatarUrl: null | string;
         };
         createdAt: number;
         authentication: {
-            signInEmail: string | null;
+            signInEmail: null | string;
             usableMethodIds: string[];
         };
         mutationCapabilities: {
@@ -1153,61 +1162,61 @@ export type HomeGovernanceActionResultById = {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 admin: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 owner: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
             disable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             reenable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             delete: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             signOutEverywhere: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
         };
     };
     readonly "home.accounts.disable": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
-        status: 'active' | 'suspended' | 'disabled';
+        homeRole: 'admin' | 'member' | 'owner';
+        status: 'active' | 'disabled' | 'suspended';
         profile: {
-            name: string | null;
-            firstName: string | null;
-            lastName: string | null;
-            username: string | null;
-            avatarUrl: string | null;
+            name: null | string;
+            firstName: null | string;
+            lastName: null | string;
+            username: null | string;
+            avatarUrl: null | string;
         };
         createdAt: number;
         authentication: {
-            signInEmail: string | null;
+            signInEmail: null | string;
             usableMethodIds: string[];
         };
         mutationCapabilities: {
@@ -1216,61 +1225,61 @@ export type HomeGovernanceActionResultById = {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 admin: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 owner: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
             disable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             reenable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             delete: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             signOutEverywhere: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
         };
     };
     readonly "home.accounts.enable": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
-        status: 'active' | 'suspended' | 'disabled';
+        homeRole: 'admin' | 'member' | 'owner';
+        status: 'active' | 'disabled' | 'suspended';
         profile: {
-            name: string | null;
-            firstName: string | null;
-            lastName: string | null;
-            username: string | null;
-            avatarUrl: string | null;
+            name: null | string;
+            firstName: null | string;
+            lastName: null | string;
+            username: null | string;
+            avatarUrl: null | string;
         };
         createdAt: number;
         authentication: {
-            signInEmail: string | null;
+            signInEmail: null | string;
             usableMethodIds: string[];
         };
         mutationCapabilities: {
@@ -1279,44 +1288,44 @@ export type HomeGovernanceActionResultById = {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 admin: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 owner: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
             disable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             reenable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             delete: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             signOutEverywhere: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
         };
     };
@@ -1327,18 +1336,18 @@ export type HomeGovernanceActionResultById = {
     };
     readonly "home.accounts.signOutEverywhere": {
         accountId: string;
-        homeRole: 'owner' | 'admin' | 'member';
-        status: 'active' | 'suspended' | 'disabled';
+        homeRole: 'admin' | 'member' | 'owner';
+        status: 'active' | 'disabled' | 'suspended';
         profile: {
-            name: string | null;
-            firstName: string | null;
-            lastName: string | null;
-            username: string | null;
-            avatarUrl: string | null;
+            name: null | string;
+            firstName: null | string;
+            lastName: null | string;
+            username: null | string;
+            avatarUrl: null | string;
         };
         createdAt: number;
         authentication: {
-            signInEmail: string | null;
+            signInEmail: null | string;
             usableMethodIds: string[];
         };
         mutationCapabilities: {
@@ -1347,219 +1356,454 @@ export type HomeGovernanceActionResultById = {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 admin: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
                 owner: {
                     status: 'available';
                 } | {
                     status: 'unavailable';
-                    reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                    reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
                 };
             };
             disable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             reenable: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             delete: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
             signOutEverywhere: {
                 status: 'available';
             } | {
                 status: 'unavailable';
-                reason: 'not_authorized' | 'last_active_owner' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
+                reason: 'last_active_owner' | 'not_authorized' | 'target_inactive' | 'target_not_active' | 'target_not_suspended' | 'target_retired' | 'team_owner_transfer_required' | 'unchanged';
             };
         };
     };
     readonly "home.policy.set": {
         revision: number;
-        teamCreationPolicy: 'self_service' | 'managed_only' | 'disabled';
+        teamCreationPolicy: 'disabled' | 'managed_only' | 'self_service';
         authentication: {
             status: 'inherited';
         } | {
             status: 'narrowed';
-            enabledMethodIds: string[] | null;
+            enabledMethodIds: null | string[];
             permittedAccountModes: ('e2ee' | 'plain')[] | null;
             recommendedProvisioningMode: 'e2ee' | 'plain' | null;
-            admission: 'closed' | 'self_service' | 'invitation_only' | null;
+            admission: 'closed' | 'invitation_only' | 'self_service' | null;
             signInServiceDisabled: boolean;
             anonymousSignup?: boolean | null | undefined;
-            storagePolicy?: 'optional' | 'required_e2ee' | 'plaintext_only' | null | undefined;
+            storagePolicy?: 'optional' | 'plaintext_only' | 'required_e2ee' | null | undefined;
         } | {
             status: 'unreadable';
         };
         teamsVisibleToMembers?: boolean | undefined;
-        teamProviders?: {
+        teamProviders?: undefined | {
             status: 'inherited';
         } | {
             status: 'narrowed';
             policy: {
                 v: 1;
-                allowedTeamProviderKinds: ('oidc' | 'workos_sso' | 'github_app_identity')[];
+                allowedTeamProviderKinds: ('github_app_identity' | 'oidc' | 'workos_sso')[];
                 teamJitAllowed: boolean;
                 approvedGitHubEnterpriseOrigins: string[];
             };
         } | {
             status: 'unreadable';
-        } | undefined;
-        identityNetwork?: {
+        };
+        identityNetwork?: undefined | {
             status: 'inherited';
         } | {
             status: 'narrowed';
             policy: {
                 v: 1;
-                mode: 'public_only';
-            } | {
-                v: 1;
                 mode: 'private_allowlist';
                 hostnames: string[];
                 cidrs: string[];
                 ports: number[];
+            } | {
+                v: 1;
+                mode: 'public_only';
             };
         } | {
             status: 'unreadable';
-        } | undefined;
+        };
     };
     readonly "home.settings.get": {
         revision: number;
-        startedAt: string | null;
+        startedAt: null | string;
         entries: {
             key: string;
             value: unknown;
-            source: 'default' | 'home' | 'deployment';
+            source: 'default' | 'deployment' | 'home';
             fixed: boolean;
-            editable: 'home' | 'bootstrap';
-            apply: 'restart' | 'live';
+            editable: 'bootstrap' | 'home';
+            apply: 'live' | 'restart';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
-            declaration?: {
-                type: 'string' | 'boolean' | 'int' | 'enum' | 'email' | 'url' | 'float' | 'list' | 'json';
-                section: 'email' | 'server' | 'data' | 'reach' | 'policies' | 'features' | 'runtime';
+            declaration?: undefined | {
+                type: 'boolean' | 'email' | 'enum' | 'float' | 'int' | 'json' | 'list' | 'string' | 'url';
+                section: 'data' | 'email' | 'features' | 'policies' | 'reach' | 'runtime' | 'server';
                 group?: string | undefined;
-                appliesWhen?: {
+                appliesWhen?: undefined | {
                     key: string;
                     values: string[];
-                } | undefined;
+                };
                 family?: string | undefined;
                 featureId?: string | undefined;
                 default?: unknown;
-                bounds?: {
+                bounds?: undefined | {
                     min?: number | undefined;
                     max?: number | undefined;
                     maxUtf8Bytes?: number | undefined;
                     noControlChars?: true | undefined;
                     values?: string[] | undefined;
                     scheme?: 'https' | undefined;
-                } | undefined;
-                readOnlyReason?: 'before_database' | 'per_process_identity' | 'invariant' | undefined;
-            } | undefined;
-            applied?: {
+                };
+                readOnlyReason?: 'before_database' | 'invariant' | 'per_process_identity' | undefined;
+            };
+            applied?: undefined | {
                 value: unknown;
                 pending: boolean;
                 ignoredReason?: 'invalid_type' | 'out_of_bounds' | 'secret_unreadable' | undefined;
-            } | undefined;
+            };
         }[];
-        featureDecisions?: {
-            featureId: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'artifacts.queryHints' | 'account.publicProfiles' | 'teams.credentialResources.externalApi' | 'deployments' | 'workflows' | 'bots' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.autonomousExchange' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'prompts.library' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
-            state: 'unknown' | 'disabled' | 'enabled' | 'unsupported';
-            blockedBy: 'scope' | 'server' | 'daemon' | 'client' | 'build_policy' | 'local_policy' | 'dependency' | null;
-            blockerCode: 'none' | 'feature_disabled' | 'not_implemented' | 'build_disabled' | 'flag_disabled' | 'endpoint_missing' | 'capability_missing' | 'probe_failed' | 'mixed_scope_support' | 'misconfigured' | 'dependency_disabled' | 'dependency_unknown';
+        featureDecisions?: undefined | {
+            featureId: 'account.publicProfiles' | 'actions.approvals' | 'agents.claude.unifiedTerminal' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.permissionProfiles' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.goals' | 'app.analytics' | 'app.crashReports' | 'app.ui.changelog' | 'app.ui.homeScreenWidgets' | 'app.ui.liveActivities' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.releaseNotes' | 'app.ui.sessionGettingStartedGuidance' | 'app.ui.storeReviewPrompts' | 'artifacts.queryHints' | 'attachments.uploads' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.pairing.boundQrV2' | 'auth.pairing.desktopQrMobileScan' | 'auth.recovery.providerReset' | 'auth.ui.recoveryKeyReminder' | 'automations' | 'bots' | 'browser' | 'browser.automation' | 'browser.automation.eval' | 'browser.automation.injectedPage' | 'browser.context' | 'browser.diagnostics' | 'browser.internal' | 'browser.recording' | 'browser.recording.attachments' | 'browser.sidecar' | 'browser.viewTargets' | 'bugReports' | 'connectedServices.accountFallback' | 'connectedServices.accountGroups' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.autoQuotaReset' | 'connectedServices.poolQuotaLimitSelection' | 'connectedServices.quotas' | 'connectedServices.subscription' | 'deployments' | 'devices' | 'devices.simulatorPreview' | 'e2ee.keylessAccounts' | 'encryption.accountOptOut' | 'encryption.plaintextStorage' | 'execution.runs' | 'files.diffSyntaxHighlighting' | 'files.editor' | 'files.markdownRichEditor' | 'files.reviewComments' | 'files.syntaxHighlighting.advanced' | 'inbox.global' | 'localServices' | 'localServices.actions' | 'localServices.actions.terminate' | 'localServices.inventory' | 'localServices.launcher' | 'localServices.managed' | 'localServices.preview' | 'localServices.publicPreview' | 'machines' | 'machines.liveStream' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.peerMediation' | 'machines.peerMediation.observability' | 'machines.pools' | 'machines.rpc' | 'machines.rpc.directPeer' | 'machines.transfer' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.tunnel' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'memory.search' | 'pets.companion' | 'pets.sync' | 'plugins' | 'plugins.ui' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'plugins.webhooks' | 'prompts.library' | 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'remoteHosts.management' | 'remoteHosts.secretMaterial' | 'scm.writeOperations' | 'search' | 'sessions' | 'sessions.agentSwitching' | 'sessions.autonomousExchange' | 'sessions.board' | 'sessions.conversations' | 'sessions.direct' | 'sessions.drafts' | 'sessions.ephemeralRunner' | 'sessions.filteredListing' | 'sessions.folders' | 'sessions.following' | 'sessions.handoff' | 'sessions.usageLimitRecovery' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.providers.allowProviderSetup' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.relayAccess.allowTailscale' | 'setup.ssh.nativeTransport' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sharing.pendingQueueV2' | 'sharing.public' | 'sharing.session' | 'social.friends' | 'teams' | 'teams.credentialResources' | 'teams.credentialResources.externalApi' | 'terminal.embeddedPty' | 'terminal.renderer.androidTermux' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.native' | 'terminal.transport.byteStream' | 'updates.ota' | 'usage.compactBatch' | 'usage.reporting' | 'voice' | 'voice.agent' | 'voice.daemonInference' | 'voice.happierVoice' | 'workflows' | 'zen.navigation';
+            state: 'disabled' | 'enabled' | 'unknown' | 'unsupported';
+            blockedBy: 'build_policy' | 'client' | 'daemon' | 'dependency' | 'local_policy' | 'scope' | 'server' | null;
+            blockerCode: 'build_disabled' | 'capability_missing' | 'dependency_disabled' | 'dependency_unknown' | 'endpoint_missing' | 'feature_disabled' | 'flag_disabled' | 'misconfigured' | 'mixed_scope_support' | 'none' | 'not_implemented' | 'probe_failed';
             diagnostics: string[];
             evaluatedAt: number;
             scope: {
-                scopeKind: 'runtime' | 'main_selection' | 'spawn';
+                scopeKind: 'main_selection' | 'runtime' | 'spawn';
                 serverId?: string | undefined;
                 machineId?: string | undefined;
             };
-            blockingDependencyId?: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'artifacts.queryHints' | 'account.publicProfiles' | 'teams.credentialResources.externalApi' | 'deployments' | 'workflows' | 'bots' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.autonomousExchange' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'prompts.library' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
-        }[] | undefined;
+            blockingDependencyId?: 'account.publicProfiles' | 'actions.approvals' | 'agents.claude.unifiedTerminal' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.permissionProfiles' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.goals' | 'app.analytics' | 'app.crashReports' | 'app.ui.changelog' | 'app.ui.homeScreenWidgets' | 'app.ui.liveActivities' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.releaseNotes' | 'app.ui.sessionGettingStartedGuidance' | 'app.ui.storeReviewPrompts' | 'artifacts.queryHints' | 'attachments.uploads' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.pairing.boundQrV2' | 'auth.pairing.desktopQrMobileScan' | 'auth.recovery.providerReset' | 'auth.ui.recoveryKeyReminder' | 'automations' | 'bots' | 'browser' | 'browser.automation' | 'browser.automation.eval' | 'browser.automation.injectedPage' | 'browser.context' | 'browser.diagnostics' | 'browser.internal' | 'browser.recording' | 'browser.recording.attachments' | 'browser.sidecar' | 'browser.viewTargets' | 'bugReports' | 'connectedServices.accountFallback' | 'connectedServices.accountGroups' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.autoQuotaReset' | 'connectedServices.poolQuotaLimitSelection' | 'connectedServices.quotas' | 'connectedServices.subscription' | 'deployments' | 'devices' | 'devices.simulatorPreview' | 'e2ee.keylessAccounts' | 'encryption.accountOptOut' | 'encryption.plaintextStorage' | 'execution.runs' | 'files.diffSyntaxHighlighting' | 'files.editor' | 'files.markdownRichEditor' | 'files.reviewComments' | 'files.syntaxHighlighting.advanced' | 'inbox.global' | 'localServices' | 'localServices.actions' | 'localServices.actions.terminate' | 'localServices.inventory' | 'localServices.launcher' | 'localServices.managed' | 'localServices.preview' | 'localServices.publicPreview' | 'machines' | 'machines.liveStream' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.peerMediation' | 'machines.peerMediation.observability' | 'machines.pools' | 'machines.rpc' | 'machines.rpc.directPeer' | 'machines.transfer' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.tunnel' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'memory.search' | 'pets.companion' | 'pets.sync' | 'plugins' | 'plugins.ui' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'plugins.webhooks' | 'prompts.library' | 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'remoteHosts.management' | 'remoteHosts.secretMaterial' | 'scm.writeOperations' | 'search' | 'sessions' | 'sessions.agentSwitching' | 'sessions.autonomousExchange' | 'sessions.board' | 'sessions.conversations' | 'sessions.direct' | 'sessions.drafts' | 'sessions.ephemeralRunner' | 'sessions.filteredListing' | 'sessions.folders' | 'sessions.following' | 'sessions.handoff' | 'sessions.usageLimitRecovery' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.providers.allowProviderSetup' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.relayAccess.allowTailscale' | 'setup.ssh.nativeTransport' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sharing.pendingQueueV2' | 'sharing.public' | 'sharing.session' | 'social.friends' | 'teams' | 'teams.credentialResources' | 'teams.credentialResources.externalApi' | 'terminal.embeddedPty' | 'terminal.renderer.androidTermux' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.native' | 'terminal.transport.byteStream' | 'updates.ota' | 'usage.compactBatch' | 'usage.reporting' | 'voice' | 'voice.agent' | 'voice.daemonInference' | 'voice.happierVoice' | 'workflows' | 'zen.navigation' | undefined;
+        }[];
     };
     readonly "home.settings.set": {
         revision: number;
-        startedAt: string | null;
+        startedAt: null | string;
         entries: {
             key: string;
             value: unknown;
-            source: 'default' | 'home' | 'deployment';
+            source: 'default' | 'deployment' | 'home';
             fixed: boolean;
-            editable: 'home' | 'bootstrap';
-            apply: 'restart' | 'live';
+            editable: 'bootstrap' | 'home';
+            apply: 'live' | 'restart';
             secretSet?: boolean | undefined;
             readOnlyReason?: string | undefined;
-            declaration?: {
-                type: 'string' | 'boolean' | 'int' | 'enum' | 'email' | 'url' | 'float' | 'list' | 'json';
-                section: 'email' | 'server' | 'data' | 'reach' | 'policies' | 'features' | 'runtime';
+            declaration?: undefined | {
+                type: 'boolean' | 'email' | 'enum' | 'float' | 'int' | 'json' | 'list' | 'string' | 'url';
+                section: 'data' | 'email' | 'features' | 'policies' | 'reach' | 'runtime' | 'server';
                 group?: string | undefined;
-                appliesWhen?: {
+                appliesWhen?: undefined | {
                     key: string;
                     values: string[];
-                } | undefined;
+                };
                 family?: string | undefined;
                 featureId?: string | undefined;
                 default?: unknown;
-                bounds?: {
+                bounds?: undefined | {
                     min?: number | undefined;
                     max?: number | undefined;
                     maxUtf8Bytes?: number | undefined;
                     noControlChars?: true | undefined;
                     values?: string[] | undefined;
                     scheme?: 'https' | undefined;
-                } | undefined;
-                readOnlyReason?: 'before_database' | 'per_process_identity' | 'invariant' | undefined;
-            } | undefined;
-            applied?: {
+                };
+                readOnlyReason?: 'before_database' | 'invariant' | 'per_process_identity' | undefined;
+            };
+            applied?: undefined | {
                 value: unknown;
                 pending: boolean;
                 ignoredReason?: 'invalid_type' | 'out_of_bounds' | 'secret_unreadable' | undefined;
-            } | undefined;
+            };
         }[];
-        featureDecisions?: {
-            featureId: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'artifacts.queryHints' | 'account.publicProfiles' | 'teams.credentialResources.externalApi' | 'deployments' | 'workflows' | 'bots' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.autonomousExchange' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'prompts.library' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting';
-            state: 'unknown' | 'disabled' | 'enabled' | 'unsupported';
-            blockedBy: 'scope' | 'server' | 'daemon' | 'client' | 'build_policy' | 'local_policy' | 'dependency' | null;
-            blockerCode: 'none' | 'feature_disabled' | 'not_implemented' | 'build_disabled' | 'flag_disabled' | 'endpoint_missing' | 'capability_missing' | 'probe_failed' | 'mixed_scope_support' | 'misconfigured' | 'dependency_disabled' | 'dependency_unknown';
+        featureDecisions?: undefined | {
+            featureId: 'account.publicProfiles' | 'actions.approvals' | 'agents.claude.unifiedTerminal' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.permissionProfiles' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.goals' | 'app.analytics' | 'app.crashReports' | 'app.ui.changelog' | 'app.ui.homeScreenWidgets' | 'app.ui.liveActivities' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.releaseNotes' | 'app.ui.sessionGettingStartedGuidance' | 'app.ui.storeReviewPrompts' | 'artifacts.queryHints' | 'attachments.uploads' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.pairing.boundQrV2' | 'auth.pairing.desktopQrMobileScan' | 'auth.recovery.providerReset' | 'auth.ui.recoveryKeyReminder' | 'automations' | 'bots' | 'browser' | 'browser.automation' | 'browser.automation.eval' | 'browser.automation.injectedPage' | 'browser.context' | 'browser.diagnostics' | 'browser.internal' | 'browser.recording' | 'browser.recording.attachments' | 'browser.sidecar' | 'browser.viewTargets' | 'bugReports' | 'connectedServices.accountFallback' | 'connectedServices.accountGroups' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.autoQuotaReset' | 'connectedServices.poolQuotaLimitSelection' | 'connectedServices.quotas' | 'connectedServices.subscription' | 'deployments' | 'devices' | 'devices.simulatorPreview' | 'e2ee.keylessAccounts' | 'encryption.accountOptOut' | 'encryption.plaintextStorage' | 'execution.runs' | 'files.diffSyntaxHighlighting' | 'files.editor' | 'files.markdownRichEditor' | 'files.reviewComments' | 'files.syntaxHighlighting.advanced' | 'inbox.global' | 'localServices' | 'localServices.actions' | 'localServices.actions.terminate' | 'localServices.inventory' | 'localServices.launcher' | 'localServices.managed' | 'localServices.preview' | 'localServices.publicPreview' | 'machines' | 'machines.liveStream' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.peerMediation' | 'machines.peerMediation.observability' | 'machines.pools' | 'machines.rpc' | 'machines.rpc.directPeer' | 'machines.transfer' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.tunnel' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'memory.search' | 'pets.companion' | 'pets.sync' | 'plugins' | 'plugins.ui' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'plugins.webhooks' | 'prompts.library' | 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'remoteHosts.management' | 'remoteHosts.secretMaterial' | 'scm.writeOperations' | 'search' | 'sessions' | 'sessions.agentSwitching' | 'sessions.autonomousExchange' | 'sessions.board' | 'sessions.conversations' | 'sessions.direct' | 'sessions.drafts' | 'sessions.ephemeralRunner' | 'sessions.filteredListing' | 'sessions.folders' | 'sessions.following' | 'sessions.handoff' | 'sessions.usageLimitRecovery' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.providers.allowProviderSetup' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.relayAccess.allowTailscale' | 'setup.ssh.nativeTransport' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sharing.pendingQueueV2' | 'sharing.public' | 'sharing.session' | 'social.friends' | 'teams' | 'teams.credentialResources' | 'teams.credentialResources.externalApi' | 'terminal.embeddedPty' | 'terminal.renderer.androidTermux' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.native' | 'terminal.transport.byteStream' | 'updates.ota' | 'usage.compactBatch' | 'usage.reporting' | 'voice' | 'voice.agent' | 'voice.daemonInference' | 'voice.happierVoice' | 'workflows' | 'zen.navigation';
+            state: 'disabled' | 'enabled' | 'unknown' | 'unsupported';
+            blockedBy: 'build_policy' | 'client' | 'daemon' | 'dependency' | 'local_policy' | 'scope' | 'server' | null;
+            blockerCode: 'build_disabled' | 'capability_missing' | 'dependency_disabled' | 'dependency_unknown' | 'endpoint_missing' | 'feature_disabled' | 'flag_disabled' | 'misconfigured' | 'mixed_scope_support' | 'none' | 'not_implemented' | 'probe_failed';
             diagnostics: string[];
             evaluatedAt: number;
             scope: {
-                scopeKind: 'runtime' | 'main_selection' | 'spawn';
+                scopeKind: 'main_selection' | 'runtime' | 'spawn';
                 serverId?: string | undefined;
                 machineId?: string | undefined;
             };
-            blockingDependencyId?: 'teams' | 'machines' | 'teams.credentialResources' | 'automations' | 'voice' | 'execution.runs' | 'voice.agent' | 'connectedServices.accountGroups' | 'sessions.usageLimitRecovery' | 'connectedServices.accountFallback' | 'connectedServices.quotas' | 'sharing.pendingQueueV2' | 'sessions' | 'sessions.drafts' | 'sharing.session' | 'machines.transfer' | 'machines.peerMediation' | 'machines.tunnel' | 'machines.liveStream' | 'machines.rpc' | 'localServices' | 'localServices.inventory' | 'browser.viewTargets' | 'localServices.actions' | 'localServices.preview' | 'browser' | 'browser.internal' | 'browser.automation' | 'browser.diagnostics' | 'browser.recording' | 'attachments.uploads' | 'browser.context' | 'plugins' | 'plugins.ui' | 'devices' | 'inbox.global' | 'auth.pairing.desktopQrMobileScan' | 'encryption.plaintextStorage' | 'remoteHosts.management' | 'app.ui.sessionGettingStartedGuidance' | 'files.editor' | 'terminal.embeddedPty' | 'terminal.transport.byteStream' | 'terminal.renderer.native' | 'providers' | 'sessions.direct' | 'agents.claude.unifiedTerminal' | 'artifacts.queryHints' | 'account.publicProfiles' | 'teams.credentialResources.externalApi' | 'deployments' | 'workflows' | 'bots' | 'pets.companion' | 'pets.sync' | 'voice.happierVoice' | 'voice.daemonInference' | 'connectedServices.subscription' | 'connectedServices.autoQuotaReset' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.poolQuotaLimitSelection' | 'updates.ota' | 'sharing.public' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sessions.handoff' | 'sessions.ephemeralRunner' | 'sessions.agentSwitching' | 'sessions.folders' | 'sessions.following' | 'sessions.autonomousExchange' | 'sessions.conversations' | 'sessions.board' | 'sessions.filteredListing' | 'machines.pools' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.peerMediation.observability' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.rpc.directPeer' | 'localServices.managed' | 'localServices.launcher' | 'localServices.actions.terminate' | 'localServices.publicPreview' | 'browser.sidecar' | 'browser.automation.injectedPage' | 'browser.automation.eval' | 'browser.recording.attachments' | 'plugins.webhooks' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'devices.simulatorPreview' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowTailscale' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.ssh.nativeTransport' | 'setup.providers.allowProviderSetup' | 'social.friends' | 'actions.approvals' | 'prompts.library' | 'auth.recovery.providerReset' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.ui.recoveryKeyReminder' | 'auth.pairing.boundQrV2' | 'encryption.accountOptOut' | 'remoteHosts.secretMaterial' | 'e2ee.keylessAccounts' | 'app.analytics' | 'app.crashReports' | 'app.ui.storeReviewPrompts' | 'app.ui.changelog' | 'app.ui.releaseNotes' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.liveActivities' | 'app.ui.homeScreenWidgets' | 'bugReports' | 'scm.writeOperations' | 'files.reviewComments' | 'files.diffSyntaxHighlighting' | 'files.markdownRichEditor' | 'files.syntaxHighlighting.advanced' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.androidTermux' | 'memory.search' | 'search' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.goals' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.codex.appServer.permissionProfiles' | 'zen.navigation' | 'usage.reporting' | undefined;
-        }[] | undefined;
+            blockingDependencyId?: 'account.publicProfiles' | 'actions.approvals' | 'agents.claude.unifiedTerminal' | 'agents.claude.unifiedTerminal.tuiRuntimeControl' | 'agents.codex.appServer.goals' | 'agents.codex.appServer.permissionProfiles' | 'agents.codex.appServer.plugins' | 'agents.codex.appServer.structuredInput' | 'agents.goals' | 'app.analytics' | 'app.crashReports' | 'app.ui.changelog' | 'app.ui.homeScreenWidgets' | 'app.ui.liveActivities' | 'app.ui.onboardingShowcase' | 'app.ui.onboardingTour' | 'app.ui.releaseNotes' | 'app.ui.sessionGettingStartedGuidance' | 'app.ui.storeReviewPrompts' | 'artifacts.queryHints' | 'attachments.uploads' | 'auth.login.keyChallenge' | 'auth.mtls' | 'auth.pairing.boundQrV2' | 'auth.pairing.desktopQrMobileScan' | 'auth.recovery.providerReset' | 'auth.ui.recoveryKeyReminder' | 'automations' | 'bots' | 'browser' | 'browser.automation' | 'browser.automation.eval' | 'browser.automation.injectedPage' | 'browser.context' | 'browser.diagnostics' | 'browser.internal' | 'browser.recording' | 'browser.recording.attachments' | 'browser.sidecar' | 'browser.viewTargets' | 'bugReports' | 'connectedServices.accountFallback' | 'connectedServices.accountGroups' | 'connectedServices.autoDisablePlanInvalid' | 'connectedServices.autoQuotaReset' | 'connectedServices.poolQuotaLimitSelection' | 'connectedServices.quotas' | 'connectedServices.subscription' | 'deployments' | 'devices' | 'devices.simulatorPreview' | 'e2ee.keylessAccounts' | 'encryption.accountOptOut' | 'encryption.plaintextStorage' | 'execution.runs' | 'files.diffSyntaxHighlighting' | 'files.editor' | 'files.markdownRichEditor' | 'files.reviewComments' | 'files.syntaxHighlighting.advanced' | 'inbox.global' | 'localServices' | 'localServices.actions' | 'localServices.actions.terminate' | 'localServices.inventory' | 'localServices.launcher' | 'localServices.managed' | 'localServices.preview' | 'localServices.publicPreview' | 'machines' | 'machines.liveStream' | 'machines.liveStream.directPeer' | 'machines.liveStream.serverRouted' | 'machines.peerMediation' | 'machines.peerMediation.observability' | 'machines.pools' | 'machines.rpc' | 'machines.rpc.directPeer' | 'machines.transfer' | 'machines.transfer.directPeer' | 'machines.transfer.serverRouted' | 'machines.tunnel' | 'machines.tunnel.directPeer' | 'machines.tunnel.serverRouted' | 'memory.search' | 'pets.companion' | 'pets.sync' | 'plugins' | 'plugins.ui' | 'plugins.ui.hostedWeb' | 'plugins.ui.reactNativeBundles' | 'plugins.webhooks' | 'prompts.library' | 'providers' | 'providers.localDiscovery' | 'providers.localModelManagement' | 'remoteHosts.management' | 'remoteHosts.secretMaterial' | 'scm.writeOperations' | 'search' | 'sessions' | 'sessions.agentSwitching' | 'sessions.autonomousExchange' | 'sessions.board' | 'sessions.conversations' | 'sessions.direct' | 'sessions.drafts' | 'sessions.ephemeralRunner' | 'sessions.filteredListing' | 'sessions.folders' | 'sessions.following' | 'sessions.handoff' | 'sessions.usageLimitRecovery' | 'setup.machine.allowLocalMachineSetup' | 'setup.machine.allowRemoteSshMachineSetup' | 'setup.providers.allowProviderSetup' | 'setup.relay.allowCustomRelayUrl' | 'setup.relay.allowHappierCloud' | 'setup.relay.allowLocalRelayHost' | 'setup.relay.allowRelaySelection' | 'setup.relay.allowRemoteSshRelayHost' | 'setup.relayAccess.allowCloudflareTunnel' | 'setup.relayAccess.allowTailscale' | 'setup.ssh.nativeTransport' | 'sharing.contentKeys' | 'sharing.pendingDeliveryState' | 'sharing.pendingQueueV2' | 'sharing.public' | 'sharing.session' | 'social.friends' | 'teams' | 'teams.credentialResources' | 'teams.credentialResources.externalApi' | 'terminal.embeddedPty' | 'terminal.renderer.androidTermux' | 'terminal.renderer.iosGhostty' | 'terminal.renderer.native' | 'terminal.transport.byteStream' | 'updates.ota' | 'usage.compactBatch' | 'usage.reporting' | 'voice' | 'voice.agent' | 'voice.daemonInference' | 'voice.happierVoice' | 'workflows' | 'zen.navigation' | undefined;
+        }[];
     };
     readonly "home.mailDelivery.get": {
         transportConfigured: boolean;
         linkTargetBuildable: boolean;
-        linkOrigin: string | null;
+        linkOrigin: null | string;
         ready: boolean;
         passwordUnreadable: boolean;
     };
     readonly "home.mailDelivery.test": {
-        status: 'sent';
-    } | {
         status: 'failed';
         reason: 'not_configured' | 'password_unreadable' | 'render_failed' | 'transport_failed';
+    } | {
+        status: 'sent';
     };
     readonly "home.audit.list": {
         items: ({
+            action: 'account.delete';
+            summary: {
+                outcome: 'deleted' | 'disabled_pending_completion';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.role.set';
+            summary: {
+                from: 'admin' | 'member' | 'owner';
+                to: 'admin' | 'member' | 'owner';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.sign_out_everywhere';
+            summary: Record<string, never>;
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'account.status.set';
+            summary: {
+                from: 'active' | 'disabled' | 'suspended';
+                to: 'active' | 'disabled' | 'suspended';
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.create';
+            summary: {
+                name: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.installation.remove';
+            summary: {
+                name: string;
+                organization: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.installation.verify';
+            summary: {
+                name: string;
+                organization: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'github_app.update';
+            summary: {
+                name: string;
+                secretsReplaced: boolean;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
             action: 'home.owner.claim';
             summary: {
                 via?: 'claim_code' | undefined;
@@ -1568,32 +1812,32 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'home.policy.set';
             summary: {
                 revision: number;
                 changes: {
-                    field: 'teamCreationPolicy' | 'teamsVisibleToMembers' | 'authenticationPolicy' | 'teamProviderPolicy' | 'identityNetworkPolicy';
+                    field: 'authenticationPolicy' | 'identityNetworkPolicy' | 'teamCreationPolicy' | 'teamProviderPolicy' | 'teamsVisibleToMembers';
                     from: unknown;
                     to: unknown;
                 }[];
@@ -1603,63 +1847,26 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'home.settings.set';
-            summary: {
-                secret: false;
-                key: string;
-                from: unknown;
-                to: unknown;
-            } | {
-                secret: true;
-                key: string;
-                from: 'set' | 'unset';
-                to: 'set' | 'unset';
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         } | {
             action: 'home.settings.discard';
             summary: {
@@ -1677,200 +1884,237 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.role.set';
+            action: 'home.settings.set';
             summary: {
-                from: 'owner' | 'admin' | 'member';
-                to: 'owner' | 'admin' | 'member';
+                secret: false;
+                key: string;
+                from: unknown;
+                to: unknown;
+            } | {
+                secret: true;
+                key: string;
+                from: 'set' | 'unset';
+                to: 'set' | 'unset';
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.status.set';
+            action: 'identity_provider.create';
             summary: {
-                from: 'active' | 'suspended' | 'disabled';
-                to: 'active' | 'suspended' | 'disabled';
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'account.delete';
+            action: 'identity_provider.disable';
             summary: {
-                outcome: 'deleted' | 'disabled_pending_completion';
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'account.sign_out_everywhere';
-            summary: Record<string, never>;
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         } | {
-            action: 'public_profile.restricted';
+            action: 'identity_provider.enable';
             summary: {
-                reason: string;
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
-            action: 'public_profile.restored';
+            action: 'identity_provider.remove';
             summary: {
-                reason: string;
+                displayName: string;
             };
             id: string;
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'identity_provider.secret.replace';
+            summary: {
+                displayName: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'identity_provider.update';
+            summary: {
+                displayName: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'public_profile.handle_reclaimed';
             summary: {
@@ -1882,26 +2126,84 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'public_profile.restored';
+            summary: {
+                reason: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+        } | {
+            action: 'public_profile.restricted';
+            summary: {
+                reason: string;
+            };
+            id: string;
+            at: number;
+            actor: {
+                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
+                id: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
+            };
         } | {
             action: 'teams.members.remove';
             summary: {
@@ -1913,368 +2215,75 @@ export type HomeGovernanceActionResultById = {
             at: number;
             actor: {
                 kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
+                accountId: null | string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
+            target: null | {
+                kind: 'account' | 'github_app' | 'identity_provider' | 'setting';
                 id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.create';
-            summary: {
-                displayName: string;
+                profile: null | {
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
+                };
             };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.update';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.secret.replace';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.enable';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.disable';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'identity_provider.remove';
-            summary: {
-                displayName: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.create';
-            summary: {
-                name: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.update';
-            summary: {
-                name: string;
-                secretsReplaced: boolean;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.installation.verify';
-            summary: {
-                name: string;
-                organization: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
-        } | {
-            action: 'github_app.installation.remove';
-            summary: {
-                name: string;
-                organization: string;
-            };
-            id: string;
-            at: number;
-            actor: {
-                kind: 'account' | 'deployment_command' | 'personal_home_bootstrap';
-                accountId: string | null;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            };
-            target: {
-                kind: 'account' | 'setting' | 'identity_provider' | 'github_app';
-                id: string;
-                profile: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
-                } | null;
-            } | null;
         })[];
-        nextCursor: string | null;
+        nextCursor: null | string;
     };
     readonly "home.reachability.get": {
         publicAddress: {
-            url: string | null;
-            source: 'home' | 'none' | 'deployment' | 'inferred';
-            inferredFrom?: 'relay_access' | 'tailscale_serve' | 'tailscale_funnel' | undefined;
+            url: null | string;
+            source: 'deployment' | 'home' | 'inferred' | 'none';
+            inferredFrom?: 'relay_access' | 'tailscale_funnel' | 'tailscale_serve' | undefined;
         };
         webApp: {
             url: string;
-            source: 'default' | 'home' | 'deployment' | 'public_address';
+            source: 'default' | 'deployment' | 'home' | 'public_address';
         };
-        hostAccess: {
-            method: 'tailscale_serve' | 'tailscale_funnel' | 'local_only' | 'lan' | 'cloudflare_tunnel';
+        hostAccess: null | {
+            method: 'cloudflare_tunnel' | 'lan' | 'local_only' | 'tailscale_funnel' | 'tailscale_serve';
             exposure: 'private' | 'public';
-            shareUrl: string | null;
-        } | null;
+            shareUrl: null | string;
+        };
         iroh: {
             availability: 'available' | 'not_available';
             mode: 'disabled' | 'enabled';
             modeFixed: boolean;
-            state: 'unavailable' | 'failed' | 'active' | 'retired' | 'not_composed' | 'starting' | 'stopping';
-            endpointId: string | null;
-            failureReason: string | null;
+            state: 'active' | 'failed' | 'not_composed' | 'retired' | 'starting' | 'stopping' | 'unavailable';
+            endpointId: null | string;
+            failureReason: null | string;
         };
     };
     readonly "home.reachability.iroh.set": {
         publicAddress: {
-            url: string | null;
-            source: 'home' | 'none' | 'deployment' | 'inferred';
-            inferredFrom?: 'relay_access' | 'tailscale_serve' | 'tailscale_funnel' | undefined;
+            url: null | string;
+            source: 'deployment' | 'home' | 'inferred' | 'none';
+            inferredFrom?: 'relay_access' | 'tailscale_funnel' | 'tailscale_serve' | undefined;
         };
         webApp: {
             url: string;
-            source: 'default' | 'home' | 'deployment' | 'public_address';
+            source: 'default' | 'deployment' | 'home' | 'public_address';
         };
-        hostAccess: {
-            method: 'tailscale_serve' | 'tailscale_funnel' | 'local_only' | 'lan' | 'cloudflare_tunnel';
+        hostAccess: null | {
+            method: 'cloudflare_tunnel' | 'lan' | 'local_only' | 'tailscale_funnel' | 'tailscale_serve';
             exposure: 'private' | 'public';
-            shareUrl: string | null;
-        } | null;
+            shareUrl: null | string;
+        };
         iroh: {
             availability: 'available' | 'not_available';
             mode: 'disabled' | 'enabled';
             modeFixed: boolean;
-            state: 'unavailable' | 'failed' | 'active' | 'retired' | 'not_composed' | 'starting' | 'stopping';
-            endpointId: string | null;
-            failureReason: string | null;
+            state: 'active' | 'failed' | 'not_composed' | 'retired' | 'starting' | 'stopping' | 'unavailable';
+            endpointId: null | string;
+            failureReason: null | string;
         };
     };
     readonly "home.retention.dryRun": {
@@ -2282,7 +2291,7 @@ export type HomeGovernanceActionResultById = {
         byDomain: Record<string, {
             wouldDelete: number;
             candidatesExamined: number;
-            stopReason: 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled';
+            stopReason: 'candidate_budget' | 'exhausted' | 'row_budget' | 'stalled' | 'time_budget';
         }>;
     };
 };

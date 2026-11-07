@@ -1,4 +1,5 @@
-import axios, { type AxiosResponse } from 'axios';
+import axios from '@/api/client/credentialAxios';
+import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
 import { executeSessionSectionActionV1, isSessionSectionActionIdV1 } from '@happier-dev/protocol/actions/sessionSections';
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
@@ -15,12 +16,13 @@ import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountM
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1, AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema, AccountTerminalPresentUserPolicySetRequestV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { ACCOUNT_EMAIL_CHANGE_REQUEST_PATH_V1, ACCOUNT_PASSWORD_CHANGE_PATH_V1, ACCOUNT_PASSWORD_ENROLL_PATH_V1, ACCOUNT_PASSWORD_REMOVE_PATH_V1, ACCOUNT_SECURITY_PATH_V1, AccountEmailChangeRequestResponseV1Schema, AccountEmailChangeRequestV1Schema, AccountPasswordChangeRequestV1Schema, AccountPasswordEnrollRequestV1Schema, AccountPasswordMutationResponseV1Schema, AccountPasswordRemoveRequestV1Schema, AccountSecurityGetResponseV1Schema, AccountSecurityRouteErrorV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, AccountSessionsSignOutEverywhereActionInputV1Schema, AccountSessionsSignOutEverywhereServerOutputV1Schema } from '@happier-dev/protocol/auth/accountSessions';
 import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequestV1, homeDomainActionOutputSchemaV1, readHomeDomainActionErrorV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { bindPublicProfileActionPorts } from '@happier-dev/protocol/actions/executor/publicProfileActions';
 import { buildPublicProfileSnapshot } from '@happier-dev/protocol/account/publicProfileSnapshot';
-import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { bindHomeDomainHttpRequestV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionAccessActionFamily';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
@@ -28,11 +30,15 @@ import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Sch
 import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
+import { readCliManagedAccountGuestDiagnostics } from '@/machines/managed/accountDiagnostics';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { SessionPublicLinkCreateActionInputV1Schema, projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import { SessionAccessErrorCodeV1Schema, SetSessionAccessContextRequestV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { z } from 'zod/mini';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 
 import {
   createAuthenticationHttpStatusError,
@@ -75,7 +81,8 @@ import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-de
 import { buildUsageCoachRemedies } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { loadMcpServerCatalogV1, type McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
-import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
+import { createCliAccountKvJsonTransport, resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
+import { createUsageCoachSuppressionPort, USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { ActionExecuteFailureSchema, type AccountActionHttpFailureDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -89,7 +96,6 @@ export type AccountServerActionDeps = Pick<
   | 'accountApiTokensRevokeAction'
   | 'accountApiTokensRevokeAllAction'
   | 'accountSecurityGetAction'
-  | 'accountSecurityTerminalPresentUserSetAction'
   | 'accountPasswordEnrollAction'
   | 'accountPasswordChangeAction'
   | 'accountPasswordRemoveAction'
@@ -239,6 +245,7 @@ export function createAccountServerActionDeps(input: Readonly<{
     throw new Error('fixed_action_server_target_incomplete');
   }
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+  const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
   const serverId = input.serverId ?? configuration.activeServerId;
   // Local routing/profile identity never substitutes for cryptographic Home
   // identity. External invocation authority compares only the explicit
@@ -386,19 +393,63 @@ export function createAccountServerActionDeps(input: Readonly<{
     }
     return { ok: false, errorCode: 'api_token_operation_failed', error: 'api_token_operation_failed' };
   };
+  const prepareApiTokenBody = async (actionId: 'account.apiTokens.create' | 'account.apiTokens.update', value: unknown,
+    context: ActionExecutorContext) => {
+    const authored = actionId === 'account.apiTokens.create' ? AccountApiTokensCreateActionInputV1Schema.parse(value)
+      : AccountApiTokensUpdateActionInputV1Schema.parse(value);
+    const assertCurrent = async () => {
+      context.signal?.throwIfAborted();
+      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+        throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+      }
+    };
+    await assertCurrent();
+    if (authored.deployment) {
+      const mismatch = await accountServerTargetMismatch({ serverId: authored.deployment.serverId });
+      if (mismatch) throw Object.assign(new Error(mismatch.errorCode), { code: mismatch.errorCode });
+    }
+    const { prepareApiTokenDeploymentAuthoring, resolveInitialDeploymentApprovalV1 } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+    let initialDeployApproval: 'automatic' | 'ask' | undefined;
+    if (authored.deployment && authored.deployment.deployApproval === undefined && authored.grant?.deployApproval === undefined) {
+      const { createCliDeploymentActionDeps } = await import('@/deployments/createCliDeploymentActionDeps');
+      const reads = createCliDeploymentActionDeps({ serverHttpBaseUrl,
+        admitAccount: async requestedServerId => {
+          await assertCurrent();
+          return accountServerTargetMismatch({ serverId: requestedServerId });
+        },
+        resolveRequestHeaders: (readContext, readActionId, request) => {
+          const authorization = resolveRequestHeaders({ context: readContext,
+            effectActionId: readContext.externalActionExecutionAuthorization?.binding.actionId ?? readActionId, ...request });
+          return authorization.ok ? authorization.headers : null;
+        },
+        dispatchReceipt: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
+      });
+      const initial = await resolveInitialDeploymentApprovalV1({ serverId: authored.deployment.serverId,
+        environmentId: authored.deployment.environmentId, context, read: reads.deploymentAction! });
+      if (!initial.ok) throw Object.assign(new Error(initial.errorCode), { code: initial.errorCode });
+      initialDeployApproval = initial.mode;
+    }
+    const accountId = input.credentials?.token === input.token ? readAccountIdFromToken(input.token) : null;
+    const prepared = await prepareApiTokenDeploymentAuthoring({ actionId, value: authored, context,
+      host: { ...(initialDeployApproval ? { initialDeployApproval } : {}),
+        ...(accountId ? { nativeAccount: { accountId, serverId,
+          isCurrent: async () => { await assertCurrent(); return true; } } } : {}) } });
+    const body = prepared.body.deployment && serverIdentityId
+      ? { ...prepared.body, deployment: { ...prepared.body.deployment, serverId: serverIdentityId } } : prepared.body;
+    return { body, assertCurrent };
+  };
   const readPrices = async (refresh: boolean, context: ActionExecutorContext) => {
     const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
     const mismatch = await accountServerTargetMismatch(context);
     if (mismatch) return mismatch;
     if (context.signal?.aborted) return failure('cancelled');
     if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
-    const actionId = refresh ? 'usage.prices.refresh' : 'usage.prices.get';
-    const path = refresh ? '/v1/account/usage/prices/refresh' : '/v1/account/usage/prices';
-    const method = refresh ? 'POST' : 'GET';
-    const body = refresh ? {} : undefined;
+    const actionId = refresh ? USAGE_PRICE_ACTION_IDS.refresh : USAGE_PRICE_ACTION_IDS.get;
+    const spec = getActionSpec(actionId);
+    const { path, method, body } = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport!, inputSchema: spec.inputSchema, input: {} });
     const authorization = resolveRequestHeaders({ context, effectActionId: actionId, method, path, body });
     if (!authorization.ok) return externalAuthorizationUnavailable();
-    const sideEffectClass = getActionSpec(actionId).sideEffectClass;
+    const sideEffectClass = spec.sideEffectClass;
     const dispatched = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method, path, body,
       signal: context.signal, sideEffectClass });
     if (!dispatched.ok) return dispatched;
@@ -450,8 +501,17 @@ export function createAccountServerActionDeps(input: Readonly<{
           return failure('usage_quota_read_failed');
         }
       };
+  const coachSuppressions = (context: ActionExecutorContext,
+    effectActionId = context.externalActionExecutionAuthorization?.binding.actionId ?? 'usage.coach.dismiss') => createUsageCoachSuppressionPort({
+    transport: createCliAccountKvJsonTransport({ credentials, key: USAGE_COACH_SUPPRESSIONS_KV_KEY, serverBaseUrl: serverHttpBaseUrl,
+      signal: context.signal, resolveAuthorizationHeaders: request => {
+        const authorization = resolveRequestHeaders({ context, effectActionId, ...request });
+        return authorization.ok ? authorization.headers : null;
+      } }),
+  });
   const deps: AccountServerActionDeps = {
     usageActions: {
+      coachSuppressions,
       readQuota,
       readPublicProfile: async (context) => {
         const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -502,6 +562,11 @@ export function createAccountServerActionDeps(input: Readonly<{
           if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
           if (!dispatched.ok) return { query, period, status: 'error', errorCode: dispatched.errorCode };
           if (isAuthenticationStatus(dispatched.response.status)) return externalAuthorizationUnavailable();
+          const errorBody = dispatched.response.data;
+          if (dispatched.response.status === 404 && errorBody !== null && typeof errorBody === 'object' && 'error' in errorBody
+            && (errorBody.error === 'not_found' || errorBody.error === 'Session not found')) {
+            return { query, period, status: 'error', errorCode: 'denied' };
+          }
           if ([404, 405, 501].includes(dispatched.response.status)) return { query, period, status: 'unsupported', errorCode: 'unsupported' };
           if (dispatched.response.status >= 400) return { query, period, status: 'error', errorCode: 'usage_query_failed' };
           const parsed = UsageAnalyticsQueryResponseSchema.safeParse(dispatched.response.data);
@@ -537,6 +602,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         let pools: UsagePoolSourceSnapshot[] | undefined;
         let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
         let pricingOverrides: ReturnType<typeof accountSettingsParse>['usageModelPriceOverridesV1'] | undefined;
+        let accountSettings: ReturnType<typeof accountSettingsParse> | undefined;
         let accountEncryptionMode: 'plain' | 'e2ee' | null = null;
         let accountStorage: Awaited<ReturnType<typeof resolveCliAccountStorageContext>> | null = null;
         let accountId = context.runtimeAccountId;
@@ -554,7 +620,11 @@ export function createAccountServerActionDeps(input: Readonly<{
           } });
           await check();
           const parsedSettings = accountSettingsParse(settings.raw);
+          accountSettings = parsedSettings;
           preferences = parsedSettings.usageCoachPreferencesV1;
+          if (request.queries.some(query => query.includeAccounting && query.includeSessionEvidence)) {
+            preferences = { ...preferences, suppressions: (await coachSuppressions(context, 'usage.query').read()).suppressions };
+          }
           pricingOverrides = parsedSettings.usageModelPriceOverridesV1;
           const profileRequest = bindHomeDomainActionHttpRequestV1('account.profile.get', {});
           const profile = AccountProfileResponseSchema.parse(await read(profileRequest.path));
@@ -597,7 +667,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const accounts = profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth');
           const periods = request.queries.filter(query => query.includeQuotaHistory)
             .map(query => resolveUsageQueryPeriod(query, accountingNowMs));
-          const starts = periods.flatMap(period => period.startMs === undefined ? [] : [period.startMs]);
+          const starts = periods.map(period => period.startMs ?? 0);
           const ends = periods.flatMap(period => period.endMs === undefined ? [] : [period.endMs]);
           const range = periods.length > 0 && starts.length === periods.length && ends.length === periods.length
             ? { startAtMs: Math.min(...starts), endAtMs: Math.max(...ends) } : undefined;
@@ -647,7 +717,7 @@ export function createAccountServerActionDeps(input: Readonly<{
             readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse(await read(MCP_SERVER_CATALOG_ROWS_ROUTE_V1)) });
           await check();
         }
-        const result = resolveUsagePageAggregation({ queries: request.queries, quota, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
+        const result = resolveUsagePageAggregation({ queries: request.queries, accountSettings, quota, pools, pricingOverrides, coachPreferences: preferences ?? null, nowMs: accountingNowMs,
           accounting, work: detail.work, howYouWork: detail.howYouWork,
           sources: [...quotaSources, { source: 'coach_preferences', status: preferences ? 'available' : 'unknown' },
             { source: 'pricing_overrides', status: pricingOverrides === undefined ? 'unknown' : 'available' }],
@@ -715,7 +785,9 @@ export function createAccountServerActionDeps(input: Readonly<{
         const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
         try {
           if (!await isCurrent()) return { status: 'unavailable' };
-          const observation = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRowsObservation({ credentials, serverId: targetServerId, signal }));
+          const observation = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRowsObservation({
+            credentials, serverId: targetServerId, signal, selection: { kinds: ['workspace-ref', 'relationship-graph'] },
+          }));
           const rows = observation.snapshot;
           const machines = await listCurrentAccountMachines({ token: credentials.token, serverHttpBaseUrl, signal });
           const actual = await observeProjectServicePlacementActualV1({ ...request,
@@ -816,11 +888,36 @@ export function createAccountServerActionDeps(input: Readonly<{
       if (!('homeId' in body)) throw new TypeError('Account-placed managed Actions require an explicit Home');
       const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
       if (unavailable) return unavailable;
+      if (actionId === 'machines.managed.power.set' && 'when' in body && body.when === 'now') {
+        try {
+          return await executeCliManagedAccountPower({ body: ManagedMachineActionInputSchemasV1['machines.managed.power.set'].parse(body),
+            context: actionContext, credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+            serverUrl: serverHttpBaseUrl, signal,
+            post: async (suffix, request, schema, requestSignal = signal) => {
+              const path = `/v1/machines/managed/controller/${suffix}`;
+              const headers = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: request });
+              if (!headers.ok) throw new ManagedMachineControllerError('admission_unavailable');
+              const dispatch = await dispatchAccountServerActionHttpRequest({ headers: headers.headers, method: 'POST', path, body: request,
+                sideEffectClass: spec.sideEffectClass, ...(requestSignal ? { signal: requestSignal } : {}) });
+              if (!dispatch.ok) throw new ManagedMachineControllerError(dispatch.errorCode ?? 'managed_request_failed');
+              if (dispatch.response.status < 200 || dispatch.response.status >= 300) {
+                const refusal = ManagedErrorV1Schema.safeParse(dispatch.response.data);
+                throw new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'managed_request_failed');
+              }
+              return schema.parse(dispatch.response.data);
+            } });
+        } catch (error) {
+          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code };
+          throw error;
+        }
+      }
       const path = managedMachineActionEndpointPathV1(actionId);
-      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
+      const homeBody = actionId === 'machines.managed.inspect' && 'managedId' in body
+        ? { homeId: body.homeId, managedId: body.managedId } : body;
+      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body: homeBody });
       if (!requestHeaders.ok) return externalAuthorizationUnavailable();
       const dispatch = await dispatchAccountServerActionHttpRequest({
-        headers: requestHeaders.headers, method: 'POST', path, body, sideEffectClass: spec.sideEffectClass,
+        headers: requestHeaders.headers, method: 'POST', path, body: homeBody, sideEffectClass: spec.sideEffectClass,
         ...(signal ? { signal } : {}),
       });
       if (!dispatch.ok) return dispatch;
@@ -842,6 +939,13 @@ export function createAccountServerActionDeps(input: Readonly<{
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         throw createHttpStatusError(response.status, 'Managed Machine Action request failed');
+      }
+      if (actionId === 'machines.managed.inspect' && 'includeGuestDiagnostics' in body && body.includeGuestDiagnostics) {
+        const output = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(response.data);
+        const guestDiagnostics = await readCliManagedAccountGuestDiagnostics({ machine: output.machine, context: actionContext,
+          credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+          serverUrl: serverHttpBaseUrl, signal });
+        return { ...output, guestDiagnostics };
       }
       return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: ManagedMachineActionOutputSchemasV1[actionId], sideEffectClass: spec.sideEffectClass });
     },
@@ -1357,7 +1461,12 @@ export function createAccountServerActionDeps(input: Readonly<{
       const targetMismatch = await accountServerTargetMismatch(actionContext);
       if (targetMismatch) return targetMismatch;
       const spec = getActionSpec('account.apiTokens.create');
-      const body = AccountApiTokensCreateActionInputV1Schema.parse(actionInput);
+      let prepared;
+      try { prepared = await prepareApiTokenBody('account.apiTokens.create', actionInput,
+        signal ? { ...actionContext, signal } : actionContext); }
+      catch (error) { const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'client_required';
+        return { ok: false, errorCode: code, error: code }; }
+      const { body } = prepared;
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,
         effectActionId: 'account.apiTokens.create',
@@ -1366,6 +1475,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         body,
       });
       if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      await prepared.assertCurrent();
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1387,7 +1497,12 @@ export function createAccountServerActionDeps(input: Readonly<{
       const targetMismatch = await accountServerTargetMismatch(actionContext);
       if (targetMismatch) return targetMismatch;
       const spec = getActionSpec('account.apiTokens.update');
-      const body = AccountApiTokensUpdateActionInputV1Schema.parse(actionInput);
+      let prepared;
+      try { prepared = await prepareApiTokenBody('account.apiTokens.update', actionInput,
+        signal ? { ...actionContext, signal } : actionContext); }
+      catch (error) { const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'client_required';
+        return { ok: false, errorCode: code, error: code }; }
+      const { body } = prepared;
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,
         effectActionId: 'account.apiTokens.update',
@@ -1396,6 +1511,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         body,
       });
       if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      await prepared.assertCurrent();
       const dispatch = await dispatchAccountServerActionHttpRequest({
         headers: requestHeaders.headers,
         method: 'POST',
@@ -1521,28 +1637,6 @@ export function createAccountServerActionDeps(input: Readonly<{
         serverHttpBaseUrl,
         path: ACCOUNT_SECURITY_PATH_V1,
         outputSchema: AccountSecurityGetResponseV1Schema,
-        ...(signal ? { signal } : {}),
-      });
-    },
-    accountSecurityTerminalPresentUserSetAction: async ({ input: actionInput, context: actionContext, signal }) => {
-      const targetMismatch = await accountServerTargetMismatch(actionContext);
-      if (targetMismatch) return targetMismatch;
-      const body = AccountTerminalPresentUserPolicySetRequestV1Schema.parse(actionInput);
-      const requestHeaders = resolveRequestHeaders({
-        context: actionContext,
-        effectActionId: 'account.security.terminalPresentUser.set',
-        method: 'POST',
-        path: ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1,
-        body,
-      });
-      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
-      return await executeAccountSecurityAction({
-        headers: requestHeaders.headers,
-        serverHttpBaseUrl,
-        path: ACCOUNT_TERMINAL_PRESENT_USER_POLICY_PATH_V1,
-        input: body,
-        inputSchema: AccountTerminalPresentUserPolicySetRequestV1Schema,
-        outputSchema: AccountTerminalPresentUserPolicySetResponseV1Schema,
         ...(signal ? { signal } : {}),
       });
     },

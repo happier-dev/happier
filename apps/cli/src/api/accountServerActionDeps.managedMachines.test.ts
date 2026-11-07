@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
-import { AccountSettingsSchema, FeaturesResponseSchema, normalizeActionsSettingsV1, type ActionId } from '@happier-dev/protocol';
+import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, normalizeActionsSettingsV1, type ActionId } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { fixture as managedFixture, pluginId as managedPluginId } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createCommittedContributedActionInvoker } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import axios from '@/api/client/credentialAxios';
 
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -59,7 +69,7 @@ describe('managed inventory CLI Home adapter', () => {
   const policy = normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: {
     'machines.presets.update': ['cli', 'agent', 'mcp'],
     'machines.access.grant.remove': ['cli', 'agent', 'mcp'],
-    'machines.environment.apply': ['cli', 'agent', 'mcp'],
+    'machines.setup.apply': ['cli', 'agent', 'mcp'],
     'session.stop': ['cli', 'agent', 'mcp'],
     'execution.run.stop': ['cli', 'agent', 'mcp'],
   } });
@@ -68,8 +78,8 @@ describe('managed inventory CLI Home adapter', () => {
     defaultSessionId = 'cli-global') {
     if (surface === 'cli') return cli.execute(actionId, input, { ...context, actionsSettings: policy });
     return createActionToolExecutorBridge({ executor: cli, surface, actionsSettings: policy })
-      .executeActionByToolName(surface === 'agent' ? 'action_execute' : actionId.replaceAll('.', '_'),
-        surface === 'agent' ? { actionId, input } : input, defaultSessionId, { actionRequestId: `parity-${surface}-${actionId}` });
+      .executeActionByToolName('action_execute', { actionId, input }, defaultSessionId,
+        { actionRequestId: `parity-${surface}-${actionId}` });
   }
 
   function executor(overrides: Partial<Pick<Parameters<typeof createAccountServerActionDeps>[0],
@@ -82,6 +92,178 @@ describe('managed inventory CLI Home adapter', () => {
       }),
     });
   }
+
+  it('reports unavailable guest diagnostics when Account inspection cannot reach the retained controller', async () => {
+    const retained = { ...machine, enrolledMachineId: 'offline-guest' };
+    app.post('/v1/machines/managed/actions/get', async () => retained);
+    app.post('/v1/machines/managed/actions/inspect', async request => {
+      // Guest diagnostics belongs to the executing host, not Home's strict read.
+      expect(request.body).toEqual({ homeId: machine.homeId, managedId: machine.id });
+      return { machine: retained };
+    });
+    await app.ready();
+    const result = await executor().execute('machines.managed.inspect', {
+      homeId: machine.homeId, managedId: machine.id, includeGuestDiagnostics: true,
+    }, { ...context, runtimeAccountId: 'owner', actionsSettings: policy });
+    expect(result).toMatchObject({ ok: true, result: { machine: { id: machine.id },
+      guestDiagnostics: { status: 'unavailable', code: 'provider_unavailable' } } });
+  });
+
+  it('reads installed guest diagnostics through the selected Account native exec role', async () => {
+    const base = managedFixture({ nativeTransport: true });
+    const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
+      actions: base.manifest.contributes.actions.map(action => ({ ...action, hostAccess: undefined,
+        execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
+    } });
+    const provisioner = manifest.contributes.machineProvisioners[0]!;
+    const provider = { pluginId: manifest.id, localId: provisioner.id };
+    const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {} };
+    const retained: ManagedMachineV1 = { ...machine, controller: undefined, launch, enrolledMachineId: 'guest-account',
+      allocation: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
+      reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+        retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+    app.post('/v1/machines/managed/actions/inspect', async request => {
+      expect(request.body).toEqual({ homeId: retained.homeId, managedId: retained.id });
+      return { machine: retained };
+    });
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
+      availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+      intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
+      release: { ref: { pluginId: provider.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+        normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+      uiArtifacts: [], packageAssets: [],
+    }));
+    const inspectInput = { homeId: retained.homeId, managedId: retained.id, includeGuestDiagnostics: true };
+    const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'guest-log-read', runtimeAccountId: 'owner' };
+    const roles: string[] = [];
+    actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.inspect', input: inspectInput,
+      context: actionContext, plan: { children: [{ action: { pluginId: provider.pluginId, localId: 'exec' }, role: 'exec' }] },
+      // The provider process is the system boundary; selection, private port,
+      // credential binding and the managed read owner remain real.
+      execute: async body => {
+        expect(body).toMatchObject({ action: { pluginId: provider.pluginId, localId: 'exec' }, input: {
+          resource: { id: 'same-native' }, argv: ['sh', '-c', expect.stringContaining("'doctor' '--json' '--include-daemon-log'")],
+        } });
+        roles.push('exec');
+        const snapshot = { daemonState: { pid: 1, httpPort: 1, startedAt: 1, startedWithCliVersion: 'guest-version',
+          machineId: 'guest-account', hasControlToken: true, daemonLogPath: null }, daemonLogs: [], doctorSnapshot: null,
+          stackContext: null, runtime: { cwd: '', platform: 'linux', nodeVersion: '' },
+          sessionDiagnostics: { context: { sessionId: '', metadataStatus: 'unavailable' }, logs: [] } };
+        return { ok: true, result: { stdoutBase64: Buffer.from(JSON.stringify(snapshot)).toString('base64'), stderrBase64: '',
+          stdoutTruncated: false, stderrTruncated: false,
+          termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } } } };
+      } });
+    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    const result = await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext });
+    expect(result).toMatchObject({ machine: { id: retained.id }, guestDiagnostics: { status: 'collected',
+      snapshot: { daemonState: { machineId: 'guest-account' } } } });
+    expect(roles).toEqual(['exec']);
+  });
+
+  it.each([['account', false], ['account', true], ['native', false], ['native', true]] as const)(
+    'executes the admitted Account power intent rather than treating its Home write as native success (%s consumer, refused=%s)', async (entry, refused) => {
+    const service = { pluginId: 'acme.accounts', localId: 'cloud' };
+    const disclosed: string[] = [];
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => ({ kind: 'account', account: { service, accountId: 'mutable-default' } }),
+      resolveTarget: async target => target.kind === 'account' ? { account: target.account, displayName: target.account.accountId } : null,
+      materializeAccount: async ({ account }) => { disclosed.push(account.accountId); return { kind: 'environment', env: { TOKEN: account.accountId } }; },
+      projectTargetAccounts: async () => { throw new Error('No account listing'); },
+      assertTargetAccountMaterializable: async () => { throw new Error('No listed account use'); },
+    });
+    const base = managedFixture({ credentialOwner: owner });
+    const provisioner = base.manifest.contributes.machineProvisioners[0]!;
+    const provider = { pluginId: managedPluginId, localId: provisioner.id };
+    const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
+      purpose: { consumer: { pluginId: provider.pluginId, localId: 'power' }, purpose: 'upstream' }, account: { service, accountId: 'selected-account' },
+    }] };
+    let retained: ManagedMachineV1 = { id: 'retained', homeId: 'srv_home', custodianAccountId: 'owner', launch,
+      allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
+      resource: { contributionRef: provider, schemaVersion: 1, value: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+        retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+    };
+    const powerInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 2, when: 'now' as const, intent: 'start' as const };
+    const paths: string[] = [];
+    app.addHook('onRequest', async request => { paths.push(request.url); });
+    const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
+      actions: base.manifest.contributes.actions.map(action => ({ ...action,
+        execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
+    } });
+    const reference = normalizePluginManifestV2({ schemaVersion: 2, id: service.pluginId, version: '1.0.0', displayName: 'Cloud', runtime: { apiVersion: 1 },
+      contributes: { connectedAccountDescriptors: [{ id: service.localId, title: 'Cloud', authentication: { defaultModeId: 'token', modes: [{
+        id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [{ id: 'token', title: 'Token', schema: { type: 'string' }, secret: true }],
+      }] } }] } });
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
+      availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+      intent: { pluginId: provider.pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'enabled', writableCollections: [], revision: 'intent-1' },
+      release: { ref: { pluginId: provider.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+        normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+        packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+      uiArtifacts: [], packageAssets: [],
+    }));
+    // A noncustodian cannot borrow an inventory row. The power admission owns
+    // the specific refusal and returns the sole native-effect descriptor.
+    app.post('/v1/machines/managed/actions/get', async (_request, reply) => refused
+      ? reply.code(403).send({ code: 'permission_denied' }) : retained);
+    app.post('/v1/machines/managed/controller/admit-control', async (_request, reply) => {
+      if (refused) return reply.code(403).send({ code: 'managed_power_required' });
+      retained = { ...retained, desired: 'start', intentRevision: 3 };
+      return { machine: retained, replayed: false };
+    });
+    app.post('/v1/machines/managed/controller/submit-intent', async () => ({ machine: retained, submitted: true }));
+    app.post('/v1/machines/managed/controller/report-intent', async request => {
+      expect(request.body).toMatchObject({ expectedIntentRevision: 3, requestId: 'original-power', result: { kind: 'confirmed' } });
+      return { machine: retained };
+    });
+    const native: string[] = [];
+    const runtime = managedFixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
+      onNativeRole: role => { native.push(role); }, onInspect: () => { native.push('inspect'); },
+      nativeRoleResults: { inspect: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' } } });
+    const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: runtime.runtimeRegistry,
+      source: 'ephemeral', durableRevision: -1, release: async () => {} }), connectedAccountPurposeBindingOwner: owner });
+    const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'original-power', runtimeAccountId: refused ? 'other' : 'owner',
+      operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
+    // This constructs the consumer's canonical private-port boundary; it is
+    // not evidence that production preparation has published the role plan.
+    actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: powerInput,
+      context: actionContext, reviewAdmitted: true,
+      plan: { children: ['power', 'inspect'].map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role })) },
+      policies: ['power', 'inspect'].map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role, surface: 'cli' })),
+      execute: async (body, childContext, actionId) => {
+        expect(actionId).toBe('action.invoke');
+        if (!body || typeof body !== 'object' || !('action' in body) || !body.action || typeof body.action !== 'object'
+          || !('localId' in body.action) || typeof body.action.localId !== 'string') throw new Error('Expected provider Action');
+        if (!('input' in body)) throw new Error('Expected provider operand');
+        expect(body).toMatchObject({ input: { resource: {} } });
+        return invoke({ action: { pluginId: provider.pluginId, localId: body.action.localId }, input: body.input, context: childContext });
+      } });
+    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    const result = entry === 'account'
+      ? await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: powerInput, context: actionContext })
+      : await executeCliManagedAccountPower({ body: powerInput, context: actionContext, credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test',
+        post: async (suffix, request, schema) => {
+          const response = await axios.post(`http://home.test/v1/machines/managed/controller/${suffix}`, request,
+            { headers: { Authorization: 'Bearer bound' }, validateStatus: () => true });
+          if (response.status >= 400) throw new ManagedMachineControllerError('managed_power_required');
+          return schema.parse(response.data);
+        } }).catch((error: unknown) => {
+          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code };
+          throw error;
+        });
+    expect(result).toMatchObject(refused ? { ok: false, errorCode: 'managed_power_required' }
+      : { kind: 'accepted', managedId: retained.id, intentRevision: 3 });
+    expect(native).toEqual(refused ? [] : ['power', 'inspect']);
+    // The native power handler materializes the selected token. The fixture's
+    // Inspect returns its observed state without acquiring another token.
+    expect(disclosed).toEqual(refused ? [] : ['selected-account']);
+    expect(paths.filter(path => path.endsWith('/admit-control'))).toHaveLength(1);
+    expect(paths.some(path => path.endsWith('/execution-authorization'))).toBe(false);
+  });
 
   it('lists and gets retained resources through the real CLI executor without a controller or answering app', async () => {
     const seen: Array<{ url: string; body: unknown; authorization?: string }> = [];
@@ -113,10 +295,43 @@ describe('managed inventory CLI Home adapter', () => {
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
 
+  it.each(['cli', 'agent', 'mcp'] as const)('retries the exact managed birth read through the real %s Action without listing Sessions', async surface => {
+    const actionId = ActionIdSchema.parse('machines.managed.birth.get');
+    const seen: string[] = [];
+    let runId: string | null = 'run-birth';
+    let sessionId: string | null = 'session-birth';
+    let refused = false;
+    const path = '/v1/machines/managed/actions/birth.get';
+    app.post(path, async (request, reply) => {
+      seen.push(request.url);
+      expect(request.body).toEqual({ homeId: 'srv_home', managedId: machine.id });
+      expect(request.headers.authorization).toBe('Bearer bound');
+      return refused ? reply.code(403).send({ code: 'permission_denied' })
+        : { source: runId ? { kind: 'run', source: { kind: 'workflow_run', runId } }
+          : sessionId ? { kind: 'session', sessionId } : null };
+    });
+    const cli = executor();
+    const read = () => invoke(cli, surface, actionId, { homeId: 'srv_home', managedId: machine.id });
+    expect(await read()).toEqual({ ok: true, result: { source: { kind: 'run', source: { kind: 'workflow_run', runId } } } });
+    expect(seen.splice(0)).toEqual([path]);
+    runId = null;
+    expect(await read()).toEqual({ ok: true, result: { source: { kind: 'session', sessionId } } });
+    expect(seen.splice(0)).toEqual([path]);
+    sessionId = null;
+    expect(await read()).toEqual({ ok: true, result: { source: null } });
+    seen.length = 0;
+    refused = true;
+    expect(await read()).toMatchObject({ ok: false, errorCode: 'permission_denied' });
+    expect(seen).toEqual([path]);
+    seen.length = 0;
+    expect(await invoke(cli, surface, actionId, { homeId: 'foreign', managedId: machine.id })).toMatchObject({ ok: false });
+    expect(seen).toEqual([]);
+  });
+
   it.each(['cli', 'agent', 'mcp'] as const)('invokes Home inventory, preset edits, pools and sharing through the real %s adapter', async surface => {
     const seen: Array<{ url: string; body: unknown; authorization?: string }> = [];
     const preset = { id: 'preset-1', homeId: 'srv_home', revision: 2, name: 'Changed',
-      owner: { kind: 'account', accountId: 'owner' }, recipe: machine.launch, controller: machine.controller };
+      owner: { kind: 'account', accountId: 'owner' }, launch: machine.launch, controller: machine.controller };
     app.post('/v1/machines/managed/actions/get', async request => {
       seen.push({ url: request.url, body: request.body, authorization: request.headers.authorization });
       return machine;

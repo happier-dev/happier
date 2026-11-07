@@ -3,14 +3,19 @@ import { SystemTaskJsonValueSchema } from '@happier-dev/protocol/system/tasks/sp
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import {
     buildRemoteBootstrapCommand,
+    buildDedicatedDaemonInvocationCommand,
     createOpenSshHappierJsonExecutor,
     createRemoteSshBootstrapMachineTaskKind,
     executeRemoteSelfDownloadFirstPartyInstallPlan,
+    installRemoteCli,
     normalizeRemoteReleaseArch,
     normalizeRemoteReleaseOs,
     parseRemoteBootstrapMachineParams,
     resolveRemoteSelfDownloadFirstPartyInstallPlan,
+    resolveSshBootstrapHostKeyPin,
     SystemTaskExecutionError,
+    type DedicatedDaemonBootstrapExec,
+    type RemoteCliInstallation,
     type RemoteSelfDownloadFirstPartyInstallPlan,
 } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 
@@ -20,6 +25,7 @@ import { approveTerminalPairing } from '@/auth/terminal/approveTerminalPairing';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import {
     TokenStorage,
+    type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import {
@@ -29,6 +35,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
+import { randomUUID } from '@/platform/randomUUID';
 import {
     NATIVE_SSH_BOOTSTRAP_TASK_KIND,
     type NativeSshTaskCredentials,
@@ -38,6 +45,7 @@ import { createNativeRemoteSshCommandRunner, type NativeRemoteSshCommandRunner }
 export { readNativeSshBootstrapDedupeKey } from './nativeTaskIdentity';
 
 type RemoteBootstrapMachineParams = ReturnType<typeof parseRemoteBootstrapMachineParams>;
+type RemoteSshBootstrapMachineOptions = Parameters<typeof createRemoteSshBootstrapMachineTaskKind>[0];
 
 export type NativeRemoteSshBootstrapEventSink = Readonly<{
     event: (payload: unknown) => void;
@@ -50,9 +58,16 @@ export type RunNativeRemoteSshBootstrapTaskParams = Readonly<{
         params: unknown;
     }>;
     nativeModule?: NativeSshModule | null;
+    /** Captured Account credentials for ordinary approval at the original Home target. */
+    approvalCredentials?: AuthCredentials;
     signal?: AbortSignal;
     events?: NativeRemoteSshBootstrapEventSink;
     commandRunner?: NativeRemoteSshCommandRunner;
+    reviewedChild?: RemoteSshBootstrapMachineOptions['reviewedChild'];
+    prepareDedicatedBootstrap?: NonNullable<Parameters<typeof installRemoteCli>[0]['bootstrap']>['prepareManagedBootstrap'];
+    assertManagedEnrollmentCurrent?: RemoteSshBootstrapMachineOptions['assertManagedEnrollmentCurrent'];
+    onEnrollmentDeadline?: RemoteSshBootstrapMachineOptions['onEnrollmentDeadline'];
+    onInstalled?: () => Promise<void>;
     resolveInstallPlan?: (params: Readonly<{
         channel: 'stable' | 'preview' | 'publicdev';
         os: 'linux' | 'darwin';
@@ -152,7 +167,7 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
         stderr: string;
     }>>;
     resolveInstallPlan?: RunNativeRemoteSshBootstrapTaskParams['resolveInstallPlan'];
-}>): Promise<void> {
+} & RemoteCliInstallation>): Promise<Readonly<{ binaryPath: string }>> {
     const preflight = await params.runTextCommand([
         "printf '{\"platform\":\"%s\",\"arch\":\"%s\"}\\n'",
         '"$(uname -s | tr \'[:upper:]\' \'[:lower:]\')"',
@@ -173,17 +188,22 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
             ? params.channel
             : 'stable';
     const plan = params.resolveInstallPlan
-        ? await params.resolveInstallPlan({ channel, os, arch })
+        ? await params.resolveInstallPlan({ channel, os, arch, ...(params.remoteHomeDir ? { remoteHomeDir: params.remoteHomeDir } : {}) })
         : await resolveRemoteSelfDownloadFirstPartyInstallPlan({
             componentId: 'happier-cli',
             channel,
             os,
             arch,
             runRemoteText: command => params.runTextCommand(command),
+            ...(params.remoteHomeDir ? { remoteHomeDir: params.remoteHomeDir } : {}),
         });
     const installResult = await executeRemoteSelfDownloadFirstPartyInstallPlan({
         componentId: 'happier-cli', channel, plan,
-        runRemoteText: (command) => params.runTextCommand(command, { execTimeoutMs: 600_000 }),
+        ...(params.remoteHomeDir ? { remoteHomeDir: params.remoteHomeDir } : {}),
+        runRemoteText: (command) => params.runTextCommand(
+            params.daemonUsername ? buildDedicatedDaemonInvocationCommand(command) : command,
+            { execTimeoutMs: 600_000 },
+        ),
     });
     if (installResult.status !== 0) {
         throw new SystemTaskExecutionError(
@@ -191,9 +211,10 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
             installResult.stderr.trim() || 'Native SSH bootstrap remote self-download install failed.',
         );
     }
+    return { binaryPath: plan.binaryPath };
 }
 
-function resolveNativeApprovalTarget(parsed: RemoteBootstrapMachineParams): Readonly<{
+function resolveNativeApprovalTarget(parsed: Pick<RemoteBootstrapMachineParams, 'homeTarget' | 'relay'>): Readonly<{
     endpointUrl: string;
     credentialUrl: string;
     profileId: string;
@@ -266,12 +287,15 @@ function resolveNativeApprovalTarget(parsed: RemoteBootstrapMachineParams): Read
     };
 }
 
-async function approveNativeLocalAuthRequest(params: Readonly<{
+export async function approveNativeLocalAuthRequest(params: Readonly<{
     publicKey: string;
     homeServerIdentityId: string;
     pairing?: unknown;
     supportsTokenOnly?: boolean;
-    parsed: RemoteBootstrapMachineParams;
+    /** An admitted Account operation retains its captured credentials through ordinary pairing. */
+    credentials?: AuthCredentials;
+    signal?: AbortSignal;
+    parsed: Pick<RemoteBootstrapMachineParams, 'homeTarget' | 'relay'>;
 }>): Promise<void> {
     const target = resolveNativeApprovalTarget(params.parsed);
     if (params.homeServerIdentityId.trim() !== target.homeServerIdentityId) {
@@ -280,7 +304,7 @@ async function approveNativeLocalAuthRequest(params: Readonly<{
             'The remote authentication request belongs to a different Home identity.',
         );
     }
-    const credentials = await TokenStorage.getCredentialsForServerUrl(
+    const credentials = params.credentials ?? await TokenStorage.getCredentialsForServerUrl(
         target.credentialUrl,
         { serverId: target.profileId },
     );
@@ -308,6 +332,7 @@ async function approveNativeLocalAuthRequest(params: Readonly<{
             pairingContext: pairing,
             targetCredentials: credentials,
             supportsTokenOnly: params.supportsTokenOnly === true,
+            ...(params.signal ? { signal: params.signal } : {}),
         });
     } finally {
         await transportResolution.transport.close();
@@ -385,25 +410,43 @@ export async function runNativeRemoteSshBootstrapTask(
     }
     const parsed = parseRemoteBootstrapMachineParams(params.spec.params);
     const commandRunner = params.commandRunner ?? createNativeRemoteSshCommandRunner();
-    const runTextCommand = async (
-        command: string,
-        options: Readonly<{ execTimeoutMs?: number }> = {},
-    ) => await commandRunner.runTextCommand({
+    let hostKeyDecision: Parameters<NativeRemoteSshCommandRunner['runTextCommand']>[0]['hostKeyDecision'];
+    const exec: DedicatedDaemonBootstrapExec = async (request) => await commandRunner.runTextCommand({
         nativeModule: params.nativeModule!,
         credentials,
-        command,
-        signal: params.signal,
+        hostKeyDecision,
+        command: request.command,
+        signal: request.signal ?? params.signal,
         requestIdPrefix: params.taskId,
-        ...(options.execTimeoutMs ? { execTimeoutMs: options.execTimeoutMs } : {}),
+        ...(request.timeoutMs ? { execTimeoutMs: request.timeoutMs } : {}),
+        ...(request.input !== undefined ? { input: request.input } : {}),
+        ...(request.onStdoutChunk ? { onStdoutChunk: request.onStdoutChunk } : {}),
     });
     const taskKind = createRemoteSshBootstrapMachineTaskKind({
-        resolveHostTrust: async () => ({ status: 'trusted' }),
-        installRemoteCli: async () => {
-            await installRemoteCliViaNativeSelfDownload({
-                channel: parsed.channel,
-                runTextCommand,
-                resolveInstallPlan: params.resolveInstallPlan,
+        reviewedChild: params.reviewedChild,
+        assertManagedEnrollmentCurrent: params.assertManagedEnrollmentCurrent,
+        onEnrollmentDeadline: params.onEnrollmentDeadline,
+        resolveHostTrust: async ({ ssh }) => {
+            const fingerprintSha256 = resolveSshBootstrapHostKeyPin(ssh);
+            hostKeyDecision = fingerprintSha256 ? { decision: 'accept-once', fingerprintSha256 } : undefined;
+            return { status: 'trusted' };
+        },
+        installRemoteCli: async ({ parsed: installTarget, signal, context }) => {
+            await installRemoteCli({
+                channel: installTarget.channel ?? 'stable', signal,
+                transport: {
+                    exec,
+                    install: placement => installRemoteCliViaNativeSelfDownload({
+                        channel: installTarget.channel,
+                        ...placement,
+                        runTextCommand: (command, options) => exec({ command, signal, timeoutMs: options?.execTimeoutMs }),
+                        resolveInstallPlan: params.resolveInstallPlan,
+                    }),
+                },
+                bootstrap: { parsed: installTarget, context, createPromptId: randomUUID,
+                    prepareManagedBootstrap: params.prepareDedicatedBootstrap },
             });
+            await params.onInstalled?.();
         },
         createRemoteEnrollmentExecutor: ({ parsed: enrollmentTarget, auth, knownHostsMode, signal }) => (
             createOpenSshHappierJsonExecutor({
@@ -411,14 +454,12 @@ export async function runNativeRemoteSshBootstrapTask(
                 auth,
                 knownHostsMode,
                 channel: enrollmentTarget.channel === 'dev' ? 'publicdev' : enrollmentTarget.channel,
+                enrollmentIdentity: enrollmentTarget.enrollmentIdentity,
                 runRemoteText: async ({ remoteCommand, timeoutMs, onStdoutChunk, input, signal: commandSignal }) => (
-                    await commandRunner.runTextCommand({
-                        nativeModule: params.nativeModule!,
-                        credentials,
+                    await exec({
                         command: remoteCommand,
                         signal: commandSignal ?? signal ?? params.signal,
-                        requestIdPrefix: params.taskId,
-                        ...(timeoutMs ? { execTimeoutMs: timeoutMs } : {}),
+                        timeoutMs,
                         ...(input !== undefined ? { input } : {}),
                         ...(onStdoutChunk ? { onStdoutChunk } : {}),
                     })
@@ -445,6 +486,7 @@ export async function runNativeRemoteSshBootstrapTask(
                 // that identity-bearing projection intact even when the shared
                 // recipe derives a relay-adjusted approval view.
                 parsed,
+                credentials: params.approvalCredentials,
             });
         },
         runRemoteCommand: async ({ label, data }) => {
@@ -452,6 +494,7 @@ export async function runNativeRemoteSshBootstrapTask(
             const output = await commandRunner.runJsonCommand({
                 nativeModule: params.nativeModule!,
                 credentials,
+                hostKeyDecision,
                 command: buildRemoteBootstrapCommand({
                     label,
                     channel: parsed.channel,
@@ -459,6 +502,7 @@ export async function runNativeRemoteSshBootstrapTask(
                     localServerUrl: localServerUrl || undefined,
                     webappUrl: isLoopbackUrl(parsed.relay.webappUrl) ? undefined : parsed.relay.webappUrl,
                     daemonServiceMode: parsed.serviceMode,
+                    enrollmentIdentity: parsed.enrollmentIdentity,
                     data: label === 'relay.runtime.install'
                         ? {
                             relayRuntimeMode: parsed.relayRuntime?.mode ?? 'user',
@@ -475,6 +519,7 @@ export async function runNativeRemoteSshBootstrapTask(
     });
 
     return await taskKind.run({
+        taskId: params.taskId,
         params: SystemTaskJsonValueSchema.parse(buildNativeSafeRecipeParams(params.spec.params)),
         signal: params.signal ?? new AbortController().signal,
         emit: (event) => {

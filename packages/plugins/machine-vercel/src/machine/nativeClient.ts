@@ -1,7 +1,10 @@
-import { Buffer } from 'node:buffer';
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerBootstrapCarrierV1, MachineProvisionerCheckResultV1, MachineProvisionerDestroyResultV1, MachineProvisionerNativeCauseV1, MachineProvisionerNativeExecResultV1, MachineProvisionerObservationV1, MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerNativeCredentialApplyInputV1, MachineProvisionerNativeCredentialApplyResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { credentialPolicyOwnership, credentialPolicyMatches, encodeCredentialPolicy } from './credentialPolicy.js';
+import { caughtNativeFailure, fail, nativeFailureResult, type VercelNativeFailure as Failure } from './nativeFailure.js';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, VercelLaunchSchema, VercelOperationSchema, VercelResourceSchema, VercelScopeSchema, type VercelScope, type VercelResource, type VercelLaunch, type VercelOperation } from './schemas.js';
 
 // Official Vercel OpenAPI, fetched 2026-10-25. v4 creation; v2 named,
@@ -12,19 +15,18 @@ const text = defineProtocolString({ minLength: 1 });
 const number = defineProtocolNumber();
 
 const sessionSchema = defineProtocolObject({
-  id: text, sourceSandboxName: text, projectId: text, createdAt: number,
+  id: text, sourceSandboxName: text, projectId: text, createdAt: number, networkPolicy: defineProtocolJsonValue().optional(),
 }, open);
 const namedIdentityFields = { name: text, createdAt: number, tags: defineProtocolObject({ 'happier-managed-id': text }, open) };
 const namedIdentityResponse = defineProtocolObject({ sandbox: defineProtocolObject(namedIdentityFields, open) }, open);
 const namedSchema = defineProtocolObject({
   ...namedIdentityFields, currentSessionId: text, currentSnapshotId: text.optional(),
   persistent: defineProtocolLiteral(true), status: defineProtocolUnion([defineProtocolLiteral('running'), defineProtocolLiteral('stopped'), defineProtocolLiteral('stopping')]),
-  expiresAt: number.optional(),
+  expiresAt: number.optional(), networkPolicy: defineProtocolJsonValue().optional(),
 }, open);
 const namedResponse = defineProtocolObject({ sandbox: namedSchema, session: sessionSchema }, open);
 const sessionResponse = defineProtocolObject({ session: sessionSchema }, open);
 const projectResponse = defineProtocolObject({ id: text }, open);
-const stdinResponse = defineProtocolObject({ bytesWritten: number }, open);
 const snapshotSchema = defineProtocolObject({
   id: text, sourceSessionId: text, status: defineProtocolUnion([defineProtocolLiteral('created'), defineProtocolLiteral('deleted'), defineProtocolLiteral('failed')]),
   createdAt: number, expiresAt: number.optional(),
@@ -38,12 +40,14 @@ const commandSchema = defineProtocolObject({
   id: text, sessionId: text, exitCode: defineProtocolUnion([defineProtocolNumber({ integer: true }), defineProtocolLiteral(null)]),
 }, open);
 const commandResponse = defineProtocolObject({ command: commandSchema }, open);
+// Official v2 write response requires command; the cumulative counter is optional.
+const stdinResponse = defineProtocolObject({ command: commandSchema, bytesWritten: number.optional() }, open);
 const teamSchema = defineProtocolObject({
-  id: text, billing: defineProtocolObject({ plan: defineProtocolUnion([defineProtocolLiteral('hobby'), defineProtocolLiteral('pro'), defineProtocolLiteral('enterprise')]) }, open),
+  id: text, billing: defineProtocolObject({ plan: defineProtocolUnion([defineProtocolLiteral('hobby'), defineProtocolLiteral('pro'), defineProtocolLiteral('enterprise')]) }, open).nullable(),
 }, open);
 const logSchema = defineProtocolObject({ stream: defineProtocolUnion([defineProtocolLiteral('stdout'), defineProtocolLiteral('stderr')]), data: defineProtocolString() }, open);
 type Native = ProtocolSchemaOutput<typeof namedResponse>;
-type Failure = Readonly<{ kind: 'unavailable' | 'unknown' | 'refused'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 }>;
+type ResourceIdentity = Pick<VercelResource, 'teamId' | 'projectId' | 'name' | 'managedId'> & Partial<Pick<VercelResource, 'createdAt'>>;
 type Http = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent'; nativeCause?: MachineProvisionerNativeCauseV1 }> | Failure;
 type ReadNative = Readonly<{ kind: 'present'; value: Native }> | Exclude<Http, { kind: 'ok' }>;
 type Acquisition = MachineProvisionerAcquireResultV1<VercelResource, VercelOperation>;
@@ -54,7 +58,6 @@ const pending = (operation: VercelOperation, nativeCause?: MachineProvisionerNat
   kind: 'pending', nativeOperationRef: reference(operation), ...(nativeCause ? { nativeCause } : {}),
 });
 const accepted = (operation: VercelOperation): Destruction => ({ kind: 'accepted', nativeOperationRef: reference(operation) });
-function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 function errorCode(error: unknown) {
   return error !== null && typeof error === 'object' && 'code' in error && error.code === 'credential_unavailable'
     ? 'credential_unavailable' : 'vercel_transport_unavailable';
@@ -119,9 +122,12 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     }
     return { kind: 'present', value };
   }
-  async function read(resource: VercelResource): Promise<ReadNative> {
+  async function readNamed(resource: ResourceIdentity): Promise<Http> {
     if (!sameScope(resource)) return { kind: 'refused', code: 'vercel_scope_mismatch' };
-    return decodeNative(await http(namedPath(resource.name), 'GET', undefined, namedParams), resource);
+    return http(namedPath(resource.name), 'GET', undefined, namedParams);
+  }
+  async function read(resource: ResourceIdentity): Promise<ReadNative> {
+    return decodeNative(await readNamed(resource), resource);
   }
   async function readSnapshot(id: string) {
     const response = await http(snapshotPath(id));
@@ -130,18 +136,18 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     return decoded.success && decoded.data.snapshot.id === id
       ? { kind: 'present' as const, value: decoded.data.snapshot } : invalid();
   }
-  async function storage(native: Native): Promise<'retained' | 'lost' | 'unknown'> {
-    if (native.sandbox.status === 'running') return 'retained';
-    if (native.sandbox.status === 'stopping') return 'unknown';
+  async function storage(native: Native): Promise<Readonly<{ kind: 'retained' }> | Readonly<{ kind: 'lost' }> | Failure> {
+    if (native.sandbox.status === 'running') return { kind: 'retained' };
+    if (native.sandbox.status === 'stopping') return { kind: 'unknown', code: 'vercel_stopping' };
     const id = native.sandbox.currentSnapshotId;
-    if (!id) return 'lost';
+    if (!id) return { kind: 'lost' };
     const snapshot = await readSnapshot(id);
-    if (snapshot.kind === 'absent') return 'lost';
-    if (snapshot.kind !== 'present') return 'unknown';
-    return snapshot.value.status === 'created' && snapshot.value.sourceSessionId === native.session.id
-      && (snapshot.value.expiresAt === undefined || snapshot.value.expiresAt > observedAt) ? 'retained' : 'lost';
+    if (snapshot.kind === 'absent') return { kind: 'lost' };
+    if (snapshot.kind !== 'present') return snapshot;
+    return { kind: snapshot.value.status === 'created' && snapshot.value.sourceSessionId === native.session.id
+      && (snapshot.value.expiresAt === undefined || snapshot.value.expiresAt > observedAt) ? 'retained' : 'lost' };
   }
-  async function check(): Promise<MachineProvisionerCheckResultV1> {
+  async function checkProject(): Promise<MachineProvisionerCheckResultV1> {
     const result = await http('/v9/projects/' + encodeURIComponent(scope.projectId));
     if (result.kind !== 'ok') return { available: false, code: result.kind === 'absent' ? 'vercel_project_unavailable' : result.code,
       ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
@@ -155,10 +161,19 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       code: result.kind === 'absent' ? 'vercel_team_unavailable' : result.code,
       ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
     const decoded = teamSchema.safeParse(result.value);
-    if (!decoded.success || decoded.data.id !== scope.teamId) return { kind: 'unavailable' as const, code: 'vercel_plan_unavailable' };
+    if (!decoded.success || decoded.data.id !== scope.teamId || !decoded.data.billing) return { kind: 'unavailable' as const, code: 'vercel_plan_unavailable' };
     const plan = decoded.data.billing.plan;
     return { kind: 'available' as const, plan, vcpus: plan === 'hobby' ? 4 : plan === 'pro' ? 8 : 32,
       timeoutMs: plan === 'hobby' ? 2_700_000 : 86_400_000 };
+  }
+  async function check(): Promise<MachineProvisionerCheckResultV1> {
+    const project = await checkProject();
+    if (!project.available) return project;
+    const qualification = await limits();
+    // Current credential-brokering transformations include Hobby:
+    // https://vercel.com/kb/guide/vercel-sandbox-vs-e2b (2026-10-28).
+    return { ...project, nativeCredentialDelivery: qualification.kind === 'available'
+      ? { status: 'supported' } : { status: 'unknown', code: qualification.code } };
   }
   async function acquire(inputLaunch: VercelLaunch, managedId: string): Promise<Acquisition> {
     signal?.throwIfAborted();
@@ -198,12 +213,13 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
   async function recover(input: VercelOperation): Promise<Acquisition> {
     const operation = VercelOperationSchema.parse(input);
     if (operation.kind !== 'acquire' || !sameScope(operation)) return pending(operation);
-    const response = await http(namedPath(operation.name), 'GET', undefined, namedParams);
+    const response = await readNamed(operation);
     const result = decodeNative(response, operation);
     const identity = returnedIdentity(response, operation);
     return result.kind === 'present' ? { kind: 'bound', resource: reference({ ...scope, name: operation.name,
       managedId: operation.managedId, createdAt: result.value.sandbox.createdAt }) }
-      : pending(identity ? { ...operation, createdAt: identity.createdAt } : operation);
+      : pending(identity ? { ...operation, createdAt: identity.createdAt } : operation,
+        result.kind === 'absent' ? undefined : result.nativeCause);
   }
   async function inspect(input: VercelResource): Promise<MachineProvisionerObservationV1> {
     const resource = VercelResourceSchema.parse(input);
@@ -212,20 +228,22 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       // Managed absence covers billed attachments too. Never let an absent VM
       // make the shared owner discard unknown or surviving snapshot custody.
       const owned = await snapshots(resource);
-      return owned !== null && owned.length === 0
+      return owned.kind === 'present' && owned.ids.length === 0
         ? observeMachineProvisionerNativeRead(observedAt, { kind: 'absent', storage: 'lost', billing: BILLING })
         : observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: 'vercel_snapshot_cleanup_unqualified' });
     }
     if (result.kind !== 'present') return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: result.code,
       ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) });
+    const stored = await storage(result.value);
     return observeMachineProvisionerNativeRead(observedAt, { kind: 'present',
       power: result.value.sandbox.status === 'stopping' ? 'unknown' : result.value.sandbox.status,
-      storage: await storage(result.value), billing: BILLING, daemon: 'unknown',
+      storage: stored.kind === 'retained' || stored.kind === 'lost' ? stored.kind : 'unknown', billing: BILLING,
+      ...('code' in stored ? { reason: stored.code, ...(stored.nativeCause ? { nativeCause: stored.nativeCause } : {}) } : {}),
       ...(result.value.sandbox.expiresAt === undefined ? {} : { nativeExpiry: result.value.sandbox.expiresAt }) });
   }
   async function running(resource: VercelResource): Promise<Native> {
     const result = await read(resource);
-    if (result.kind !== 'present') fail(result.kind === 'absent' ? 'vercel_resource_absent' : result.code);
+    if (result.kind !== 'present') fail(result.kind === 'absent' ? 'vercel_resource_absent' : result.code, result.nativeCause);
     if (result.value.sandbox.status !== 'running') fail('vercel_resource_stopped');
     return result.value;
   }
@@ -233,7 +251,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (!argv.length) fail('invalid_request');
     const started = await http(sessionPath(native.session.id) + '/cmd', 'POST', { command: argv[0], args: argv.slice(1),
       wait: false, attachStdin: input !== undefined, ...(timeoutMs == null ? {} : { timeout: timeoutMs }) });
-    if (started.kind !== 'ok') fail(started.kind === 'absent' ? 'vercel_command_absent' : started.code);
+    if (started.kind !== 'ok') fail(started.kind === 'absent' ? 'vercel_command_absent' : started.code, started.nativeCause);
     const initial = commandResponse.safeParse(started.value);
     if (!initial.success || initial.data.command.sessionId !== native.session.id) fail('vercel_invalid_response');
     const command = initial.data.command;
@@ -243,24 +261,26 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       // actual JSON overhead, so the host's larger file fragments stay valid.
       let offset = 0;
       do {
-        const overhead = Buffer.byteLength(JSON.stringify({ data: '', offset, close: true }));
+        const overhead = new TextEncoder().encode(JSON.stringify({ data: '', offset, close: true })).length;
         const bytesPerRequest = Math.floor((1_000_000 - overhead) / 4) * 3;
         const end = Math.min(input.length, offset + bytesPerRequest);
-        const result = await http(path + '/stdin', 'POST', { data: Buffer.from(input.subarray(offset, end)).toString('base64'),
+        const result = await http(path + '/stdin', 'POST', { data: encodeBase64(input.subarray(offset, end)),
           offset, close: end === input.length });
-        if (result.kind !== 'ok') fail(result.kind === 'absent' ? 'vercel_command_absent' : result.code);
+        if (result.kind !== 'ok') fail(result.kind === 'absent' ? 'vercel_command_absent' : result.code, result.nativeCause);
         const written = stdinResponse.safeParse(result.value);
-        if (!written.success || written.data.bytesWritten !== end) fail('vercel_stdin_unconfirmed');
+        if (!written.success || written.data.command.id !== command.id || written.data.command.sessionId !== native.session.id
+          || written.data.bytesWritten !== undefined && written.data.bytesWritten !== end) fail('vercel_stdin_unconfirmed');
         offset = end;
       } while (offset < input.length);
     }
     const finished = await http(path, 'GET', undefined, { wait: 'true' });
-    if (finished.kind !== 'ok') fail(finished.kind === 'absent' ? 'vercel_command_absent' : finished.code);
+    if (finished.kind !== 'ok') fail(finished.kind === 'absent' ? 'vercel_command_absent' : finished.code, finished.nativeCause);
     const result = commandResponse.safeParse(finished.value);
     if (!result.success || result.data.command.id !== command.id || result.data.command.sessionId !== native.session.id
       || result.data.command.exitCode === null) fail('vercel_command_unconfirmed');
     const logs = await http(path + '/logs', 'GET', undefined, {}, false, true);
-    if (logs.kind !== 'ok' || !Array.isArray(logs.value)) fail(logs.kind === 'ok' || logs.kind === 'absent' ? 'vercel_logs_unavailable' : logs.code);
+    if (logs.kind !== 'ok') fail(logs.kind === 'absent' ? 'vercel_logs_unavailable' : logs.code, logs.nativeCause);
+    if (!Array.isArray(logs.value)) fail('vercel_logs_unavailable');
     let stdout = '', stderr = '';
     for (const line of logs.value) {
       const parsed = logSchema.safeParse(line);
@@ -290,133 +310,194 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       const { environment, detachedDaemonStartArgv } = parsed.processConfig;
       const home = environment.HAPPIER_HOME_DIR;
       if (!home?.startsWith('/') || !detachedDaemonStartArgv?.length || Object.keys(environment).some(key => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) fail('invalid_request');
-      // The existing enrollment owner supplies the installed payload command.
-      // Persist its native boot recipe on the same retained filesystem, never
-      // reconstruct an installer, credential, enrollment or Session lifecycle.
-      const script = '#!/bin/sh\n' + Object.entries(environment).map(([key, value]) => 'export ' + key + '=' + quote(value)).join('\n')
-        + '\nexec ' + detachedDaemonStartArgv.map(quote).join(' ') + '\n';
-      await put(native, home + '/vercel-daemon-start.new', Buffer.from(script), 0o700);
-      const publish = await execute(native, ['sh', '-c', 'mv ' + quote(home + '/vercel-daemon-start.new') + ' ' + quote(home + '/vercel-daemon-start')]);
-      if (publish.exitCode !== 0) fail('vercel_boot_unconfirmed');
-      const start = await execute(native, detachedDaemonStartArgv, undefined, parsed.timeoutMs);
+      const script = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
+      const start = await execute(native, ['sh', '-c', script], undefined, parsed.timeoutMs);
       if (start.exitCode !== 0) fail('vercel_boot_unconfirmed');
       return { kind: 'process-configured' };
     }
     const result = await execute(native, parsed.argv,
-      parsed.inputBase64 === undefined ? undefined : Buffer.from(parsed.inputBase64, 'base64'), parsed.timeoutMs);
+      parsed.inputBase64 === undefined ? undefined : decodeBase64(parsed.inputBase64), parsed.timeoutMs);
     return { termination: { observed: { kind: 'exit', exitCode: result.exitCode }, requestedBy: { kind: 'none' } },
-      stdoutBase64: Buffer.from(result.stdout).toString('base64'), stderrBase64: Buffer.from(result.stderr).toString('base64'),
+      stdoutBase64: encodeBase64(new TextEncoder().encode(result.stdout)), stderrBase64: encodeBase64(new TextEncoder().encode(result.stderr)),
       stdoutTruncated: false, stderrTruncated: false };
   }
   async function putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
     const parsed = ROLE_SCHEMAS.putFileInput.parse(input);
-    try { await put(await running(parsed.resource), parsed.guestPath, Buffer.from(parsed.bytesBase64, 'base64'), parsed.mode); return { kind: 'confirmed' }; }
-    catch (error) { return { kind: 'unknown', code: error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'vercel_file_unconfirmed' }; }
+    try { await put(await running(parsed.resource), parsed.guestPath, decodeBase64(parsed.bytesBase64), parsed.mode); return { kind: 'confirmed' }; }
+    catch (error) { return caughtNativeFailure(error, 'vercel_file_unconfirmed'); }
+  }
+  async function applyNativeCredentials(input: MachineProvisionerNativeCredentialApplyInputV1,
+    materializeHeaders: PluginInvocationContext['services']['machineProvisioners']['materializeNativeCredentialHeaders']): Promise<MachineProvisionerNativeCredentialApplyResultV1> {
+    const decoded = VercelResourceSchema.safeParse(input.resource.value);
+    if (input.resource.contributionRef.pluginId !== CONTRIBUTION.pluginId || input.resource.contributionRef.localId !== CONTRIBUTION.localId
+      || input.resource.schemaVersion !== 1 || !decoded.success) return { kind: 'refused', code: 'resource_mismatch' };
+    const resource = decoded.data;
+    const native = await read(resource);
+    if (native.kind !== 'present') return { kind: native.kind === 'refused' || native.kind === 'absent' ? 'refused' : 'unknown',
+      code: native.kind === 'absent' ? 'vercel_resource_absent' : native.code,
+      ...(native.nativeCause ? { nativeCause: native.nativeCause } : {}) };
+    if (native.value.sandbox.status === 'stopping') return { kind: 'unknown', code: 'vercel_stopping' };
+    const policies = [native.value.sandbox.networkPolicy,
+      ...(native.value.sandbox.status === 'running' ? [native.value.session.networkPolicy] : [])];
+    for (const policy of policies) {
+      const ownership = credentialPolicyOwnership(policy);
+      if (ownership !== 'owned') return ownership === 'conflict'
+        ? { kind: 'refused', code: 'vercel_policy_ownership_conflict' } : { kind: 'unknown', code: 'vercel_policy_unavailable' };
+    }
+    const updateLive = native.value.sandbox.status === 'running'
+      && !credentialPolicyMatches(native.value.session.networkPolicy, input.bindings);
+    const updateSaved = !credentialPolicyMatches(native.value.sandbox.networkPolicy, input.bindings);
+    if (!updateLive && !updateSaved) return { kind: 'confirmed' };
+    const encoded = await encodeCredentialPolicy(input, materializeHeaders);
+    if (encoded.kind !== 'ready') return encoded;
+    if (updateLive) {
+      const live = await http(sessionPath(native.value.session.id) + '/network-policy', 'POST', encoded.policy);
+      if (live.kind !== 'ok') return { kind: 'unknown', code: live.kind === 'absent' ? 'vercel_policy_unconfirmed' : live.code,
+        ...(live.nativeCause ? { nativeCause: live.nativeCause } : {}) };
+      const acknowledged = sessionResponse.safeParse(live.value);
+      if (!acknowledged.success || acknowledged.data.session.id !== native.value.session.id
+        || acknowledged.data.session.sourceSandboxName !== resource.name || acknowledged.data.session.projectId !== scope.projectId) {
+        return { kind: 'unknown', code: 'vercel_policy_unconfirmed' };
+      }
+    }
+    // Saving stopped configuration never wakes the resource. Live and saved
+    // effects are not atomic; a partial update remains unconfirmed.
+    if (!updateSaved) return { kind: 'confirmed' };
+    const saved = await http(namedPath(resource.name), 'PATCH', { networkPolicy: encoded.policy }, { projectId: scope.projectId });
+    return returnedIdentity(saved, resource) ? { kind: 'confirmed' }
+      : { kind: 'unknown', code: saved.kind === 'ok' || saved.kind === 'absent' ? 'vercel_policy_unconfirmed' : saved.code,
+        ...(saved.kind !== 'ok' && saved.nativeCause ? { nativeCause: saved.nativeCause } : {}) };
   }
   async function power(resource: VercelResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
     if (!['start', 'stop', 'resume'].includes(intent)) return { kind: 'refused', code: 'vercel_intent_unsupported' };
     const native = await read(VercelResourceSchema.parse(resource));
     if (native.kind !== 'present') return { kind: native.kind === 'refused' || native.kind === 'absent' ? 'refused' : 'unknown',
-      code: native.kind === 'absent' ? 'vercel_resource_absent' : native.code };
+      code: native.kind === 'absent' ? 'vercel_resource_absent' : native.code,
+      ...(native.nativeCause ? { nativeCause: native.nativeCause } : {}) };
     if (intent === 'stop') {
       if (native.value.sandbox.status === 'running') {
         const stopped = await http(sessionPath(native.value.session.id) + '/stop', 'POST');
-        if (stopped.kind !== 'ok') return { kind: 'unknown', code: stopped.kind === 'absent' ? 'vercel_stop_unconfirmed' : stopped.code };
+        if (stopped.kind !== 'ok') return stopped.kind === 'absent'
+          ? { kind: 'unknown', code: 'vercel_stop_unconfirmed', ...(stopped.nativeCause ? { nativeCause: stopped.nativeCause } : {}) }
+          : nativeFailureResult(stopped);
       }
       const current = await inspect(resource);
+      if (current.reason) return { kind: 'unknown', code: current.reason, ...(current.nativeCause ? { nativeCause: current.nativeCause } : {}) };
       return current.power === 'stopped' && current.storage === 'retained'
         ? { kind: 'confirmed' } : { kind: 'unknown', code: 'vercel_stop_unconfirmed' };
     }
     if (native.value.sandbox.status === 'stopping') return { kind: 'unknown', code: 'vercel_stopping' };
-    if (native.value.sandbox.status === 'stopped' && await storage(native.value) !== 'retained') return { kind: 'refused', code: 'vercel_snapshot_unavailable' };
+    if (native.value.sandbox.status === 'stopped') {
+      const stored = await storage(native.value);
+      if (stored.kind !== 'retained') return stored.kind === 'lost' ? { kind: 'refused', code: 'vercel_snapshot_unavailable' } : nativeFailureResult(stored);
+    }
     const resumed = native.value.sandbox.status === 'running' ? native : decodeNative(
       await http(namedPath(resource.name), 'GET', undefined, { projectId: scope.projectId, resume: 'true' }, true), resource);
-    if (resumed.kind !== 'present' || resumed.value.sandbox.status !== 'running') return { kind: 'unknown', code: 'vercel_resume_unconfirmed' };
-    try {
-      const started = await execute(resumed.value, ['sh', '-c', 'exec "$HOME/.happier/vercel-daemon-start"']);
-      return started.exitCode === 0 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'vercel_boot_unconfirmed' };
-    } catch { return { kind: 'unknown', code: 'vercel_boot_unconfirmed' }; }
+    if (resumed.kind !== 'present') return resumed.kind === 'absent'
+      ? { kind: 'unknown', code: 'vercel_resume_unconfirmed', ...(resumed.nativeCause ? { nativeCause: resumed.nativeCause } : {}) }
+      : nativeFailureResult(resumed);
+    if (resumed.value.sandbox.status !== 'running') return { kind: 'unknown', code: 'vercel_resume_unconfirmed' };
+    return { kind: 'confirmed' };
   }
-  async function snapshots(resource: VercelResource): Promise<readonly string[] | null> {
+  async function snapshots(resource: VercelResource): Promise<Readonly<{ kind: 'present'; ids: readonly string[] }> | Failure> {
     const ids: string[] = [];
     let cursor: string | null = null;
     const seen = new Set<string>();
     do {
       const page = await http('/v2/sandboxes/snapshots', 'GET', undefined, { project: scope.projectId, name: resource.name, ...(cursor ? { cursor } : {}) });
-      if (page.kind !== 'ok') return null;
+      if (page.kind !== 'ok') return page.kind === 'absent'
+        ? { kind: 'unknown', code: 'vercel_cleanup_unqualified', ...(page.nativeCause ? { nativeCause: page.nativeCause } : {}) } : page;
       const parsed = pageSchema.safeParse(page.value);
-      if (!parsed.success) return null;
+      if (!parsed.success) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
       for (const snapshot of parsed.data.snapshots) {
         if (snapshot.status === 'deleted') continue;
         const source = await http(sessionPath(snapshot.sourceSessionId));
-        if (source.kind !== 'ok') return null;
+        if (source.kind !== 'ok') return source.kind === 'absent'
+          ? { kind: 'unknown', code: 'vercel_cleanup_unqualified', ...(source.nativeCause ? { nativeCause: source.nativeCause } : {}) } : source;
         const decoded = sessionResponse.safeParse(source.value);
+        // Vercel requests the initial session before committing its named
+        // sandbox. Qualify the snapshot's generation, not that request's time.
         if (!decoded.success || decoded.data.session.id !== snapshot.sourceSessionId || decoded.data.session.projectId !== resource.projectId || decoded.data.session.sourceSandboxName !== resource.name
-          || decoded.data.session.createdAt < resource.createdAt || snapshot.createdAt < resource.createdAt) return null;
+          || snapshot.createdAt < resource.createdAt) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
         ids.push(snapshot.id);
       }
       cursor = parsed.data.pagination.next;
-      if (cursor && seen.has(cursor)) return null;
+      if (cursor && seen.has(cursor)) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
       if (cursor) seen.add(cursor);
     } while (cursor);
-    return [...new Set(ids)];
+    return { kind: 'present', ids: [...new Set(ids)] };
   }
-  async function cleanup(input: VercelOperation): Promise<{ kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string }> {
+  async function cleanupEvidence(input: VercelOperation): Promise<{ kind: 'confirmed' } | { kind: 'retryable' } | Failure> {
     const operation = VercelOperationSchema.parse(input);
     if (operation.kind !== 'delete' || operation.phase !== 'delete' || !sameScope(operation.resource)) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
     const native = await read(operation.resource);
     if (native.kind === 'present') return { kind: 'retryable' };
-    if (native.kind !== 'absent') return { kind: 'unknown', code: native.code };
+    if (native.kind !== 'absent') return native;
     let survives = false;
     for (const id of operation.snapshotIds) {
       const snapshot = await readSnapshot(id);
       if (snapshot.kind === 'present' && snapshot.value.status !== 'deleted') survives = true;
-      else if (snapshot.kind !== 'absent' && snapshot.kind !== 'present') return { kind: 'unknown', code: snapshot.code };
+      else if (snapshot.kind !== 'absent' && snapshot.kind !== 'present') return snapshot;
     }
     return { kind: survives ? 'retryable' : 'confirmed' };
+  }
+  async function cleanup(input: VercelOperation) {
+    const result = await cleanupEvidence(input);
+    // The public cleanup observation admits a code only. Destroy consumes the
+    // full native evidence before this narrower, read-only projection.
+    return result.kind === 'confirmed' || result.kind === 'retryable'
+      ? result : { kind: 'unknown' as const, code: result.code };
   }
   async function destroy(input: { resource: VercelResource } | { nativeOperation: VercelOperation }): Promise<Destruction> {
     let operation: VercelOperation = 'resource' in input ? { kind: 'delete', resource: VercelResourceSchema.parse(input.resource), phase: 'stop', snapshotIds: [] }
       : VercelOperationSchema.parse(input.nativeOperation);
     if (operation.kind === 'acquire') {
-      const recovered = await recover(operation);
-      if (recovered.kind !== 'bound') return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
-      operation = { kind: 'delete', resource: recovered.resource.value, phase: 'stop', snapshotIds: [] };
+      const recovered = await read(operation);
+      if (recovered.kind !== 'present') return recovered.kind === 'absent'
+        ? { kind: 'unknown', code: 'vercel_cleanup_unqualified', ...(recovered.nativeCause ? { nativeCause: recovered.nativeCause } : {}) }
+        : nativeFailureResult(recovered);
+      operation = { kind: 'delete', resource: { ...scope, name: operation.name, managedId: operation.managedId,
+        createdAt: recovered.value.sandbox.createdAt }, phase: 'stop', snapshotIds: [] };
     }
     if (!sameScope(operation.resource)) return { kind: 'refused', code: 'vercel_scope_mismatch' };
     let native = await read(operation.resource);
-    if (native.kind !== 'present' && native.kind !== 'absent') return native.kind === 'refused'
-      ? { kind: 'refused', code: native.code } : accepted(operation);
+    if (native.kind !== 'present' && native.kind !== 'absent') return nativeFailureResult(native);
     if (operation.phase === 'stop') {
       if (native.kind === 'absent') {
         const ids = await snapshots(operation.resource);
-        if (ids === null) return { kind: 'unknown', code: 'vercel_cleanup_unqualified' };
-        return ids.length === 0 ? { kind: 'confirmed' }
-          : accepted({ ...operation, phase: 'delete', snapshotIds: ids });
+        if (ids.kind !== 'present') return nativeFailureResult(ids);
+        return ids.ids.length === 0 ? { kind: 'confirmed' }
+          : accepted({ ...operation, phase: 'delete', snapshotIds: [...ids.ids] });
       }
       if (native.value.sandbox.status === 'running') {
         const stopped = await http(sessionPath(native.value.session.id) + '/stop', 'POST');
-        if (stopped.kind !== 'ok') return accepted(operation);
+        if (stopped.kind !== 'ok') return stopped.kind === 'absent'
+          ? { kind: 'unknown', code: 'vercel_stop_unconfirmed', ...(stopped.nativeCause ? { nativeCause: stopped.nativeCause } : {}) }
+          : nativeFailureResult(stopped);
         native = await read(operation.resource);
       }
-      if (native.kind !== 'present' || native.value.sandbox.status !== 'stopped') return accepted(operation);
+      if (native.kind !== 'present' && native.kind !== 'absent') return nativeFailureResult(native);
+      if (native.kind === 'absent' || native.value.sandbox.status !== 'stopped') return accepted(operation);
       const ids = await snapshots(operation.resource);
-      if (ids === null) return accepted(operation);
-      operation = { ...operation, phase: 'delete', snapshotIds: ids };
+      if (ids.kind !== 'present') return nativeFailureResult(ids);
+      operation = { ...operation, phase: 'delete', snapshotIds: [...ids.ids] };
       // Publish the exact attachment closure to the existing row owner before
       // destroying native metadata. A lost later reply still has these IDs.
       return accepted(operation);
     }
     if (native.kind === 'present') {
       const deleted = await http(namedPath(operation.resource.name), 'DELETE', undefined, { projectId: scope.projectId, deleteOrphanSnapshots: 'true' });
-      if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return accepted(operation);
+      if (deleted.kind !== 'ok' && deleted.kind !== 'absent') return nativeFailureResult(deleted);
       native = await read(operation.resource);
+      if (native.kind !== 'present' && native.kind !== 'absent') return nativeFailureResult(native);
       if (native.kind !== 'absent') return accepted(operation);
     }
     // Vercel owns orphan/reference qualification. Unconditional snapshot DELETE
     // would destroy a deliberately shared restore source. Native orphan cleanup
     // is asynchronous; exact survivors remain retained and visibly incomplete.
-    return (await cleanup(operation)).kind === 'confirmed' ? { kind: 'confirmed' } : accepted(operation);
+    const cleaned = await cleanupEvidence(operation);
+    return cleaned.kind === 'confirmed' ? { kind: 'confirmed' } : cleaned.kind === 'retryable'
+      ? accepted(operation) : nativeFailureResult(cleaned);
   }
-  return { check, limits, acquire, recover, inspect, bootstrap, exec, putFile, power, destroy, cleanup };
+  return { check, checkProject, limits, acquire, recover, inspect, bootstrap, exec, putFile, applyNativeCredentials, power, destroy, cleanup };
 }

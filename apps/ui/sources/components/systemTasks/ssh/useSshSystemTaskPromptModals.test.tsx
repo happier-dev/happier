@@ -8,6 +8,15 @@ import type { SystemTaskPromptEnvelope } from '../prompts/readLatestSystemTaskPr
 const modalSpies = vi.hoisted(() => ({
     confirm: vi.fn(async () => false),
     prompt: vi.fn(async () => null as string | null),
+    /** The host-key sheet's answers, in order; the sheet settles through its own onResolve. */
+    hostKeyAnswers: [] as boolean[],
+    show: vi.fn((config: { chrome?: { testID?: string }; props?: { onResolve?: (trusted: boolean) => void } }) => {
+        if (config.chrome?.testID === 'ssh-host-key-modal') {
+            const answer = modalSpies.hostKeyAnswers.shift() ?? false;
+            queueMicrotask(() => config.props?.onResolve?.(answer));
+        }
+        return 'modal-id';
+    }),
 }));
 
 // Mock factories import the leaf testkit mock modules, never the full
@@ -20,6 +29,7 @@ vi.mock('@/modal', async () => {
         spies: {
             confirm: modalSpies.confirm,
             prompt: modalSpies.prompt,
+            show: modalSpies.show as never,
         },
     }).module;
 });
@@ -30,6 +40,11 @@ vi.mock('@/text', async () => {
         translate: (key: string) => key,
     });
 });
+
+// Cold UI transformation belongs to collection, outside each prompt's lifecycle assertion.
+// Keep the real sheet and its platform/modal boundaries; dispatch still uses import().
+await import('./useSshSystemTaskPromptModals');
+await import('@/components/ssh/SshHostKeyTrustSheet');
 
 async function renderPrompt(prompt: SystemTaskPromptEnvelope) {
     const { useSshSystemTaskPromptModals } = await import('./useSshSystemTaskPromptModals');
@@ -42,6 +57,7 @@ async function renderPrompt(prompt: SystemTaskPromptEnvelope) {
         snapshot: manual.runner.getSnapshot(taskId),
         prompt,
     }));
+    await vi.dynamicImportSettled();
     await flushHookEffects();
     return { taskId, respond: manual.bridge.respond, cancel: manual.bridge.cancel };
 }
@@ -52,9 +68,25 @@ afterEach(() => {
     modalSpies.confirm.mockResolvedValue(false);
     modalSpies.prompt.mockReset();
     modalSpies.prompt.mockResolvedValue(null);
+    modalSpies.show.mockClear();
+    modalSpies.hostKeyAnswers.length = 0;
 });
 
 describe('useSshSystemTaskPromptModals', () => {
+    it('offers only trust-once when the current response Action cannot remember a host key', async () => {
+        const { answerSshSystemTaskPrompt } = await import('./answerSshSystemTaskPrompt');
+        modalSpies.hostKeyAnswers.push(true);
+        const options = { isCurrent: () => true, cancel: async () => {}, supportsRememberHostKey: false };
+        expect(await answerSshSystemTaskPrompt({ kind: 'ssh.trustHost', message: '',
+            data: { host: 'worker.test', keyType: 'ssh-ed25519', fingerprint: 'SHA256:worker' } }, options)).toEqual({ trusted: true });
+        // The host key is the trust sheet (lab af-ssh Kp): the full fingerprint, a sheet on phones, no second question.
+        expect(modalSpies.show).toHaveBeenCalledTimes(1);
+        expect(modalSpies.show.mock.calls[0]![0]).toMatchObject({
+            chrome: { testID: 'ssh-host-key-modal', phonePresentation: 'sheet' },
+            props: { request: { host: 'worker.test', keyType: 'ssh-ed25519', fingerprint: 'SHA256:worker' } },
+        });
+        expect(modalSpies.confirm).not.toHaveBeenCalled();
+    });
     it('retries a failed native answer after remount while retaining the admitted continuation', async () => {
         const { useSshSystemTaskPromptModals } = await import('./useSshSystemTaskPromptModals');
         const manual = createManualSystemTaskRunner('dev');
@@ -150,10 +182,12 @@ describe('useSshSystemTaskPromptModals', () => {
             prompt: null,
         }));
         await hook.unmount();
-        modalSpies.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        modalSpies.hostKeyAnswers.push(true);
+        modalSpies.confirm.mockResolvedValueOnce(false);
         manual.emitEvent(taskId, { type: 'prompt', data: {
             kind: 'ssh.trustHost', promptId: 'trust-1', host: 'remote.test', fingerprint: 'SHA256:remote',
         } });
+        await vi.dynamicImportSettled();
         await flushHookEffects();
         expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { trusted: true });
         modalSpies.prompt.mockResolvedValueOnce('password');
@@ -263,9 +297,8 @@ describe('useSshSystemTaskPromptModals', () => {
     });
 
     it('remembers accepted SSH host keys when the user opts into persistent trust', async () => {
-        modalSpies.confirm
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(true);
+        modalSpies.hostKeyAnswers.push(true);
+        modalSpies.confirm.mockResolvedValueOnce(true);
 
         const { taskId, respond } = await renderPrompt({
             kind: 'ssh.trustHost',
@@ -278,12 +311,13 @@ describe('useSshSystemTaskPromptModals', () => {
             },
         });
 
-        expect(modalSpies.confirm).toHaveBeenCalledTimes(2);
+        expect(modalSpies.show).toHaveBeenCalledTimes(1);
+        expect(modalSpies.confirm).toHaveBeenCalledTimes(1);
         expect(respond).toHaveBeenCalledWith(taskId, { trusted: true, remember: true });
     });
 
     it('distinguishes changed SSH host keys from first-time trust prompts', async () => {
-        modalSpies.confirm.mockResolvedValueOnce(true);
+        modalSpies.hostKeyAnswers.push(true);
 
         const { taskId, respond } = await renderPrompt({
             kind: 'ssh.replaceHostKey',
@@ -297,18 +331,12 @@ describe('useSshSystemTaskPromptModals', () => {
             },
         });
 
-        expect(modalSpies.confirm).toHaveBeenCalledWith(
-            'settings.remoteHostsReplaceHostKeyTitle',
-            expect.stringContaining('settings.remoteHostsHostKeyCurrentFingerprintLabel: SHA256:old'),
-            expect.objectContaining({
-                confirmText: 'settings.remoteHostsReplaceHostKeyAction',
-            }),
-        );
-        expect(modalSpies.confirm).toHaveBeenCalledWith(
-            'settings.remoteHostsReplaceHostKeyTitle',
-            expect.stringContaining('settings.remoteHostsHostKeyNewFingerprintLabel: SHA256:new'),
-            expect.any(Object),
-        );
+        // A changed key shows both fingerprints in the same sheet; replacing is remembered without a second question.
+        expect(modalSpies.show).toHaveBeenCalledTimes(1);
+        expect(modalSpies.show.mock.calls[0]![0]).toMatchObject({
+            props: { request: { host: 'server.example.test', fingerprint: 'SHA256:new', existingFingerprint: 'SHA256:old' } },
+        });
+        expect(modalSpies.confirm).not.toHaveBeenCalled();
         expect(respond).toHaveBeenCalledWith(taskId, { trusted: true, remember: true });
     });
 

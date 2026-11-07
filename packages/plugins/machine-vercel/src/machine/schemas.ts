@@ -3,6 +3,7 @@ import {
   defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { label } from '../ui/translations.js';
 const closed = { policy: 'closed' } as const;
 const text = defineProtocolString({ minLength: 1, pattern: '\\S' });
 const name = defineProtocolString({ minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' });
@@ -33,5 +34,9 @@ export const ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: VercelLaun
 export const RECONCILIATION = defineMachineProvisionerReconciliationSchemas({ launch: VercelLaunchSchema, resource: VercelResourceSchema, nativeOperation: VercelOperationSchema });
 export const prepareStoredSchemas = () => prepareMachineProvisionerStoredSchemas({ launch: VercelLaunchSchema, resource: VercelResourceSchema, nativeOperation: VercelOperationSchema });
 export const CONTRIBUTION = { pluginId: 'happier.machine.vercel', localId: 'vercel' } as const;
-export const BILLING = { location: 'cloud', stoppedBilling: 'not-billed' } as const;
+// Published paid-plan rate before included usage; this is not a per-machine quote.
+export const BILLING = { location: 'cloud', stoppedBilling: 'not-billed', storageCharges: [{
+  label: label('snapshotStorage'), amount: '0.08', currency: 'USD', unit: 'GB-month',
+  source: 'https://vercel.com/docs/sandbox/pricing', observedAt: Date.UTC(2026, 9, 27),
+}] } as const;
 export const reference = <T>(value: T) => ({ contributionRef: CONTRIBUTION, schemaVersion: 1, value });

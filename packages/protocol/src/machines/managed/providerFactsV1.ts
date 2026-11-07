@@ -61,6 +61,7 @@ export const ProviderNativeOptionFactsV1Schema = lazyDefinition(() => z.strictOb
 }));
 export const BillingCapabilitiesV1Schema = lazyDefinition(() => z.strictObject({
   location: z.enum(['local', 'cloud', 'unknown']),
+  /** Compute charges while parked; retained storage is described separately by storageCharges. */
   stoppedBilling: z.enum(['billed', 'not-billed', 'unknown']),
   storageCharges: z.optional(z.array(ProviderPriceV1Schema)),
 }));
@@ -117,7 +118,6 @@ export const ProviderObservationV1Schema = lazyDefinition(() => z.strictObject({
   availability: z.enum(['present', 'absent', 'unavailable']),
   power: z.optional(z.enum(['running', 'stopped', 'suspended', 'unknown'])),
   storage: z.optional(z.enum(['retained', 'lost', 'unknown'])),
-  daemon: z.optional(z.enum(['connected', 'disconnected', 'unknown'])),
   billing: z.optional(BillingCapabilitiesV1Schema),
   prices: z.optional(z.array(ProviderPriceV1Schema)),
   nativeExpiry: z.optional(instant()),
@@ -155,7 +155,7 @@ export type ManagedSshHostKeyEvidenceV1 = z.infer<typeof ManagedSshHostKeyEviden
 export const ManagedBootstrapSshCarrierV1Schema = lazyDefinition(() => z.strictObject({
   kind: z.literal('ssh'), address: id(), user: id(),
   port: z.optional(z.int().check(z.gte(1), z.lte(65535))),
-  hostKeyEvidence: ManagedSshHostKeyEvidenceV1Schema,
+  hostKeyEvidence: z.optional(ManagedSshHostKeyEvidenceV1Schema),
   /** The provider installed the host identity from this resource's retained credential. */
   hostKeySource: z.optional(z.literal('retained-credential')),
   credentialRef: SharedSavedSecretRefV1Schema,
@@ -167,6 +167,7 @@ export const ManagedRefusalCodeV1Schema = lazyDefinition(() => z.enum([
   'controller_unavailable', 'controller_retired', 'credential_unavailable', 'provider_unavailable',
   'request_conflict', 'intent_changed', 'managed_not_found', 'enrollment_retired', 'resource_mismatch',
   'preset_not_found', 'preset_archived', 'preset_limit_reached',
+  'enrollment_identity_review_required', 'enrollment_attendance_required',
 ]));
 export const ManagedNativeOperationReferenceV1Schema = lazyDefinition(() => z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)), value: PluginJsonValueV2Schema }));
 // Native stderr is a diagnostic excerpt bounded to the existing Action-operation
@@ -184,7 +185,7 @@ export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.unio
     stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),
     stderrTruncated: z.optional(z.literal(true)),
   }),
-  z.strictObject({ localCause: z.enum(['native_options_changed', 'native_ssh_network_unavailable', 'native_route_unavailable', 'native_lease_ended']) }),
+  z.strictObject({ localCause: z.enum(['native_options_changed', 'native_ssh_network_unavailable', 'native_route_unavailable', 'native_lease_ended', 'native_macos_vm_limit_reached']) }),
   z.strictObject({ localCause: z.literal('native_route_not_found'),
     route: z.enum(['inspect', 'run', 'stop', 'delete', 'pull', 'configure']), httpStatus: z.literal(404) }),
   z.strictObject({ localCause: z.enum(['native_configure_refused', 'native_delete_refused']), httpStatus: z.literal(400) }),
@@ -212,7 +213,8 @@ export const AcquireResultV1Schema = lazyDefinition(() => z.discriminatedUnion('
     startPending: z.optional(z.literal(true)) }),
   z.strictObject({ kind: z.literal('pending'), nativeOperationRef: ManagedNativeOperationReferenceV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
   z.strictObject({ kind: z.literal('unknown'), recovery: ManagedRecoveryHintV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
-  z.strictObject({ kind: z.literal('rejected'), code: ManagedRefusalCodeV1Schema, nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
+  // Providers own definite pre-effect refusal codes, as they do for power and Delete.
+  z.strictObject({ kind: z.literal('rejected'), code: id(), nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema) }),
 ]));
 export type BillingCapabilitiesV1 = z.infer<typeof BillingCapabilitiesV1Schema>;
 export type RetentionCapabilitiesV1 = z.infer<typeof RetentionCapabilitiesV1Schema>;
