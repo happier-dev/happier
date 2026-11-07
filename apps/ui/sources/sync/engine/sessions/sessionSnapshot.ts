@@ -2082,11 +2082,10 @@ export async function fetchAndApplySessions(params: {
             { shared: shared.display, ...(owner?.ok ? { owner: owner.display } : {}) }));
     }
     const displayDemand = sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
-        && (row.encryptionMode === 'plain' || hasDisplayDemand(row.id)
-            || (row.metadataLayoutVersion === 1 && row.metadataAudience === 'owner' && !openedDisplayRows.has(row.id)
-                && !(readCurrentDisplay(row.id)?.[SESSION_OWNER_METADATA_PROJECTION]?.isCurrentAuthority?.({
-                    credentials, accountMode: accountCurrentness?.mode, accountCurrentness,
-                }) && readCurrentDisplay(row.id)?.metadataVersion === row.metadataVersion)))
+        // A missing sidecar is not demand for a Session body. The viewport,
+        // route or explicit query owns the first read; its tuple writer persists
+        // the display so later list reads can use the sidecar directly.
+        && hasDisplayDemand(row.id)
         && shouldApplyRenderables && needsWarmHydration({ row,
             cachedEntry: cachedSessionListEntries[row.id], existingSession: params.getExistingSession?.(row.id),
             currentRenderable: readCurrentDisplay(row.id),

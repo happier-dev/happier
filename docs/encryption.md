@@ -5731,7 +5731,10 @@ It keeps hidden actionable Voice sessions in Activity custody without carrying
 the private system key or making the display a reusable Voice-session authority.
 Display opening never establishes full-document readiness or authorizes a
 mutation, role, request or Agent target. Missing or invalid display falls back
-to the existing scoped full reader. Fresh Server admission rechecks an owner
+to the existing scoped full reader when a visible row, open Session or explicit
+query/inventory needs it. A missing sidecar alone never starts a body read during
+ordinary list bootstrap; the first demanded full read persists its repair.
+Fresh Server admission rechecks an owner
 display's mode against the already-read current Account mode, withdrawing an
 incompatible owner leaf without rereading documents or replacing captured
 shared display. UI owner-content opening also matches the actual credential

@@ -23,6 +23,57 @@ const initialState = storage.getState();
 let homes: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { await homes?.dispose(); homes = undefined; storage.setState(initialState, true); });
 
+it('reads no idle Session bodies in a 3,391-Session Home and backfills a newly displayed row on demand', async () => {
+    const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
+    const { retainVisibleSessionListSurfaces } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+    const { sync } = await import('@/sync/syncEngine');
+    // Account A's observed inventory size, with constructed upgraded rows
+    // missing display sidecars and no mounted list or Session surface.
+    const records = Array.from({ length: 3_391 }, (_, index) => createPlainSessionCurrentProjectionRecordFixture({
+        id: `idle-display-${index}`, active: true, metadataVersion: 7,
+        metadata: { name: `Session ${index}`, path: `/project/${index}`, host: 'owner-host' },
+    }));
+    const persisted = createSessionMetadataHttpBoundary(() => ({}));
+    for (const record of records) persisted.replaceSession(record.id, record);
+    const transport = createSessionReadBatchHttpBoundary(async request => {
+        if (request.path === '/v2/sessions/metadata-upgrades') return Response.json({ sessionIds: [] });
+        if (request.path === '/v2/sessions') {
+            const response = persisted.handle(request.url)!;
+            const { sessions } = await response.json();
+            const page = sessions.slice(0, Number(request.url.searchParams.get('limit')) || 50);
+            return Response.json({ sessions: page, hasNext: true, nextCursor: 'next-page' });
+        }
+        return persisted.handle(request.url, { method: request.method, headers: request.headers,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) })
+            ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+    });
+    homes = await serveAccountHomes({ homes: [{ key: 'owner', serverUrl: 'https://idle-display-census.test',
+        accountId: 'idle-display-census', currentAccount: true }], route: request => transport.handle(request) });
+    await homes.restoreActiveConnection();
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    const batches = () => homes!.httpRequests.filter(request => request.path === '/v2/sessions/read-batch');
+    expect.soft(batches().length).toBe(0);
+    expect.soft(persisted.writes).toEqual([]);
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    expect(batches().length).toBe(0);
+    expect(persisted.writes).toEqual([]);
+    const address = { serverId: homes.homes.owner!.id, sessionId: records[0]!.id };
+    const release = retainVisibleSessionListSurfaces([address]);
+    try {
+        await sync.hydrateSessionListRows([address]);
+        await vi.waitFor(() => expect(persisted.writes).toEqual([address.sessionId]));
+        for (const request of batches()) expect(request.body).toMatchObject({ sessionIds: [address.sessionId] });
+        expect(storage.getState().sessionListRowsByServerId[address.serverId]?.[address.sessionId]?.metadata?.name).toBe('Session 0');
+        const response = persisted.handle(new URL(`/v2/sessions/${address.sessionId}`, homes.homes.owner!.serverUrl));
+        if (!response) throw new Error('Expected persisted display sidecar');
+        expect((await response.json()).session.displayProjectionV1).toMatchObject({ sourceMetadataVersion: 8 });
+    } finally { release(); }
+    const demandedReads = batches().length;
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    expect(batches().length).toBe(demandedReads);
+    expect(persisted.writes).toEqual([address.sessionId]);
+});
+
 it.each(['default', 'read-only'] as const)('retains full Session content with %s tuple-maintenance demand', async demand => {
     const id = `full-${demand}`;
     const persisted = createSessionMetadataHttpBoundary(() => ({}));

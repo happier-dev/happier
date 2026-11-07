@@ -1348,8 +1348,10 @@ optional owner leaf independently uses the owner's Account content mode. Only
 the existing owner-recipient projection returns the owner leaf. Public links,
 collaborators and Session-runtime principals receive shared display only, even
 when another part of their existing read authority is broader. A missing,
-stale, mode-incompatible or unopenable display requires the existing authorized
-full-read fallback, not an empty document. Owner display uses Account purpose
+stale, mode-incompatible or unopenable display uses the existing authorized
+full-read fallback when a visible row, open Session or explicit query/inventory
+needs it. Ordinary list bootstrap does not fetch bodies solely to repair missing
+sidecars. Owner display uses Account purpose
 separation without Session-ID binding, matching existing owner metadata; shared
 display uses the Session key generated before create. The create interface and
 ID allocation are unchanged. Fresh-create adapters use the same semantic
