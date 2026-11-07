@@ -127,7 +127,13 @@ export function planTriageListContinuationV1(input: Readonly<{
 export function readTriageWindowStatementV1(input: Readonly<{
   loadedCount: number;
   window: Pick<TriageListWindowV1, 'coverage' | 'lanes'> | null;
-  configuredSources: readonly Readonly<{ sourceInstanceId: string; displayLabel?: string }>[];
+  configuredSources: readonly Readonly<{
+    sourceInstanceId: string;
+    source?: Readonly<{ pluginId: string; localId: string }>;
+    displayLabel?: string;
+  }>[];
+  /** The source's own name ("GitHub"), from its mounted descriptor: a connection is said by it, not by its login. */
+  readSourceName?: (source: Readonly<{ pluginId: string; localId: string }>) => string | undefined;
   entries: TriageListContinuationCopyV1;
   /** The pins' own continuation copy, while there are more pins or reading them failed; otherwise `null`. */
   pins?: TriageListContinuationCopyV1 | null;
@@ -145,7 +151,10 @@ export function readTriageWindowStatementV1(input: Readonly<{
   if (window !== null && input.loadedCount > 0) {
     parts.push(text('plugins.triage.surface.window.loaded', '{count} loaded', { count: input.loadedCount }));
     if (input.entries.tone === 'warning') {
-      parts.push(input.entries.title);
+      // A connection that stopped short because it failed is said once, by the page's failure line.
+      const saidByPage = input.entries.actionLabel === undefined && window.lanes.some((lane) =>
+        lane.health.kind === 'failed' || lane.health.kind === 'unavailable');
+      if (!saidByPage) parts.push(input.entries.title);
     } else if (window.coverage === 'complete') {
       parts.push(text('plugins.triage.surface.window.complete', 'complete'));
     } else {
@@ -154,7 +163,7 @@ export function readTriageWindowStatementV1(input: Readonly<{
         // Only a connection that answered can "have more": one the pass could not read, or whose read failed,
         // told us nothing, and its failure is said once by the page.
         if (lane.exhausted || lane.health.kind === 'failed' || lane.health.kind === 'unavailable') continue;
-        const name = input.configuredSources.find((source) => source.sourceInstanceId === lane.sourceInstanceId)?.displayLabel;
+        const name = connectionName(input, lane.sourceInstanceId);
         if (name !== undefined && !names.includes(name)) names.push(name);
       }
       parts.push(names.length === 0
@@ -164,4 +173,19 @@ export function readTriageWindowStatementV1(input: Readonly<{
   }
   if (input.pins != null) parts.push(input.pins.title);
   return parts.length === 0 ? undefined : parts;
+}
+
+/**
+ * The source's declared name ("GitHub"), deduplicated by the footer across its connections.
+ * A source without a declared name keeps its connection label.
+ */
+function connectionName(
+  input: Pick<Parameters<typeof readTriageWindowStatementV1>[0], 'configuredSources' | 'readSourceName'>,
+  sourceInstanceId: string,
+): string | undefined {
+  const connection = input.configuredSources.find((candidate) => candidate.sourceInstanceId === sourceInstanceId);
+  if (connection === undefined) return undefined;
+  const sourceName = connection.source === undefined ? undefined : input.readSourceName?.(connection.source);
+  if (sourceName === undefined || sourceName.length === 0) return connection.displayLabel;
+  return sourceName;
 }

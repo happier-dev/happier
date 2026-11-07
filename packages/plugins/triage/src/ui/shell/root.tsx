@@ -2318,6 +2318,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     loadedCount: rowCount,
     window: listWindow?.window ?? null,
     configuredSources: window.snapshot.configuredSources,
+    readSourceName: (source) => readTriageSourceDescriptorV1(surfaceContext, source)?.displayName,
     entries: planTriageListContinuationV1({ section: 'entries', state: windowLoadMore, text }),
     pins: marks.more || pinsLoadMore?.kind === 'failed' || pinsLoadMore?.kind === 'unresumable'
       ? planTriageListContinuationV1({ section: 'pins', state: pinsLoadMore, text })
