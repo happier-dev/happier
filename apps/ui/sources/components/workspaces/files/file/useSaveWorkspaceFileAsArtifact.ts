@@ -12,7 +12,7 @@ type Status = Readonly<{ kind: 'idle' | 'publishing' }>
     | Readonly<{ kind: 'sharing' | 'saved'; receipt: Receipt }>
     | Readonly<{ kind: 'failed'; failure: ArtifactActionFailure; receipt?: Receipt }>
     | Readonly<{ kind: 'approval'; approvalId: string; receipt?: Receipt }>;
-type Dialog = Readonly<{ identity: string; isOpen: boolean; title: string; visibility: Visibility; selectedTeamId: string | null; status: Status }>;
+type Dialog = Readonly<{ identity: string; isOpen: boolean; title: string; entrypoint: string; visibility: Visibility; selectedTeamId: string | null; status: Status }>;
 
 /** The PAGE surface renders this model; publication and audience changes use the existing Artifact Actions. */
 export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
@@ -21,6 +21,8 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
     sourceSessionId: string | null;
     sourceWorkspace?: ArtifactActionInputV1<'artifact.publish_from_file'>['workspace'] | null;
     filePath: string;
+    /** Present for an HTML folder: the page the bundle opens with; every file under the folder travels with it. */
+    entrypoint?: string;
     sourceProject?: WorkspaceRefV1 | null;
     team?: Readonly<{ teamId: string; name: string }> | null;
 }>) {
@@ -29,7 +31,9 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
     const identity = JSON.stringify([scope?.serverId, scope?.accountId, input.sourceSessionId,
         input.sourceWorkspace?.machineId, input.sourceWorkspace?.rootPath, input.filePath, input.team?.teamId]);
     const fileName = input.filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? input.filePath;
-    const initial = (): Dialog => ({ identity, isOpen: false, title: fileName, visibility: 'private', selectedTeamId: null, status: { kind: 'idle' } });
+    const folder = input.entrypoint !== undefined;
+    const initial = (): Dialog => ({ identity, isOpen: false, title: fileName, entrypoint: input.entrypoint ?? '',
+        visibility: 'private', selectedTeamId: null, status: { kind: 'idle' } });
     const [dialog, setDialog] = React.useState<Dialog>(initial);
     const currentIdentity = React.useRef(identity);
     currentIdentity.current = identity;
@@ -57,6 +61,7 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
     const available = Boolean(scope && (input.sourceWorkspace || input.sourceSessionId));
     const canSubmit = available && mounted.ready && dialog.isOpen && !sourceAudience.loading
         && (dialog.visibility === 'private' || dialog.selectedTeamId === team?.teamId)
+        && (!folder || dialog.entrypoint.trim().length > 0)
         && !busy && dialog.status.kind !== 'approval' && dialog.status.kind !== 'saved';
     const submit = async (): Promise<string | null> => {
         const sessionId = input.sourceSessionId;
@@ -71,6 +76,7 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
             if (!published) {
                 update({ kind: 'publishing' });
                 const result = await client.publishWorkspaceFile({ path: input.filePath, title: dialog.title,
+                    ...(folder ? { entrypoint: dialog.entrypoint.trim() } : {}),
                     ...(workspace ? { workspace } : {}) }, sessionId ? { sessionId } : undefined);
                 if (!isCurrent()) return null;
                 if ('approvalId' in result) { update({ kind: 'approval', approvalId: result.approvalId }); return null; }
@@ -96,7 +102,7 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
         }
     };
     return {
-        isOpen: dialog.isOpen, title: dialog.title, visibility: dialog.visibility, status: dialog.status,
+        isOpen: dialog.isOpen, title: dialog.title, folder, entrypoint: dialog.entrypoint, visibility: dialog.visibility, status: dialog.status,
         approval: mounted.approval,
         team, audienceLoading: sourceAudience.loading, audienceUnavailable: sourceAudience.unavailable,
         receipt: receipt ?? null, savedArtifactId: dialog.status.kind === 'saved' ? dialog.status.receipt.artifactId : null,
@@ -105,6 +111,9 @@ export function useSaveWorkspaceFileAsArtifact(input: Readonly<{
         open: () => { if (!busy) setDialog({ ...initial(), isOpen: true }); },
         dismiss: () => { if (!busy) setDialog(previous => ({ ...previous, isOpen: false })); },
         setTitle: (title: string) => { if (!busy && !receipt && dialog.status.kind !== 'approval') setDialog(previous => ({ ...previous, title })); },
+        setEntrypoint: (entrypoint: string) => {
+            if (folder && !busy && !receipt && dialog.status.kind !== 'approval') setDialog(previous => ({ ...previous, entrypoint }));
+        },
         setVisibility: (visibility: Visibility) => {
             if (!busy && !receipt && dialog.status.kind !== 'approval' && (visibility === 'private' || team)) setDialog(previous => ({ ...previous,
                 visibility, selectedTeamId: visibility === 'team' ? team?.teamId ?? null : null }));

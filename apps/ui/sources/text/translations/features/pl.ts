@@ -3336,6 +3336,8 @@ const filesPaneTranslations = { pl: {
             artifactTitle: "Zapisz jako Artifact",
             artifactDescription: "Artifact to kopia, którą możesz udostępnić. Późniejsze zmiany pliku jej nie zmieniają.",
             artifactTitleLabel: "Tytuł",
+            artifactFolderDescription: "Artefakt to kopia, którą możesz udostępnić. Zawiera stronę i wszystkie pliki obok; późniejsze zmiany w folderze go nie zmieniają.",
+            artifactEntrypointLabel: "Strona otwierana",
             artifactAudience: "Kto może zobaczyć",
             artifactOnlyYou: "Tylko ty",
             artifactSave: "Zapisz jako Artifact",

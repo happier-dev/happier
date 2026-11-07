@@ -3318,6 +3318,8 @@ const filesPaneTranslations = { 'zh-Hant': {
             artifactTitle: "另存為 Artifact",
             artifactDescription: "Artifact 是可以分享的副本。之後對檔案的變更不會改變它。",
             artifactTitleLabel: "標題",
+            artifactFolderDescription: "工件是可以分享的副本。它包含該頁面及旁邊的所有檔案；之後對資料夾的變更不會影響它。",
+            artifactEntrypointLabel: "開啟的頁面",
             artifactAudience: "誰可以檢視",
             artifactOnlyYou: "僅限你自己",
             artifactSave: "另存為 Artifact",

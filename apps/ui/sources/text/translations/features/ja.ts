@@ -3323,6 +3323,8 @@ const filesPaneTranslations = { ja: {
             artifactTitle: "Artifact として保存",
             artifactDescription: "Artifact は共有できるコピーです。後でファイルを変更しても Artifact は変わりません。",
             artifactTitleLabel: "タイトル",
+            artifactFolderDescription: "アーティファクトは共有できるコピーです。ページと隣のすべてのファイルを含みます。後でフォルダを変更しても変わりません。",
+            artifactEntrypointLabel: "開くページ",
             artifactAudience: "閲覧できる人",
             artifactOnlyYou: "自分のみ",
             artifactSave: "Artifact として保存",

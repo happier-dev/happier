@@ -3325,6 +3325,8 @@ const filesPaneTranslations = { it: {
             artifactTitle: "Salva come Artifact",
             artifactDescription: "Un Artifact è una copia che puoi condividere. Le modifiche successive al file non lo cambiano.",
             artifactTitleLabel: "Titolo",
+            artifactFolderDescription: "Un artefatto è una copia che puoi condividere. Include la pagina e tutti i file accanto; le modifiche successive alla cartella non lo cambiano.",
+            artifactEntrypointLabel: "Pagina che apre",
             artifactAudience: "Chi può vederlo",
             artifactOnlyYou: "Solo tu",
             artifactSave: "Salva come Artifact",

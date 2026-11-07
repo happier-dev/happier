@@ -74,6 +74,8 @@ export type FilesPaneTranslations = Readonly<{
         tooLargeBody: (params: Readonly<{ slice: string }>) => string;
         showFirst: (params: Readonly<{ slice: string }>) => string;
         showLast: (params: Readonly<{ slice: string }>) => string;
+        artifactFolderDescription: string;
+        artifactEntrypointLabel: string;
         showingFirst: (params: Readonly<{ slice: string; size: string }>) => string;
         showingLast: (params: Readonly<{ slice: string; size: string }>) => string;
         partialFact: (params: Readonly<{ slice: string; size: string }>) => string;
@@ -287,6 +289,8 @@ export const filesPaneTranslationsEnglish = { en: {
             lookingUp: "Looking it up…",
             goToDefinition: "Go to definition",
             findReferences: "Find references",
+            artifactFolderDescription: "An Artifact is a copy you can share. It takes the page and every file beside it; later changes to the folder don’t change it.",
+            artifactEntrypointLabel: "Page it opens",
             definition: "Definition",
             references: "References",
             definedOutside: "Defined outside the workspace",

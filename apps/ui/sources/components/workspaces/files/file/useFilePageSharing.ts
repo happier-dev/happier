@@ -1,9 +1,8 @@
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
-import { Modal } from '@/modal';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { SaveFileAsArtifactDialog } from './SaveFileAsArtifactDialog';
+import { openSaveFileAsArtifactDialog } from './SaveFileAsArtifactDialog';
 import { useFilePageShareContext } from './useFilePageShareContext';
 import { useWorkspaceFileShareActions, type WorkspaceFileShareActionsInput } from './useWorkspaceFileShareActions';
 
@@ -23,7 +22,7 @@ export function useFilePageSharing(input: Parameters<typeof useFilePageShareCont
         onSaveAsArtifact: input.accountScope ? () => {
             const sourceScope = input.accountScope;
             if (!sourceScope || !areServerAccountScopesEqual(sourceScope, getActiveServerAccountScope())) return;
-            Modal.show({ component: SaveFileAsArtifactDialog, props: {
+            openSaveFileAsArtifactDialog({
                 source: { scope: sourceScope, sourceSessionId: context.sourceSessionId,
                     sourceWorkspace: context.sourceSessionId ? null : { machineId: input.scope.machineId, rootPath: input.scope.rootPath },
                     sourceProject: context.sourceProject, filePath: input.filePath },
@@ -31,7 +30,7 @@ export function useFilePageSharing(input: Parameters<typeof useFilePageShareCont
                 onOpenArtifact: (artifactId: string) => {
                     if (areServerAccountScopesEqual(sourceScope, getActiveServerAccountScope())) router.push(artifactViewRoute(artifactId) as never);
                 },
-            } });
+            });
         } : undefined,
     });
 }

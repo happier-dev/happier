@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, readdir } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
-import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
-import { ArtifactHtmlBundleV1Schema, type ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-import { resolveHostedWebAssetContentTypeV1 } from '@happier-dev/protocol/plugins/ui/hostedWebAssetMime';
+import { assembleArtifactHtmlBundleV1, isArtifactHtmlBundleEntrypointV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
 import type { ArtifactSavedByV1 } from '@happier-dev/protocol';
 import type { UiSurfaceCapabilityRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { configuration } from '@/configuration';
@@ -89,10 +87,9 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
   const sourceStats = await lstat(sourcePath);
   if (sourceStats.isSymbolicLink() || (!sourceStats.isFile() && !sourceStats.isDirectory())) throw forbidden();
   if (sourceStats.isDirectory()) {
-    const entrypoint = ArtifactHtmlBundleV1Schema.shape.entrypoint.safeParse(params.entrypoint);
-    if (!entrypoint.success || resolveHostedWebAssetContentTypeV1(entrypoint.data)?.split(';', 1)[0] !== 'text/html') throw forbidden();
+    if (params.entrypoint === undefined || !isArtifactHtmlBundleEntrypointV1(params.entrypoint)) throw forbidden();
     try {
-      if (!(await lstat(join(sourcePath, ...entrypoint.data.split('/')))).isFile()) throw forbidden();
+      if (!(await lstat(join(sourcePath, ...params.entrypoint.split('/')))).isFile()) throw forbidden();
     } catch {
       params.signal?.throwIfAborted();
       throw forbidden();
@@ -133,7 +130,7 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
       const prepared = prepareArtifactWorkspaceFileV1({ caller: params.caller, file, input: params });
       return { ...file, bundle: prepared.bundle, content: prepared };
     }
-    const files: ArtifactHtmlBundleV1['files'] = {};
+    const files: Array<Readonly<{ key: string; bytes: Uint8Array }>> = [];
     const visit = async (directory: string): Promise<void> => {
       params.signal?.throwIfAborted();
       const entries = (await readdir(directory)).sort();
@@ -144,17 +141,12 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
         if (stats.isSymbolicLink()) throw forbidden();
         if (stats.isDirectory()) { await visit(path); continue; }
         if (!stats.isFile()) throw forbidden();
-        const key = relative(sourcePath, path).split(sep).join('/');
-        if (!ArtifactHtmlBundleV1Schema.shape.entrypoint.safeParse(key).success) throw forbidden();
-        const mime = resolveHostedWebAssetContentTypeV1(key)?.split(';', 1)[0] ?? 'application/octet-stream';
-        files[key] = { mime, contentBase64: (await readFile(path)).toString('base64') };
+        files.push({ key: relative(sourcePath, path).split(sep).join('/'), bytes: await readFile(path) });
       }
     };
     await visit(sourcePath);
     params.signal?.throwIfAborted();
-    const parsed = ArtifactHtmlBundleV1Schema.safeParse({ v: 1, entrypoint: params.entrypoint, files });
-    if (!parsed.success) throw forbidden();
-    const bundle = parsed.data;
+    const bundle = assembleArtifactHtmlBundleV1({ entrypoint: params.entrypoint!, files });
     const bytes = Buffer.from(JSON.stringify(bundle), 'utf8');
     const file = { ...metadata, bytes, sha: createHash('sha256').update(bytes).digest('hex'), bundle };
     return { ...file, content: prepareArtifactWorkspaceFileV1({ caller: params.caller, file, input: params }) };

@@ -2,7 +2,8 @@ import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, projectArtifact
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { createArtifactPublicLinkActionsV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import { assembleArtifactHtmlBundleV1, isArtifactHtmlBundleEntrypointV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import { workspaceListDirectory, type WorkspaceListDirectoryResponse } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -33,14 +34,26 @@ import { documentFileName, saveWorkflowDocument } from '@/sync/domains/workflows
 export function createUiArtifactAction(account: LazyActionAccountContext, options?: Readonly<{
     onPublicLinkIssued?: (link: ArtifactPublicLinkIssuedV1) => void | Promise<void>;
     workspaceDownload?: typeof downloadDaemonWorkspaceFileToDestination;
+    /** One confined directory listing on the source machine (the daemon's filesystem Action). */
+    workspaceList?: (request: Readonly<{ machineId: string; rootPath: string; agentRootPath?: string; path: string;
+        signal: AbortSignal; context: ActionExecutorContext }>) => Promise<WorkspaceListDirectoryResponse & Readonly<{ truncated?: boolean }>>;
 }>): NonNullable<ActionExecutorDeps['artifactAction']> {
     // Internal consumers retain exact acknowledged content; the public Action keeps its existing receipt shape.
     const createDocument = async (input: Parameters<LazyActionAccountContext['createArtifactDocument']>[0]) => {
         const { artifactId, revision } = await account.createArtifactDocument(input);
         return { artifactId, revision };
     };
+    const forbidden = () => Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
+    const listDirectory = options?.workspaceList ?? (async request => await workspaceListDirectory({ machineId: request.machineId,
+        rootPath: request.rootPath, agentRootPath: request.agentRootPath ?? null, serverId: account.serverId }, request.path,
+        { signal: request.signal, callerContext: request.context }));
+    /**
+     * The confined workspace bytes behind `artifact.publish_from_file`. A file is one confined transfer;
+     * an HTML folder (`entrypoint`) is every file under it through that same transfer, assembled by the
+     * protocol's one bundle owner. A link, an unlisted entry or a truncated listing is refused, never skipped.
+     */
     const readWorkspaceFile = async (context: ActionExecutorContext, path: string, signal?: AbortSignal,
-        workspace?: ArtifactActionInputV1<'artifact.publish_from_file'>['workspace']) => {
+        workspace?: ArtifactActionInputV1<'artifact.publish_from_file'>['workspace'], entrypoint?: string) => {
         account.assertCurrent();
         const sessionId = workspace ? null : readArtifactWorkspaceSourceSessionId(context);
         if ((!workspace && !sessionId) || context.runtimeAccountId !== account.accountId
@@ -61,29 +74,59 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
         const relativePath = resolvePathRelativeToRoot({ root: target.basePath, path: absolutePath });
         if (relativePath === null || !isSafeWorkspaceRelativePath(relativePath))
             throw Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
-        // The existing producer enforces its download budget before transfer. Do not add a competing inline ceiling.
-        const buffered = createBufferedTransferDestination(Number.POSITIVE_INFINITY);
+        if (entrypoint !== undefined && !isArtifactHtmlBundleEntrypointV1(entrypoint)) throw forbidden();
         const retirement = new AbortController();
         const stop = account.accountLifetime.onRetire(() => retirement.abort());
         const cancellation = mergeAbortSignals([retirement.signal, signal]);
+        const download = async (filePath: string) => {
+            // The existing producer enforces its download budget before transfer. Do not add a competing inline ceiling.
+            const buffered = createBufferedTransferDestination(Number.POSITIVE_INFINITY);
+            try {
+                const downloaded = await (options?.workspaceDownload ?? downloadDaemonWorkspaceFileToDestination)({
+                    serverId: account.serverId, machineId: target.machineId, rootPath: target.basePath,
+                    agentRootPath: target.agentBasePath, request: { path: filePath, asZip: false },
+                    confinedToWorkingDirectory: true, destination: buffered.destination, signal: cancellation.signal });
+                account.assertCurrent();
+                cancellation.signal.throwIfAborted();
+                if (!downloaded.ok) throw Object.assign(new Error('artifact_source_transfer_failed'), { code: 'artifact_source_transfer_failed' });
+                return { name: downloaded.name, bytes: buffered.toBytes() };
+            } finally {
+                buffered.reset();
+            }
+        };
+        const readFolder = async () => {
+            const files: Array<Readonly<{ key: string; bytes: Uint8Array }>> = [];
+            const visit = async (directory: string): Promise<void> => {
+                const listed = await listDirectory({ machineId: target.machineId, rootPath: target.basePath,
+                    ...(target.agentBasePath ? { agentRootPath: target.agentBasePath } : {}), path: directory, signal: cancellation.signal, context });
+                account.assertCurrent();
+                cancellation.signal.throwIfAborted();
+                if (!listed.success) throw Object.assign(new Error('artifact_source_transfer_failed'), { code: 'artifact_source_transfer_failed' });
+                if (listed.truncated === true) throw forbidden();
+                for (const entry of listed.entries) {
+                    const child = `${directory}/${entry.name}`;
+                    if (entry.type === 'directory') await visit(child);
+                    else if (entry.type === 'file') files.push({ key: child.slice(relativePath.length + 1), bytes: (await download(child)).bytes });
+                    else throw forbidden();
+                }
+            };
+            await visit(relativePath);
+            const bundle = assembleArtifactHtmlBundleV1({ entrypoint: entrypoint!, files });
+            const bytes = new TextEncoder().encode(JSON.stringify(bundle));
+            return { name: relativePath.split('/').at(-1) ?? relativePath, bytes, bundle };
+        };
         try {
-            const downloaded = await (options?.workspaceDownload ?? downloadDaemonWorkspaceFileToDestination)({
-                serverId: account.serverId, machineId: target.machineId, rootPath: target.basePath,
-                agentRootPath: target.agentBasePath, request: { path: relativePath, asZip: false },
-                confinedToWorkingDirectory: true, destination: buffered.destination, signal: cancellation.signal });
-            account.assertCurrent();
-            cancellation.signal.throwIfAborted();
-            if (!downloaded.ok) throw Object.assign(new Error('artifact_source_transfer_failed'), { code: 'artifact_source_transfer_failed' });
+            const acquired = entrypoint === undefined ? await download(relativePath) : await readFolder();
             const current = resolveTarget();
             if (!current || current.machineId !== target.machineId || current.basePath !== target.basePath)
                 throw Object.assign(new Error('artifact_source_unavailable'), { code: 'artifact_source_unavailable' });
-            const bytes = buffered.toBytes();
+            const { bytes } = acquired;
             const caller = workspace ? { rootPath: target.basePath, machineId: target.machineId }
                 : { sessionId: sessionId!, machineId: target.machineId, ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
             return { caller,
-                file: { bytes, name: downloaded.name, path: relativePath, sha: hashArtifactBinaryContent(bytes) } };
+                file: { bytes, name: acquired.name, path: relativePath, sha: hashArtifactBinaryContent(bytes),
+                    ...('bundle' in acquired ? { bundle: acquired.bundle } : {}) } };
         } finally {
-            buffered.reset();
             cancellation.dispose();
             stop.dispose();
         }
@@ -226,7 +269,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 }
                 case 'artifact.publish_from_file': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
-                    const source = await readWorkspaceFile(context, args.path, signal, args.workspace);
+                    const source = await readWorkspaceFile(context, args.path, signal, args.workspace, args.entrypoint);
                     const content = prepareArtifactWorkspaceFileV1({ ...source, input: args });
                     return await createDocument({ header: content.header, body: content.binary ?? content.body, source: content.source, savedBy, signal });
                 }

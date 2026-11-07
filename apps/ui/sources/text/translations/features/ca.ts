@@ -3325,6 +3325,8 @@ const filesPaneTranslations = { ca: {
             artifactTitle: "Desa com a Artifact",
             artifactDescription: "Un Artifact és una còpia que pots compartir. Els canvis posteriors al fitxer no el modifiquen.",
             artifactTitleLabel: "Títol",
+            artifactFolderDescription: "Un artefacte és una còpia que pots compartir. Inclou la pàgina i tots els fitxers del costat; els canvis posteriors a la carpeta no el canvien.",
+            artifactEntrypointLabel: "Pàgina que obre",
             artifactAudience: "Qui ho pot veure",
             artifactOnlyYou: "Només tu",
             artifactSave: "Desa com a Artifact",

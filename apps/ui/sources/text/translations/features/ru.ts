@@ -3345,6 +3345,8 @@ const filesPaneTranslations = { ru: {
             artifactTitle: "Сохранить как Artifact",
             artifactDescription: "Artifact — это копия, которой можно поделиться. Последующие изменения файла её не меняют.",
             artifactTitleLabel: "Название",
+            artifactFolderDescription: "Артефакт — это копия, которой можно поделиться. Он берёт страницу и все файлы рядом; последующие изменения папки его не меняют.",
+            artifactEntrypointLabel: "Открываемая страница",
             artifactAudience: "Кто может видеть",
             artifactOnlyYou: "Только вы",
             artifactSave: "Сохранить как Artifact",

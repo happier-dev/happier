@@ -4,6 +4,8 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ArtifactHtmlBundleV1Schema } from './artifactHtmlV1.js';
 import { UiSurfaceCapabilityRequestV1Schema, type UiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
+import { resolveHostedWebAssetContentTypeV1 } from '../plugins/ui/hostedWebAssetMime.js';
+import { encodeBase64 } from '../crypto/base64.js';
 
 /** Acquisition intent is Action input only; stored HTML always carries a by-value bundle. */
 export const ArtifactWorkspacePublicationSourceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -13,6 +15,38 @@ export const ArtifactWorkspacePublicationSourceV1Schema = lazyZodSchema(() => z.
     machineId: z.string().check(z.minLength(1)), rootPath: z.string().check(z.minLength(1)),
   })),
 }));
+
+function forbiddenWorkspaceSource(): Error {
+  return Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
+}
+
+/** Whether a folder's named entrypoint is a confined HTML page key, checked before any byte is read. */
+export function isArtifactHtmlBundleEntrypointV1(entrypoint: string): boolean {
+  const parsed = ArtifactHtmlBundleV1Schema.shape.entrypoint.safeParse(entrypoint);
+  return parsed.success && resolveHostedWebAssetContentTypeV1(parsed.data)?.split(';', 1)[0] === 'text/html';
+}
+
+/**
+ * One bundle assembly for every keyholding host that acquires a confined HTML folder (CLI from its
+ * filesystem, UI through the daemon's confined transfer): bundle-relative keys, served content types,
+ * and an HTML entrypoint that is one of the files. Anything else is refused, never repaired.
+ */
+export function assembleArtifactHtmlBundleV1(input: Readonly<{
+  entrypoint: string;
+  files: ReadonlyArray<Readonly<{ key: string; bytes: Uint8Array }>>;
+}>): ArtifactHtmlBundleV1 {
+  if (!isArtifactHtmlBundleEntrypointV1(input.entrypoint)) throw forbiddenWorkspaceSource();
+  const files: ArtifactHtmlBundleV1['files'] = {};
+  for (const file of input.files) {
+    if (!ArtifactHtmlBundleV1Schema.shape.entrypoint.safeParse(file.key).success || Object.hasOwn(files, file.key)) throw forbiddenWorkspaceSource();
+    files[file.key] = { mime: resolveHostedWebAssetContentTypeV1(file.key)?.split(';', 1)[0] ?? 'application/octet-stream',
+      contentBase64: encodeBase64(file.bytes) };
+  }
+  if (!Object.hasOwn(files, input.entrypoint)) throw forbiddenWorkspaceSource();
+  const parsed = ArtifactHtmlBundleV1Schema.safeParse({ v: 1, entrypoint: input.entrypoint, files });
+  if (!parsed.success) throw forbiddenWorkspaceSource();
+  return parsed.data;
+}
 
 /** File classification and provenance shared by the keyholding publication hosts. */
 export function prepareArtifactWorkspaceFileV1(params: Readonly<{

@@ -6,10 +6,12 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FileIcon } from '@/components/ui/media/FileIcon';
+import { Icon } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
+import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
@@ -27,6 +29,11 @@ export type SaveFileAsArtifactDialogProps = CustomModalInjectedProps & Readonly<
  * Save as Artifact… (lab AD1s): the crossing from a file to an Artifact is an explicit copy, so the
  * consequence is said first, the title is the file's name until changed, and Only you is the default.
  */
+/** The one way Save as Artifact… opens, for a file page and for a folder row alike. */
+export function openSaveFileAsArtifactDialog(props: Omit<SaveFileAsArtifactDialogProps, keyof CustomModalInjectedProps>): void {
+    Modal.show({ component: SaveFileAsArtifactDialog, props });
+}
+
 export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
     const { theme } = useUnistyles();
     const model = useSaveWorkspaceFileAsArtifact(props.source);
@@ -65,7 +72,7 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
         <ModalCardFrame
             testID="save-as-artifact-dialog"
             title={t('files.pane.page.artifactTitle')}
-            subtitle={t('files.pane.page.artifactDescription')}
+            subtitle={model.folder ? t('files.pane.page.artifactFolderDescription') : t('files.pane.page.artifactDescription')}
             onClose={close}
             dimensions={{ width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, size: 'dialog' }}
             footer={(
@@ -90,7 +97,8 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
         >
             <View style={styles.body}>
                 <View testID="save-as-artifact-source" style={[styles.source, { backgroundColor: theme.colors.surface.inset }]}>
-                    <FileIcon fileName={fileName} size={20} appearance="line" />
+                    {model.folder ? <Icon name="folder" size={20} color={theme.colors.text.secondary} />
+                        : <FileIcon fileName={fileName} size={20} appearance="line" />}
                     <View style={styles.sourceText}>
                         <Text style={styles.sourceName} numberOfLines={1}>{fileName}</Text>
                         {props.sourceFacts ? <Text style={styles.sourceFacts} numberOfLines={1}>{props.sourceFacts}</Text> : null}
@@ -103,6 +111,16 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
                         accessibilityLabelledBy="save-as-artifact-title-label" editable={model.canEditFields}
                         returnKeyType="done" onSubmitEditing={() => { void submit(); }} />
                 </View>
+                {model.folder ? (
+                    // A folder publishes the page it opens with and every file beside it, as one HTML Artifact.
+                    <View style={styles.field}>
+                        <Text nativeID="save-as-artifact-entrypoint-label" style={styles.label}>{t('files.pane.page.artifactEntrypointLabel')}</Text>
+                        <FieldTextInput testID="save-as-artifact-entrypoint" value={model.entrypoint} onChangeText={model.setEntrypoint}
+                            accessibilityLabel={t('files.pane.page.artifactEntrypointLabel')}
+                            accessibilityLabelledBy="save-as-artifact-entrypoint-label" editable={model.canEditFields}
+                            returnKeyType="done" onSubmitEditing={() => { void submit(); }} />
+                    </View>
+                ) : null}
                 {audience ? (
                     <View style={styles.field}>
                         <Text style={styles.label}>{t('files.pane.page.artifactAudience')}</Text>
