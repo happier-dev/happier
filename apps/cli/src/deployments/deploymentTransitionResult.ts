@@ -7,9 +7,10 @@ export type DeploymentTransitionResultForHost =
 
 /** Keep issued-write ambiguity while retaining only the protocol owner's safe diagnostic vocabulary. */
 export function projectDeploymentTransitionOutcomeUnknownForHost(error: unknown): ActionExecuteFailure {
-    const reason = readUnexpectedActionErrorDiagnosticV1(error).errorCode;
+    const { errorCode: reason, errorClass, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
     return { ok: false, errorCode: 'outcome_unknown',
-        error: reason ? `Deployment transition outcome is unknown (${reason}).` : 'outcome_unknown' };
+        error: reason ? `Deployment transition outcome is unknown (${reason}).` : 'outcome_unknown',
+        failureCause: { phase: 'deployment.transition', errorCode: reason, errorClass, httpStatus } };
 }
 
 /** The transition boundary owns the domain-to-Action failure projection, including quota facts. */

@@ -11,6 +11,7 @@ import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { configuration } from '@/configuration';
+import { projectDeploymentTransitionOutcomeUnknownForHost } from '@/deployments/deploymentTransitionResult';
 import * as installationStore from '@/daemon/identity/store';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -599,8 +600,8 @@ describe('own-server target at the Action host boundary', () => {
                 // failure crosses back through real native stage callbacks.
                 if (scenario === 'transition_provenance_reason' && transitionWrites === 1
                     || scenario === 'transition_log_reason' && transitionWrites === 2) {
-                    return { ok: false, errorCode: 'outcome_unknown',
-                        error: 'Deployment transition outcome is unknown (database_transaction_conflict_exhausted).' };
+                    return projectDeploymentTransitionOutcomeUnknownForHost({ response: { status: 503,
+                        data: { error: 'database_transaction_conflict_exhausted' } } });
                 }
                 if (scenario === 'runtime_stage' || scenario === 'member_cost' || scenario === 'candidate_pending_check_zero'
                     || migrationBackup)
@@ -852,7 +853,9 @@ describe('own-server target at the Action host boundary', () => {
                 const result = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id });
                 expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
-                    error: expect.stringContaining('database_transaction_conflict_exhausted') });
+                    error: expect.stringContaining('database_transaction_conflict_exhausted'), failureCause: {
+                        phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
+                    } });
                 return;
             }
             if (migrationBackup) {
