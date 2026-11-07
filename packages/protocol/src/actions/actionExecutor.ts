@@ -335,7 +335,7 @@ import {
   resolveActionSurfaceAvailability,
   type ActionSurfaceAvailability,
 } from './actionSurfaceAvailability.js';
-import { isPluginDevLoopActionIdV1, isRuntimeActionIdV1, isSessionAccessActionId, ActionIdSchema, type ActionId, WorkflowActionIdV1Schema } from './actionIds.js';
+import { isPluginDevLoopActionIdV1, isRuntimeActionIdV1, isSessionAccessActionId, isSessionListActionId, ActionIdSchema, type ActionId, WorkflowActionIdV1Schema } from './actionIds.js';
 import { WorkflowActionInputSchemasV1 } from '../workflows/actionsV1.js';
 import { executeWorkflowDiscussionRoundProjectV1 } from './executor/workflowDiscussionRound.js';
 import { ArtifactAccessActionIdV1Schema, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../artifacts/artifactAccessV1.js';
@@ -1607,6 +1607,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // itself. In that case retain the validated originating context.
       && isActionSpecSurfacedOn(getActionSpec(actionId), args.ctx.surface === 'cli' ? 'cli' : 'ui')
       && isPresentUserHostInvocation(args.ctx);
+    // A list's ambient corpus stays with its admitted origin even when the
+    // deciding app supplies the Home adapter for its replay.
+    const appOwnedContextReplay = appOwnedReplay && origin?.success && (!isSessionListActionId(actionId)
+      || origin.data.sessionListAccess === undefined || origin.data.sessionListAccess === 'mounted_ui');
     // A Machine target authored with the creator's device-local profile follows
     // this already-verified Account replay Home. Never rewrite the stored/signed
     // proposal, a different target, or exact-daemon/external replay custody.
@@ -1640,7 +1644,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(args.ctx.operationOwnerUpdate ? { operationOwnerUpdate: args.ctx.operationOwnerUpdate } : {}),
         ...(args.ctx.operationCancellation ? { operationCancellation: args.ctx.operationCancellation } : {}),
       } : {}),
-      ...(appOwnedReplay && origin?.success ? {
+      ...(appOwnedContextReplay && origin?.success ? {
         authority: 'present_user' as const, surface: args.ctx.surface === 'cli' ? 'cli' as const : 'ui' as const,
         serverId: replayServerId,
         ...(origin.data.serverIdentityId ? { serverIdentityId: origin.data.serverIdentityId } : {}),
@@ -1701,7 +1705,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : {}),
       } : {}),
       ...(replaySessionTargets ? { sessionTargetsV1: replaySessionTargets } : {}),
-      actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedReplay ? { kind: 'host' } : replayCaller),
+      actionCaller: retainedPluginContext?.context.actionCaller ?? (appOwnedContextReplay ? { kind: 'host' } : replayCaller),
       ...(args.retainedPluginSettingsIntent
         ? { isPluginSettingsIntentCurrent: args.retainedPluginSettingsIntent } : {}),
       ...(args.retainedWidgetAreaContext ? { widgetAreaContext: args.retainedWidgetAreaContext } : {}),

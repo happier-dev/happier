@@ -513,10 +513,6 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
         return { artifactId: 'list-approval' };
       },
       approvalsGet: async () => storedRequest,
-      approvalsWaitForDecision: async ({ request }) => ({
-        decision: 'approve' as const,
-        request: { ...request, status: 'approved' as const, decision: { kind: 'approve' as const, decidedAtMs: 2 } },
-      }),
       approvalsUpdate: async ({ request }) => {
         storedRequest = request;
         return { ok: true as const };
@@ -532,14 +528,20 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       defaultSessionMachineId: 'machine-1',
       actionRequestId: 'list-request',
     });
-    expect(admitted).toEqual({ ok: true, result: { sessions: [], nextCursor: null, hasNext: false } });
+    // Durable Agent/MCP approvals return custody instead of retaining a waiter
+    // (651bc122d9); the effect runs only after the separate human decision.
+    expect(admitted).toEqual({ ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'list-approval', actionId: 'session.list',
+    } });
+    expect(sessionList).not.toHaveBeenCalled();
     expect(storedRequest).toMatchObject({ executionOriginV1: {
       serverId: 'home-original', serverIdentityId: 'stable-home-identity',
       sessionId: 'session-original', sessionListAccess: 'current_session',
     } });
     const result = await executor.execute('approval.request.decide', {
       artifactId: 'list-approval', decision: 'approve',
-    }, { surface: 'ui', authority: 'present_user', serverId: 'home-original', defaultSessionId: 'different-session' });
+    }, { surface: 'ui', authority: 'present_user', serverId: 'home-original',
+      serverIdentityId: 'stable-home-identity', defaultSessionId: 'different-session' });
     expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({
       defaultSessionId: 'session-original', sessionListAccess: 'current_session',

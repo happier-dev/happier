@@ -958,6 +958,10 @@ export type SessionAccessActionId = typeof ACTION_ID_FAMILIES_V1.session_access[
 export function isSessionAccessActionId(value: string): value is SessionAccessActionId {
   return (ACTION_ID_FAMILIES_V1.session_access as readonly string[]).includes(value);
 }
+
+export function isSessionListActionId(value: unknown): value is 'session.list' {
+  return value === 'session.list';
+}
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
 
 /** The closed Action family sharing relationship creation and destination approval. */
