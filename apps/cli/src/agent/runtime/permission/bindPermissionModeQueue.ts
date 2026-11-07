@@ -143,7 +143,8 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       if (!isCurrentBinding(session, messageBindingGeneration)) return;
       pushMessageToQueueWithSpecialCommands({
         queue: opts.queue,
-        message: { text, localId: deliveryIdentity.localId, ...(message.meta ? { meta: message.meta } : {}) },
+        message: { text, localId: deliveryIdentity.localId },
+        providerPromptMeta: message.meta,
         text,
         mode: {
           permissionMode: resolvedMode.queuePermissionMode,

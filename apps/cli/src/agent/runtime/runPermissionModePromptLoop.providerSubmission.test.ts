@@ -24,11 +24,11 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
   it('delivers advertised provider commands unchanged and applies deferred fresh-session prompt composition to the next prompt', async () => {
     const queue = createModeQueue();
     queue.push(
-      { text: '/goal fix authentication $review', localId: 'local-command', meta: { happierStructuredInputV1: {
+      { text: '/goal fix authentication $review', localId: 'local-command' },
+      { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
+      { userMessageLocalId: 'local-command', providerPromptMeta: { happierStructuredInputV1: {
         v: 1, mentions: [{ kind: 'happier.skill', ref: 'skill:review', token: '$review', start: 25, end: 32 }],
       } } },
-      { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
-      { userMessageLocalId: 'local-command' },
     );
 
     const metadata: Record<string, unknown> = {

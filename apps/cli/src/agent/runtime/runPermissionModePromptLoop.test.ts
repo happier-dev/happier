@@ -185,8 +185,7 @@ describe('runPermissionModePromptLoop', () => {
     queue.push({
       text: 'hello',
       localId: 'local-1',
-      meta: { sessionWorkStateRequestV1: { refresh: true } },
-    } as any, { permissionMode: 'default' });
+    }, { permissionMode: 'default' }, { providerPromptMeta: { sessionWorkStateRequestV1: { refresh: true } } });
 
     let shouldExit = false;
     let readyCount = 0;
@@ -241,8 +240,7 @@ describe('runPermissionModePromptLoop', () => {
     queue.push({
       text: 'hello',
       localId: 'local-1',
-      meta: { sessionWorkStateRequestV1: { refresh: true } },
-    }, { permissionMode: 'default' });
+    }, { permissionMode: 'default' }, { providerPromptMeta: { sessionWorkStateRequestV1: { refresh: true } } });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {
@@ -662,8 +660,7 @@ describe('runPermissionModePromptLoop', () => {
     queue.push({
       text: 'hello',
       localId: 'local-1',
-      meta: { sessionWorkStateRequestV1: { refresh: true } },
-    }, { permissionMode: 'default' });
+    }, { permissionMode: 'default' }, { providerPromptMeta: { sessionWorkStateRequestV1: { refresh: true } } });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {

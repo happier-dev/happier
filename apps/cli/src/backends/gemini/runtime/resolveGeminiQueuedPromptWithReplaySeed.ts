@@ -8,6 +8,7 @@ export async function resolveGeminiQueuedPromptWithReplaySeed(params: Readonly<{
     refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   };
   text: string;
+  meta?: unknown;
   localId: string | null;
   replaySeedAllowed: boolean;
   didBootstrap: boolean;
@@ -23,6 +24,7 @@ export async function resolveGeminiQueuedPromptWithReplaySeed(params: Readonly<{
   const resolution = await resolveProviderPromptForDispatch({
     session: params.sessionClient,
     userText: params.text,
+    meta: params.meta,
     allowSeed: params.replaySeedAllowed,
     localId: params.localId,
     nowMs: Date.now(),

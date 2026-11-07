@@ -14,6 +14,7 @@ export type MessageBatch<Mode, Message> = {
   userMessageLocalIds?: readonly string[];
   /** Exact current-vs-old custody marker; not a selectable materialization policy. */
   providerAcceptancePending?: boolean;
+  providerPromptMeta?: unknown;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
   pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 };

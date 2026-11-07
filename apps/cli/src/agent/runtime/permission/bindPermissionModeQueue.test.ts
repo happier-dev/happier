@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { registerPermissionModeMessageQueueBinding } from './bindPermissionModeQueue';
 import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permission/permissionModeQueuedPrompt';
+import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 
 describe('registerPermissionModeMessageQueueBinding', () => {
   function createSessionHarness(initialMetadata?: Metadata) {
@@ -12,6 +14,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
 
     return {
       session: {
+        getMetadataSnapshot: () => metadata,
         onUserMessage: (handler: (message: UserMessage) => void) => {
           userMessageHandler = handler;
         },
@@ -27,11 +30,31 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     };
   }
 
+  it('keeps messages from different agents separate through the shared permission queue', async () => {
+    const harness = createSessionHarness();
+    const { messageQueue } = createPermissionModeQueueState({
+      session: harness.session as ApiSessionClient,
+      initialPermissionMode: 'default',
+    });
+    const senders = ['first', 'second'];
+    for (const sender of senders) {
+      harness.emit({ role: 'user', content: { type: 'text', text: sender }, localId: sender,
+        meta: { happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: sender, via: 'mcp' } },
+      } as UserMessage);
+    }
+    for (const sender of senders) {
+      const batch = await messageQueue.waitForMessagesAndGetAsString();
+      expect(batch?.message.text).toBe(sender);
+      expect(batch?.providerPromptMeta).toMatchObject({ happierProvenanceV1: { sourceSessionId: sender } });
+    }
+  });
+
   function createHarness() {
     const queueCalls: Array<{
       type: 'push' | 'clear';
       message: PermissionModeQueuedPrompt;
       mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null };
+      providerPromptMeta?: unknown;
     }> = [];
     let currentPermissionMode: PermissionMode | undefined;
     const sessionHarness = createSessionHarness();
@@ -39,12 +62,12 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     const binding = registerPermissionModeMessageQueueBinding({
       session: sessionHarness.session,
       queue: {
-        push: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }) =>
-          queueCalls.push({ type: 'push', message, mode }),
-        unshift: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }) =>
-          queueCalls.push({ type: 'push', message, mode }),
-        pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }) =>
-          queueCalls.push({ type: 'clear', message, mode }),
+        push: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }, options) =>
+          queueCalls.push({ type: 'push', message, mode, providerPromptMeta: options?.providerPromptMeta }),
+        unshift: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }, options) =>
+          queueCalls.push({ type: 'push', message, mode, providerPromptMeta: options?.providerPromptMeta }),
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode }, options) =>
+          queueCalls.push({ type: 'clear', message, mode, providerPromptMeta: options?.providerPromptMeta }),
       },
       getCurrentPermissionMode: () => currentPermissionMode,
       setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
@@ -75,6 +98,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       {
         type: 'push',
         message: expect.objectContaining({ text: 'hello world', localId: 'local-1' }),
+        providerPromptMeta: {},
         mode: { permissionMode: 'default' },
       },
     ]);
@@ -100,8 +124,8 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         message: {
           text: 'approve this',
           localId: 'local-2',
-          meta: { permissionMode: 'acceptEdits' },
         },
+        providerPromptMeta: { permissionMode: 'acceptEdits' },
         mode: { permissionMode: 'safe-yolo' },
       },
     ]);
@@ -131,8 +155,8 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         message: {
           text: 'approve this',
           localId: 'local-rebind-1',
-          meta: { permissionMode: 'acceptEdits' },
         },
+        providerPromptMeta: { permissionMode: 'acceptEdits' },
         mode: { permissionMode: 'safe-yolo' },
       },
     ]);
@@ -174,6 +198,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       {
         type: 'clear',
         message: expect.objectContaining({ text: '/clear', localId: 'local-3' }),
+        providerPromptMeta: {},
         mode: { permissionMode: 'default' },
       },
     ]);
@@ -198,10 +223,8 @@ describe('registerPermissionModeMessageQueueBinding', () => {
         message: {
           text: 'hello world',
           localId: 'local-4',
-          meta: {
-            appendSystemPrompt: 'Use the latest project conventions.',
-          },
         },
+        providerPromptMeta: { appendSystemPrompt: 'Use the latest project conventions.' },
         mode: {
           permissionMode: 'default',
           appendSystemPrompt: 'Use the latest project conventions.',

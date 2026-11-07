@@ -1063,6 +1063,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
         const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
         const deliveryAttribution = {
+            providerPromptMeta: message.meta,
             userMessageSeq: deliveryInfo?.seq ?? null,
             userMessageLocalId: message.localId ?? null,
             providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
@@ -1991,6 +1992,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                     }, installedRuntimeCapabilities);
                     const baseQueuedText = structuredRouting?.queuedText ?? message.content.text;
                     const deliveryAttribution = {
+                        providerPromptMeta: message.meta,
                         userMessageSeq: deliveryInfo?.seq ?? null,
                         userMessageLocalId: message.localId ?? null,
                         providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,

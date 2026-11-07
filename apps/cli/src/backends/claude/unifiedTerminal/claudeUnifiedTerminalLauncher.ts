@@ -99,6 +99,7 @@ type ParkedUnifiedTerminalMessage = Readonly<{
   maxUserMessageSeq: number | null;
   userMessageLocalIds: readonly string[];
   providerAcceptancePending?: boolean;
+  providerPromptMeta?: unknown;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
   pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
@@ -629,6 +630,7 @@ export async function claudeUnifiedTerminalLauncher(
         mode: batch.mode,
         maxUserMessageSeq: batch.maxUserMessageSeq ?? null,
         userMessageLocalIds: [localId],
+        providerPromptMeta: batch.providerPromptMeta,
         ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
         ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
         ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
@@ -855,6 +857,7 @@ export async function claudeUnifiedTerminalLauncher(
       session.queue.unshift(inFlight.batch.message, inFlight.batch.mode, {
         userMessageSeq: inFlight.batch.maxUserMessageSeq,
         userMessageLocalIds: inFlight.batch.userMessageLocalIds,
+        providerPromptMeta: inFlight.batch.providerPromptMeta,
         ...(inFlight.batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
         ...(inFlight.batch.pendingProviderAction
           ? { pendingProviderAction: inFlight.batch.pendingProviderAction }
@@ -1168,6 +1171,7 @@ export async function claudeUnifiedTerminalLauncher(
           mode,
           maxUserMessageSeq: batch.maxUserMessageSeq,
           userMessageLocalIds: batch.userMessageLocalIds,
+          providerPromptMeta: batch.providerPromptMeta,
           ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
           ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
           ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),

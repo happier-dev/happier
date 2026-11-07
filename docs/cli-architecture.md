@@ -59,11 +59,26 @@ replay uses the original origin and never the approving session's identity.
 
 `resolveProviderPromptForDispatch` renders the origin once as
 `<happier_input_context>` alongside the existing session-reference block, for both
-new turns and in-flight steering. Replay context reserves space for both blocks;
-native commands retain their first-line syntax. The context identifies the source
-session and action/MCP transport and explains ordinary final-answer delivery through
-the existing send wait. It does not introduce the 0.3 reply action or returned-answer
-state machine. Attribution is descriptive and grants no additional authority.
+new turns and in-flight steering. For ordinary agent messages,
+`<happier_session_message>` groups this context and the exact JSON-string body;
+replay and restored conversation history stay outside it. Provider-native slash
+commands retain their first-line syntax with the source context appended. Claude's
+local clear/checkpoint/rewind commands retain their raw grammar without model-only
+context or replay seeds. Terminal compaction acceptance uses the shared special
+command parser, including when attribution follows the command on a new line.
+Replay context reserves the framing overhead through the existing total budget.
+The short guidance allows agent requests within the user's authorized scope and
+existing permissions, without treating an agent message as user approval. Replying
+normally completes an existing send wait; a separate message can use
+`session.message.send` with the source session ID. This guidance is included only
+with attributed input, without startup instructions or a persistent received flag.
+Claude, Gemini, Codex and shared ACP preserve input metadata through the shared mode queue; entries
+carrying metadata stay separate so batching cannot attribute a neighbor's text to
+another sender. Their adapters use the same finalizer. Queued metadata has one
+carrier rather than competing mode fields or typed-message fields. Rejected
+Codex steering returns raw input to queue custody for fresh dispatch, avoiding
+nested attribution or repeated reference resolution. This does not introduce the
+0.3 reply action or returned-answer state machine.
 Delivery's existing `source`, `sentFrom`, permissions, and notice behavior retain
 their separate meanings. The UI reads the same protocol shape and displays the
 sender's cached title, exact ID, and transport without fetching another transcript.

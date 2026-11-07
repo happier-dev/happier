@@ -495,7 +495,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     }
   });
 
-  it('settles an after-write timeout from the exact resumed-session JSONL prompt after the native continuation hook', async () => {
+  it.each(['text', 'attributed compact'] as const)('settles an after-write timeout from resumed-session JSONL evidence (%s)', async kind => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-late-exact-acceptance-'));
     tempDirs.push(dir);
     const workspaceDir = join(dir, 'workspace');
@@ -509,7 +509,18 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
 
-    const prompt = 'Prompt accepted after a resumed terminal write times out before Enter is verified.';
+    const { resolveClaudeQueuedPromptForDispatch } = await import('../runtime/resolveClaudeQueuedPromptForDispatch');
+    const { message: prompt } = await resolveClaudeQueuedPromptForDispatch({
+      sessionClient: { getMetadataSnapshot: () => ({}), updateMetadata: () => {} },
+      batch: {
+        message: kind === 'text' ? 'Prompt accepted after a resumed terminal write times out before Enter is verified.' : '/compact',
+        mode: { replaySeedAllowed: false },
+        ...(kind === 'attributed compact' ? { providerPromptMeta: {
+          happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'compact-sender', via: 'mcp' },
+        } } : {}),
+      },
+      didBootstrap: true,
+    });
     const nextPrompt = 'Next durable prompt drains after exact acceptance.';
     const abortController = new AbortController();
     const onPromptAcceptedByProvider = vi.fn();
@@ -605,7 +616,7 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
         transcript_path: transcriptPath,
         source: 'resume',
       });
-      hook({
+      if (kind === 'text') hook({
         hook_event_name: 'UserPromptSubmit',
         session_id: claudeSessionId,
         prompt_id: 'late-exact-prompt-id',
@@ -614,7 +625,11 @@ describe('runClaudeUnifiedTerminalSession resumed hook activation', () => {
       expect(onPromptAcceptedByProvider).not.toHaveBeenCalled();
 
       const acceptedTimestamp = new Date().toISOString();
-      await appendFile(transcriptPath, `${JSON.stringify({
+      await appendFile(transcriptPath, `${JSON.stringify(kind === 'attributed compact' ? {
+        type: 'system', subtype: 'compact_boundary', uuid: 'late-compact-boundary',
+        sessionId: claudeSessionId, timestamp: acceptedTimestamp, isSidechain: false,
+        compactMetadata: { trigger: 'manual', preTokens: 100 },
+      } : {
         type: 'user',
         uuid: 'late-exact-accepted-user-row',
         promptId: 'late-exact-prompt-id',

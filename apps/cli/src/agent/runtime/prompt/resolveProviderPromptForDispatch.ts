@@ -108,8 +108,18 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     // without a single signature change (D-21a) — including the backends whose prompt call
     // takes only a string.
     const sessionReferenceBlock = buildSessionReferenceBlockV1(params.meta);
-    const inputContext = [sessionReferenceBlock, renderSessionMessageProvenanceContextV1(params.meta)]
-        .filter((block): block is string => Boolean(block)).join('\n\n');
+    // Keep slash-prefixed input in its existing provider-command position. This
+    // controls layout only; the provider's existing command owner decides dispatch.
+    const preserveCommandSyntax = params.userText.trimStart().startsWith('/');
+    const senderContext = renderSessionMessageProvenanceContextV1(
+        params.meta, preserveCommandSyntax ? undefined : params.userText,
+    );
+    const messagePrompt = [
+        senderContext && !preserveCommandSyntax ? senderContext : params.userText,
+        sessionReferenceBlock,
+        preserveCommandSyntax ? senderContext : null,
+    ].filter((block): block is string => Boolean(block)).join('\n\n');
+    const framingChars = messagePrompt.length - params.userText.length;
 
     // Reference resolution runs BEFORE the seed, because consuming the replay seed mutates
     // session metadata: a send rejected by D-27 must not have burned the seed on its way out.
@@ -165,13 +175,11 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
             // wire cap than this daemon allows. Even without a Session
             // reference it therefore goes through the one dispatch budget;
             // only the rendered reference and sender context consumes a reservation.
-            reservedChars: inputContext ? inputContext.length + 2 : 0,
+            reservedChars: Math.max(0, framingChars),
             maxPromptChars: configuration.replaySeedMaxChars,
         })
         : '';
-    const promptBody = seedResolution.seedApplied
-        ? (fittedSeedText ? `${fittedSeedText}\n\n${params.userText}` : params.userText)
-        : seedResolution.providerPrompt;
+    const providerPrompt = fittedSeedText ? `${fittedSeedText}\n\n${messagePrompt}` : messagePrompt;
 
     // Applied means DELIVERED. When the reservation leaves no room the fit yields
     // nothing and the provider receives only the user's text, so reporting the
@@ -182,7 +190,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
     const seedDelivered = seedResolution.seedApplied && fittedSeedText.length > 0;
 
     return {
-        providerPrompt: inputContext ? `${promptBody}\n\n${inputContext}` : promptBody,
+        providerPrompt,
         meta,
         seedApplied: seedDelivered,
         seedText: fittedSeedText || seedResolution.seedText,

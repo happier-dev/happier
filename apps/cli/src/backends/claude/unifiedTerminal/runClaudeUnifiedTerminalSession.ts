@@ -7,6 +7,7 @@ import type {
   TerminalInputInjectionV1,
 } from '@happier-dev/agents';
 import {
+  parseSpecialCommand,
   SessionTerminalComposerClearResultV1Schema,
   type SessionTerminalComposerClearFailureStatusV1,
   type SessionTerminalComposerClearRequestV1,
@@ -824,11 +825,6 @@ function isAcceptedPromptTranscriptCandidate(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const type = (value as Record<string, unknown>).type;
   return type === 'user' || type === 'queue-operation' || type === 'attachment';
-}
-
-function isCompactSlashCommandPrompt(message: string): boolean {
-  const trimmed = message.trim();
-  return trimmed === '/compact' || trimmed.startsWith('/compact ');
 }
 
 function isDeterministicInvalidPromptTextFailure(
@@ -2425,7 +2421,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       };
       const confirmCompactBoundaryPromptAcceptedFromTranscript = (message: RawJSONLines): boolean => {
         if (!isClaudeMainChainCompactBoundary(message)) return false;
-        void arbiter.confirmPromptAcceptedByProviderIf((batch) => isCompactSlashCommandPrompt(batch.message)).catch(() => undefined);
+        void arbiter.confirmPromptAcceptedByProviderIf((batch) => parseSpecialCommand(batch.message).type === 'compact').catch(() => undefined);
         return true;
       };
       const pendingQueuePump = createClaudeUnifiedPendingQueuePump<Mode>({

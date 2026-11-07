@@ -60,6 +60,7 @@ type QueuedPermissionModeMessage = {
   hash: string;
   maxUserMessageSeq: number | null;
   userMessageLocalIds: readonly string[];
+  providerPromptMeta?: unknown;
 };
 
 export type ReadyNotificationTurnContext = Readonly<{
@@ -384,6 +385,7 @@ export async function runPermissionModePromptLoop(opts: {
         hash: next.hash,
         maxUserMessageSeq: next.maxUserMessageSeq ?? null,
         userMessageLocalIds: next.userMessageLocalIds ?? [],
+        providerPromptMeta: next.providerPromptMeta,
       };
     }
     if (!message) continue;
@@ -540,7 +542,7 @@ export async function runPermissionModePromptLoop(opts: {
         localId,
         nowMs,
         refreshMetadataBeforeRead: false,
-        meta: message.message.meta,
+        meta: message.providerPromptMeta,
         catalogs: {
           ...(typeof opts.runtime.listSkills === 'function'
             ? { listSkills: () => opts.runtime.listSkills!() }

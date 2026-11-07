@@ -1,62 +1,25 @@
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
-export type SpecialCommandQueue<Mode, Message> = {
-  push: (
-    message: Message,
-    mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
-  ) => void;
-  unshift: (
-    message: Message,
-    mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
-  ) => void;
-  pushIsolateAndClear: (
-    message: Message,
-    mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
-  ) => void;
-};
+export type SpecialCommandQueue<Mode, Message> = Pick<MessageQueue2<Mode, Message>,
+  'push' | 'unshift' | 'pushIsolateAndClear'>;
+
+type EnqueueOptions<Mode, Message> = NonNullable<Parameters<MessageQueue2<Mode, Message>['push']>[2]>;
 
 /**
  * Push user input to a mode-aware queue, handling slash-style clear commands consistently.
  */
-export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: {
+export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: EnqueueOptions<Mode, Message> & {
   queue: SpecialCommandQueue<Mode, Message>;
   message: Message;
   text: string;
   mode: Mode;
-  userMessageSeq?: number | null;
-  userMessageLocalId?: string | null;
-  userMessageLocalIds?: readonly string[] | null;
-  providerAcceptancePending?: boolean | null;
-  pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
   prioritize?: boolean;
 }): void {
-  const special = parseSpecialCommand(opts.text);
+  const { queue, message, text, mode, prioritize, ...enqueueOptions } = opts;
+  const special = parseSpecialCommand(text);
   const queueOptions = {
+    ...enqueueOptions,
     userMessageSeq: opts.userMessageSeq ?? null,
     userMessageLocalId: opts.userMessageLocalId ?? null,
     userMessageLocalIds: opts.userMessageLocalIds ?? null,
@@ -65,12 +28,12 @@ export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: {
     ...(opts.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
   };
   if (special.type === 'clear') {
-    opts.queue.pushIsolateAndClear(opts.message, opts.mode, queueOptions);
+    queue.pushIsolateAndClear(message, mode, queueOptions);
     return;
   }
-  if (opts.prioritize) {
-    opts.queue.unshift(opts.message, opts.mode, queueOptions);
+  if (prioritize) {
+    queue.unshift(message, mode, queueOptions);
   } else {
-    opts.queue.push(opts.message, opts.mode, queueOptions);
+    queue.push(message, mode, queueOptions);
   }
 }

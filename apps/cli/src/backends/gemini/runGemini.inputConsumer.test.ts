@@ -138,7 +138,7 @@ const {
     providerInputOutcomeObserverMock: vi.fn(),
     recordSessionTurnCompletedMock: vi.fn(async () => undefined),
     resolveGeminiQueuedPromptWithReplaySeedMock: vi.fn<
-      (opts: { text: string; didBootstrap: boolean }) => Promise<{
+      (opts: Parameters<typeof import('./runtime/resolveGeminiQueuedPromptWithReplaySeed').resolveGeminiQueuedPromptWithReplaySeed>[0]) => Promise<{
         text: string;
         didBootstrap: boolean;
         seedApplied?: boolean;
@@ -479,6 +479,41 @@ describe('runGemini input consumer migration', () => {
           : { status: 'dispatched' as const, value: await dispatch() }),
       closeProviderInputAdmissionAndWaitForDispatches: vi.fn(async () => undefined),
     });
+  });
+
+  it('keeps restored history outside an agent message after a mode change', async () => {
+    const actual = await vi.importActual<typeof import('./runtime/resolveGeminiQueuedPromptWithReplaySeed')>(
+      './runtime/resolveGeminiQueuedPromptWithReplaySeed',
+    );
+    resolveGeminiQueuedPromptWithReplaySeedMock
+      .mockImplementationOnce(actual.resolveGeminiQueuedPromptWithReplaySeed)
+      .mockImplementationOnce(actual.resolveGeminiQueuedPromptWithReplaySeed);
+    const session = getFakeSession();
+    const receive = async (text: string, meta: Record<string, unknown>) => {
+      const handler = session.onUserMessage.mock.calls[0]?.[0];
+      if (!handler) throw new Error('Expected the session input handler');
+      await handler({ content: { text }, meta, localId: `local-${text}` });
+      return createSessionProviderInputConsumerMock.mock.calls[0]![0].messageQueue.waitForMessagesAndGetAsString();
+    };
+    waitForNextInputMock.mockReset();
+    waitForNextInputMock
+      .mockImplementationOnce(() => receive('previous human request', { model: 'gemini-2.5-pro' }))
+      .mockImplementationOnce(() => receive('review this change', {
+        model: 'gemini-2.5-flash',
+        happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'history-test-sender', via: 'mcp' },
+      }))
+      .mockResolvedValueOnce(null);
+    const { runGemini } = await import('./runGemini');
+    await runGemini({ credentials });
+    const prompt = sendGeminiPromptWithRetryMock.mock.calls[1]?.[0].prompt;
+    expect(prompt).toBeDefined();
+    const frame = prompt!.match(/<happier_session_message v="1">\n([\s\S]*?)\n<\/happier_session_message>/)?.[1];
+    expect(frame).toBeDefined();
+    const body = frame!.split('\n').find(line => line.startsWith('message='));
+    expect(JSON.parse(body!.slice('message='.length))).toBe('review this change');
+    expect(frame).toContain('source_session_id="history-test-sender"');
+    expect(frame).not.toContain('previous human request');
+    expect(prompt!.indexOf('previous human request')).toBeLessThan(prompt!.indexOf('<happier_session_message'));
   });
 
   it('suppresses failed-turn raw fallback when the daemon handled a superseded source tuple', async () => {

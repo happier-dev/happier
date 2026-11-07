@@ -3,6 +3,24 @@ import { MessageQueue2 } from './modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 
 describe('MessageQueue2', () => {
+    it('preserves per-message prompt metadata without attributing neighboring messages to its sender', async () => {
+        const queue = new MessageQueue2<string>(mode => mode);
+        const first = { happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'sender-1', via: 'mcp' } };
+        const second = { happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'sender-2', via: 'action' } };
+        queue.push('human before', 'remote');
+        queue.push('agent two', 'remote', { providerPromptMeta: second });
+        queue.unshift('agent one', 'remote', { providerPromptMeta: first });
+        queue.push('human after', 'remote');
+        for (const [message, providerPromptMeta] of [
+            ['agent one', first], ['human before', undefined],
+            ['agent two', second], ['human after', undefined],
+        ] as const) {
+            const batch = await queue.waitForMessagesAndGetAsString();
+            expect(batch?.message).toBe(message);
+            expect(batch?.providerPromptMeta).toEqual(providerPromptMeta);
+        }
+    });
+
     it('keeps server-selected provider actions isolated from ordinary batching', async () => {
         const queue = new MessageQueue2<string>(mode => mode);
         queue.push('exact', 'remote', { pendingProviderAction: 'steer' });

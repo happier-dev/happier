@@ -1595,7 +1595,7 @@ export async function claudeRemoteLauncher(
                     await replaySeedRetirement.drain();
                     const resolution = await resolveClaudeQueuedPromptForDispatch({
                         sessionClient: session.client,
-                        batch: { message: batch.message, mode: batch.mode },
+                        batch,
                         didBootstrap: didReplaySeedBootstrap,
                     });
                     didReplaySeedBootstrap = resolution.didBootstrap;

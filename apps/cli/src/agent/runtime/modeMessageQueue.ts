@@ -19,6 +19,18 @@ export type MessageQueueBatch<Mode, Message> = {
   providerAcceptancePending?: boolean;
   pendingProviderAction?: PendingProviderAction;
   pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
+  providerPromptMeta?: unknown;
+};
+
+type EnqueueMessageOptions = {
+  userMessageSeq?: number | null;
+  userMessageLocalId?: string | null;
+  userMessageLocalIds?: readonly string[] | null;
+  providerAcceptancePending?: boolean | null;
+  pendingProviderAction?: PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
+  /** Original input metadata consumed by the shared provider-prompt finalizer. */
+  providerPromptMeta?: unknown;
 };
 
 type QueueItem<Mode, Message> = {
@@ -31,6 +43,7 @@ type QueueItem<Mode, Message> = {
   providerAcceptancePending: boolean;
   pendingProviderAction?: PendingProviderAction;
   pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
+  providerPromptMeta?: unknown;
 };
 
 type MessageBatcher<Message> = (messages: Message[]) => Message;
@@ -99,14 +112,7 @@ export class MessageQueue2<Mode, Message = string> {
   push(
     message: Message,
     mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
+    opts?: EnqueueMessageOptions,
   ): void {
     if (this.closed) {
       throw new Error('Cannot push to closed queue');
@@ -122,6 +128,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageSeq: normalizeUserMessageSeq(opts?.userMessageSeq),
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
+      ...(opts?.providerPromptMeta == null ? {} : { providerPromptMeta: opts.providerPromptMeta }),
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
       ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
@@ -144,14 +151,7 @@ export class MessageQueue2<Mode, Message = string> {
   pushIsolateAndClear(
     message: Message,
     mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
+    opts?: EnqueueMessageOptions,
   ): void {
     if (this.closed) {
       throw new Error('Cannot push to closed queue');
@@ -168,6 +168,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageSeq: normalizeUserMessageSeq(opts?.userMessageSeq),
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
+      ...(opts?.providerPromptMeta == null ? {} : { providerPromptMeta: opts.providerPromptMeta }),
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
       ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
@@ -186,14 +187,7 @@ export class MessageQueue2<Mode, Message = string> {
   unshift(
     message: Message,
     mode: Mode,
-    opts?: {
-      userMessageSeq?: number | null;
-      userMessageLocalId?: string | null;
-      userMessageLocalIds?: readonly string[] | null;
-      providerAcceptancePending?: boolean | null;
-      pendingProviderAction?: PendingProviderAction;
-      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
-    },
+    opts?: EnqueueMessageOptions,
   ): void {
     if (this.closed) {
       throw new Error('Cannot unshift to closed queue');
@@ -209,6 +203,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageSeq: normalizeUserMessageSeq(opts?.userMessageSeq),
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
+      ...(opts?.providerPromptMeta == null ? {} : { providerPromptMeta: opts.providerPromptMeta }),
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
       ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
@@ -314,7 +309,7 @@ export class MessageQueue2<Mode, Message = string> {
       providerAcceptancePending = providerAcceptancePending || item.providerAcceptancePending;
     };
 
-    if (firstItem.isolate || firstItem.pendingProviderAction || firstItem.providerAcceptancePending) {
+    if (firstItem.isolate || firstItem.pendingProviderAction || firstItem.providerAcceptancePending || firstItem.providerPromptMeta != null) {
       consume(this.queue.shift()!);
     } else {
       while (
@@ -322,6 +317,7 @@ export class MessageQueue2<Mode, Message = string> {
         && this.queue[0].modeHash === targetModeHash
         && !this.queue[0].isolate
         && !this.queue[0].providerAcceptancePending
+        && this.queue[0].providerPromptMeta == null
         && this.queue[0].pendingProviderAction === pendingProviderAction
       ) {
         consume(this.queue.shift()!);
@@ -338,6 +334,7 @@ export class MessageQueue2<Mode, Message = string> {
       maxUserMessageSeq,
       userMessageLocalIds,
       providerAcceptancePending,
+      ...(firstItem.providerPromptMeta == null ? {} : { providerPromptMeta: firstItem.providerPromptMeta }),
       ...(pendingProviderAction ? { pendingProviderAction } : {}),
       ...(firstItem.pendingRequestedAction ? { pendingRequestedAction: firstItem.pendingRequestedAction } : {}),
     };

@@ -3560,6 +3560,7 @@ describe('runCodex CodexACP resume behavior', () => {
     }));
     createCodexAppServerRuntimeSpy.mockImplementationOnce(() => appServerRuntime);
 
+    const senderMetadata = { happierProvenanceV1: { v: 1, kind: 'happierSession', sourceSessionId: 'stale-steer-sender', via: 'mcp' } };
     let observedSuppressUserEcho: boolean | undefined;
     sessionInputConsumerWaitForNextInputImpl = async (opts) => {
       if (!lastOnUserMessageHandler) {
@@ -3567,13 +3568,15 @@ describe('runCodex CodexACP resume behavior', () => {
       }
       lastOnUserMessageHandler({
         content: { text: 'recover directly from stale steer' },
-        meta: {},
+        meta: senderMetadata,
         localId: 'local-direct-stale-steer',
       }, { seq: null, pendingProviderAction, providerAcceptancePending: pendingProviderAction === 'steer' });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(opts.messageQueue.size()).toBe(1);
       const batch = await opts.messageQueue.waitForMessagesAndGetAsString();
       observedSuppressUserEcho = batch?.mode?.suppressUserEcho;
+      expect(batch?.message).toBe('recover directly from stale steer');
+      expect(batch?.providerPromptMeta).toEqual(senderMetadata);
       throw new Error('stop-after-direct-requeue');
     };
 
@@ -3589,8 +3592,8 @@ describe('runCodex CodexACP resume behavior', () => {
       .then(() => ({ ok: true as const }))
       .catch((error: unknown) => ({ ok: false as const, error }));
 
-    expect(appServerRuntime.steerPrompt).toHaveBeenCalledWith('recover directly from stale steer', {
-      metadata: {},
+    expect(appServerRuntime.steerPrompt).toHaveBeenCalledWith(expect.stringContaining('message="recover directly from stale steer"'), {
+      metadata: senderMetadata,
       localId: 'local-direct-stale-steer',
       userMessageSeq: null,
     });
@@ -3806,10 +3809,10 @@ describe('runCodex CodexACP resume behavior', () => {
           mode: {
             permissionMode: 'default',
             permissionModeUpdatedAt: 1,
-            promptMetadata: structuredInputMetadata,
           },
           isolate: false,
           hash: 'hash-structured-input',
+          providerPromptMeta: structuredInputMetadata,
         };
       }
       return null;
