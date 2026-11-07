@@ -1,12 +1,11 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
-import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { z } from 'zod/mini';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { SessionIdSchema, TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { SpawnSessionErrorCodeSchema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionErrorCodeSchema, normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
+import { SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { SessionTurnProviderCheckpointV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { AcpConfigOptionOverridesV1, AgentExecutionTargetV1, AgentSessionStartupInstructionsV1, BackendTargetRefV2, CallerInputConstraintsV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, RuntimeDescriptorV1, SessionAttachMetadataIdentityPolicy, SessionCapabilitySelectionV1, SessionInitialAccessDraftV1, SessionManagerV1, SessionRolesV1, SessionInitialGoalRequestV1, SessionCreateOriginFieldsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1, SessionProviderBindingSecurityChangeConfirmationV1, SecretReferenceOverlayV1, SpawnSessionExecutionAuthorization, SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
@@ -19,7 +18,7 @@ import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapte
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
-export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+export { SPAWN_SESSION_ERROR_CODES };
 export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 
 export const AGENT_SESSION_CONTINUATION_UNREACHABLE_ERROR_NAME =
@@ -134,8 +133,8 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
   /** Launch-time Home access recheck. Never persisted or retained as runtime authority. */
   verifyRequesterMachineAdmissionCurrent?: () => Promise<boolean>;
-  /** Host-owned handoff acceptance immediately before physical launch; never persisted. */
-  beforeSessionRunnerLaunch?: () => Promise<boolean>;
+  /** Host-owned launch admission; a typed refusal is presentation, never launch authority. Never persisted. */
+  beforeSessionRunnerLaunch?: () => Promise<boolean | SessionSpawnLaunchErrorV1>;
   /** Invocation-only admitted Resume caller; raw spawn requests cannot supply this. */
   resumeActionContext?: ActionExecutorContext;
   /** Verified original spawn invocation for its exact native-install child. Never serialized or reused for release. */
@@ -173,9 +172,6 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   sessionCreationTag?: import('@happier-dev/protocol').SessionCreationTagV1;
   /** Full immutable create-or-rejoin recipe carried with the admitted tag. */
   sessionCreationCorrespondence?: import('@happier-dev/protocol').SessionCreationCorrespondenceV1;
-  /** Exact admitted pre-Agent setup input and original authority, restored from immutable birth. */
-  machineSetupPlanInput?: import('@happier-dev/protocol/machines/managed/actionsV1').MachineSetupPlanInputV1;
-  machineSetupExecution?: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionCreationMachineSetupExecutionV1;
   /** Informational creation origin; never an execution target or runtime authority. */
   placementOrigin?: MachinePoolSelectionOriginV1;
   /** Mutable presentation state committed inside the fresh Session create transaction. */
@@ -291,6 +287,16 @@ export type SpawnSessionResult =
     runtimeFailureReason?: import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingActivationFailureDetailsV1['runtimeReason'];
   };
 
+/** One projection for private launch checks; the detail is presentation, never authority. */
+export function projectSessionRunnerLaunchAdmissionFailure(
+  admission: boolean | SessionSpawnLaunchErrorV1,
+): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  if (admission === true) return null;
+  return !admission
+    ? { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Session handoff launch custody unavailable' }
+    : { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: admission.message, errorDetail: admission };
+}
+
 export const SessionCreationOutcomeSchema = z.strictObject({
   disposition: z.enum(['created', 'rejoined']),
   organizationPlacement: SessionOrganizationPlacementV1Schema,
@@ -342,13 +348,4 @@ export function projectSpawnSessionControlErrorResponse(
     ...(error.agentId !== undefined ? { agentId: error.agentId } : {}),
     ...(errorDetail ? { errorDetail } : {}),
   };
-}
-
-export function projectSessionRunnerLaunchAdmissionFailure(
-  admission: boolean | SessionSpawnLaunchErrorV1,
-): Extract<SpawnSessionResult, { type: 'error' }> | null {
-  if (admission === true) return null;
-  return !admission
-    ? { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE, errorMessage: 'Session handoff launch custody unavailable' }
-    : { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: admission.message, errorDetail: admission };
 }

@@ -16,6 +16,7 @@ import { ProviderErrorV1Schema, type ProviderErrorV1 } from '../providers/errors
 import { SpawnFailureV1Schema } from '../machines/processes/spawnFailureV1.js';
 export { SessionSpawnLaunchErrorV1Schema, SESSION_SPAWN_CHILD_STDERR_MAX_BYTES, type SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
 import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from './creation/sessionSpawnLaunchErrorV1.js';
+import { SessionCreationCurrentnessFailureV1Schema } from './creation/sessionSpawnLaunchErrorV1.js';
 
 // Process launch accepts the existing daemon modes, not integrated UI authoring.
 export const SpawnSessionTerminalSchema = lazyZodSchema(() => {
@@ -149,6 +150,7 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
    */
   SESSION_CREATION_ACCESS_REFUSED: 'session_creation_access_refused',
   SESSION_CREATION_INITIAL_TRIGGER_REFUSED: 'session_creation_initial_trigger_refused',
+  SESSION_CREATION_CURRENTNESS_UNAVAILABLE: 'session_creation_currentness_unavailable',
   /** A strict no-effect initial-access refusal requiring a newer server or daemon. */
   SESSION_INITIAL_ACCESS_UPDATE_REQUIRED: 'update_required',
 } as const;
@@ -225,6 +227,11 @@ export type SessionCreationAccessRefusedSpawnErrorDetail = z.infer<
 
 /** Exact no-effect creation refusals carried to a daemon spawn waiter. */
 export const SessionCreationTerminalSpawnErrorDetailSchema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_CURRENTNESS_UNAVAILABLE),
+    code: z.literal('currentness_unavailable'),
+    ...SessionCreationCurrentnessFailureV1Schema.shape,
+  }),
   SessionCreationOrganizationInvalidSpawnErrorDetailSchema,
   SessionCreationCorrespondenceConflictSpawnErrorDetailSchema,
   SessionCreationAccessRefusedSpawnErrorDetailSchema,

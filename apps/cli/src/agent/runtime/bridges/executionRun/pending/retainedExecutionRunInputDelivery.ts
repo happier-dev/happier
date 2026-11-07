@@ -17,11 +17,31 @@ import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/a
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { projectExecutionRunWorkflowInputAcceptance } from '../executionRunWorkflowObservation';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
+import { createExecutionRunDiagnosticError, projectExecutionRunError } from '../errors';
 
 import type {
     ExecutionRunPendingInputDelivery,
     ExecutionRunRuntimeDeliveryOutcome,
 } from './executionRunPendingInputConsumer';
+
+/** The same text projection is used for actual delivery and its prepared reservation. */
+export function renderRetainedExecutionRunInputPrompt(
+    params: Parameters<typeof renderSessionInputContextPromptV1>[0] & Readonly<{ profileContext?: string }>,
+): string {
+    const { profileContext, ...context } = params;
+    return renderSessionInputContextPromptV1({ ...context,
+        transformedUserText: profileContext ? `${profileContext}\n\n${context.transformedUserText}` : context.transformedUserText });
+}
+
+export function readRetainedExecutionRunInputTextReservation(
+    params: Omit<Parameters<typeof renderRetainedExecutionRunInputPrompt>[0], 'transformedUserText'>,
+): number {
+    // A real scalar keeps the renderer's context-to-user separator present.
+    // Remove only that scalar, leaving the exact rendered envelope reservation.
+    let scalars = 0;
+    for (const _character of renderRetainedExecutionRunInputPrompt({ ...params, transformedUserText: 'a' })) scalars += 1;
+    return scalars - 1;
+}
 
 export type RetainedExecutionRunInputDelivery = Readonly<{
     delivery: ExecutionRunPendingInputDelivery;
@@ -37,6 +57,7 @@ export type RetainedExecutionRunInputDelivery = Readonly<{
 
 export type RetainedExecutionRunInputDeliveryOptions = Readonly<{
     runId: string;
+    agentId?: string;
     controller: ExecutionRunBackendController;
     onInputTurnUpdated?: () => void;
     onTurnComplete?: (turn: Readonly<{ turnId: string; inputIds?: readonly string[]; rawText: string; finishedAtMs: number }>) => Promise<void>;
@@ -132,6 +153,9 @@ export function createRetainedExecutionRunInputDelivery(
                 controller.lastInputTurn = {
                     ...controller.currentInputTurn,
                     state: event.kind === 'turn-complete' ? 'completed' : event.kind === 'turn-failed' ? 'failed' : 'cancelled',
+                    ...(event.kind === 'turn-failed' ? { error: projectExecutionRunError(
+                        createExecutionRunDiagnosticError(event.diagnostic, event.emittedAtMs, options.agentId), { runId },
+                    ) } : {}),
                 };
                 controller.currentInputTurn = undefined;
             }
@@ -282,11 +306,12 @@ export function createRetainedExecutionRunInputDelivery(
         const sessionRunContext = !contextInitialized ? options.sessionRunContext : undefined;
         const profileContext = !contextInitialized ? options.readInitialProfileContext?.() : undefined;
         const runtimeInput = {
-            text: renderSessionInputContextPromptV1({
+            text: renderRetainedExecutionRunInputPrompt({
                 provenanceBlock: renderSessionInputContextBlockV1({ provenance }),
                 ...resolved.promptContext,
                 ...(sessionRunContext ? { sessionRunContext } : {}),
-                transformedUserText: profileContext ? `${profileContext}\n\n${input.content.text}` : input.content.text,
+                ...(profileContext ? { profileContext } : {}),
+                transformedUserText: input.content.text,
             }),
             ...(resolved.structuredInput
                 ? { structuredInput: normalizeStrictJsonValue(resolved.structuredInput) }

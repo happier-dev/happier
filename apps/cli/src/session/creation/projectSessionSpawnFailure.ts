@@ -1,9 +1,12 @@
-import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
-import { isConnectedServiceUxDiagnosticSpawnErrorDetail, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { readSessionPreparationFailureCode, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { ProviderErrorCodeV1Schema, createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
 
 /** The creation adapter retains the daemon's redacted cause, not just its outcome. */
 export function projectSessionSpawnFailure(input: Readonly<{
@@ -11,8 +14,18 @@ export function projectSessionSpawnFailure(input: Readonly<{
   errorMessage: unknown;
   agentId?: unknown;
   errorDetail?: unknown;
+  requestId?: string;
 }>): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
   const normalized = normalizeSpawnSessionNonceResolution({ status: 'error', ...input });
+  const creationFailure = SessionCreationTerminalSpawnErrorDetailSchema.safeParse(input.errorDetail);
+  if (creationFailure.success && creationFailure.data.kind === 'session_creation_currentness_unavailable') {
+    const { kind: _kind, code, ...currentnessFailure } = creationFailure.data;
+    return { type: 'error', code: 'spawn_failed', retryable: currentnessFailure.retryable,
+      launchError: { kind: 'launch_error', code,
+        message: typeof input.errorMessage === 'string' && input.errorMessage.trim()
+          ? sanitizeConnectedServiceDiagnosticString(input.errorMessage)
+          : 'Account encryption currentness is unavailable', currentnessFailure } };
+  }
   if (isConnectedServiceUxDiagnosticSpawnErrorDetail(input.errorDetail)) {
     const diagnostic = input.errorDetail.uxDiagnostic;
     const reason = diagnostic.diagnostics?.reason;
@@ -32,24 +45,41 @@ export function projectSessionSpawnFailure(input: Readonly<{
       ...(normalized.errorCode === SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT ? { launchError: {
         kind: 'launch_error' as const, code: normalized.errorCode,
         message: 'Sign in to the Agent on the target Machine. If using Connected Accounts, select a Connected Account profile for this Session or recipe, or configure an Account default profile before retrying.',
+        ...(input.requestId ? { failureCause: { phase: 'authentication' as const,
+          failureReason: 'authentication_required' as const, requestId: input.requestId } } : {}),
       } } : {}),
     };
   }
   const detail = SessionSpawnLaunchErrorV1Schema.safeParse(input.errorDetail);
-  const code = detail.success ? detail.data.code
-    : input.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED && input.errorMessage === 'agent_cli_not_runnable'
-      ? 'agent_cli_not_runnable' : input.errorCode;
+  const nativeFailure = normalizeSpawnSessionErrorDetail(input.errorDetail);
+  const nativeCode = nativeFailure?.kind === 'spawn_failure' ? nativeFailure.errno : undefined;
+  // executeSpawnSessionRequest and launch-witness admission carry closed
+  // preflight codes in the validation message. Preserve that exact code;
+  // arbitrary daemon prose cannot become a public failure classification.
+  const preparationCode = input.errorCode === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED
+    ? readTeamCredentialLaunchFailureCode(input.errorMessage) ?? readSessionPreparationFailureCode(input.errorMessage)
+      ?? (input.errorMessage === 'team_credential_provider_binding_unavailable' ? input.errorMessage : null)
+    : null;
+  const fallback = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
+    code: nativeCode ?? preparationCode ?? (input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED),
+    message: typeof input.errorMessage === 'string' && input.errorMessage.trim()
+      ? input.errorMessage : 'Session launch failed' });
+  const causeCode = detail.success ? detail.data.failureCause?.code : undefined;
+  const typedCauseCode = readTeamCredentialLaunchFailureCode(causeCode)
+    ?? (readSessionStartupFailurePreview(causeCode) ? causeCode : undefined);
+  const code = typedCauseCode ?? (detail.success ? detail.data.code : nativeCode ?? preparationCode ?? input.errorCode);
   if (code === 'agent_cli_not_runnable') {
     const title = typeof input.agentId === 'string' ? resolveAgentDisplayTitle(input.agentId) : null;
     return { type: 'error', code: 'spawn_failed', retryable: false,
       launchError: { kind: 'launch_error', code, message: readSessionStartupFailurePreview(code, title)!,
         ...(detail.success && detail.data.failureCause ? { failureCause: detail.data.failureCause } : {}) } };
   }
-  const fallback = SessionSpawnLaunchErrorV1Schema.safeParse({ kind: 'launch_error',
-    code: input.errorCode || SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-    message: typeof input.errorMessage === 'string' && input.errorMessage.trim()
-      ? input.errorMessage : 'Session launch failed' });
-  return { type: 'error', code: 'spawn_failed', retryable: true,
-    launchError: detail.success ? detail.data : fallback.success ? fallback.data
+  const providerCode = ProviderErrorCodeV1Schema.safeParse(code);
+  const retryable = code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
+    || code === 'agent_isolation_unavailable'
+    || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
+    : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true;
+  return { type: 'error', code: 'spawn_failed', retryable,
+    launchError: detail.success ? { ...detail.data, code: typedCauseCode ?? detail.data.code } : fallback.success ? fallback.data
       : { kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, message: 'Session launch failed' } };
 }

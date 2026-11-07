@@ -6,7 +6,8 @@ import { logger } from '@/ui/logger';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { SessionInputWorkflowV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { deriveSessionMessageReplyReturnLocalIdV1, SessionMessageReplyAccountMutationV1Schema,
+  SessionMessageReplyReadResultV1Schema, type SessionMessageReplyPublicationV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createSocketTransportAdapter, socketRpcCodec } from '@happier-dev/sync-client';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
@@ -28,6 +29,7 @@ import {
   materializeWorkflowAcceptedSnapshotV1,
   formatWorkflowDefinitionRefV1,
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+  WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1,
   openWorkflowProgressStoredEnvelopeV1,
   openWorkflowAcceptedSnapshotStoredEnvelopeV1,
   parseWorkflowStoredContentEnvelopeV1,
@@ -63,10 +65,12 @@ import {
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
+import type { DiscussionPromptContextEntryV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import type { WorkflowPromptContext } from './workflowPromptContext';
 import { observeWorkflowSessionInputResult } from './stepExecution';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
 import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
-import { WorkflowInputResolutionError } from './input';
+import { isWorkflowJsonObject, WorkflowInputResolutionError } from './input';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -95,7 +99,7 @@ import { createCredentialedWorkflowMaterializationHostV1 } from '@/session/actio
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { createRoleSourceReader } from '@/session/roles/roleSources';
 import { resolveAutomationPollingConfig } from '@/daemon/automation/automationScheduler';
-import {  workflowInvocationKey } from './coordinator';
+import { WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, workflowInvocationKey } from './coordinator';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
@@ -107,7 +111,7 @@ import { createWorkflowOriginContextInputPort } from '@/agent/runtime/session/co
 import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
-import { buildWorkflowActionContext, resolveWorkflowSessionConversation } from './daemonRuntime';
+import { buildWorkflowActionContext, resolveWorkflowSessionConversation, createWorkflowAcceptedAuthorizationCurrentness } from './daemonRuntime';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { DiscussionAgentPostResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 
@@ -174,6 +178,18 @@ const onlyStep = {
   input: [], result: { kind: 'text' as const },
 };
 
+function readPromptContext(text: string): WorkflowPromptContext[] {
+  const entries: DiscussionPromptContextEntryV1[] = text.split('\n')
+    .filter(line => line.startsWith('{"author":') || line.startsWith('{"kind":"host_reference_metadata"'))
+    .map(line => JSON.parse(line.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&')));
+  return entries.flatMap((entry, index) => {
+    if (!('author' in entry)) return [];
+    const metadata = entries[index - 1];
+    expect(metadata).toMatchObject({ kind: 'host_reference_metadata' });
+    return [{ ...JSON.parse(metadata!.text), author: entry.author, value: JSON.parse(entry.text) }];
+  });
+}
+
 function productionExecution(
   sessionInput?: NonNullable<WorkflowProductionExecutionDeps['sessionInput']>,
 ): WorkflowProductionExecutionDeps {
@@ -203,7 +219,8 @@ const productionMaterializationHost: NonNullable<Parameters<typeof createProduct
   }),
 });
 
-async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 'result_ack_lost' | 'admission_ack_lost', memberOrdinal = '0') {
+async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 'result_ack_lost' | 'admission_ack_lost', memberOrdinal = '0',
+  actionId: 'machines.command.run' | 'machines.services.exec' = 'machines.command.run') {
   const rootId = 'root-command-output';
   const runDataKey = new Uint8Array(32).fill(7);
   const encryption: WorkflowRunEncryptionV1 = { witness: { mode, version: 1,
@@ -242,8 +259,11 @@ async function commandOutputAdmissionFixture(mode: 'plain' | 'e2ee', fault?: 're
   const binding = { v: 1 as const, purpose: 'invocation_progress' as const, accountId, runId,
     recordId: row.index.id, sequence: row.index.sequence, parentRecordId: row.index.parentRecordId,
     memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt };
-  const execution = { kind: 'action' as const, actionId: 'machines.command.run', actionRequestId: 'command-request',
-    localInputId: 'command-request', input: { command: 'fixed command' } };
+  const input = actionId === 'machines.command.run' ? { command: 'fixed command' }
+    : { serverId: 'home', machineId, target: { kind: 'current', serviceId: 'service', expectedGeneration: 'generation' },
+      mode: 'exec', argv: ['tool', 'fixed-argument'] };
+  const execution = { kind: 'action' as const, actionId, actionRequestId: 'command-request',
+    localInputId: 'command-request', input };
   return { store, boundary, key, intent, binding, execution, sealMode, rootId, encryption,
     open: () => openWorkflowProgressStoredEnvelopeV1({ ...encryption.runCrypto, binding,
       envelope: parseWorkflowStoredContentEnvelopeV1(boundary.rowById(intent.recordId)!.contentEnvelope) }) };
@@ -492,10 +512,14 @@ describe('production workflow coordinator', () => {
     }
   });
 
-  it.each(['none', 'lost_ack', 'denied', 'review', 'review_stable_home', 'round_native_no_outcome', 'round_already_returned', 'round_concurrent', 'round_reclaimed_published'] as const)('materializes authorized Discussion history and repairs lost publication acknowledgements (publication=%s)', async scenario => {
+  it.each(['none', 'lost_ack', 'denied', 'round_denied_active', 'cancelled_publication_pending', 'cancelled_publication_miswired', 'cancelled_root_publication_pending', 'cancelled_publication_race', 'review', 'review_stable_home', 'round_native_no_outcome', 'round_already_returned', 'round_concurrent', 'round_reclaimed_published'] as const)('materializes authorized Discussion history and repairs lost publication acknowledgements (publication=%s)', async scenario => {
     const publication = scenario !== 'none';
+    let publicationAuthorityReads = 0;
+    const cancelledPublication = scenario === 'cancelled_publication_pending' || scenario === 'cancelled_publication_miswired'
+      || scenario === 'cancelled_root_publication_pending' || scenario === 'cancelled_publication_race';
     const hasReview = scenario === 'review' || scenario === 'review_stable_home';
-    const concurrentRound = scenario === 'round_concurrent';
+    const deniedActive = scenario === 'round_denied_active';
+    const concurrentRound = scenario === 'round_concurrent' || deniedActive;
     const reclaimedPublished = scenario === 'round_reclaimed_published';
     const expiredClaim = new AbortController();
     const projectsRound = scenario === 'round_native_no_outcome' || scenario === 'round_already_returned' || concurrentRound || reclaimedPublished;
@@ -584,6 +608,7 @@ describe('production workflow coordinator', () => {
     let inputLocalId = '';
     const committedPosts = new Map<string, string>();
     const publishedInputs = new Map<string, string>();
+    const publicationStates = new Map<string, SessionMessageReplyPublicationV1>();
     const admittedInputs = new Map<string, { workflow: SessionInputWorkflowV2;
       discussion: NonNullable<Parameters<NonNullable<WorkflowProductionExecutionDeps['sessionInput']>['enqueue']>[0]['discussionAddressing']> }>();
     const parents: string[] = [];
@@ -598,6 +623,8 @@ describe('production workflow coordinator', () => {
     const publicationDiagnostics: unknown[] = [];
     vi.spyOn(logger, 'warnLocalFile').mockImplementation((...args) => { publicationDiagnostics.push(args); });
     let denied = false;
+    let releaseDeniedSibling = () => {};
+    const denialObserved = new Promise<void>(resolve => { releaseDeniedSibling = resolve; });
     const previousGet = vi.mocked(axios.get).getMockImplementation()!;
     vi.mocked(axios.get).mockImplementation(async (url, config) => {
       transportRequests.push(`get ${url}`);
@@ -609,6 +636,7 @@ describe('production workflow coordinator', () => {
         return { status: 200, data: { v: 1, status: 'available', progress: {
         v: 1, mode: 'wait', workflow: admitted.workflow, acceptedTurnId: 'accepted-turn', disposition: publicationId ? 'returned' : 'observing',
         discussion: admitted.discussion,
+        ...(publicationStates.has(localId) ? { returnPublication: publicationStates.get(localId) } : {}),
         ...(!pendingC2.has(admitted.discussion.participantSessionId) ? { outcome: publicationId
           ? { kind: 'answer', publicationRef: { kind: 'discussion', discussion, messageId: publicationId } }
           : { kind: 'answer', result: { sessionId: admitted.discussion.participantSessionId, messageId: 'exact-result' } } } : {}),
@@ -647,9 +675,23 @@ describe('production workflow coordinator', () => {
             socket.trigger('ephemeral', { type: 'session-message-reply-pending-v1', v: 1, sessionId, requestLocalId: localId });
           }
         }
-        return { status: 200, data: { messages: [input, answer] } };
+        return { status: 200, data: { hasMore: false, messages: [input, answer] } };
       }
       return previousGet(url, config);
+    });
+    const previousPost = vi.mocked(axios.post).getMockImplementation()!;
+    vi.mocked(axios.post).mockImplementation(async (url, body, config) => {
+      if (!url.includes('/by-local-id/') || !url.endsWith('/reply')) return previousPost(url, body, config);
+      const mutation = SessionMessageReplyAccountMutationV1Schema.parse(body);
+      if (mutation.kind !== 'discussion_publication') throw new Error('Unexpected original return mutation');
+      const localId = decodeURIComponent(/\/by-local-id\/([^/]+)\/reply$/.exec(url)![1]!);
+      const original = SessionMessageReplyReadResultV1Schema.parse((await axios.get(url)).data);
+      if (original.status !== 'available') throw new Error('Missing original return');
+      if (original.progress.disposition === 'returned') return { status: 200, data: { v: 1, ok: true, progress: original.progress } };
+      publicationStates.set(localId, mutation.publication);
+      return { status: 200, data: { v: 1, ok: true, progress: { ...original.progress,
+        returnPublication: mutation.publication,
+        disposition: mutation.publication.kind === 'failed' && !mutation.publication.failure.retryable ? 'released' : 'return_pending' } } };
     });
     const publishNativeReturn = async (request: import('@happier-dev/protocol/discussions/api').DiscussionAgentPostPublicationV1) => {
       const replyReturn = request.replyReturn;
@@ -666,8 +708,9 @@ describe('production workflow coordinator', () => {
           runId, invocationRecordId: publicationWorkflow.invocationRecordId, invocationAttempt: '0',
         } }, request: { localId: expectedLocalId, replyTarget: { kind: 'message', messageId: expectedParent },
           content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: isReview ? 'reviewed' : 'answer' }] } } } });
-      if (scenario === 'denied' && !denied) {
+      if ((scenario === 'denied' || deniedActive) && !denied) {
         denied = true;
+        releaseDeniedSibling();
         return { v: 1, ok: false, error: 'discussion_post_denied' };
       }
       // This is the installed Machine network boundary: the real append owner commits
@@ -692,7 +735,28 @@ describe('production workflow coordinator', () => {
     let observing = 0;
     let releaseObservations = () => {};
     const bothObserving = new Promise<void>(resolve => { releaseObservations = resolve; });
-    const coordinate = createProductionWorkflowRunCoordinator({ token: credentials.token, accountId, machineId, storage: boundary,
+    let cancellationRaced = false;
+    const coordinate = createProductionWorkflowRunCoordinator({ token: credentials.token, accountId, machineId,
+      storage: { ...boundary, execute: async (operation, options) => {
+        if (deniedActive && operation.operation === 'transition' && operation.custodyState === 'settled') {
+          // Match workflowRunService's real unsettled-index guard. An accepted
+          // sibling whose observation failed still owns native input custody.
+          const terminal = new Set(['completed', 'failed', 'skipped', 'cancelled', 'outcome_uncertain', 'superseded']);
+          const unsettled = new Set<string>(WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1);
+          // This opaque storage boundary receives the public transition packet.
+          const transitions = (operation.invocationTransitions ?? []) as ReadonlyArray<Readonly<{ id: string; lifecycle: string }>>;
+          const closing = new Set(transitions.filter(row => terminal.has(row.lifecycle)).map(row => row.id));
+          if (boundary.rows().some(row => unsettled.has(row.index.lifecycle) && !closing.has(row.index.id))) {
+            throw Object.assign(new Error('currentness_conflict'), { response: { status: 409, data: { error: 'currentness_conflict' } } });
+          }
+        }
+        if (scenario === 'cancelled_publication_race' && !cancellationRaced
+          && operation.operation === 'invocations.fact' && operation.lifecycle === 'needs_attention') {
+          cancellationRaced = true;
+          boundary.requestControl('cancel_requested');
+        }
+        return await boundary.execute(operation, options);
+      } },
       execution: { ...productionExecution({ enqueue: async request => {
         inputs.push(request.text);
         workflow = request.workflow;
@@ -704,10 +768,27 @@ describe('production workflow coordinator', () => {
           if (++observing === participants.length) releaseObservations();
           await bothObserving;
         }
+        if (deniedActive && sessionId === 'session-2') {
+          await denialObserved;
+          // Let the refused publication finish its already-resolved HTTP
+          // settlement before the independent native observation responds.
+          await new Promise(resolve => setImmediate(resolve));
+          return { ok: false, code: 'session_not_found' };
+        }
         if (projectsRound) {
           const observed = await observeWorkflowSessionInputResult({ credentials, sessionId, localId, ...(signal ? { signal } : {}) });
           observedNative.add(sessionId);
           return observed;
+        }
+        if (cancelledPublication && scenario !== 'cancelled_publication_race') {
+          boundary.requestControl('cancel_requested');
+          if (scenario === 'cancelled_root_publication_pending') {
+            const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
+            await boundary.execute({ operation: 'invocations.fact', runId, parentAttempt: 0,
+              invocationId: root.index.id, invocationAttempt: root.index.attempt,
+              expectedLifecycle: root.index.lifecycle, expectedContentRevision: root.index.contentRevision,
+              lifecycle: 'cancelled', contentEnvelope: root.contentEnvelope });
+          }
         }
         return { ok: true, sessionId, localId,
           result: { kind: 'final_text', text: hasReview && admittedInputs.size > 1 ? 'reviewed' : 'answer' },
@@ -721,25 +802,70 @@ describe('production workflow coordinator', () => {
           buildContext: async execution => buildWorkflowActionContext(execution),
           observeRun: async () => { throw new Error('Round projection does not launch a Run'); } },
         } : {}),
-        postWorkflowMessage: async publication => 'producer' in publication
+        ...(scenario === 'cancelled_publication_miswired' ? {} : { postWorkflowMessage: async (publication: Parameters<NonNullable<WorkflowProductionExecutionDeps['postWorkflowMessage']>>[0]) => cancelledPublication
+          ? DiscussionAgentPostResponseV1Schema.parse({ v: 1, ok: false, error: 'discussions_unavailable' })
+          : 'producer' in publication
           ? DiscussionAgentPostResponseV1Schema.parse({ v: 1, ok: true,
             value: { message: { ...wireMessage(5), content: publication.request.content, producerV1: publication.producer }, messageSeq: 5 } })
-          : DiscussionAgentPostResponseV1Schema.parse(await publishNativeReturn(publication)),
+          : DiscussionAgentPostResponseV1Schema.parse(await publishNativeReturn(publication)) }),
         ...(scenario === 'review_stable_home' ? { serverIdentityId: 'srv_workflow_home' } : {}) },
       resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
       resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
-      isAcceptedAuthorizationCurrent: async () => true,
+      // Delivering to the frozen origin Discussion is admitted work: no principal re-read.
+      isAcceptedAuthorizationCurrent: async () => { publicationAuthorityReads++; return true; },
       workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected worktree'); },
         inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
       onCommittedTransition: async () => {},
     });
     const claim = { runId, attempt: 0, expectedRevision: 0,
       accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null }, acceptedEnvelope };
-    if (scenario === 'denied') {
-      expect(await coordinate(claim)).toMatchObject({ state: 'interrupted', reason: 'workflow_discussion_publication_unavailable' });
-      expect(boundary.run().state).toBe('interrupted');
+    if (cancelledPublication) {
+      await expect(coordinate(claim)).resolves.toMatchObject({ state: 'cancelled' });
+      expect(boundary.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
+      expect(boundary.rows().find(row => row.index.parentRecordId === null)?.index.lifecycle).toBe('cancelled');
+      expect(boundary.rows().filter(row => row.index.parentRecordId !== null).map(row => row.index.lifecycle)).toEqual(['completed']);
+      expect(inputs).toHaveLength(1);
+      expect(committedPosts.size).toBe(0);
+      if (scenario === 'cancelled_root_publication_pending') {
+        const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
+        const terminalContent = root.contentEnvelope;
+        const beforeReclaim = boundary.calls.length;
+        await expect(coordinate({ ...claim, attempt: 1, expectedRevision: boundary.run().revision }))
+          .resolves.toMatchObject({ state: 'cancelled' });
+        expect(boundary.rowById(root.index.id)?.contentEnvelope).toBe(terminalContent);
+        expect(boundary.calls.slice(beforeReclaim).filter(operation => operation.operation === 'invocations.fact'
+          && operation.invocationId === root.index.id)).toEqual([]);
+        expect(boundary.run()).toMatchObject({ state: 'cancelled', workflowCustodyState: 'pending' });
+        expect(inputs).toHaveLength(1);
+      }
+      return;
+    } else if (deniedActive) {
+      expect(await coordinate(claim)).toMatchObject({ state: 'failed', reason: 'discussion_post_denied' });
+      expect(denied).toBe(true);
+      expect(boundary.run()).toMatchObject({ state: 'failed', workflowCustodyState: 'pending' });
+      expect(boundary.rows().find(row => row.index.parentRecordId === null)?.index.lifecycle).toBe('failed');
+      expect(boundary.rows().filter(row => row.index.lifecycle === 'completed')).toHaveLength(1);
+      const sibling = [...admittedInputs.values()].find(value => value.discussion.participantSessionId === 'session-2');
+      if (!sibling) throw new Error('Missing accepted sibling input');
+      const active = boundary.rowById(sibling.workflow.invocationRecordId);
+      expect(active).toBeDefined();
+      if (!active) throw new Error('Missing retained accepted sibling');
+      expect(active.index.lifecycle).toBe('needs_attention');
+      expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: { v: 1, purpose: 'invocation_progress',
+        accountId, runId, recordId: active.index.id, sequence: active.index.sequence, parentRecordId: active.index.parentRecordId,
+        memberOrdinal: active.index.memberOrdinal, attempt: active.index.attempt },
+        envelope: parseWorkflowStoredContentEnvelopeV1(active.contentEnvelope) })).toMatchObject({ kind: 'available',
+        content: { execution: { kind: 'session', sessionId: 'session-2', localInputId: expect.any(String) } } });
+      expect(inputs).toHaveLength(2);
+      expect(committedPosts.size).toBe(0);
+      return;
+    } else if (scenario === 'denied') {
+      expect(await coordinate(claim)).toMatchObject({ state: 'failed', reason: 'discussion_post_denied' });
+      expect(boundary.run()).toMatchObject({ state: 'failed', workflowCustodyState: 'settled' });
       expect(boundary.rows().some(row => row.index.lifecycle === 'completed')).toBe(true);
-      expect(boundary.rows().find(row => row.index.parentRecordId === null)?.index.lifecycle).toBe('needs_attention');
+      expect(boundary.rows().find(row => row.index.parentRecordId === null)?.index.lifecycle).toBe('failed');
+      expect(publicationStates.get(inputLocalId)).toMatchObject({ kind: 'failed',
+        failure: { code: 'discussion_post_denied', retryable: false } });
       expect(committedPosts.size).toBe(0);
     } else if (projectsRound) {
       if (reclaimedPublished) {
@@ -795,20 +921,19 @@ describe('production workflow coordinator', () => {
       if (review?.kind !== 'available') throw new Error('review_progress_unavailable');
       expect(review.content.input).not.toHaveProperty('discussionReplyTo');
     } else if (publication) {
-      await expect(coordinate(claim)).rejects.toThrow('committed_reply_ack_lost');
-      expect(boundary.run().state).toBe('running');
+      expect(await coordinate(claim)).toMatchObject({ state: 'succeeded' });
+      expect(boundary.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
       expect(boundary.rows().some(row => row.index.lifecycle === 'completed')).toBe(true);
       expect(committedPosts.size, JSON.stringify({ publicationDiagnostics, transportRequests })).toBe(1);
     } else expect(await coordinate(claim)).toMatchObject({ state: 'succeeded' });
     expect(inputs).toHaveLength(hasReview ? 2 : participants.length);
-    const values = inputs[0]!.split('\n').filter(line => line.startsWith('{"author":'))
-      .map(line => JSON.parse(JSON.parse(line).text));
-    const fixed = values.filter(value => value.reference.scope === 'addressing_message');
-    const current = values.filter(value => value.reference.scope === 'so_far');
-    expect(fixed.map(value => value.value.id)).toEqual(['message-1', 'question']);
-    expect(fixed.every(value => value.source.throughSeq === 2)).toBe(true);
+    const values = readPromptContext(inputs[0]!);
+    const fixed = values.filter(value => value.reference.kind === 'discussion_context' && value.reference.scope === 'addressing_message');
+    const current = values.filter(value => value.reference.kind === 'discussion_context' && value.reference.scope === 'so_far');
+    expect(fixed.map(value => isWorkflowJsonObject(value.value) ? value.value.id : undefined)).toEqual(['message-1', 'question']);
+    expect(fixed.every(value => value.source && isWorkflowJsonObject(value.source) && value.source.throughSeq === 2)).toBe(true);
     expect(JSON.stringify(fixed)).not.toContain('peer sentinel');
-    expect(current.map(value => value.value.id)).toEqual(['message-1', 'question', 'message-3']);
+    expect(current.map(value => isWorkflowJsonObject(value.value) ? value.value.id : undefined)).toEqual(['message-1', 'question', 'message-3']);
     const previousReads = reads.length;
     if (scenario === 'denied') {
       const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
@@ -818,29 +943,33 @@ describe('production workflow coordinator', () => {
         normalizeAbsolutePath: path => path, randomBytes: () => { throw new Error('Plain keys are absent'); },
         isAcceptedAuthorizationCurrent: async () => true,
       });
-      const retried = WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse(await owner.execute({
+      await expect(owner.execute({
         actionId: 'workflow.run.invocations.retry', context: { surface: 'cli', authority: 'present_user',
           callerPermissionMode: 'yolo', actionCaller: { kind: 'host' }, actionRequestId: 'retry-publication' },
         input: { runId, expectedRevision: boundary.run().revision, invocation: { recordId: root.index.id },
           causalInvocationIds: [root.index.id], conversation: 'fresh_agent',
           input: { kind: 'original' } },
-      }));
-      expect(retried.invocation.attempt).toBe('1');
+      })).rejects.toMatchObject({ code: 'ineligible_state' });
       expect(boundary.rows().find(row => row.index.id === workflow!.invocationRecordId)?.index).toMatchObject({
         attempt: '0', lifecycle: 'completed',
       });
+      expect(inputs).toHaveLength(1);
+      expect(reads).toHaveLength(previousReads);
+      return;
     }
     expect(await coordinate({ ...claim, expectedRevision: boundary.run().revision })).toMatchObject({ state: 'succeeded' });
     expect(inputs).toHaveLength(hasReview ? 2 : participants.length);
     expect(reads).toHaveLength(previousReads);
+    expect(publicationAuthorityReads).toBe(0);
   });
   it.each([
     { status: 500, committed: false, recordingAvailable: true, settlement: false },
     { status: 500, committed: true, recordingAvailable: true, settlement: false },
     { status: 503, committed: false, recordingAvailable: true, settlement: false },
+    { status: 503, committed: false, recordingAvailable: true, settlement: false, cancelAtAttention: true },
     { status: 500, committed: false, recordingAvailable: false, settlement: false },
     { status: 500, committed: true, recordingAvailable: true, settlement: true },
-  ])('retains a readable recoverable storage cause after HTTP $status (committed=$committed, recording=$recordingAvailable, settlement=$settlement)', async ({ status, committed, recordingAvailable, settlement }) => {
+  ])('retains a readable recoverable storage cause after HTTP $status (committed=$committed, recording=$recordingAvailable, settlement=$settlement, cancel=$cancelAtAttention)', async ({ status, committed, recordingAvailable, settlement, cancelAtAttention = false }) => {
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.external-test', localId: 'external' } },
       conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
@@ -871,6 +1000,9 @@ describe('production workflow coordinator', () => {
       if (!url.endsWith('/v3/automations/runs/workflow-storage')) return await originalPost(url, body, config);
       if (faulted && !recordingAvailable) throw storageFailure;
       const operation = body as WorkflowRunStorageOperation;
+      if (faulted && cancelAtAttention && operation.operation === 'invocations.fact' && operation.lifecycle === 'needs_attention') {
+        boundary.requestControl('cancel_requested');
+      }
       const candidates = operation.operation === 'invocations.admit'
         ? operation.invocations as readonly { id: string; sequence: string; parentRecordId: string; memberOrdinal: string; contentEnvelope: string }[] : [];
       const beta = candidates.some(candidate => {
@@ -906,20 +1038,23 @@ describe('production workflow coordinator', () => {
     });
     const outcome = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
-    if (settlement) await expect(outcome).resolves.toMatchObject({ state: 'succeeded' });
+    if (cancelAtAttention) await expect(outcome).resolves.toMatchObject({ state: 'cancelled' });
+    else if (settlement) await expect(outcome).resolves.toMatchObject({ state: 'succeeded' });
     else if (recordingAvailable) await expect(outcome).resolves.toMatchObject({ state: 'interrupted', reason: 'storage_unavailable' });
     else await expect(outcome).rejects.toBe(storageFailure);
     expect(faulted).toBe(true);
-    expect(boundary.run()).toMatchObject({ state: settlement ? 'succeeded' : recordingAvailable ? 'interrupted' : 'running',
+    expect(boundary.run()).toMatchObject({ state: cancelAtAttention ? 'cancelled' : settlement ? 'succeeded' : recordingAvailable ? 'interrupted' : 'running',
       workflowCustodyState: settlement ? 'settled' : 'pending' });
+    if (cancelAtAttention) expect(boundary.rows().some(row => row.index.parentRecordId !== null
+      && (row.index.lifecycle === 'cancel_requested' || row.index.lifecycle === 'outcome_uncertain'))).toBe(true);
     const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
-    expect(root.index.lifecycle).toBe(settlement ? 'completed' : recordingAvailable ? 'needs_attention' : 'running');
+    expect(root.index.lifecycle).toBe(cancelAtAttention ? 'cancelled' : settlement ? 'completed' : recordingAvailable ? 'needs_attention' : 'running');
     const opened = openProgress(root);
-    if (recordingAvailable && !settlement) expect(opened).toMatchObject({ kind: 'available', content: { reason: {
+    if (recordingAvailable && !settlement && !cancelAtAttention) expect(opened).toMatchObject({ kind: 'available', content: { reason: {
       code: 'storage_unavailable', message: expect.any(String),
     } } });
     else expect(opened).toMatchObject({ kind: 'available', content: expect.not.objectContaining({ reason: expect.anything() }) });
-    if (recordingAvailable && !settlement) {
+    if (recordingAvailable && !settlement && !cancelAtAttention) {
       const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
         storage: boundary, definitions: { get: async () => { throw new Error('must_not_read_mutable_definition'); } },
         resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
@@ -944,7 +1079,9 @@ describe('production workflow coordinator', () => {
     expect(betaRows).toHaveLength(Number(committed));
   });
 
-  it.each(['plain', 'e2ee'] as const)('retains evaluated quiet provenance on the real durable root (%s)', async (mode) => {
+  it.each([{ mode: 'plain', pending: undefined }, { mode: 'e2ee', pending: undefined },
+    { mode: 'plain', pending: true }, { mode: 'plain', pending: false }] as const)(
+    'retains evaluated quiet provenance on the real durable root ($mode, pending=$pending)', async ({ mode, pending }) => {
     const rootId = 'condition-root';
     const runDataKey = new Uint8Array(32).fill(7);
     const encryption: WorkflowRunEncryptionV1 = { witness: { mode, version: 1,
@@ -961,10 +1098,34 @@ describe('production workflow coordinator', () => {
       })) } });
     const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: rootId,
       nextSequence: '1', frontier: { nextBlockOrdinal: 0, paused: false } };
+    let holdControlRead = false;
+    let releaseControl = () => {};
+    const controlGate = new Promise<void>(resolve => { releaseControl = resolve; });
+    let controlReadStarted = () => {};
+    const controlStarted = new Promise<void>(resolve => { controlReadStarted = resolve; });
+    let sourceCompleted = () => {};
+    const sourceCommitted = new Promise<void>(resolve => { sourceCompleted = resolve; });
+    // Delay only the real storage boundary. Notification evaluation, root
+    // capture, the root queue and membership projection remain production code.
+    const storage = { execute: async (request: Parameters<typeof boundary.execute>[0]) => {
+      const response = await boundary.execute(request);
+      if (holdControlRead && request.operation === 'get') {
+        holdControlRead = false;
+        controlReadStarted();
+        await controlGate;
+      }
+      if (request.operation === 'invocations.fact' && request.invocationId !== rootId
+        && request.lifecycle === 'completed') sourceCompleted();
+      return response;
+    } };
     const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0, encryption,
-      rootRecordId: rootId, revision: boundary.run().revision, checkpoint, storage: boundary });
+      rootRecordId: rootId, revision: boundary.run().revision, checkpoint, storage });
     const rootKey = workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 });
     await store.commitFact({ key: rootKey, lifecycle: 'running' });
+    if (pending === false) await store.reconcilePublicationApprovalAttention(() => true);
+    holdControlRead = pending !== undefined;
+    const attention = pending === undefined ? undefined : store.reconcilePublicationApprovalAttention(() => pending);
+    if (attention) await controlStarted;
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { agentTarget: {
       kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } } }, blocks: [
       { kind: 'step', id: 'report', document: { text: 'Report', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
@@ -975,11 +1136,23 @@ describe('production workflow coordinator', () => {
           right: { kind: 'literal', value: '' } } },
     ] };
     const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId,
-      isAcceptedAuthorizationCurrent: async () => true,
       resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }),
       executeStep: async () => ({ kind: 'completed', result: '' }) });
-    expect(await coordinator.run({ runId, definition, inputs: {}, executionTarget: { kind: 'session' },
-      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } })).toMatchObject({ state: 'succeeded' });
+    const coordination = coordinator.run({ runId, definition, inputs: {}, executionTarget: { kind: 'session' },
+      authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } });
+    if (attention) {
+      await sourceCommitted;
+      // Let the real false-condition branch queue its provenance behind the
+      // held root mutation, preserving the caller's now-stale lifecycle.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      releaseControl();
+      await attention;
+    }
+    expect(await coordination).toMatchObject({ state: 'succeeded' });
+    if (pending !== undefined) {
+      expect(boundary.rowById(rootId)?.index.lifecycle).toBe(pending ? 'needs_attention' : 'running');
+      expect(store.read(rootKey)?.reason).toBe(pending ? 'approval_required' : undefined);
+    }
     const source = boundary.rows().find(row => row.index.id !== rootId && row.index.lifecycle === 'completed')!;
     const opened = openWorkflowProgressStoredEnvelopeV1({ ...encryption.runCrypto, binding,
       envelope: parseWorkflowStoredContentEnvelopeV1(boundary.rowById(rootId)!.contentEnvelope) });
@@ -1022,8 +1195,7 @@ describe('production workflow coordinator', () => {
         resolveExistingSessionConversation: async () => { throw new Error('Durable creation needs no runtime input'); },
         sessionInput: { enqueue: async () => { throw new Error('Inputless creation has no input'); }, observe: async () => { throw new Error('Inputless creation has no turn'); } },
       });
-      const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId,
-        isAcceptedAuthorizationCurrent: async () => true, executeStep,
+      const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId, executeStep,
         resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }),
       });
       return coordinator.run({ runId, inputs: {}, executionTarget: { kind: 'session' },
@@ -1043,8 +1215,11 @@ describe('production workflow coordinator', () => {
     expect(creations).toBe(1);
   });
 
-  it.each(['plain', 'e2ee'] as const)('fits exact command suffixes to the real sealed progress envelope (%s)', async mode => {
-    const fixture = await commandOutputAdmissionFixture(mode, 'result_ack_lost');
+  it.each([
+    ['plain', 'machines.command.run'], ['e2ee', 'machines.command.run'],
+    ['plain', 'machines.services.exec'], ['e2ee', 'machines.services.exec'],
+  ] as const)('persists complete command output independently of the Automation envelope budget (%s, %s)', async (mode, actionId) => {
+    const fixture = await commandOutputAdmissionFixture(mode, 'result_ack_lost', '0', actionId);
     await fixture.store.commitFact({ key: fixture.key, lifecycle: 'admitting', execution: fixture.execution });
     const raw = { exitCode: 7, stdout: `old-out:${'😀\n"'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES / 4)}:stdout-end😀`,
       stderr: `old-error:${'é\\'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES / 2)}:stderr-end😀` };
@@ -1052,21 +1227,17 @@ describe('production workflow coordinator', () => {
     const committed = await fixture.store.commitFact(fact);
     const output = WorkflowMachineCommandOutputV1Schema.parse(committed.result);
     expect(output.exitCode).toBe(7);
-    expect(raw.stdout.endsWith(output.stdout)).toBe(true);
-    expect(raw.stderr.endsWith(output.stderr)).toBe(true);
-    expect(output.stdout.endsWith(':stdout-end😀')).toBe(true);
-    expect(output.stderr.endsWith(':stderr-end😀')).toBe(true);
-    expect(output.stdout.charCodeAt(0) >= 0xdc00 && output.stdout.charCodeAt(0) <= 0xdfff).toBe(false);
-    expect(committed.result).toMatchObject({ stdoutTruncated: true, stderrTruncated: true });
-    expect(new TextEncoder().encode(fixture.boundary.rowById(fixture.intent.recordId)!.contentEnvelope).byteLength)
-      .toBeLessThanOrEqual(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES);
+    expect(output).toEqual(raw);
     expect(fixture.open()).toMatchObject({ kind: 'available', content: { result: committed.result, execution: fixture.execution } });
-    // A duplicate caller with the original unprojected response rejoins the exact committed fact.
+    // A duplicate caller rejoins the exact committed fact after the lost acknowledgement.
     await expect(fixture.store.commitFact(fact)).resolves.toMatchObject({ lifecycle: 'completed', result: committed.result });
   });
 
-  it.each(['plain', 'e2ee'] as const)('keeps cancelled command result and execution output coherent after the Stop CAS (%s)', async mode => {
-    const fixture = await commandOutputAdmissionFixture(mode);
+  it.each([
+    ['plain', 'machines.command.run'], ['e2ee', 'machines.command.run'],
+    ['plain', 'machines.services.exec'], ['e2ee', 'machines.services.exec'],
+  ] as const)('keeps cancelled command result and execution output coherent after the Stop CAS (%s, %s)', async (mode, actionId) => {
+    const fixture = await commandOutputAdmissionFixture(mode, undefined, '0', actionId);
     await fixture.store.commitFact({ key: fixture.key, lifecycle: 'admitting', execution: fixture.execution });
     fixture.boundary.requestControl('cancel_requested');
     const swept = fixture.boundary.rowById(fixture.intent.recordId)!;
@@ -1084,11 +1255,25 @@ describe('production workflow coordinator', () => {
       execution: { ...fixture.execution, output: raw }, reason: 'command_cancelled' });
     const output = WorkflowMachineCommandOutputV1Schema.parse(committed.result);
     expect(committed).toMatchObject({ lifecycle: 'cancelled', execution: { ...fixture.execution, output: committed.result } });
-    expect(output.stdout.endsWith(':stdout-end😀')).toBe(true);
-    expect(output.stderr).toBe('short stderr');
-    expect(committed.result).toMatchObject({ stdoutTruncated: true });
+    expect(output).toEqual(raw);
     expect(fixture.open()).toMatchObject({ kind: 'available', content: { result: committed.result, interaction: concurrentInteraction,
       execution: { ...fixture.execution, output: committed.result } } });
+  });
+
+  it.each(['finite', 'outcome_unknown'] as const)('settles only finite service command output after the Stop CAS (%s)', async outcome => {
+    const fixture = await commandOutputAdmissionFixture('plain', undefined, '0', 'machines.services.exec');
+    await fixture.store.commitFact({ key: fixture.key, lifecycle: 'admitting', execution: fixture.execution });
+    fixture.boundary.requestControl('cancel_requested');
+    const result = outcome === 'finite' ? { exitCode: -1, stdout: 'before Stop', stderr: '' } : { kind: 'outcome_unknown' };
+    const settlement = fixture.store.commitFact({ key: fixture.key, lifecycle: 'cancelled', reason: 'command_cancelled', result });
+    if (outcome === 'finite') {
+      await expect(settlement).resolves.toMatchObject({ lifecycle: 'cancelled', result });
+      expect(fixture.open()).toMatchObject({ kind: 'available', content: { result } });
+    } else {
+      await expect(settlement).rejects.toThrow();
+      expect(fixture.store.read(fixture.key)?.lifecycle).toBe('cancel_requested');
+      expect(fixture.store.read(fixture.key)?.result).toBeUndefined();
+    }
   });
 
   it('leaves a small command result unchanged', async () => {
@@ -1100,53 +1285,27 @@ describe('production workflow coordinator', () => {
     expect(fixture.open()).toMatchObject({ kind: 'available', content: { result: output } });
   });
 
-  it.each(['plain', 'e2ee'] as const)('refuses command admission before transport when even its minimal reply cannot fit (%s)', async mode => {
-    const fixture = await commandOutputAdmissionFixture(mode);
-    const opened = fixture.open();
-    if (opened.kind !== 'available') throw new Error('expected current command row');
-    const executionWithEnv = (length: number) => ({ ...fixture.execution,
-      input: { ...fixture.execution.input, env: { VALUE: 'x'.repeat(length) } } });
-    // Derive this boundary case from the actual sealed envelope, including encryption framing.
-    let fits = 0;
-    let exceeds = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
-    while (fits + 1 < exceeds) {
-      const candidate = Math.floor((fits + exceeds) / 2);
-      try {
-        sealWorkflowProgressStoredEnvelopeV1({ ...fixture.sealMode, binding: fixture.binding,
-          progress: { ...opened.content, execution: executionWithEnv(candidate) } });
-        fits = candidate;
-      } catch { exceeds = candidate; }
-    }
-    const before = fixture.boundary.calls.filter(operation => operation.operation === 'invocations.fact').length;
-    await expect(fixture.store.commitFact({ key: fixture.key, lifecycle: 'admitting', execution: executionWithEnv(fits) }))
-      .rejects.toMatchObject({ name: WorkflowInputResolutionError.name, code: 'workflow_input_too_large' });
-    expect(fixture.boundary.calls.filter(operation => operation.operation === 'invocations.fact')).toHaveLength(before);
-    expect(fixture.store.read(fixture.key)?.lifecycle).toBe('pending');
+  it.each([
+    ['plain', 'machines.command.run'], ['e2ee', 'machines.command.run'],
+    ['plain', 'machines.services.exec'], ['e2ee', 'machines.services.exec'],
+  ] as const)('persists complete command input independently of the Automation envelope budget (%s, %s)', async (mode, actionId) => {
+    const fixture = await commandOutputAdmissionFixture(mode, undefined, '0', actionId);
+    const value = 'x'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES + 1);
+    const execution = { ...fixture.execution,
+      input: actionId === 'machines.command.run' ? { ...fixture.execution.input, env: { VALUE: value } }
+        : { ...fixture.execution.input, argv: ['tool', value] } };
+    await expect(fixture.store.commitFact({ key: fixture.key, lifecycle: 'admitting', execution }))
+      .resolves.toMatchObject({ lifecycle: 'admitting', execution });
+    expect(fixture.open()).toMatchObject({ kind: 'available', content: { execution } });
   });
 
-  it.each(['pre_write', 'lost_ack'] as const)('distinguishes command capacity refusal from an attempted admission acknowledgement (%s)', async failure => {
-    const fixture = await commandOutputAdmissionFixture('plain', failure === 'lost_ack' ? 'admission_ack_lost' : undefined, '1');
+  it('does not repeat command admission after losing its persisted acknowledgement', async () => {
+    const fixture = await commandOutputAdmissionFixture('plain', 'admission_ack_lost', '1');
     const producerKey = workflowInvocationKey({ runId, blockId: 'producer', scope: [], attempt: 0 });
-    const producer = await fixture.store.ensureIntent({ key: producerKey, recordId: 'producer-leaf', runId,
+    await fixture.store.ensureIntent({ key: producerKey, recordId: 'producer-leaf', runId,
       blockId: 'producer', path: { blockId: 'producer', scope: [] }, blockKind: 'step', memberOrdinal: '0', attempt: 0,
       acceptedAtMs: 1, lifecycle: 'pending' });
-    const producerRow = fixture.boundary.rowById(producer.recordId)!;
-    const producerBinding = { ...fixture.binding, recordId: producerRow.index.id, sequence: producerRow.index.sequence,
-      parentRecordId: producerRow.index.parentRecordId, memberOrdinal: producerRow.index.memberOrdinal, attempt: producerRow.index.attempt };
-    const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: producerBinding,
-      envelope: parseWorkflowStoredContentEnvelopeV1(producerRow.contentEnvelope) });
-    if (opened.kind !== 'available') throw new Error('expected producer row');
-    let fits = 0;
-    let exceeds = MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES;
-    if (failure === 'pre_write') while (fits + 1 < exceeds) {
-      const candidate = Math.floor((fits + exceeds) / 2);
-      try {
-        sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: producerBinding,
-          progress: { ...opened.content, result: { VALUE: 'x'.repeat(candidate) } } });
-        fits = candidate;
-      } catch { exceeds = candidate; }
-    }
-    await fixture.store.commitFact({ key: producerKey, lifecycle: 'completed', result: { VALUE: 'x'.repeat(fits) } });
+    await fixture.store.commitFact({ key: producerKey, lifecycle: 'completed', result: { VALUE: 'producer value' } });
     let effects = 0;
     const executor = createActionExecutor(createCliActionDeps({ token: 'token', sessionId: '', mode: 'plain', ctx: null,
       serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', machineActionDirectTargetTransport: { machineId,
@@ -1161,8 +1320,7 @@ describe('production workflow coordinator', () => {
         outputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.outputSchema!, { target: 'draft-7' })) } };
     const workspace = { machineId, directory: '/repo', checkoutRootPath: '/repo' };
     const coordinator = createWorkflowCoordinator({ store: fixture.store, rootInvocationRecordId: fixture.rootId,
-      executeStep: async () => { throw new Error('producer is already completed'); }, resolveWorkspace: async () => ({ ok: true, workspace }),
-      isAcceptedAuthorizationCurrent: async () => true, action: { executor, buildContext: async () => ({ surface: 'cli',
+      executeStep: async () => { throw new Error('producer is already completed'); }, resolveWorkspace: async () => ({ ok: true, workspace }), action: { executor, buildContext: async () => ({ surface: 'cli',
         authority: 'account_automation', bypassApprovals: true, serverId: 'home',
         externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: '/repo' } } }),
         observeRun: async () => { throw new Error('immediate Action has no child Runs'); } } });
@@ -1174,8 +1332,7 @@ describe('production workflow coordinator', () => {
         { kind: 'step', authoredWorkspace: { kind: 'inherit' }, sourceKey: '$root', blockId: 'producer',
           selection: {}, executionTarget: { kind: 'session' } }, frozen] });
     expect(effects).toBe(0);
-    expect(JSON.stringify(outcome)).toBe(JSON.stringify({ state: failure === 'pre_write' ? 'failed' : 'outcome_uncertain',
-      reason: failure === 'pre_write' ? 'workflow_input_too_large' : 'outcome_uncertain' }));
+    expect(outcome).toEqual({ state: 'outcome_uncertain', reason: 'outcome_uncertain' });
   });
   it('executes an admitted Run lifecycle Notify me through the real worker and notification Action once', async () => {
     // The registered plugin sender is an external delivery boundary. Workflow,
@@ -1380,6 +1537,7 @@ describe('production workflow coordinator', () => {
       expect.objectContaining({ sourceKey: 'builtin:child', blockId: 'follow-up', ordinal: 1, name: 'Follow up', sessionIds: ['session-2'],
         observation: expect.objectContaining({ lifecycle: 'completed' }) }),
     ]) });
+    expect(rootProgress()).toMatchObject({ completed: 3, skipped: 0, total: 3 });
     const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
       storage: boundary, definitions: { get: async () => { throw new Error('must_not_read_mutable_definition'); } },
       resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
@@ -1420,6 +1578,143 @@ describe('production workflow coordinator', () => {
     await restored.readByLogicalInvocation(earlierFollowUps[0]!.index.id);
     await restored.refreshStepProgress();
     expect(rootProgress()?.destinations).toEqual(beforeReload?.destinations);
+  });
+
+  it.each(['then', 'otherwise', 'all_taken'] as const)('projects finished and skipped Action steps through the Run presenter (%s)', async branch => {
+    const action = (id: string): WorkflowActionLeafV1 => ({ kind: 'action', id, actionId: 'machines.list', input: {} });
+    const authored: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: branch === 'all_taken'
+      ? [action('first'), action('second')]
+      : [{ kind: 'if', id: 'choose', when: { kind: 'exists', value: { kind: 'literal', value: branch === 'then' ? true : null } },
+        then: [action('taken')], otherwise: [action('alternative')] }] };
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: authored,
+      context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } });
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
+    }));
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    // Only the Account inventory transport is replaced; Action dispatch, admission,
+    // coordinator execution, durable projection and both presenters stay real.
+    const executor = createActionExecutor({ machinesList: async () => ({ items: [] }) });
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary,
+      execution: { ...productionExecution(), action: { executor,
+        buildContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+        observeRun: async () => { throw new Error('machines.list does not launch work'); } } },
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected worktree'); },
+        inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } })).resolves.toMatchObject({ state: 'succeeded' });
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
+      storage: boundary, definitions: { get: async () => { throw new Error('must_not_read_mutable_definition'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: directory => directory.startsWith('/') ? directory : null,
+      randomBytes: () => { throw new Error('plain_account_does_not_need_keys'); },
+    });
+    const beforeList = boundary.calls.length;
+    const listed = WorkflowActionOutputSchemasV1['workflow.run.list'].parse(
+      await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }));
+    expect(boundary.calls.slice(beforeList).map(call => call.operation)).toEqual(['list']);
+    const run = listed.runs[0]!;
+    const expected = branch === 'all_taken' ? { completed: 2, skipped: 0, total: 2 } : { completed: 1, skipped: 1, total: 2 };
+    expect(run.stepProgress).toMatchObject(expected);
+    const { formatWorkflowRunOutcomeSentence } = await import('../../../../ui/sources/components/workflows/run/workflowRunDetailPresentation');
+    const { describeWorkflowRunProgress } = await import('../../../../ui/sources/components/workflows/presentation/workflowRunProgress');
+    const { t } = await import('../../../../ui/sources/text');
+    const coverage = { observedLeafCounts: { completed: expected.completed, failed: 0, attention: 0 },
+      coverage: 'complete' as const, knownFailure: false };
+    expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: true })).toBe(branch === 'all_taken'
+      ? t('workflows.run.completedCount', { count: 2 })
+      : t('workflows.run.completedWithSkipped', { completed: 1, skipped: 1 }));
+    expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...coverage, knownFailure: true }, historyComplete: true }))
+      .toBe(t('workflows.runState.completed_with_failures'));
+    expect(describeWorkflowRunProgress(run.stepProgress)).toBe(branch === 'all_taken'
+      ? t('workflows.list.stepsProgress', expected)
+      : t('workflows.run.completedWithSkipped', { completed: 1, skipped: 1 }));
+    const get = WorkflowActionOutputSchemasV1['workflow.run.get'].parse(
+      await owner.execute({ actionId: 'workflow.run.get', input: { runId }, context: {} }));
+    expect(get.run.stepProgress).toEqual(run.stepProgress);
+  });
+
+  it('settles and starts the next durable Session invocation without firing an interval or deadline', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    const fakeTimeout = globalThis.setTimeout;
+    let timerFires = 0;
+    const timeout = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) =>
+      fakeTimeout(() => { timerFires += 1; callback(...args); }, delay));
+    const interval = vi.spyOn(globalThis, 'setInterval');
+    try {
+      const authored: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
+      }, blocks: [onlyStep, { ...onlyStep, id: 'next' }] };
+      const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: authored,
+        context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+          workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+          origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+        admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      if (!accepted.ok) throw new Error(accepted.error.code);
+      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
+      }));
+      const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+      let firstSettled = false;
+      let readsAtSettlement = 0;
+      let operationsBeforeNextInput: readonly string[] = [];
+      const admitted: string[] = [];
+      const execution = productionExecution({
+        enqueue: async request => {
+          if (admitted.length === 1) {
+            expect(firstSettled).toBe(true);
+            expect(boundary.rows().filter(row => row.index.lifecycle === 'completed')).toHaveLength(1);
+            operationsBeforeNextInput = boundary.operations().slice(readsAtSettlement);
+          }
+          const localId = deriveWorkflowSessionInputLocalIdV2(request.workflow);
+          admitted.push(localId);
+          return { status: 'accepted', localId };
+        },
+        observe: async ({ sessionId, localId }) => {
+          if (admitted.length === 1) {
+            firstSettled = true;
+            readsAtSettlement = boundary.calls.length;
+          }
+          return { ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } };
+        },
+      });
+      const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary, execution,
+        resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+        resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        isAcceptedAuthorizationCurrent: async () => true,
+        workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected worktree'); },
+          inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+      });
+      const startedAt = Date.now();
+      // Never advance the fake clock: any interval-dependent handoff cannot complete.
+      await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
+        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } })).resolves.toMatchObject({ state: 'succeeded' });
+      expect(new Set(admitted).size).toBe(2);
+      expect(boundary.rows().filter(row => row.index.lifecycle === 'completed')).toHaveLength(3);
+      expect(Date.now()).toBe(startedAt);
+      expect(timerFires).toBe(0);
+      expect(interval).not.toHaveBeenCalled();
+      // The next intent carries its resolved input; no separate input fact and
+      // corresponding root projection round trips precede Session admission.
+      expect(operationsBeforeNextInput).toHaveLength(11);
+      console.info('FIN-HANDOFF-COST', JSON.stringify({ timerFires, intervalInstalls: interval.mock.calls.length, invocationsStarted: admitted.length,
+        deadlineDelaysMs: timeout.mock.calls.map(([, delay]) => delay),
+        storageOperations: boundary.calls.length, operationsFromFirstResultToNextInput: operationsBeforeNextInput }));
+    } finally {
+      timeout.mockRestore();
+      interval.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('publishes authored step counts and completed parallel items rather than admission cursors', async () => {
@@ -1473,8 +1768,132 @@ describe('production workflow coordinator', () => {
     await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } })).resolves.toMatchObject({ state: 'succeeded' });
     expect(observed[0]).toMatchObject({ completed: 0, total: 4 });
-    expect(observed[3]).toMatchObject({ completed: 3, total: 4, currentLoop: { completed: 1, total: 3 } });
-    expect(openedRoot()).toMatchObject({ kind: 'available', content: { stepProgress: { completed: 4, total: 4 } } });
+    expect(observed[3]).toMatchObject({ completed: 1, skipped: 2, total: 4, currentLoop: { completed: 1, total: 3 } });
+    expect(openedRoot()).toMatchObject({ kind: 'available', content: { stepProgress: { completed: 2, skipped: 2, total: 4 } } });
+  });
+
+  it.each(['item', 'aggregate'] as const)('retains completed loop progress when Stop races the %s publication', async stopAt => {
+    const authored: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'loop', id: 'batch',
+      repetition: { kind: 'items', items: { kind: 'literal', value: ['first', 'second'] },
+        execution: 'sequential', failurePolicy: 'collect_outcomes' },
+      body: [{ kind: 'action', id: 'inventory', actionId: 'machines.list', input: {} }] }] };
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: authored,
+      context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } });
+    if (!accepted.ok) throw new Error(accepted.error.code);
+    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
+    }));
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    const open = (row: NonNullable<ReturnType<typeof boundary.rowById>>) => openWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope),
+      binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: row.index.id, sequence: row.index.sequence,
+        parentRecordId: row.index.parentRecordId, memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt },
+    });
+    let stopped = false;
+    const storage: typeof boundary = { ...boundary, execute: async (operation, options) => {
+      const result = await boundary.execute(operation, options);
+      if (!stopped && operation.operation === 'invocations.fact') {
+        const opened = open(boundary.rowById(operation.invocationId)!);
+        if (opened.kind === 'available' && (stopAt === 'item'
+          ? operation.lifecycle === 'completed' && opened.content.frame?.source.kind === 'item'
+          : opened.content.stepProgress?.currentLoop?.completed === 1)) {
+          stopped = true;
+          boundary.requestControl('cancel_requested');
+        }
+      }
+      return result;
+    } };
+    const executor = createActionExecutor({ machinesList: async () => ({ items: [] }) });
+    const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage,
+      execution: { ...productionExecution(), action: { executor,
+        buildContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+        observeRun: async () => { throw new Error('unexpected run observation'); } } },
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected worktree'); },
+        inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+    });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } })).resolves.toMatchObject({ state: 'cancelled' });
+    expect(stopped).toBe(true);
+    const items = boundary.rows().filter(row => {
+      const opened = open(row);
+      return opened.kind === 'available' && opened.content.frame?.source.kind === 'item';
+    });
+    expect(items.filter(row => row.index.lifecycle === 'completed')).toHaveLength(1);
+    const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
+    expect(root.index.lifecycle).toBe('cancelled');
+    expect(open(root)).toMatchObject({ kind: 'available', content: { stepProgress: {
+      completed: 0, total: 1, currentLoop: { completed: 1, total: 2 },
+    } } });
+    const loop = boundary.rows().find(row => row.index.parentRecordId === root.index.id)!;
+    expect(loop.index.lifecycle).toBe('cancelled');
+    expect(open(loop)).toMatchObject({ kind: 'available', content: { loopProgress: { completed: 1, total: 2 } } });
+    const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
+      storage: boundary, definitions: { get: async () => { throw new Error('unexpected definition read'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      normalizeAbsolutePath: directory => directory.startsWith('/') ? directory : null,
+      randomBytes: () => { throw new Error('unexpected key creation'); },
+    });
+    const listed = WorkflowActionOutputSchemasV1['workflow.run.list'].parse(
+      await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }));
+    expect(listed.runs[0]).toMatchObject({ state: 'cancelled', stepProgress: {
+      completed: 0, total: 1, currentLoop: { completed: 1, total: 2 },
+    } });
+  });
+
+  it('settles a late child without republishing immutable cancelled root and loop aggregates', async () => {
+    const rootId = 'cancelled-projection-root';
+    const loopId = 'cancelled-projection-loop';
+    const childId = 'late-cancelled-item';
+    const authored: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'loop', id: 'batch',
+      repetition: { kind: 'items', items: { kind: 'literal', value: [1] }, execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [onlyStep] }] };
+    const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: rootId,
+      nextSequence: '3', frontier: { nextBlockOrdinal: 0, paused: false } };
+    const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'checkpoint', accountId, runId }, checkpoint }));
+    const seal = (id: string, sequence: string, parentRecordId: string | null, progress: WorkflowProgressEnvelopeV1) =>
+      serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id, sequence, parentRecordId, memberOrdinal: '0', attempt: '0' }, progress }));
+    const boundary = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope: 'opaque-accepted' });
+    await boundary.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope,
+      rootInvocation: { id: rootId, contentEnvelope: seal(rootId, '0', null, { kind: 'happier.workflow-progress.v1', blockKind: 'root',
+        invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: rootId }) } });
+    await boundary.execute({ operation: 'invocations.admit', runId, expectedRevision: boundary.run().revision, checkpointEnvelope, invocations: [
+      { id: loopId, sequence: '1', parentRecordId: rootId, memberOrdinal: '0', lifecycle: 'running',
+        contentEnvelope: seal(loopId, '1', rootId, { kind: 'happier.workflow-progress.v1', blockKind: 'loop',
+          invocationPath: { blockId: 'batch', scope: [] }, attempt: '0', logicalInvocationRecordId: loopId,
+          container: { kind: 'loop', mode: 'items', source: { kind: 'definition', reference: { kind: 'literal', value: [1] } }, itemCount: '1', nextMemberIndex: '1', nextBodyBlockOrdinal: '0' } }) },
+      { id: childId, sequence: '2', parentRecordId: loopId, memberOrdinal: '0', lifecycle: 'running',
+        contentEnvelope: seal(childId, '2', loopId, { kind: 'happier.workflow-progress.v1', blockKind: 'loop',
+          invocationPath: { blockId: 'batch', scope: [{ kind: 'iteration', blockId: 'batch', index: 0 }] }, attempt: '0', logicalInvocationRecordId: childId,
+          frame: { ownerBlockId: 'batch', source: { kind: 'item', index: '0' } }, container: { kind: 'body', nextBlockOrdinal: '0' } }) },
+    ] });
+    boundary.requestControl('cancel_requested');
+    for (const id of [rootId, loopId]) {
+      const row = boundary.rowById(id)!;
+      await boundary.execute({ operation: 'invocations.fact', runId, parentAttempt: 0, invocationId: id, invocationAttempt: '0',
+        expectedLifecycle: row.index.lifecycle, expectedContentRevision: row.index.contentRevision, lifecycle: 'cancelled', contentEnvelope: row.contentEnvelope });
+    }
+    const terminalContent = [rootId, loopId].map(id => boundary.rowById(id)!.contentEnvelope);
+    const store = await DurableWorkflowCoordinatorStore.load({ accountId, runId, parentAttempt: 0, storage: boundary, checkpoint,
+      revision: boundary.run().revision, rootRecordId: rootId, authoredDefinition: authored,
+      encryption: { witness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, runCrypto: { mode: 'plain' } } });
+    await store.readByLogicalInvocation(loopId);
+    const child = await store.readByLogicalInvocation(childId);
+    if (!child) throw new Error('late_child_missing');
+    const beforeSettlement = boundary.calls.length;
+    await expect(store.commitFact({ key: child.key, lifecycle: 'cancelled' })).resolves.toMatchObject({ lifecycle: 'cancelled' });
+    await store.refreshStepProgress();
+    expect(boundary.rowById(childId)?.index.lifecycle).toBe('cancelled');
+    expect([rootId, loopId].map(id => boundary.rowById(id)!.contentEnvelope)).toEqual(terminalContent);
+    expect(boundary.calls.slice(beforeSettlement).filter(operation => operation.operation === 'invocations.fact')
+      .map(operation => operation.invocationId)).toEqual([childId]);
   });
 
   it('counts only current loop-item attempts after reload and replacement', async () => {
@@ -1651,8 +2070,7 @@ describe('production workflow coordinator', () => {
         } },
     });
     const coordinator = createWorkflowCoordinator({ store: restored, rootInvocationRecordId: rootId, executeStep,
-      resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }),
-      isAcceptedAuthorizationCurrent: async () => true });
+      resolveWorkspace: async () => ({ ok: true, workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' } }) });
     await expect(coordinator.run({ runId, inputs: {}, originSessionId: 'origin', executionTarget: { kind: 'session' },
       authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
       definition: { version: 1, inputs: [], defaults: {}, blocks: [{ ...onlyStep, execution: { conversation: { kind: 'origin_session' } } }] } }))
@@ -1801,8 +2219,7 @@ describe('production workflow coordinator', () => {
         scopeSessionId: callerOriginId, accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
       })).resolves.toEqual({ state: 'succeeded' });
       expect(sentInputs).toHaveLength(2);
-      const capturedContexts = sentInputs.map(text => text.split('\n')
-        .filter(line => line.startsWith('{"author":')).map(line => JSON.parse(JSON.parse(line).text)));
+      const capturedContexts = sentInputs.map(readPromptContext);
       expect(capturedContexts).toMatchObject([
         [{ reference: { kind: 'session_context' }, value: { usage: { kind: 'accounted', tokensUsed: 3 } } }],
         [{ reference: { kind: 'session_context' }, value: { usage: { kind: 'accounted', tokensUsed: 10 } } }],
@@ -1884,7 +2301,6 @@ describe('production workflow coordinator', () => {
         directory: '/retained', agentTarget: authored.defaults.agentTarget }),
     });
     const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId,
-      isAcceptedAuthorizationCurrent: async () => true,
       resolveWorkspace: async (params) => await resolveWorkspace(params),
       ...(retainedSession ? { prepareStep: async (params: Parameters<typeof conversations.prepare>[0]) => {
         const prepared = await conversations.prepare(params);
@@ -2306,7 +2722,6 @@ describe('production workflow coordinator', () => {
     } });
     const events: string[] = [];
     const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: rootId,
-      isAcceptedAuthorizationCurrent: async () => true,
       allocateInvocationRecordId: (() => { let ordinal = 0; return () => `new-restart-${ordinal++}`; })(),
       resolveWorkspace: async () => ({ ok: true, workspace }),
       prepareStep: async ({ step }) => { events.push(`prepare:${step.id}`); return {}; },
@@ -2522,6 +2937,7 @@ describe('production workflow coordinator', () => {
       }
       if (operation.operation === 'get') return {
         run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'running', revision: 3, machineId: 'machine-1',
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           workflowCustodyState: 'pending', originDeliveryAckRevision: null, availability,
           createdAt: now, updatedAt: now },
         acceptedEnvelope: '{}', checkpointEnvelope: null, resultEnvelope: null,
@@ -2629,7 +3045,6 @@ describe('production workflow coordinator', () => {
       prepareStep,
       executeStep,
       resolveWorkspace: async () => ({ ok: true, workspace }),
-      isAcceptedAuthorizationCurrent: async () => true,
     });
 
     await expect(coordinator.run({
@@ -2739,8 +3154,9 @@ describe('production workflow coordinator', () => {
       logPrefix: '[WORKFLOW TEST]',
     });
 
+    const toolInput = { path: '/repo/file.txt', content: 'x'.repeat(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES + 1) };
     await requestStore.publishRequestAndWait({
-      requestId: 'permission-1', toolName: 'Write', toolInput: { path: '/repo/file.txt' }, createdAt: 1,
+      requestId: 'permission-1', toolName: 'Write', toolInput, createdAt: 1,
     });
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       operation: 'invocations.fact',
@@ -2754,32 +3170,9 @@ describe('production workflow coordinator', () => {
       kind: 'available',
       content: {
         result: { changed: true },
-        interaction: { requests: { 'permission-1': { tool: 'Write', arguments: { path: '/repo/file.txt' } } } },
+        interaction: { requests: { 'permission-1': { tool: 'Write', arguments: toolInput } } },
       },
     });
-
-    await expect(requestStore.publishRequestAndWait({
-      requestId: 'permission-too-large',
-      toolName: 'Write',
-      toolInput: { content: 'x'.repeat(512 * 1024) },
-      createdAt: 2,
-    })).rejects.toMatchObject({
-      code: 'workflow_interaction_capacity_exceeded',
-      recoverable: true,
-    });
-    const afterOverflow = openWorkflowProgressStoredEnvelopeV1({
-      mode: 'plain', binding, envelope: parseWorkflowStoredContentEnvelopeV1(persistedEnvelope),
-    });
-    expect(afterOverflow).toMatchObject({
-      kind: 'available',
-      content: {
-        result: { changed: true },
-        interaction: { requests: { 'permission-1': expect.any(Object) } },
-      },
-    });
-    if (afterOverflow.kind === 'available') {
-      expect(afterOverflow.content.interaction).not.toHaveProperty('requests.permission-too-large');
-    }
 
     await expect(requestStore.completeRequest({
       requestId: 'permission-1',
@@ -2990,6 +3383,7 @@ describe('production workflow coordinator', () => {
       if (operation.operation !== 'get') throw new Error(`unexpected:${String(operation.operation)}`);
       return {
         run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           id: runId, origin: { kind: 'automation', automationId: 'automation-1' }, state: 'queued', revision: 0,
           machineId: 'machine-other', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
           availability, createdAt: now, updatedAt: now,
@@ -3719,7 +4113,47 @@ describe('production workflow coordinator', () => {
     }
   });
 
-  it('names an inline trigger Run after its Automation and keeps a saved Workflow\'s own name', async () => {
+  it.each(['profile:trigger', null] as const)('carries a stored trigger approval reference into accepted child Action context (%s)', async approvalProfileId => {
+    const captured = new Error('accepted_snapshot_captured');
+    let childContext: ReturnType<typeof buildWorkflowActionContext> | undefined;
+    const coordinate = createProductionWorkflowRunCoordinator({
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+      token: 'token', accountId, machineId,
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      execution: productionExecution(), onCommittedTransition: vi.fn(),
+      resolveMaterializationHost: productionMaterializationHost,
+      prepareAcceptedWorkspaceTarget: async () => ({ ok: true,
+        workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+      }),
+      storage: { observeChanges: quietStorageChanges, execute: async operation => {
+        if (operation.operation !== 'accepted-snapshot.resolve') throw new Error('unexpected_storage_effect');
+        const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+          envelope: parseWorkflowStoredContentEnvelopeV1(operation.acceptedEnvelope),
+        });
+        if (opened.kind !== 'available') throw new Error('snapshot_unavailable');
+        childContext = buildWorkflowActionContext({ ...opened.content, runId });
+        throw captured;
+      } },
+    });
+    await expect(coordinate({ runId, attempt: 0, expectedRevision: 0, automationId: 'automation-1',
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+      automationCause: { kind: 'manual', invokedAt: 1 }, causeWorkDepth: 0,
+      definitionEnvelope: JSON.stringify({ t: 'plain', v: { approvalProfileId,
+        inlineDefinition: { version: 1, inputs: [], defaults: {
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        }, blocks: [onlyStep] }, workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+      } }),
+    })).rejects.toBe(captured);
+    expect(childContext).toHaveProperty('approvalProfileId', approvalProfileId);
+  });
+
+  it.each([
+    { automationName: 'Library memory upkeep', stepName: undefined, title: 'Library memory upkeep' },
+    { automationName: 'Workflow triggers', stepName: undefined, title: 'Send a prompt' },
+    { automationName: 'Workflow triggers', stepName: 'Review the garden', title: 'Review the garden' },
+  ])('names an inline trigger Run by its Library display name: $title', async ({ automationName, stepName, title }) => {
     const captured = new Error('accepted_snapshot_captured');
     const accepted: unknown[] = [];
     const coordinate = createProductionWorkflowRunCoordinator({
@@ -3749,12 +4183,12 @@ describe('production workflow coordinator', () => {
       definitionEnvelope: JSON.stringify({ t: 'plain', v: {
         inlineDefinition: { version: 1, inputs: [], defaults: {
           agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
-        }, blocks: [onlyStep] },
+        }, blocks: [{ ...onlyStep, ...(stepName ? { name: stepName } : {}) }] },
         workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
       } }),
     };
-    await expect(coordinate({ ...claim, automationName: 'Library memory upkeep' })).rejects.toBe(captured);
-    expect(accepted[0]).toMatchObject({ source: { kind: 'automation' }, metadata: { title: 'Library memory upkeep' } });
+    await expect(coordinate({ ...claim, automationName })).rejects.toBe(captured);
+    expect(accepted[0]).toMatchObject({ source: { kind: 'automation' }, metadata: { title } });
     await expect(coordinate(claim)).rejects.toBe(captured);
     expect((accepted[1] as { metadata?: unknown }).metadata ?? null).toBeNull();
   });
@@ -3794,6 +4228,7 @@ describe('production workflow coordinator', () => {
     let lostFinalTransitionResponse = false;
     const rows = new Map<string, { index: Record<string, unknown>; contentEnvelope: string }>();
     const summary = (state: string) => ({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'automation', automationId: 'automation-1' }, state,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       revision, machineId, workflowCustodyState: durableCustody, originDeliveryAckRevision: null,
       availability, createdAt: now, updatedAt: now });
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {

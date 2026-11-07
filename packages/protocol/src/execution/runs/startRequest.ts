@@ -48,6 +48,7 @@ import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOv
 import { HappierStructuredInputV1Schema } from '../../runtime/input/structuredInputV1.js';
 import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
+import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 
 export const ExecutionRunTeamCredentialSessionBindingConsentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -59,6 +60,11 @@ export const ExecutionRunTeamCredentialSessionBindingConsentV1Schema = lazyZodSc
 export type ExecutionRunTeamCredentialSessionBindingConsentV1 = z.infer<
   typeof ExecutionRunTeamCredentialSessionBindingConsentV1Schema
 >;
+
+/** Existing Run control's attach/detach operand; selection is a reference only. */
+export const ExecutionRunApprovalProfileSetInputSchema = lazyZodSchema(() => z.strictObject({
+  approvalProfileId: z.nullable(ApprovalProfileIdV1Schema),
+}));
 
 /** Select the safe start operation; admission remains the model/source resolver. */
 export function requiresProviderSafeExecutionRunStartRpc(
@@ -405,6 +411,8 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
   display: z.optional(ExecutionRunDisplaySchema),
   launchOrigin: z.optional(ExecutionRunLaunchOriginSchema),
   permissionMode: z.string().check(z.minLength(1)),
+  /** Reference only; null explicitly opts out of inherited selection. */
+  approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
   ioMode: ExecutionRunIoModeSchema,

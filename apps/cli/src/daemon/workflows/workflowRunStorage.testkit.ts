@@ -1,9 +1,11 @@
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInvocationLifecycleV1, WorkflowRunInvocationIndexV1, WorkflowRunOriginV1, WorkflowRunStateV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 
 /**
  * In-memory stand-in for the server's opaque Workflow Run storage owner.
@@ -127,6 +129,15 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   let originDeliveryAckRevision = params.originDeliveryAckRevision ?? null;
   let waitAttempts = 0;
   let keyCensus = params.keyCensus ?? createPlainWorkflowRunKeyCensusFixture(params);
+  const retainAdmissionKeys = (operation: WorkflowRunStorageTestkitOperation) => {
+    const ownerKey = WorkflowRunRecipientKeyEnvelopesV1Schema.parse(operation.recipientKeyEnvelopes ?? [])
+      .find(item => item.recipientAccountId === keyCensus.ownerAccountId);
+    const currentness = operation.accountCurrentness === undefined ? null
+      : AutomationAccountCurrentnessWitnessV1Schema.parse(operation.accountCurrentness);
+    keyCensus = { ...keyCensus,
+      ...(currentness ? { encryptionMode: currentness.mode, ownerAccountCurrentness: currentness } : {}),
+      ...(ownerKey ? { dataEncryptionKey: ownerKey.encryptedDataKey, callerDataEncryptionKey: ownerKey.encryptedDataKey } : {}) };
+  };
 
   const requiresAttention = () => state !== 'cancelled'
     && [...rows.values()].some(value => ATTENTION_LIFECYCLES.some(lifecycle => lifecycle === value.index.lifecycle));
@@ -197,6 +208,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         return keyCensus;
       case 'admit': {
         if (acceptedEnvelope === null) {
+          retainAdmissionKeys(operation);
           acceptedEnvelope = String(operation.acceptedEnvelope);
           const delivery = operation.resultDelivery;
           if (delivery && typeof delivery === 'object' && 'kind' in delivery
@@ -212,17 +224,17 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         if (operation.expectedRevision !== revision) throw storageError('currentness_conflict');
         const disposition = acceptedEnvelope === null ? 'created' : 'existing';
         if (acceptedEnvelope === null) {
+          retainAdmissionKeys(operation);
           acceptedEnvelope = String(operation.acceptedEnvelope);
-          const ownerKey = WorkflowRunRecipientKeyEnvelopesV1Schema.parse(operation.recipientKeyEnvelopes ?? [])
-            .find((item) => item.recipientAccountId === keyCensus.ownerAccountId);
-          if (ownerKey) keyCensus = { ...keyCensus, dataEncryptionKey: ownerKey.encryptedDataKey,
-            callerDataEncryptionKey: ownerKey.encryptedDataKey };
           revision += 1;
         }
         return { disposition, acceptedEnvelope, run: summary() };
       }
       case 'get': {
-        if (acceptedEnvelope === null) throw notFound();
+        if (acceptedEnvelope === null) {
+          if (operation.prepareAdmission !== undefined) return { run: null, keyCensus };
+          throw notFound();
+        }
         const rootProgress = ordered().find(row => row.index.parentRecordId === null
           && row.index.sequence === '0' && row.index.memberOrdinal === '0' && row.index.attempt === '0') ?? null;
         return { run: summary(), acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress };
@@ -381,6 +393,8 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const attentionBefore = requiresAttention();
         const row = rows.get(String(operation.invocationId));
         if (!row) throw notFound();
+        const observedSettlement = ['completed', 'failed', 'cancelled', 'needs_attention'].includes(String(operation.lifecycle))
+          || operation.lifecycle === 'outcome_uncertain' && canObserveLostWorkflowActionOperationV1(row.index.lifecycle);
         if (operation.expectedRevision !== undefined) {
           expectRevision();
           if (operation.parentAttempt !== undefined || state !== 'interrupted') throw storageError('currentness_conflict');
@@ -388,7 +402,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
             if (row.index.parentRecordId !== null || row.index.sequence !== '0' || row.index.memberOrdinal !== '0'
               || row.index.attempt !== '0' || operation.lifecycle !== operation.expectedLifecycle) throw storageError('invalid_input');
           } else if (operation.resolution !== 'observed_terminal_execution'
-            || !['completed', 'failed', 'cancelled', 'needs_attention'].includes(String(operation.lifecycle))) throw storageError('invalid_input');
+            || !observedSettlement) throw storageError('invalid_input');
         } else if (operation.resolution === 'root_list_progress') throw storageError('invalid_input');
         if (row.index.lifecycle !== operation.expectedLifecycle) throw storageError('currentness_conflict');
         if (row.index.attempt !== operation.invocationAttempt) throw storageError('currentness_conflict');
@@ -398,8 +412,9 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         if (row.index.lifecycle === operation.lifecycle && row.contentEnvelope === contentEnvelope) return { ...row.index, parentRevision: revision };
         const resolvesObservedTerminal = operation.resolution === 'observed_terminal_execution'
           && (operation.expectedRevision !== undefined
-            ? ['completed', 'failed', 'cancelled', 'needs_attention'].includes(String(operation.lifecycle))
+            ? observedSettlement
             : operation.lifecycle === 'completed' || operation.lifecycle === 'needs_attention'
+              || (operation.expectedLifecycle === 'outcome_uncertain' && operation.lifecycle === 'outcome_uncertain')
               || ((operation.lifecycle === 'failed' || operation.lifecycle === 'cancelled')
                 && TERMINAL_RUN_STATES.some(candidate => candidate === state)));
         if (TERMINAL_INVOCATION_LIFECYCLES.some((candidate) => candidate === row.index.lifecycle)
@@ -479,7 +494,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         revision += 1;
         if (kind === 'pause') state = 'pause_requested';
         if (kind === 'resume') state = 'running';
-        return { run: summary(), intent: kind };
+        return { run: summary(), intent: kind === 'pause' ? 'pause_requested' : 'resumed' };
       }
       case 'wait': {
         // Faithful projection of the server's observation contract: terminal,

@@ -2,6 +2,8 @@ import { areWorkflowRetainedRuntimeSelectionsEqualV1, projectWorkflowRetainedRun
 import { assertNonEscalatingPermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunResumeHandleProviderSessionV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ExecutionRunResultContractV1, ExecutionRunResumeHandle, WorkflowAuthoredProducerRef, WorkflowProgressEnvelopeV1, WorkflowRetainedRuntimeSelectionV1 } from '@happier-dev/protocol';
@@ -35,6 +37,8 @@ import {
 import { resolveWorkflowConversationSelection, type WorkflowConversationBinding } from './workflowConversation';
 import type { WorkflowProducerBinding } from './workflowScopeBinding';
 import { withWorkflowRoleInstructions } from './sessionStepExecutor';
+import { buildWorkflowActionContext } from './workflowActionContext';
+import { readWorkflowActionApprovalSettlement } from './actionApproval';
 
 type WorkflowExecutionRunConversation = Readonly<{
   runId: string;
@@ -102,13 +106,13 @@ async function actionContextFor(
   }>,
 ): Promise<RpcActionExecutorContext> {
   const ownerContext = await deps.buildActionContext({ ...params, workDepth: deps.workDepth });
+  const workflowContext = buildWorkflowActionContext({ ...params, approvalProfileId: params.execution.approvalProfileId });
   return {
     ...ownerContext,
-    actionCaller: {
-      kind: 'workflowRun',
-      runId: params.runId,
-      authorization: params.authorization,
-    },
+    ...(params.execution.approvalProfileId === undefined ? {} : { approvalProfileId: params.execution.approvalProfileId }),
+    approvalProfileChange: workflowContext.approvalProfileChange,
+    actionCaller: workflowContext.actionCaller,
+    executionRunWorkflowRunId: params.runId,
     executionRunTargetMachineId: params.workspace.machineId,
     ...(observation
       ? {
@@ -273,10 +277,11 @@ async function observeExactRunInput(params: Readonly<{
     return { kind: 'needs_attention', code: 'workflow_step_timeout' };
   }
   const deadline = params.deadline;
+  const { approvalProfileChange: _selectedProfileChange, ...admittedContext } = params.context;
   const observationContext = deadline === null
-    ? params.context
+    ? admittedContext
     : {
-        ...params.context,
+        ...admittedContext,
         signal: params.context.signal
           ? AbortSignal.any([params.context.signal, deadline.signal])
           : deadline.signal,
@@ -349,7 +354,7 @@ async function settleOwnedRunInputAfterAbort(params: Readonly<{
   if (classifyWorkflowAbort(params.executionParams.signal) === 'interrupted') {
     throw new WorkflowRuntimeInterruption();
   }
-  const { signal: _abortedSignal, ...settlementContext } = params.context;
+  const { signal: _abortedSignal, approvalProfileChange: _selectedProfileChange, ...settlementContext } = params.context;
   const settled = await stopWorkflowPendingExecutionRunInput({
     runId: params.runId,
     localInputId: params.localInputId,
@@ -389,7 +394,7 @@ function buildNativeAgentRunStartInput(params: Readonly<{
   executionParams: Parameters<WorkflowStepExecutor>[0];
   sessionId: null;
   localInputId: string;
-  roleInstructions?: string;
+  instructions: string;
   permissionMode: string;
 }>): Record<string, unknown> {
   const { executionParams, sessionId, localInputId } = params;
@@ -399,9 +404,10 @@ function buildNativeAgentRunStartInput(params: Readonly<{
     sessionId,
     intent: 'agent',
     backendTarget: selection.agentTarget,
-    instructions: withWorkflowRoleInstructions(executionParams.input.text, params.roleInstructions),
+    instructions: params.instructions,
     localInputId,
     resultContract: executionParams.step.result,
+    ...(selection.approvalProfileId === undefined ? {} : { approvalProfileId: selection.approvalProfileId }),
     permissionMode: params.permissionMode,
     ...(selection.allowedTools !== undefined ? { allowedTools: selection.allowedTools } : {}),
     ...(selection.unlistedTools !== undefined ? { unlistedTools: selection.unlistedTools } : {}),
@@ -436,7 +442,6 @@ function workflowExecutionRunStartContext(
     // This creates an already-admitted Workflow Agent leaf. The Action caller
     // still carries its accepted authorization and currentness checks; it is
     // not a new Agent request that would re-admit or increment the Run depth.
-    surface: 'rpc',
     agentStartWorkDepth: workDepth + 1,
     actionRequestId: `${localInputId}:execution-run-start`,
   };
@@ -604,6 +609,32 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
   ): Promise<WorkflowStepExecutionResult> {
     const existing = params.invocation.execution;
     if (existing) {
+      if (existing.kind === 'action' && (existing.actionId === 'execution.run.start' || existing.actionId === 'execution.run.send')
+        && ActionApprovalRequestCreatedResultSchema.safeParse(existing.output).success) {
+        const retained = WorkflowRetainedRuntimeSelectionV1Schema.safeParse(existing.input.runtimeSelection);
+        if (!retained.success) return { kind: 'needs_attention', code: 'continuation_unavailable' };
+        const providerResumeIdentity = existing.input.providerResumeIdentity === undefined ? undefined
+          : ExecutionRunResumeHandleProviderSessionV1Schema.safeParse(existing.input.providerResumeIdentity);
+        if (providerResumeIdentity && !providerResumeIdentity.success) return { kind: 'needs_attention', code: 'continuation_unavailable' };
+        const context = await actionContextFor(deps, params, { localInputId: existing.localInputId, runtimeSelection: retained.data });
+        const settlement = await readWorkflowActionApprovalSettlement({ execution: existing,
+          read: async artifactId => {
+            const observed = await deps.actionExecutor.execute('approval.request.get', { artifactId }, context);
+            return observed.ok ? observed.result : null;
+          } });
+        if (!settlement || settlement.kind === 'unresolved') return { kind: 'needs_attention', code: settlement?.code ?? 'approval_unavailable' };
+        if (settlement.kind !== 'completed') return { kind: 'failed', code: settlement.code ?? 'action_failed' };
+        const started = existing.actionId === 'execution.run.start' ? ExecutionRunStartResponseSchema.safeParse(settlement.result) : null;
+        const runId = started?.success ? started.data.runId
+          : existing.actionId === 'execution.run.send' && typeof existing.input.runId === 'string' ? existing.input.runId : null;
+        if (!runId) return { kind: 'outcome_uncertain', code: 'execution_run_start_ambiguous' };
+        const execution = { kind: 'detached_run' as const, runId,
+          localInputId: existing.localInputId, runtimeSelection: retained.data,
+          ...(providerResumeIdentity?.success ? { providerResumeIdentity: providerResumeIdentity.data } : {}) };
+        await params.onInputAccepted(execution);
+        return await observeExactRunInput({ deps, executionParams: params, runId: execution.runId,
+          localInputId: execution.localInputId, sessionId: null, context, deadline });
+      }
       if (existing.kind === 'action' && existing.actionId === 'execution.run.start'
         && typeof existing.input.runId === 'string') {
         const retained = WorkflowRetainedRuntimeSelectionV1Schema.safeParse(existing.input.runtimeSelection);
@@ -662,8 +693,21 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
       invocationRecordId: params.invocationRecordId ?? params.invocation.logicalInvocationRecordId,
     });
     const resultContract: ExecutionRunResultContractV1 = params.step.result;
+    const renderedText = params.input.renderedText
+      ?? withWorkflowRoleInstructions(params.input.text, deps.resolveRoleInstructions?.(params));
     const structuredInput = buildWorkflowStructuredInput(params.input);
     const context = await actionContextFor(deps, params, { localInputId, runtimeSelection });
+    const retainApproval = async (actionId: 'execution.run.start' | 'execution.run.send', value: unknown,
+      retainedRunId?: string, providerResumeIdentity?: ExecutionRunResumeHandleProviderSessionV1): Promise<boolean> => {
+      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(value);
+      if (!approval.success || approval.data.actionId !== actionId) return false;
+      await params.onExecutionObservation?.({ execution: { kind: 'action', actionId,
+        actionRequestId: `${localInputId}:${actionId === 'execution.run.start' ? 'execution-run-start' : 'execution-run-send'}`, localInputId,
+        input: { runtimeSelection: projectNativeJsonValueForTransport(runtimeSelection),
+          ...(retainedRunId ? { runId: retainedRunId } : {}),
+          ...(providerResumeIdentity ? { providerResumeIdentity: projectNativeJsonValueForTransport(providerResumeIdentity) } : {}) }, output: approval.data } });
+      return true;
+    };
     let runId: string;
     let acceptedProviderResumeIdentity: ExecutionRunResumeHandleProviderSessionV1 | undefined;
 
@@ -682,23 +726,24 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
     }
 
     if (retainedConversation) {
-      await params.beforeInputAdmission();
+      await params.beforeInputAdmission(renderedText);
       assertWorkflowAdmissionSignal(params.signal);
       const sent = await deps.actionExecutor.execute(
         'execution.run.send',
         {
           sessionId: null,
           runId: retainedConversation.runId,
-          message: withWorkflowRoleInstructions(params.input.text, deps.resolveRoleInstructions?.(params)),
+          message: renderedText,
           delivery: 'prompt',
           resume: true,
           localInputId,
           resultContract,
           ...(structuredInput ? { structuredInput } : {}),
         },
-        context,
+        { ...context, actionRequestId: `${localInputId}:execution-run-send` },
       );
       if (sent.ok) {
+        if (await retainApproval('execution.run.send', sent.result, retainedConversation.runId, retainedConversation.providerResumeIdentity)) return { kind: 'needs_attention', code: 'approval_required' };
         runId = retainedConversation.runId;
         acceptedProviderResumeIdentity = retainedConversation.providerResumeIdentity;
       } else {
@@ -714,7 +759,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
           )) {
           return { kind: 'needs_attention', code: 'continuation_unavailable' };
         }
-        await params.beforeInputAdmission();
+        await params.beforeInputAdmission(renderedText);
         assertWorkflowAdmissionSignal(params.signal);
         const started = await deps.actionExecutor.execute(
           'execution.run.start',
@@ -723,7 +768,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
               executionParams: params,
               sessionId: null,
               localInputId,
-              roleInstructions: deps.resolveRoleInstructions?.(params),
+              instructions: renderedText,
               permissionMode,
             }),
             resumeHandle: providerResumeIdentity,
@@ -732,6 +777,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
           workflowExecutionRunStartContext(context, localInputId, deps.workDepth),
         );
         if (!started.ok) return classifyActionFailure(started, true, params.signal);
+        if (await retainApproval('execution.run.start', started.result, undefined, providerResumeIdentity)) return { kind: 'needs_attention', code: 'approval_required' };
         const payload = ExecutionRunStartResponseSchema.safeParse(started.result);
         if (!payload.success) {
           return { kind: 'outcome_uncertain', code: 'execution_run_start_ambiguous' };
@@ -742,7 +788,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
     } else {
       const selection = params.execution;
       if (!selection.agentTarget) return { kind: 'failed', code: 'target_unavailable' };
-      await params.beforeInputAdmission();
+      await params.beforeInputAdmission(renderedText);
       assertWorkflowAdmissionSignal(params.signal);
       const started = await deps.actionExecutor.execute(
         'execution.run.start',
@@ -751,7 +797,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
             executionParams: params,
             sessionId: null,
             localInputId,
-            roleInstructions: deps.resolveRoleInstructions?.(params),
+            instructions: renderedText,
             permissionMode,
           }),
           ...(structuredInput ? { structuredInput } : {}),
@@ -759,6 +805,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
         workflowExecutionRunStartContext(context, localInputId, deps.workDepth),
       );
       if (!started.ok) return classifyActionFailure(started, true, params.signal);
+      if (await retainApproval('execution.run.start', started.result)) return { kind: 'needs_attention', code: 'approval_required' };
       const payload = ExecutionRunStartResponseSchema.safeParse(started.result);
       if (!payload.success) {
         return { kind: 'outcome_uncertain', code: 'execution_run_start_ambiguous' };

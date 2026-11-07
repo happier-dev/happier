@@ -33,7 +33,8 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { WorkflowInvocationRecoveryObservation } from './recovery';
-import { classifyWorkflowSessionInputResult, observeWorkflowDetachedExecutionRunInput, observeWorkflowSessionInputResult, resolveWorkflowDetachedExecutionRunInputTurn, stopWorkflowPendingExecutionRunInput } from './stepExecution';
+import { classifyWorkflowSessionInputResult, observeWorkflowDetachedExecutionRunInput, observeWorkflowSessionInputResult, resolveWorkflowDetachedExecutionRunInputTurn } from './stepExecution';
+import { observeWorkflowDetachedRunRecovery } from './detachedRunRecovery';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
@@ -41,6 +42,7 @@ import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol
 import type { SessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { deriveWorkflowSessionCreationTag } from './workflowSessionStartup';
 import { readRetainedWorkflowSessionStartupFailure } from './workflowSessionStartupFailure';
+import { hasLostWorkflowActionOperation, LOST_ACTION_OPERATION_CODE, readWorkflowActionOperationSnapshot } from './actionOperationObservation';
 
 type WorkflowInvocationRecoveryEvidence = Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['observeRecovery']>>>;
 
@@ -178,7 +180,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
     activity: 'unknown', canReattach: false, canContinueConversation: false,
   };
   const execution = params.progress.execution;
-  if (!execution) return unavailable;
+  if (!execution || hasLostWorkflowActionOperation(params.progress)) return unavailable;
   if (execution.kind === 'session_ready') return { activity: 'not_active', canReattach: true, canContinueConversation: false };
   try {
     if (execution.kind === 'action') {
@@ -189,6 +191,16 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       if (execution.awaitedOperations?.length && params.getOperation) {
         const snapshots = await Promise.all(execution.awaitedOperations.map(async (target) => {
           const parsed = ActionOperationGetV1ResponseSchema.safeParse(await params.getOperation!(target));
+          if (parsed.success && parsed.data.kind === 'not_found' && params.progress.blockKind === 'step'
+            && execution.actionId === 'session.spawn_new' && execution.awaitedOperations?.length === 1
+            && target.machineId === params.machineId) {
+            const output = execution.output;
+            // The strict original startup fact survives its process-local
+            // owner. Only authoritative absence permits using that fact;
+            // live, malformed or unavailable observations never fall back.
+            return readRetainedWorkflowSessionStartupFailure(output && typeof output === 'object' && !Array.isArray(output)
+              && 'operation' in output ? output.operation : undefined, target, execution.actionRequestId);
+          }
           return parsed.success && parsed.data.kind === 'found' && parsed.data.operation.operationId === target.operationId
             && parsed.data.operation.scope.machineId === target.machineId && parsed.data.operation.actionId === execution.actionId
             ? parsed.data.operation : undefined;
@@ -299,7 +311,6 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
   const now = params.now ?? Date.now;
   const observeSession = params.observeSession ?? observeWorkflowSessionInputResult;
   const cancelSession = params.cancelSession ?? cancelSessionInput;
-  const observeRun = params.observeRun ?? observeWorkflowDetachedExecutionRunInput;
   return async function observe(input: Readonly<{
     progress: import('@happier-dev/protocol').WorkflowProgressEnvelopeV1;
     run?: Readonly<{ id: string; state?: WorkflowRunSummaryV1['state'] }>;
@@ -311,6 +322,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
     signal?: AbortSignal;
   }>): Promise<WorkflowInvocationRecoveryObservation> {
     const execution = input.progress.execution;
+    if (hasLostWorkflowActionOperation(input.progress)) return { kind: 'outcome_uncertain', code: LOST_ACTION_OPERATION_CODE };
     const stopCreatedSession = async (sessionId: string): Promise<WorkflowInvocationRecoveryObservation> => {
       if (!input.run || !input.index) return { kind: 'unresolved', code: 'workflow_execution_correspondence_missing' };
       // Physical Stop cannot retire a durable queued input: it could otherwise
@@ -429,16 +441,9 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         const transport = params.nativeActionOperations;
         if (!transport) return { kind: 'unresolved', code: 'action_operation_observation_unavailable' };
         try {
-          const read = (raw: unknown, target: ActionCompletionOperation) => {
-            const parsed = ActionOperationGetV1ResponseSchema.parse(raw);
-            if (parsed.kind !== 'found' || parsed.operation.operationId !== target.operationId
-              || parsed.operation.scope.machineId !== target.machineId || parsed.operation.actionId !== execution.actionId
-              || (input.progress.blockKind === 'step' && execution.actionId === 'session.spawn_new'
-                && parsed.operation.requestId !== execution.actionRequestId)) {
-              throw new Error('action_operation_correspondence_mismatch');
-            }
-            return parsed.operation;
-          };
+          const read = (raw: unknown, target: ActionCompletionOperation) => readWorkflowActionOperationSnapshot(raw, target,
+            { actionId: execution.actionId, ...(input.progress.blockKind === 'step' && execution.actionId === 'session.spawn_new'
+              ? { startupRequestId: execution.actionRequestId } : {}) });
           const snapshots = await Promise.all(execution.awaitedOperations.map(async (target) => ({ target,
             raw: await transport.get(target, input.signal) })));
           // Persisted startup correspondence can outlive the process-local
@@ -456,7 +461,10 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
               ...(failed.error?.error ? { message: failed.error.error } : {}) };
             return await recoverAbsentStartup();
           }
-          const observedOperations = snapshots.map(({ target, raw }) => ({ target, operation: read(raw, target) }));
+          const observedOperations = snapshots.flatMap(({ target, raw }) => {
+            const operation = read(raw, target);
+            return operation ? [{ target, operation }] : [];
+          });
           const uncertain = observedOperations.find(({ operation }) => operation.observation?.kind === 'outcome_uncertain');
           if (uncertain) return { kind: 'outcome_uncertain', code: uncertain.operation.observation!.code };
           if (!input.terminalParent && !input.cancellationRequested) {
@@ -476,11 +484,14 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
               waitForCompletion: async () => {
                 await Promise.all(pending.map(async ({ target }) => {
                   const operation = read(await transport.wait(target, input.signal), target);
-                  if (operation.state === 'accepted' || operation.state === 'running') throw new Error('action_operation_pending');
+                  if (operation && (operation.state === 'accepted' || operation.state === 'running')) throw new Error('action_operation_pending');
                 }));
               },
             } : {}) };
           }
+          // Missing historical output cannot retire a still-live sibling. The
+          // existing pending wait above drains its custody before recording loss.
+          if (observedOperations.length !== snapshots.length) return { kind: 'outcome_uncertain', code: LOST_ACTION_OPERATION_CODE };
           if (execution.output === undefined) {
             const failed = observedOperations.find(({ operation }) => operation.state === 'failed');
             if (failed) return { kind: 'failed', code: failed.operation.error?.errorCode ?? 'action_operation_failed',
@@ -619,6 +630,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         waitForCompletion: async () => {
           const settled = await observeSession({ credentials: params.credentials,
             sessionId: execution.sessionId, localId: execution.localInputId,
+            ...(input.run?.state === 'cancelled' ? { observeReply: false } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
           });
           if (!settled.ok || settled.sessionId !== execution.sessionId || settled.localId !== execution.localInputId
@@ -628,10 +640,33 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         },
       };
       const result = classifyWorkflowSessionInputResult(observed.result, observed.replyOutcome);
+      if (result.kind === 'pending' && input.run?.state === 'cancelled' && !input.observationOnly) {
+        // Original reply custody may be unknown after a Discussion participant
+        // is archived. Read physical custody through the same exact-input owner;
+        // this cannot settle publication or substitute an unbound final answer.
+        try {
+          const physical = await observeSession({ credentials: params.credentials,
+            sessionId: execution.sessionId, localId: execution.localInputId,
+            observeReply: false, deadlineMs: now(),
+            ...(input.signal ? { signal: input.signal } : {}),
+          });
+          if (physical.ok && physical.sessionId === execution.sessionId && physical.localId === execution.localInputId) {
+            const custody = classifyWorkflowSessionInputResult(physical.result, physical.replyOutcome);
+            if (custody.kind === 'needs_attention') return { ...custody, kind: 'stopped' };
+          }
+        } catch {
+          input.signal?.throwIfAborted();
+        }
+      }
       switch (result.kind) {
         case 'completed': return result;
         case 'failed': return result;
-        case 'needs_attention': return result;
+        case 'needs_attention':
+          // The exact input is terminal even when no result can be recovered.
+          // Cancel ends that result obligation; preserve its missing-result
+          // evidence while retiring physical custody through the stopped arm.
+          return input.run?.state === 'cancelled' && !input.observationOnly
+            ? { ...result, kind: 'stopped' } : result;
         case 'pending':
           if (input.observationOnly || (!input.terminalParent && !input.cancellationRequested)) {
             return { kind: 'unresolved', code: 'session_input_pending', ...completion };
@@ -663,85 +698,6 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
       }
     }
 
-    const sessionId = null;
-    let actionFailure: string | null = null;
-    let retainedRun: ReturnType<typeof ExecutionRunGetResponseSchema.parse>['run'] | undefined;
-    const stoppedCustody = () => {
-      if (!input.terminalParent || input.observationOnly || !retainedRun
-        || (retainedRun.status !== 'failed' && retainedRun.status !== 'succeeded' && retainedRun.status !== 'cancelled')
-        || retainedRun.inputTurns?.current?.state === 'active'
-        || resolveWorkflowDetachedExecutionRunInputTurn(retainedRun, execution.runId, execution.localInputId)) return null;
-      // The exact Run owner proves inactivity, not this historical input's
-      // outcome. Never copy its result or another turn's failure into the row.
-      return { kind: 'stopped' as const, code: 'execution_run_input_not_observed' };
-    };
-    const actionContext = {
-      surface: 'agent' as const,
-      authority: 'account_automation' as const,
-      executionRunTargetMachineId: params.machineId,
-      ...(input.signal ? { signal: input.signal } : {}),
-    };
-    let observed: Awaited<ReturnType<typeof observeRun>>;
-    try {
-      observed = await observeRun({
-        runId: execution.runId,
-        localInputId: execution.localInputId,
-        get: async (request) => {
-          const result = await params.actionExecutor.execute(
-            'execution.run.get',
-            { sessionId, ...request },
-            actionContext,
-          );
-          if (!result.ok) {
-            actionFailure = result.errorCode;
-            return null;
-          }
-          const parsed = ExecutionRunGetResponseSchema.safeParse(result.result);
-          retainedRun = parsed.success && parsed.data.run.runId === execution.runId ? parsed.data.run : undefined;
-          return result.result;
-        },
-      });
-    } catch {
-      return { kind: 'unresolved', code: actionFailure ?? 'execution_run_result_read_failed' };
-    }
-    if (actionFailure) return { kind: 'unresolved', code: actionFailure };
-    if (observed.kind === 'outcome_uncertain' && observed.code === 'execution_run_input_not_observed') {
-      return stoppedCustody() ?? observed;
-    }
-    if (observed.kind !== 'pending') return observed;
-    if (input.observationOnly || (!input.terminalParent && !input.cancellationRequested)) {
-      return { kind: 'unresolved', code: 'execution_run_input_pending' };
-    }
-    const { signal: _signal, ...stopContext } = actionContext;
-    const stopped = await stopWorkflowPendingExecutionRunInput({
-      runId: execution.runId,
-      localInputId: execution.localInputId,
-      stop: async () => {
-        try {
-          return await params.actionExecutor.execute(
-            'execution.run.stop',
-            { sessionId, runId: execution.runId },
-            stopContext,
-          );
-        } catch {
-          return { ok: false, errorCode: 'execution_run_stop_unavailable' };
-        }
-      },
-      get: async (request) => {
-        retainedRun = undefined;
-        const result = await params.actionExecutor.execute(
-          'execution.run.get',
-          { sessionId, ...request },
-          stopContext,
-        );
-        if (result.ok) {
-          const parsed = ExecutionRunGetResponseSchema.safeParse(result.result);
-          retainedRun = parsed.success && parsed.data.run.runId === execution.runId ? parsed.data.run : undefined;
-        }
-        return result.ok ? result.result : null;
-      },
-      observe: observeRun,
-    });
-    return stopped.kind === 'unresolved' ? stoppedCustody() ?? stopped : stopped;
+    return await observeWorkflowDetachedRunRecovery(params, { ...input, execution });
   };
 }

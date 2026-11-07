@@ -26,6 +26,9 @@ import os from 'node:os';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { applyInitialSessionCreationFactsToMetadata, buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { deliverSessionTurnMutation } from '@/api/session/client/transport/mutations/deliverSessionTurnMutation';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
@@ -165,11 +168,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   preparePromptStack?: () => Promise<void>;
   /** Host preparation of committed Session content; never carried over spawn RPC. */
   beforeLaunch?: SessionCreationHostContinuationV1['beforeLaunch'];
-  /** The local admitted host signs birth bytes; never serialized to a Machine RPC. */
-  authorizeCreationRequest?: Parameters<typeof getOrCreateSessionByTag>[0]['authorizeRequest'];
-  templateRequesterAuthorization?: Parameters<typeof getOrCreateSessionByTag>[0]['templateRequesterAuthorization'];
-  onCreationAuthorization?: Parameters<typeof getOrCreateSessionByTag>[0]['onCreationAuthorization'];
-  authorizeMachineAccessKeyRequest?: Parameters<typeof ensureSessionMachineAccessKeyBinding>[0]['authorizeRequest'];
+  /** The admitted host signs exact requester HTTP requests; never serialized to a Machine RPC. */
+  authorizeRequest?: Parameters<typeof getOrCreateSessionByTag>[0]['authorizeRequest'];
   /**
    * Private sidecar from a provenance-bounded predecessor approval-artifact
    * replay; never accepted from live Action/RPC ingress or sent as a server
@@ -367,7 +367,20 @@ function isTransientSpawnFailure(spawnResponse: unknown): boolean {
   return SPAWN_TRANSIENT_ERROR_MARKERS.some((marker) => message.includes(marker));
 }
 
-
+function readSpawnFailureCode(
+  response: Readonly<{ errorCode?: unknown; errorDetail?: unknown }> | null | undefined,
+  fallback: string,
+): string {
+  // Preserve the typed refusal through retained Action operations, whose
+  // failure projection carries a code rather than private spawn details.
+  const detail = normalizeSpawnSessionErrorDetail(response?.errorDetail);
+  if (detail?.kind === 'requester_home_unavailable') {
+    return 'project_requester_home_unavailable';
+  }
+  if (detail?.kind === 'launch_error') return detail.code;
+  return typeof response?.errorCode === 'string' && response.errorCode.trim().length > 0
+    ? response.errorCode : fallback;
+}
 
 async function assertStoredAuthTokenValidForSpawn(token: string): Promise<void> {
   const validation = await validateStoredAuthTokenAgainstActiveServer(token);
@@ -554,9 +567,13 @@ async function dispatchCommittedSpawn(args: Readonly<{
   token: string;
   sessionId: string;
   createdHere: boolean;
+  spawnNonce: string;
+  resolveSpawnSessionByNonce: SpawnSessionNonceResolver;
+  signal?: AbortSignal;
+  authorizeRequest?: CreateSpawnedSessionParams['authorizeRequest'];
   dispatchSpawnRequest: (request: SpawnDaemonSessionRequest) => Promise<unknown>;
   spawnRequestInput: Record<string, unknown>;
-}>): Promise<unknown> {
+}>): Promise<Awaited<ReturnType<typeof awaitSpawnedSessionId>>> {
   const {
     placementOrigin: _creationOwnedPlacementOrigin,
     authoringOrigin: _creationOwnedAuthoringOrigin,
@@ -578,19 +595,62 @@ async function dispatchCommittedSpawn(args: Readonly<{
     ...attachSpawnRequestInput
   } = args.spawnRequestInput;
   try {
-    return await args.dispatchSpawnRequest(
+    const response = await args.dispatchSpawnRequest(
       SpawnDaemonSessionRequestSchema.parse({
         ...attachSpawnRequestInput,
         existingSessionId: args.sessionId,
         freshSessionCreation: args.createdHere,
       }),
     );
+    const settled = await awaitSpawnedSessionId({ result: response, spawnNonce: args.spawnNonce,
+      resolveSpawnSessionByNonce: args.resolveSpawnSessionByNonce,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    if (settled.type === 'error' && isDefiniteSpawnPreAdmissionRejection(settled.errorCode)) {
+      const detail = normalizeSpawnSessionErrorDetail(settled.errorDetail);
+      // The committed child has no admitted runner or input. Settle its known
+      // startup refusal through the existing host lifecycle, never raw daemon prose.
+      const lifecycle = createSessionTurnLifecycle({
+        session: {
+          sessionId: args.sessionId,
+          enqueueSessionTurnMutation: async (mutation) => {
+            const delivery = await deliverSessionTurnMutation({
+              token: args.token,
+              socket: null,
+              mutation,
+              ...(args.authorizeRequest ? { resolveAuthorizationHeaders: args.authorizeRequest } : {}),
+            });
+            if (!delivery.delivered) throw new Error(delivery.reason);
+          },
+        },
+      });
+      try {
+        await lifecycle.failTurn({
+          allocateWhenIdle: true,
+          issue: classifyPrimarySessionRuntimeIssue({
+            cause: 'session_error',
+            ...(settled.agentId ? { provider: settled.agentId } : {}),
+            error: { code: detail?.kind === 'launch_error' ? detail.code : settled.errorCode, severity: 'error' },
+          }),
+        });
+      } finally {
+        lifecycle.dispose();
+      }
+      if (args.createdHere) {
+        await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId,
+          ...(args.authorizeRequest ? { resolveAuthorizationHeaders: args.authorizeRequest } : {}),
+        }).catch(() => undefined);
+      }
+    }
+    return settled;
   } catch (error) {
     const code = error && typeof error === 'object'
       ? (error as { code?: unknown }).code
       : undefined;
     if (args.createdHere && isDefiniteSpawnPreAdmissionRejection(code)) {
-      await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId })
+      await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId,
+        ...(args.authorizeRequest ? { resolveAuthorizationHeaders: args.authorizeRequest } : {}),
+      })
         .catch(() => undefined);
     }
     throw error;
@@ -610,6 +670,8 @@ async function createSeededSpawnedSession(args: Readonly<{
   seededCreation: SeededSessionCreationV1;
   spawnRequestInput: Readonly<Record<string, unknown>>;
   dispatchSpawnRequest: (request: SpawnDaemonSessionRequest) => Promise<unknown>;
+  spawnNonce: string;
+  resolveSpawnSessionByNonce: SpawnSessionNonceResolver;
   initialInputLocalId: string;
   initialInputHandoff?: ReturnType<NonNullable<CreateSpawnedSessionParams['buildInitialInputHandoff']>>;
 }>): Promise<Readonly<{
@@ -661,9 +723,7 @@ async function createSeededSpawnedSession(args: Readonly<{
     commit: async () => {
       const created = await getOrCreateSessionByTag({
         ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.authorizeCreationRequest ? { authorizeRequest: params.authorizeCreationRequest } : {}),
-        ...(params.templateRequesterAuthorization ? { templateRequesterAuthorization: params.templateRequesterAuthorization } : {}),
-        ...(params.onCreationAuthorization ? { onCreationAuthorization: params.onCreationAuthorization } : {}),
+        ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
         ...(params.creationAuthorization ? { creationAuthorizationToken: params.creationAuthorization.token,
           prepareCreationAuthorizationProof: params.creationAuthorization.prepareRequestProof } : {}),
         ...pickSessionCreateOriginFields(params),
@@ -785,9 +845,6 @@ async function createSeededSpawnedSession(args: Readonly<{
       }
     },
     bindMachine: async ({ sessionId }) => {
-      // The verified finite birth binds the requester Machine in the same
-      // server transaction, including rejoin. Its response settles this phase.
-      if (params.templateRequesterAuthorization) return;
       // A reused tag is trusted only after its immutable recipe is authenticated.
       // Bind before dispatch, since its first Message may race Session socket setup.
       await ensureSessionMachineAccessKeyBinding({
@@ -795,7 +852,7 @@ async function createSeededSpawnedSession(args: Readonly<{
         token: params.credentials.token,
         sessionId,
         machineId: params.machineId,
-        ...(params.authorizeMachineAccessKeyRequest ? { authorizeRequest: params.authorizeMachineAccessKeyRequest } : {}),
+        ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
       });
     },
     beforeLaunch: async ({ sessionId, disposition, metadataRevision }) => {
@@ -806,35 +863,21 @@ async function createSeededSpawnedSession(args: Readonly<{
         token: params.credentials.token,
         sessionId,
         createdHere: created.created === true,
+        spawnNonce: args.spawnNonce,
+        resolveSpawnSessionByNonce: args.resolveSpawnSessionByNonce,
+        ...(params.signal ? { signal: params.signal } : {}),
+        ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
         dispatchSpawnRequest: args.dispatchSpawnRequest,
         spawnRequestInput: {
           ...args.spawnRequestInput,
           ...connectedServiceChildLaunch.spawn,
         },
       });
-      const spawnResponseRecord = readSpawnResponseRecord(spawnResponse);
-      const spawnSucceeded = spawnResponseRecord?.type === 'success'
-        || spawnResponseRecord?.success === true;
-      if (!spawnSucceeded) {
-        // Only a fresh row plus a known pre-admission rejection proves this owner
-        // can archive. Rejoins and ambiguous/post-admission outcomes may be live.
-        if (
-          created.created === true
-          && isDefiniteSpawnPreAdmissionRejection(spawnResponseRecord?.errorCode)
-        ) {
-          await archiveSessionOnceInactive({ token: params.credentials.token, sessionId })
-            .catch(() => undefined);
-        }
+      if (spawnResponse.type === 'error') {
         throw createCodedError(
-          typeof spawnResponseRecord?.errorMessage === 'string' && spawnResponseRecord.errorMessage.trim().length > 0
-            ? spawnResponseRecord.errorMessage
-            : typeof spawnResponseRecord?.error === 'string' && spawnResponseRecord.error.trim().length > 0
-              ? spawnResponseRecord.error
-              : 'Failed to spawn session',
-          typeof spawnResponseRecord?.errorCode === 'string' && spawnResponseRecord.errorCode.trim().length > 0
-            ? spawnResponseRecord.errorCode
-            : SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-          { sessionId, spawnResponse: spawnResponse ?? null },
+          spawnResponse.errorMessage,
+          readSpawnFailureCode(spawnResponse, spawnResponse.errorCode),
+          { sessionId, spawnResponse },
         );
       }
     },
@@ -843,6 +886,7 @@ async function createSeededSpawnedSession(args: Readonly<{
         organizationPlacement = await fetchSessionOrganizationPlacement({
           token: params.credentials.token,
           sessionId,
+          ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
           ...(params.signal ? { signal: params.signal } : {}),
         });
       } catch {
@@ -860,10 +904,9 @@ async function createSeededSpawnedSession(args: Readonly<{
         initialInput: params.initialInput,
         localId: args.initialInputLocalId,
         ...(!created.created ? { rejoinSession: created.session } : {}),
-        initialInputHandoff: args.initialInputHandoff ?? (params.templateRequesterAuthorization
-          ? params.buildInitialInputHandoff?.(args.initialInputLocalId) : undefined),
+        initialInputHandoff: args.initialInputHandoff,
         machineAdmissionTransport: params.machineAdmissionTransport,
-        ...(params.templateRequesterAuthorization ? { callerInputAuthorization: params.templateRequesterAuthorization.authorization } : {}),
+        ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
         ...(params.deferLaunch ? { resumeInactiveSession: false as const } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       });
@@ -941,7 +984,7 @@ export async function createSpawnedSession(
       SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
     );
   }
-  const initialInputHandoff = initialInputRequested && !params.templateRequesterAuthorization
+  const initialInputHandoff = initialInputRequested
     ? params.buildInitialInputHandoff?.(initialInputLocalId)
     : undefined;
   if (initialInputRequested && !params.buildInitialInputHandoff) {
@@ -1025,13 +1068,14 @@ export async function createSpawnedSession(
   // goes through the canonical strict daemon parser.
   const spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
   const isProviderBound = spawnRequest.modelSelection?.ref.providerConnectionId != null;
-  await assertStoredAuthTokenValidForSpawn(params.credentials.token);
+  if (!params.authorizeRequest) await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   params.signal?.throwIfAborted();
   const rejoinExistingCreation = async (afterSpawnFailure = false): Promise<Awaited<ReturnType<typeof createSpawnedSession>> | null> => {
-    if (!params.sessionCreationTag || !params.sessionCreationCorrespondence || params.templateRequesterAuthorization) return null;
+    if (!params.sessionCreationTag || !params.sessionCreationCorrespondence) return null;
     const lookup = await lookupSessionsByTags({
       token: params.credentials.token,
       tags: [params.sessionCreationTag],
+      ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     if (lookup.state === 'unavailable') {
@@ -1114,7 +1158,7 @@ export async function createSpawnedSession(
         // and live-slot validation before input can attach.
         const current = await getOrCreateSessionByTag({
           ...(params.signal ? { signal: params.signal } : {}),
-          ...(params.authorizeCreationRequest ? { authorizeRequest: params.authorizeCreationRequest } : {}),
+          ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
           ...pickSessionCreateOriginFields(params),
           credentials: params.credentials,
           tag: params.sessionCreationTag,
@@ -1132,25 +1176,34 @@ export async function createSpawnedSession(
         }
         existing = current.session;
       }
+      if (params.beforeLaunch) {
+        await ensureSessionMachineAccessKeyBinding({
+          serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token,
+          sessionId: existing.id, machineId: params.machineId,
+          ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
+        });
+      }
       await prepareCommittedSessionContent(params, {
         sessionId: existing.id, disposition: 'rejoined', metadataRevision: existing.metadataVersion,
       });
       if (needsInitialRunner && params.resumeOnly !== true && !params.deferLaunch) {
-        await ensureSessionMachineAccessKeyBinding({
-          serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token,
-          sessionId: existing.id, machineId: params.machineId,
-          ...(params.authorizeMachineAccessKeyRequest ? { authorizeRequest: params.authorizeMachineAccessKeyRequest } : {}),
-        });
+        if (!params.beforeLaunch) {
+          await ensureSessionMachineAccessKeyBinding({
+            serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token,
+            sessionId: existing.id, machineId: params.machineId,
+            ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
+          });
+        }
         // Attach through the same launch owner as seeded creation. Its daemon
         // pre-gate also owns any already-pending runner; rejoin adds no launcher.
         const spawnResponse = await dispatchCommittedSpawn({
           token: params.credentials.token, sessionId: existing.id, createdHere: false,
           spawnRequestInput, dispatchSpawnRequest,
-        });
-        const settled = await awaitSpawnedSessionId({
-          result: spawnResponse, spawnNonce, resolveSpawnSessionByNonce,
+          spawnNonce, resolveSpawnSessionByNonce,
           ...(params.signal ? { signal: params.signal } : {}),
+          ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
         });
+        const settled = spawnResponse;
         if (settled.type === 'error') {
           throw createCodedError(settled.errorMessage, settled.errorCode, {
             sessionId: existing.id, spawnResponse,
@@ -1163,6 +1216,7 @@ export async function createSpawnedSession(
             { sessionId: existing.id });
         }
         const current = await fetchSessionById({ reason: 'session-control', token: params.credentials.token, sessionId: existing.id,
+          ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
           ...(params.signal ? { signal: params.signal } : {}) });
         if (current) existing = current;
       }
@@ -1177,6 +1231,7 @@ export async function createSpawnedSession(
         organizationPlacement = await fetchSessionOrganizationPlacement({
           token: params.credentials.token,
           sessionId: existing.id,
+          ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
           ...(params.signal ? { signal: params.signal } : {}),
         });
       } catch {
@@ -1201,6 +1256,7 @@ export async function createSpawnedSession(
         rejoinSession: existing,
         initialInputHandoff,
         machineAdmissionTransport: params.machineAdmissionTransport,
+        ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       });
       const filesNotCopied = readForkFilesNotCopied(ownerMetadata);
@@ -1234,6 +1290,7 @@ export async function createSpawnedSession(
     ?? (params.originKind === 'run_step' ? params.originSessionId : undefined);
   if (params.resumeOnly !== true && leadSessionId) {
     const lead = await fetchSessionById({ reason: 'session-control', token: params.credentials.token, sessionId: leadSessionId,
+      ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
       ...(params.signal ? { signal: params.signal } : {}) });
     if (!lead) throw createCodedError('Lead Context is unavailable', 'context_source_unavailable');
     // Reporting membership does not grant access to another Account's Context.
@@ -1362,7 +1419,7 @@ export async function createSpawnedSession(
   }
 
   let seededCreation: SeededSessionCreationV1 | undefined = params.replaySeededCreation;
-  if ((params.deferLaunch || params.templateRequesterAuthorization || params.attestedContext || params.discussionParticipant || params.beforeLaunch) && !seededCreation) {
+  if ((params.deferLaunch || params.attestedContext || params.discussionParticipant || params.beforeLaunch) && !seededCreation) {
     const tag = params.sessionCreationTag;
     if (!tag) throw createCodedError('Session birth provenance requires its canonical creation tag', SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST);
     seededCreation = { tag, metadata: buildCommittedLaunchMetadata({
@@ -1377,6 +1434,8 @@ export async function createSpawnedSession(
       seededCreation,
       spawnRequestInput: birthSpawnRequestInput,
       dispatchSpawnRequest,
+      spawnNonce,
+      resolveSpawnSessionByNonce,
       initialInputLocalId,
       ...(initialInputHandoff ? { initialInputHandoff } : {}),
     });
@@ -1458,9 +1517,7 @@ export async function createSpawnedSession(
       responseError,
       spawnResponseRecord?.requiresUserApproval === true || spawnResponseRecord?.type === 'requestToApproveDirectoryCreation'
         ? 'conflict'
-        : typeof spawnResponseRecord?.errorCode === 'string' && spawnResponseRecord.errorCode.trim().length > 0
-          ? spawnResponseRecord.errorCode
-          : 'unknown_error',
+        : readSpawnFailureCode(spawnResponseRecord, 'unknown_error'),
       spawnResponse ?? null,
     );
   }
@@ -1493,7 +1550,8 @@ export async function createSpawnedSession(
           return stopped.ok && stopped.stopped;
         },
         archiveSession: async (sessionId) => {
-          await archiveSessionOnceInactive({ token: params.credentials.token, sessionId });
+          await archiveSessionOnceInactive({ token: params.credentials.token, sessionId,
+            ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}) });
         },
       });
     }
@@ -1503,7 +1561,7 @@ export async function createSpawnedSession(
         ? spawnResponseRecord.error
         : 'Failed to spawn session'),
     );
-    (error as { code?: string }).code = settledSpawn.errorCode;
+    (error as { code?: string }).code = readSpawnFailureCode(settledSpawn, settledSpawn.errorCode);
     (error as { details?: unknown }).details = {
       spawnResponse: spawnResponse ?? null,
       ...(settledSpawn.agentId ? { agentId: settledSpawn.agentId } : {}),
@@ -1535,6 +1593,7 @@ export async function createSpawnedSession(
     ...(rejoinSession ? { rejoinSession } : {}),
     initialInputHandoff,
     machineAdmissionTransport: params.machineAdmissionTransport,
+    ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
   });
   const fetchTimeoutMs = resolvePositiveIntFromEnv('HAPPIER_SESSION_SPAWN_FETCH_TIMEOUT_MS', DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS);
