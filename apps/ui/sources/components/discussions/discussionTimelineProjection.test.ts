@@ -276,15 +276,22 @@ function message(id: string, seq: number) {
     return { id, seq };
 }
 
-it('commits an anchored message and its Run bands together, retaining the shown timeline during acquisition', () => {
+it('shows readable messages before Run decorations settle and retains unchanged rows as they arrive', () => {
     const messages = [message('question', 1), message('answer', 2)];
     const params = { serverId: 'home-1', discussionId: 'discussion-1', messages, subagents: [],
         readExecutionRunEntry: () => null, workflowRunAnswerIds: new Map([['run-ready', ['answer']]]) };
-    expect(buildDiscussionTimelineItems({ ...params, workflowRuns: [], workflowRunsPending: true })).toEqual([]);
-    const shown = buildDiscussionTimelineItems({ ...params,
-        workflowRuns: [{ ...workflowRun('run-ready', { messageId: 'question' }), state: 'succeeded' }] });
+    const cold = buildDiscussionTimelineItems({ ...params, workflowRuns: [] });
+    expect(cold.map(item => item.kind)).toEqual(['human_message', 'human_message']);
+    const workflowRuns = [{ ...workflowRun('run-ready', { messageId: 'question' }), state: 'succeeded' as const }];
+    const shown = buildDiscussionTimelineItems({ ...params, workflowRuns }, cold);
     expect(shown.map(item => item.kind)).toEqual(['human_message', 'workflow_run', 'human_message', 'workflow_run_end']);
-    expect(buildDiscussionTimelineItems({ ...params, workflowRunsPending: true, workflowRuns: [] }, shown)).toBe(shown);
+    expect(shown[0]).toBe(cold[0]);
+    expect(shown[2]).toBe(cold[1]);
+    const arrival = message('arrival', 3);
+    const pending = buildDiscussionTimelineItems({ ...params, messages: [...messages, arrival], workflowRuns }, shown);
+    expect(pending.slice(0, shown.length)).toEqual(shown);
+    expect(pending.at(-1)).toMatchObject({ kind: 'human_message', message: arrival });
+    expect(pending[0]).toBe(shown[0]);
 });
 
 it('publishes only the arriving timeline model across 300 messages and three Runs', () => {
@@ -483,6 +490,28 @@ describe('buildDiscussionTimelineItems', () => {
         expect(items.map((item) => item.kind === 'human_message' ? item.message.id
             : item.kind === 'workflow_run' ? `run:${item.run.id}` : 'reference')).toEqual([
             'message-1', 'run:wf-first', 'message-2', 'run:wf-later', 'message-3',
+        ]);
+    });
+
+    it('reads several runs one message started in the order they started, whatever order the list arrives in', () => {
+        const at = (id: string, createdAt: string) => ({ ...workflowRun(id, { messageId: 'message-1' }), createdAt });
+        const items = buildDiscussionTimelineItems({
+            serverId: 'home-1',
+            discussionId: 'discussion-1',
+            messages: [message('message-1', 1), message('message-2', 2)],
+            subagents: [],
+            readExecutionRunEntry: () => null,
+            // The Runs list arrives newest first; Run again starts a newer Run under the same message.
+            workflowRuns: [
+                at('wf-again-b', '2026-11-07T13:20:00.000Z'),
+                at('wf-again-a', '2026-11-07T13:20:00.000Z'),
+                at('wf-first', '2026-11-07T13:00:00.000Z'),
+            ],
+        });
+
+        expect(items.map((item) => item.kind === 'human_message' ? item.message.id
+            : item.kind === 'workflow_run' ? `run:${item.run.id}` : 'other')).toEqual([
+            'message-1', 'run:wf-first', 'run:wf-again-a', 'run:wf-again-b', 'message-2',
         ]);
     });
 

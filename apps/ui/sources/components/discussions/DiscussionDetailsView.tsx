@@ -1049,10 +1049,10 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
     const previousTimelineItems = React.useRef<Readonly<{ dataKey: string; items: readonly DiscussionTimelineItem<DiscussionDisplayMessage>[] }> | null>(null);
     const items = React.useMemo(() => {
         const previous = previousTimelineItems.current?.dataKey === dataKey ? previousTimelineItems.current.items : [];
-        const next = buildDiscussionTimelineItems({ serverId: props.target.address.serverId, discussionId: props.target.discussionId, messages: displayMessages, subagents: sourceSubagents, readExecutionRunEntry: readSourceExecutionRunEntry, workflowRuns: managedRuns.runs, workflowRunsPending: managedRuns.pending, workflowRunAnswerIds: publishedByRun, messageLabels }, previous);
+        const next = buildDiscussionTimelineItems({ serverId: props.target.address.serverId, discussionId: props.target.discussionId, messages: displayMessages, subagents: sourceSubagents, readExecutionRunEntry: readSourceExecutionRunEntry, workflowRuns: managedRuns.runs, workflowRunAnswerIds: publishedByRun, messageLabels }, previous);
         previousTimelineItems.current = { dataKey, items: next };
         return next;
-    }, [dataKey, displayMessages, managedRuns.pending, managedRuns.runs, messageLabels, props.target.address.serverId, props.target.discussionId, publishedByRun, readSourceExecutionRunEntry, sourceSubagents]);
+    }, [dataKey, displayMessages, managedRuns.runs, messageLabels, props.target.address.serverId, props.target.discussionId, publishedByRun, readSourceExecutionRunEntry, sourceSubagents]);
     // C7: a shared Bot's outward request waits in the thread that asked, under the Bot's reply to that
     // ask (or the ask itself while the Bot is blocked on it), joined by the request's admitted cause.
     const requesterApprovals = useDiscussionRequesterApprovals(discussionAddress, mentionedSessionAddresses);
@@ -1309,12 +1309,12 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
     // header with its Retry, never a second state over the messages.
     // With no messages to keep, a failed read is the thread's own state in its body, not a line over nothing.
     const threadReadFailed = items.length === 0
-        && (thread.status === 'offline' || thread.status === 'locked' || thread.status === 'error' || managedRuns.phase === 'failed');
+        && (thread.status === 'offline' || thread.status === 'locked' || thread.status === 'error');
     const threadStaleLabel = threadReadFailed ? null : thread.status === 'offline'
         ? t('session.collaboration.discussion.offline')
         : thread.status === 'locked'
             ? t('session.access.preparing')
-            : thread.status === 'error' || managedRuns.refreshFailed
+            : thread.status === 'error' || (managedRuns.refreshFailed && managedRuns.phase !== 'failed')
                 ? t('session.collaboration.discussion.loadError')
                 : null;
     const operationNotice = lifecycleFailure
@@ -1452,10 +1452,16 @@ function DiscussionContent(props: DiscussionProps & Readonly<{
                     viewabilityConfig={VIEWABILITY}
                     onStartReached={thread.hasMoreOlder ? () => void repository.loadOlderMessages(props.target.discussionId) : undefined}
                     onStartReachedThreshold={0.2}
-                    header={thread.hasMoreOlder ? <HappierPressable style={styles.retry} accessibilityRole="button" accessibilityLabel={t('session.collaboration.discussion.loadOlder')} onPress={() => void repository.loadOlderMessages(props.target.discussionId)}><Text style={styles.retryText}>{t('session.collaboration.discussion.loadOlder')}</Text></HappierPressable> : null}
+                    header={thread.hasMoreOlder || managedRuns.phase === 'failed' ? <>{thread.hasMoreOlder ? <HappierPressable style={styles.retry} accessibilityRole="button" accessibilityLabel={t('session.collaboration.discussion.loadOlder')} onPress={() => void repository.loadOlderMessages(props.target.discussionId)}><Text style={styles.retryText}>{t('session.collaboration.discussion.loadOlder')}</Text></HappierPressable> : null}
+                        {managedRuns.phase === 'failed' ? <View style={threadColumn}><SurfaceStateCard
+                            testID="session-discussion-workflow-runs-state" size="line" kind="unavailable"
+                            title={t('workflows.destination.history.loadFailedTitle')}
+                            reason={t('workflows.destination.history.loadFailedBody')}
+                            action={{ label: t('session.collaboration.discussion.retry'), onPress: managedRuns.retry }}
+                        /></View> : null}</> : null}
                     // While the messages are still on their way the header and composer stay and the thread shows
                     // its loading rows (lab T2-ST "Loading"), never an empty claim it hasn't checked.
-                    footer={<>{waitingApprovalCard}{items.length === 0 ? thread.status === 'loading' || managedRuns.pending
+                    footer={<>{waitingApprovalCard}{items.length === 0 ? thread.status === 'loading'
                         ? <View testID="session-discussion-loading" style={[styles.loadingRows, threadColumn]}><SkeletonRows rows={4} /></View>
                         : <SurfaceStateCard testID="session-discussion-empty" kind="empty" title={t('session.collaboration.discussion.emptyActive')} /> : null}
                         {/* The composer floats over the thread on a phone; the last message scrolls clear of it. */}

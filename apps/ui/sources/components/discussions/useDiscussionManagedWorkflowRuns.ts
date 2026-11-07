@@ -1,7 +1,6 @@
 import type { DiscussionAddressV1 } from '@happier-dev/protocol/discussions';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import type { WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import * as React from 'react';
 import { useContextManagedWorkflowRuns } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -9,6 +8,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { getStorage, useWorkflowRunRows } from '@/sync/domains/state/storage';
 import { discussionWorkflowRunWindowId } from '@/sync/store/domains/workflowRuns';
 import { resolveDiscussionWorkflowAttribution } from './discussionTimelineProjection';
+import { readDiscussionWorkflowQuestionRunId } from './discussionWorkflowQuestionReference';
 
 const NO_RUN_IDS: readonly string[] = Object.freeze([]);
 
@@ -35,10 +35,8 @@ export function useDiscussionManagedWorkflowRuns(params: Readonly<{
                 && messageIds.has(origin.messageId)) ids.add(row.id);
         }
         for (const message of params.messages ?? []) {
-            // Composer questions persist their Run id as the post's local id. Ordinary
-            // post ids are only lookup hints; the timeline validates the returned origin.
-            const candidate = WorkflowRunIdV1Schema.safeParse(message.localId);
-            if (candidate.success) ids.add(candidate.data);
+            const questionRunId = readDiscussionWorkflowQuestionRunId(message.localId);
+            if (questionRunId) ids.add(questionRunId);
             const attribution = resolveDiscussionWorkflowAttribution(message);
             if (attribution) ids.add(attribution.runId);
         }
@@ -50,7 +48,7 @@ export function useDiscussionManagedWorkflowRuns(params: Readonly<{
         runIds,
         enabled: params.enabled !== false && areServerProfileIdentifiersEquivalent(params.accountLifetime.scope.serverId, params.discussion.serverId) });
     const onStarted = useDiscussionWorkflowRunStarted(params);
-    return { ...state, onStarted, pending: runIds.length > 0 && (state.phase === 'loading' || state.phase === 'failed') };
+    return { ...state, onStarted };
 }
 
 /** The thread and its mounted Start share one acknowledged-Run projection owner. */

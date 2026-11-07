@@ -666,15 +666,12 @@ export function buildDiscussionTimelineItems<
     readExecutionRunEntry: (runId: string) => AgentActivityEntry | null;
     /** The authorized managed Run list for this Discussion; a Run whose starting message isn't loaded waits for it. */
     workflowRuns?: readonly WorkflowRunSummaryV1[];
-    /** Commit known Run bands with their anchoring messages, retaining the shown page during acquisition. */
-    workflowRunsPending?: boolean;
     /** Each Run's committed replies published here (`projectWorkflowRunPublishedAnswerIds`); a finished Run ends after its last. */
     workflowRunAnswerIds?: ReadonlyMap<string, readonly string[]>;
     messageLabels?: ReadonlyMap<string, DiscussionMessageLabelProjection>;
   }>,
   previous: readonly DiscussionTimelineItem<TMessage>[] = [],
 ): readonly DiscussionTimelineItem<TMessage>[] {
-  if (params.workflowRunsPending) return previous;
   const previousMessages = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'human_message' }>>();
   const previousRuns = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run' }>>();
   const previousRunEnds = new Map<string, Extract<DiscussionTimelineItem<TMessage>, { kind: 'workflow_run_end' }>>();
@@ -757,6 +754,9 @@ export function buildDiscussionTimelineItems<
     if (atMessage) atMessage.push(run);
     else workflowRunsByMessageId.set(origin.messageId, [run]);
   }
+  // The thread reads downward in time: Run again starts a newer Run under the same message, below the earlier one.
+  for (const runs of workflowRunsByMessageId.values())
+    runs.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 
   // A finished Run with replies here ends after the last of them that is loaded, in thread order.
   const runEndsAfterMessageId = new Map<string, WorkflowRunSummaryV1[]>();

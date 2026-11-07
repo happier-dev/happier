@@ -22,8 +22,10 @@ import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protoco
 import { DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
+import { createWorkflowDefinitionFixture, createWorkflowRunListStorageFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 const counters = vi.hoisted(() => new Map<string, ReturnType<typeof createRenderCommitCounter>>());
+const transcriptList = vi.hoisted(() => ({ state: null as null | Readonly<{ props: unknown }> }));
 vi.mock('react-native', async () => {
     const React = await import('react');
     const { createRenderCommitCounter, useRenderCommitCounter } = await import('@/dev/testkit/performance/counts');
@@ -50,8 +52,10 @@ vi.mock('@legendapp/list/react-native', async importOriginal => {
     // The host renderer has no measured viewport. Use the canonical native-list
     // presentation boundary (eight visible rows), retaining the real screen,
     // Markdown and data owners. No Discussion logic or row is mocked.
-    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(),
-        renderItemLimit: 8, memoizeItems: true }).module;
+    const mock = createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(),
+        renderItemLimit: 8, memoizeItems: true });
+    transcriptList.state = mock.state;
+    return mock.module;
 });
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: (text: string) => [{ text, reveal: false }],
@@ -79,6 +83,7 @@ const { flushSessionDraftLocally } = await import('@/sync/ops/sessionDrafts/sess
 const { DiscussionComposer } = await import('./DiscussionComposer');
 const { DiscussionRouteScreen } = await import('./DiscussionRouteScreen');
 const { DiscussionPhoneSurfaceHost } = await import('./DiscussionRightSidebar');
+const { PresentedDetailNavigationProvider, usePresentedDetailNavigationChrome } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
 const { TranscriptListShell } = await import('@/components/sessions/transcript/viewport/shell/TranscriptListShell');
 const { Modal } = await import('@/modal');
 function discussionSuggestions(screen: Awaited<ReturnType<typeof renderScreen>>) {
@@ -97,7 +102,7 @@ afterEach(async () => {
     vi.useRealTimers();
 });
 
-async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void) {
+async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void, options?: Readonly<{ losePost?: boolean }>) {
     const serverUrl = 'https://discussion-cost.test';
     const serverIdentityId = 'srv_discussion_cost';
     const localServerId = await homes.addHome({ name: 'Discussion costs', serverUrl, serverIdentityId, accountId: 'alice', currentAccount: true });
@@ -120,11 +125,18 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void)
     homes.answer(serverId, '/v2/session-organization', { body: SessionOrganizationSnapshotResponseSchema.parse({ snapshot: {
         schemaVersion: 1, version: 0, pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
     } }) });
-    const fixture = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false });
+    const fixture = answerDiscussionThreadForTests(homes, serverId, { loseCreate: false, loseFirstRejoin: false, losePost: options?.losePost });
     let roster = DiscussionParticipantsListResponseV1Schema.parse({
         discussionId: 'committed-thread', ownerAccountId: 'alice', access: 'owner', participants: [],
         grants: Array.from({ length: 4 }, (_, index) => ({ principal: { kind: 'account', accountId: `person-${index}` },
             accessLevel: 'edit', createdByAccountId: 'alice', createdAt: 1, display: { name: `Person ${index}`, username: null } })),
+        accountActors: ['alice', ...Array.from({ length: 4 }, (_, index) => `person-${index}`)].map(accountId => ({
+            v: 1 as const, accountId, accessibility: 'current' as const, profile: {
+                name: accountId === 'alice' ? 'Alice' : `Person ${accountId.at(-1)}`,
+                firstName: accountId === 'alice' ? 'Alice' : `Person ${accountId.at(-1)}`,
+                lastName: null, username: accountId, avatarUrl: null,
+            },
+        })),
     });
     homes.answer(serverId, '/v1/discussions/committed-thread/participants', { select: () => ({ body: roster }) });
     for (const id of ['alice', ...Array.from({ length: 4 }, (_, index) => `person-${index}`)]) {
@@ -141,7 +153,7 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void)
     if (created.kind !== 'succeeded') throw new Error(JSON.stringify(created));
     const root = fixture.messages[0]!;
     let archived = false;
-    const participantAccounts = ['alice', ...Array.from({ length: 4 }, (_, index) => `person-${index}`)]
+    let participantAccounts = ['alice', ...Array.from({ length: 4 }, (_, index) => `person-${index}`)]
         .map(accountId => SessionMessageAccountActorV1Schema.parse({ v: 1, accountId, profile: {
             name: accountId === 'alice' ? 'Alice' : `Person ${accountId.at(-1)}`,
             firstName: accountId === 'alice' ? 'Alice' : `Person ${accountId.at(-1)}`,
@@ -158,6 +170,22 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void)
             { t: 'mention', participant: { kind: 'account', accountId: 'person-0' } },
         ] } }, mentionedAccountIds: ['person-0'], createdAt: seq });
     fixture.messages.push(...Array.from({ length: 299 }, (_, index) => newMessage(index + 2)));
+    // Protected Workflow replies require their exact Run summaries before the
+    // timeline can commit its bands. Answer the storage boundary with real
+    // accepted-snapshot/key producers, retaining the real Action and reader.
+    const workflowRows = await createWorkflowRunListStorageFixture({
+        definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Review the answer', references: [], attachments: [] }, result: { kind: 'text' } }] }),
+        runs: [1, 2, 3].map(index => createWorkflowRunSummaryFixture({
+            id: `run-${index}`, ownerAccountId: 'alice', state: 'succeeded', workflowCustodyState: 'settled',
+            origin: { kind: 'direct', discussion: { discussion: { serverId, discussionId: 'committed-thread' },
+                messageId: root.id, throughSeq: 1 } },
+        })),
+    });
+    homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { select: body => {
+        expect(body).toMatchObject({ operation: 'list' });
+        return { body: workflowRows };
+    } });
     // The current server's summary query already projects the admitted roster's
     // complete profiles, independently of the paged authored messages.
     homes.answer(serverId, 'GET /v1/discussions/committed-thread', { select: () => {
@@ -176,10 +204,57 @@ async function prepareLongDiscussion(configureSocket?: (socket: Socket) => void)
     } });
     const binding = await renderHook(() => useServerCredentialAccountScopeBindings([serverId]));
     const repository = getDiscussionRepository({ scope, address: { serverId }, client, accountLifetime: binding.getCurrent().get(serverId)! });
-    return { serverId, serverUrl, fixture, newMessage, repository, accountLifetime: binding.getCurrent().get(serverId)!,
+    return { serverId, serverUrl, fixture, newMessage, repository, workflowRows, accountLifetime: binding.getCurrent().get(serverId)!,
         roster, setRoster: (value: typeof roster) => { roster = value; },
+        setParticipantAccounts: (value: typeof participantAccounts) => { participantAccounts = value; },
         setArchived: (value: boolean) => { archived = value; } };
 }
+
+it.each(['pending', 'failed'] as const)('shows readable cold-thread messages when the optional Run read is %s', async phase => {
+    const { serverId, workflowRows } = await prepareLongDiscussion();
+    const requested = createDeferred<void>();
+    const release = createDeferred<void>();
+    homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { select: async () => {
+        requested.resolve();
+        if (phase === 'pending') await release.promise;
+        return { status: 503, body: { error: 'unavailable' } };
+    } });
+    const screen = await renderScreen(<AppPaneProvider><DiscussionDetailsView
+        target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active /></AppPaneProvider>);
+    try {
+        await requested.promise;
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Root'));
+        expect(screen.findByTestId('session-discussion-thread-state')).toBeNull();
+        if (phase === 'failed') {
+            await vi.waitFor(() => expect(screen.findByTestId('session-discussion-workflow-runs-state')).not.toBeNull());
+            const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+            const card = screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'session-discussion-workflow-runs-state');
+            expect(card?.props.kind).toBe('unavailable');
+            homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { body: workflowRows });
+            await act(async () => card?.props.action.onPress());
+            await vi.waitFor(() => expect(screen.findByTestId('session-discussion-workflow-runs-state')).toBeNull());
+            expect(screen.getTextContent()).toContain('Root');
+            expect(screen.findByTestId('discussion-workflow-run:run-1')).not.toBeNull();
+        }
+    } finally {
+        release.resolve();
+        await screen.unmount();
+    }
+});
+
+it('does not read Runs for ordinary post UUID local ids', async () => {
+    const { serverId, fixture, accountLifetime } = await prepareLongDiscussion();
+    const root = { ...fixture.messages[0]!, localId: 'bd8bdc54-b179-4ac7-a28a-5dfcdf390a53', producerV1: null };
+    const before = homes.requestsFor('/v3/automations/runs/workflow-storage').length;
+    const { useDiscussionManagedWorkflowRuns } = await import('./useDiscussionManagedWorkflowRuns');
+    const hook = await renderHook(() => useDiscussionManagedWorkflowRuns({
+        discussion: { serverId, discussionId: 'committed-thread' }, accountLifetime, messages: [root],
+    }));
+    await flushHookEffects({ cycles: 10 });
+    expect(hook.getCurrent()).toMatchObject({ phase: 'idle', runs: [] });
+    expect(homes.requestsFor('/v3/automations/runs/workflow-storage')).toHaveLength(before);
+    await hook.unmount();
+});
 
 it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post from %s before historical approval paging settles', async arrival => {
     const sockets: Socket[] = [];
@@ -214,11 +289,10 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
     const releaseInventory = createDeferred<void>();
     const bodyReads: string[][] = [];
     let changed = false;
-    // A full first page makes the canonical transport continue into old receipts. A current
-    // private draft must not wait for that trailing history to be read or declared complete.
-    const oldRequest = ApprovalRequestV2Schema.parse({ ...approval, status: 'rejected', updatedAtMs: 2,
-        executionOriginV1: { ...approval.executionOriginV1, sessionId: 'unrelated-history' },
-        decision: { kind: 'reject', decidedAtMs: 2 } });
+    // The Inbox reads open requests. Fill that actual selected inventory so the
+    // current private draft cannot wait for its trailing pages to complete.
+    const oldRequest = ApprovalRequestV2Schema.parse({ ...approval, updatedAtMs: 2,
+        executionOriginV1: { ...approval.executionOriginV1, sessionId: 'unrelated-history' } });
     const oldArtifact = createPlainArtifactHttpFixture({ id: '11111111-1111-4111-8111-111111112918',
         header: buildApprovalRequestArtifactHeaderV1(oldRequest), title: oldRequest.summary,
         body: JSON.stringify(oldRequest), isDecrypted: true, headerVersion: 1, bodyVersion: 1,
@@ -274,6 +348,14 @@ it.each(['inventory-page', 'catch-up'] as const)('mounts a cold private Post fro
         await vi.waitFor(() => expect(storage.getState().artifacts[artifactId]?.body).toBe(JSON.stringify(approval)));
         await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-waiting-approval-approve')).not.toBeNull());
         expect(screen.findHostByTestId('session-discussion-waiting-approval-decline')).not.toBeNull();
+        // A rich approval must scroll with the conversation. In the composer band
+        // it can consume the entire host and give the real list a zero-height viewport.
+        const approvalOwners: string[] = [];
+        for (let node = screen.findHostByTestId('session-discussion-waiting-approval-approve')?.parent; node; node = node.parent) {
+            if (typeof node.props.testID === 'string') approvalOwners.push(node.props.testID);
+        }
+        expect(approvalOwners).toContain('agent-content-layer');
+        expect(approvalOwners).not.toContain('agent-content-input-footer');
         // The private draft reads as the answer it is, not as the Action's operands.
         expect(JSON.stringify(screen.findHostByTestId('session-discussion-waiting-approval-draft')?.props.children)).toContain('A private answer');
         // Who is waiting leads the card once the draft's Session is known; until then the generic line stands.
@@ -304,6 +386,12 @@ it('keeps phone-covered and unfocused messages unread while the active Discussio
     const screen = await renderScreen(frame('chat'));
     await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(300));
     const observe = async (seq: number) => {
+        // Message acquisition precedes the exact Run reads and their composed
+        // timeline commit. Observe the rendered viewport, not the storage edge.
+        await vi.waitFor(() => expect(screen.root.findByType(TranscriptListShell).props.data.some(row =>
+            row !== null && typeof row === 'object' && 'kind' in row && row.kind === 'human_message'
+            && 'message' in row && row.message !== null && typeof row.message === 'object'
+            && 'seq' in row.message && row.message.seq === seq)).toBe(true));
         const props = screen.root.findByType(TranscriptListShell).props;
         const index = props.data.findIndex(row => row !== null && typeof row === 'object' && 'kind' in row
             && row.kind === 'human_message' && 'message' in row && row.message !== null && typeof row.message === 'object'
@@ -429,7 +517,7 @@ it('keeps unaffected mounted message rows quiet when one message arrives in a 30
     const screen = await renderScreen(frame);
     await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(300));
     await flushHookEffects();
-    expect(counters.size).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(counters.size).toBeGreaterThan(0));
     const routesSince = (start: number) => homes.requests.slice(start).reduce<Record<string, number>>((counts, request) => {
         const route = new URL(request.path, serverUrl).pathname;
         counts[route] = (counts[route] ?? 0) + 1;
@@ -465,6 +553,124 @@ it('keeps unaffected mounted message rows quiet when one message arrives in a 30
     expect(counts).toEqual({ renders: 0, commits: 0 });
 });
 
+it('warm-mounts retained former rows from the current roster actor and exposes that author to the composer', async () => {
+    const { serverId, fixture, newMessage, repository, roster, setRoster, setParticipantAccounts } = await prepareLongDiscussion();
+    const bobActor = SessionMessageAccountActorV1Schema.parse({
+        v: 1,
+        accountId: 'bob',
+        accessibility: 'current',
+        profile: { name: 'QA N3 Bob', firstName: null, lastName: null, username: 'qa-n3b', avatarUrl: null },
+    });
+    const root = fixture.messages[0]!;
+    const unrelated = {
+        ...newMessage(2),
+        id: 'unrelated-message',
+        localId: 'unrelated-local',
+        authorAccountId: 'carol',
+        accountActor: SessionMessageAccountActorV1Schema.parse({
+            v: 1,
+            accountId: 'carol',
+            accessibility: 'current',
+            profile: { name: 'Carol', firstName: null, lastName: null, username: 'carol', avatarUrl: null },
+        }),
+        producerV1: null,
+    };
+    const historicalFormerBob = SessionMessageAccountActorV1Schema.parse({ ...bobActor, accessibility: 'former' });
+    const bobStart = {
+        ...newMessage(3),
+        id: 'bob-group-start',
+        localId: 'bob-group-start-local',
+        authorAccountId: 'bob',
+        accountActor: historicalFormerBob,
+        producerV1: null,
+    };
+    const bobOlder = {
+        ...newMessage(4),
+        id: 'bob-group-older',
+        localId: 'bob-group-older-local',
+        authorAccountId: 'bob',
+        accountActor: historicalFormerBob,
+        producerV1: null,
+    };
+    const carolLatest = {
+        ...newMessage(5),
+        id: 'carol-latest',
+        localId: 'carol-latest-local',
+        authorAccountId: 'carol',
+        accountActor: unrelated.accountActor,
+        producerV1: null,
+    };
+    fixture.messages.splice(0, fixture.messages.length, root, unrelated, bobStart, bobOlder, carolLatest);
+    setParticipantAccounts([historicalFormerBob]);
+    setRoster({ ...roster, accountActors: [...(roster.accountActors ?? []), bobActor] });
+    await repository.refreshDiscussion('committed-thread');
+    expect(repository.getSnapshot().threads['committed-thread']?.messages.slice(2, 4)
+        .map(message => message.accountActor?.accessibility)).toEqual(['former', 'former']);
+
+    const screen = await renderScreen(<AppPaneProvider><SurfaceStateSizeProvider size="pane">
+        <DiscussionDetailsView target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active />
+    </SurfaceStateSizeProvider></AppPaneProvider>);
+    await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(5));
+    await vi.waitFor(() => expect(screen.findHostByTestId('session-discussion-message-actor-bob-group-start')?.props.children)
+        .toBe('QA N3 Bob'));
+    expect(screen.findHostByTestId('session-discussion-reply-bob-group-older')?.props.accessibilityLabel).toContain('QA N3 Bob');
+    expect(screen.findHostByTestId('session-discussion-message-actor-carol-latest')?.props.children).toBe('Carol');
+    expect((await discussionSuggestions(screen)('@', new AbortController().signal))
+        .find(row => row.key === 'bob')).toMatchObject({ label: 'QA N3 Bob' });
+    await flushHookEffects();
+
+    const unrelatedCounters = [
+        counters.get(`session-discussion-message-group-start-${root.id}`),
+        counters.get('session-discussion-message-group-start-unrelated-message'),
+        counters.get('session-discussion-message-group-start-carol-latest'),
+    ];
+    const bobCounters = [
+        counters.get('session-discussion-message-group-start-bob-group-start'),
+        counters.get('session-discussion-message-group-continuation-bob-group-older'),
+    ];
+    expect([...unrelatedCounters, ...bobCounters].every(Boolean)).toBe(true);
+    for (const counter of [...unrelatedCounters, ...bobCounters]) counter?.reset();
+
+    setRoster({ ...roster, accountActors: [...(roster.accountActors ?? []), historicalFormerBob] });
+    await act(async () => { publishMountedDiscussionChanges({ serverId, accountId: 'alice', changes: [
+        { kind: 'discussion', entityId: 'committed-thread', cursor: 1, changedAt: 2, hint: null },
+    ] }); });
+    await flushHookEffects();
+
+    expect(repository.getSnapshot().threads['committed-thread']?.messages[2]?.accountActor?.accessibility).toBe('former');
+    expect(repository.getSnapshot().threads['committed-thread']?.messages[3]?.accountActor?.accessibility).toBe('former');
+    expect(repository.getSnapshot().threads['committed-thread']?.messages[4]?.authorAccountId).toBe('carol');
+    expect(screen.findHostByTestId('session-discussion-message-actor-bob-group-start')?.props.children).toBe('Former member');
+    expect(screen.findHostByTestId('session-discussion-reply-bob-group-older')?.props.accessibilityLabel).toContain('Former member');
+    expect(screen.findHostByTestId('session-discussion-message-actor-carol-latest')?.props.children).toBe('Carol');
+    expect((await discussionSuggestions(screen)('@', new AbortController().signal))
+        .find(row => row.key === 'bob')).toMatchObject({ label: 'Former member' });
+    expect(bobCounters.map(counter => counter?.read().renders ?? 0).every(renders => renders > 0)).toBe(true);
+    expect(unrelatedCounters.map(counter => counter?.read())).toEqual([
+        { renders: 0, commits: 0 },
+        { renders: 0, commits: 0 },
+        { renders: 0, commits: 0 },
+    ]);
+
+    for (const counter of [...unrelatedCounters, ...bobCounters]) counter?.reset();
+    setRoster({ ...roster, accountActors: [...(roster.accountActors ?? []), bobActor] });
+    await act(async () => { publishMountedDiscussionChanges({ serverId, accountId: 'alice', changes: [
+        { kind: 'discussion', entityId: 'committed-thread', cursor: 2, changedAt: 3, hint: null },
+    ] }); });
+    await flushHookEffects();
+    expect(screen.findHostByTestId('session-discussion-message-actor-bob-group-start')?.props.children).toBe('QA N3 Bob');
+    expect(screen.findHostByTestId('session-discussion-reply-bob-group-older')?.props.accessibilityLabel).toContain('QA N3 Bob');
+    expect(screen.findHostByTestId('session-discussion-message-actor-carol-latest')?.props.children).toBe('Carol');
+    expect((await discussionSuggestions(screen)('@', new AbortController().signal))
+        .find(row => row.key === 'bob')).toMatchObject({ label: 'QA N3 Bob' });
+    expect(bobCounters.map(counter => counter?.read().renders ?? 0).every(renders => renders > 0)).toBe(true);
+    expect(unrelatedCounters.map(counter => counter?.read())).toEqual([
+        { renders: 0, commits: 0 },
+        { renders: 0, commits: 0 },
+        { renders: 0, commits: 0 },
+    ]);
+});
+
 it('catches up replies when a retained Discussion is reopened without a reload', async () => {
     const { serverId, serverUrl, fixture, newMessage, repository } = await prepareLongDiscussion();
     const frame = (active: boolean) => <AppPaneProvider><SurfaceStateSizeProvider size="pane">
@@ -495,10 +701,9 @@ it('catches up replies when a retained Discussion is reopened without a reload',
     await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages.at(-1)?.seq).toBe(301));
     expect(homes.requests.slice(start).some(request => new URL(request.path, serverUrl).pathname
         === '/v1/discussions/committed-thread/messages')).toBe(true);
-    const list = screen.root.findByType(TranscriptListShell).props;
-    expect(list.data.some(row => row !== null && typeof row === 'object' && 'kind' in row
+    await vi.waitFor(() => expect(screen.root.findByType(TranscriptListShell).props.data.some(row => row !== null && typeof row === 'object' && 'kind' in row
         && row.kind === 'human_message' && 'message' in row && row.message !== null
-        && typeof row.message === 'object' && 'id' in row.message && row.message.id === 'message-301')).toBe(true);
+        && typeof row.message === 'object' && 'id' in row.message && row.message.id === 'message-301')).toBe(true));
 });
 
 it('keeps the workspace census demanded by real Workflow editors', async () => {
@@ -526,7 +731,9 @@ it('shares the mounted roster across queries, refreshes one invalidation, and st
     }
     const queryReads = homes.requestsFor(path).length - start;
     setRoster({ ...roster, grants: [...roster.grants, { principal: { kind: 'account', accountId: 'new-person' },
-        accessLevel: 'edit', createdByAccountId: 'alice', createdAt: 2, display: { name: 'New person', username: null } }] });
+        accessLevel: 'edit', createdByAccountId: 'alice', createdAt: 2, display: { name: 'New person', username: null } }],
+        accountActors: [...(roster.accountActors ?? []), { v: 1, accountId: 'new-person', accessibility: 'current',
+            profile: { name: 'New person', firstName: 'New', lastName: 'person', username: 'new-person', avatarUrl: null } }] });
     const membershipStart = homes.requestsFor(path).length;
     await act(async () => { publishMountedDiscussionChanges({ serverId, accountId: 'alice', changes: [
         { kind: 'discussion', entityId: 'committed-thread', cursor: 1, changedAt: 2, hint: null },
@@ -553,6 +760,24 @@ it('shares the mounted roster across queries, refreshes one invalidation, and st
     console.info('Discussion roster cost', { queries: 4, queryReads, membershipReads, deniedSends });
     expect(await retainedSuggestions('@person', new AbortController().signal)).toEqual([]);
     expect({ queryReads, membershipReads, hasNewMember }).toEqual({ queryReads: 0, membershipReads: 1, hasNewMember: true });
+});
+
+it('keeps the transcript and its page out of a redraw while the person types a message', async () => {
+    const { serverId } = await prepareLongDiscussion();
+    const screen = await renderScreen(<AppPaneProvider><SurfaceStateSizeProvider size="pane">
+        <DiscussionDetailsView target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active />
+    </SurfaceStateSizeProvider></AppPaneProvider>);
+    await vi.waitFor(() => expect(counters.size).toBeGreaterThan(0));
+    await flushHookEffects();
+    const input = (): React.ComponentProps<typeof AgentInput> => screen.root.findByType(AgentInput).props;
+    const listProps = transcriptList.state?.props;
+    expect(listProps).toBeTruthy();
+    for (const text of ['D', 'Dr', 'Dra', 'Draft']) await act(async () => { input().onChangeText?.(text); });
+    await flushHookEffects();
+    expect(input().value).toBe('Draft');
+    // Each keystroke belongs to the composer; the transcript list receives no new props.
+    expect(transcriptList.state?.props).toBe(listProps);
+    await screen.unmount();
 });
 
 it('retries an unavailable roster through the mounted acquisition owner, not through another query', async () => {
@@ -606,4 +831,338 @@ it('advances a visible message age without rerendering its message body', async 
         await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
         expect(clockFires).toHaveBeenCalledTimes(1);
     } finally { unsubscribe(); }
+});
+
+it.each([false, true])('lets the mounted Workflow Start commit and rejoin its ordinary question before returning the Discussion origin (lost response=%s)', async losePost => {
+    const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
+    const { discussionWorkflowRunWindowId } = await import('@/sync/store/domains/workflowRuns');
+    const { serverId, repository, fixture, accountLifetime } = await prepareLongDiscussion(undefined, { losePost });
+    const discussion = { serverId, discussionId: 'committed-thread' };
+    const address = { kind: 'discussion' as const, discussionId: discussion.discussionId };
+    writeDiscussionSessionDraft({ scope: accountLifetime.scope, address, patch: { text: 'Retained question' } });
+    const tab = { ...createWorkflowStartDetailsTab({ kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, 'Panel',
+        { kind: 'discussion', discussion }), isPinned: true, isPreview: false };
+    const paneRef: { current: ReturnType<typeof useAppPaneScope> | null } = { current: null };
+    function ObservePane() {
+        paneRef.current = useAppPaneScope('discussion');
+        return null;
+    }
+    const screen = await renderScreen(<AppPaneProvider><DiscussionPaneHost main={<ObservePane />} /></AppPaneProvider>);
+    await act(async () => paneRef.current!.openDetailsTab(tab, { intent: 'pinned', start: true }));
+    await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStartDetailsBody)).toHaveLength(1));
+    const body: React.ComponentProps<typeof WorkflowStartDetailsBody> = screen.root.findByType(WorkflowStartDetailsBody).props;
+    expect(body.retainedDraft).toBe('Retained question');
+    // The thread remains editable while Start reviews its retained question.
+    await act(async () => { writeDiscussionSessionDraft({ scope: accountLifetime.scope, address, patch: { text: 'Next unsent question' } }); });
+    expect(fixture.messages.filter(message => message.localId === 'workflow-run:workflow-question')).toHaveLength(0);
+    const before = homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST').length;
+    let origin: Awaited<ReturnType<NonNullable<typeof body.prepareOrigin>>> | undefined;
+    await act(async () => {
+        origin = await body.prepareOrigin!({ runId: 'workflow-question', inputs: undefined,
+            retainedDraft: 'Retained question', submittedDraft: 'Reviewed workflow question' });
+    });
+    const committed = fixture.messages.find(message => message.localId === 'workflow-run:workflow-question');
+    expect(committed).toMatchObject({ content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Reviewed workflow question' }] } } });
+    expect(origin).toEqual({ kind: 'discussion', discussion, addressingMessageId: committed!.id });
+    expect(fixture.messages.filter(message => message.localId === 'workflow-run:workflow-question')).toHaveLength(1);
+    expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST')).toHaveLength(before + 1);
+    expect(repository.getSnapshot().mutations['workflow-run:workflow-question']?.draftSubmission).toMatchObject({ scope: accountLifetime.scope, address });
+    const { useDiscussionDraft } = await import('./useDiscussionDraft');
+    const draft = await renderHook(() => useDiscussionDraft({ scope: accountLifetime.scope, address }));
+    await act(async () => { await draft.getCurrent().clearAfterObservedSuccess(repository.getSnapshot().mutations['workflow-run:workflow-question']!.draftSubmission!); });
+    expect(draft.getCurrent().text).toBe('Next unsent question');
+    expect(draft.getCurrent().submitted).toBeNull();
+    await draft.unmount();
+    const run = createWorkflowRunSummaryFixture({ id: 'workflow-question', ownerAccountId: 'alice', origin: {
+        kind: 'direct', discussion: { discussion, messageId: committed!.id, throughSeq: committed!.seq },
+    } });
+    await act(async () => body.onStarted({ admission: 'created', run }, serverId));
+    expect(paneRef.current!.scopeState?.details.tabs).toEqual([expect.objectContaining({
+        resource: { kind: 'workflowRunPeek', serverId, runId: run.id } })]);
+    const windowId = discussionWorkflowRunWindowId(accountLifetime.scope, discussion.discussionId);
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    expect(getStorage().getState().workflowRunListWindows[windowId]?.runIds).toContain(run.id);
+    await screen.unmount();
+    // The committed composer question and acknowledged Run outlive this process's
+    // projection. Reopen without any retained id and before its first reply.
+    expect(committed!.producerV1).toBeNull();
+    getStorage().setState({ workflowRunsById: {}, workflowRunListWindows: {}, workflowRunInvocationsByRunId: {} });
+    const coldRows = await createWorkflowRunListStorageFixture({ definition: createWorkflowDefinitionFixture({ blocks: [{
+        kind: 'wait', id: 'answer', document: { text: 'Answer', references: [], attachments: [] }, result: { kind: 'text' },
+    }] }), runs: [run] });
+    homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { select: body => {
+        expect(body).toMatchObject({ operation: 'list' });
+        return { body: coldRows };
+    } });
+    const { useDiscussionManagedWorkflowRuns } = await import('./useDiscussionManagedWorkflowRuns');
+    const reloaded = await renderHook(() => useDiscussionManagedWorkflowRuns({ discussion, accountLifetime,
+        messages: [committed!] }));
+    await flushHookEffects({ cycles: 40 });
+    expect(reloaded.getCurrent().runs.map(value => value.id)).toEqual([run.id]);
+    await reloaded.unmount();
+});
+
+it.each([
+    { text: '', refusal: null, code: 'discussion_invalid_content' },
+    { text: 'A question', refusal: 'discussion_invalid_mention', code: 'discussion_invalid_mention' },
+])('preserves the Discussion cause before Workflow admission ($code)', async ({ text, refusal, code }) => {
+    const { DiscussionWorkflowStartDetails } = await import('./DiscussionWorkflowStartDetails');
+    const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
+    const { WorkflowActionError } = await import('@/sync/domains/workflows/workflowActionError');
+    const { resolveWorkflowProblemPresentation } = await import('@/components/workflows/presentation/workflowProblemPresentation');
+    const { discussionFailureLabel } = await import('./discussionFailureLabel');
+    const { serverId } = await prepareLongDiscussion();
+    if (refusal) homes.answer(serverId, 'POST /v1/discussions/committed-thread/messages', {
+        select: () => ({ status: 400, body: { error: refusal } }),
+    });
+    const tab = { ...createWorkflowStartDetailsTab({ kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, 'Panel',
+        { kind: 'discussion', discussion: { serverId, discussionId: 'committed-thread' } }), isPinned: true, isPreview: false };
+    const scope = { kind: 'global' as const };
+    const screen = await renderScreen(<DiscussionWorkflowStartDetails input={{ tab, active: true, scope, region: 'details', callbacks: {},
+        descriptor: { surfaceId: 'discussion-workflow-start', resourceKey: tab.key, scope, region: 'details', status: 'available' } }} />);
+    await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStartDetailsBody)).toHaveLength(1));
+    const body: React.ComponentProps<typeof WorkflowStartDetailsBody> = screen.root.findByType(WorkflowStartDetailsBody).props;
+    let failure: unknown;
+    await act(async () => {
+        try { await body.prepareOrigin!({ runId: 'workflow-refused-question', inputs: undefined, retainedDraft: text, submittedDraft: text }); }
+        catch (error) { failure = error; }
+    });
+    expect(failure).toBeInstanceOf(WorkflowActionError);
+    expect(failure).toMatchObject({ rawCode: code });
+    expect(resolveWorkflowProblemPresentation(failure)).toMatchObject({ message: discussionFailureLabel(code), repair: 'none' });
+    if (text === '') expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST')).toHaveLength(0);
+    await screen.unmount();
+});
+
+it('keeps the current Discussion post attempt in custody while Workflow Start is open', async () => {
+    const { DiscussionWorkflowStartDetails } = await import('./DiscussionWorkflowStartDetails');
+    const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
+    const { useDiscussionDraft } = await import('./useDiscussionDraft');
+    const { serverId, repository, fixture, accountLifetime } = await prepareLongDiscussion();
+    const discussion = { serverId, discussionId: 'committed-thread' };
+    const address = { kind: 'discussion' as const, discussionId: discussion.discussionId };
+    const tab = { ...createWorkflowStartDetailsTab({ kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, 'Panel',
+        { kind: 'discussion', discussion }), isPinned: true, isPreview: false };
+    const scope = { kind: 'global' as const };
+    const screen = await renderScreen(<DiscussionWorkflowStartDetails input={{ tab, active: true, scope, region: 'details', callbacks: {},
+        descriptor: { surfaceId: 'discussion-workflow-start', resourceKey: tab.key, scope, region: 'details', status: 'available' } }} />);
+    await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStartDetailsBody)).toHaveLength(1));
+    const draft = await renderHook(() => useDiscussionDraft({ scope: accountLifetime.scope, address }));
+    const requested = createDeferred<void>();
+    const release = createDeferred<void>();
+    const { DiscussionPostRequestV1Schema } = await import('@happier-dev/protocol/discussions/api');
+    homes.answer(serverId, 'POST /v1/discussions/committed-thread/messages', { select: async input => {
+        const request = DiscussionPostRequestV1Schema.parse(input);
+        if (request.localId === 'ordinary-post') { requested.resolve(); await release.promise; }
+        const message = { ...fixture.messages[0]!, id: `committed-${request.localId}`, localId: request.localId,
+            seq: fixture.messages.length + 1, content: request.content };
+        return { body: { message, messageSeq: message.seq } };
+    } });
+    let ordinaryPost: ReturnType<typeof repository.post>;
+    await act(async () => {
+        ordinaryPost = repository.post({ discussionId: discussion.discussionId, localId: 'ordinary-post',
+            content: { v: 1, parts: [{ t: 'text', text: 'Ordinary question' }] }, draftSubmission: draft.getCurrent().captureSubmittedCurrentness() });
+        await requested.promise;
+    });
+    const before = homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST').length;
+    const body: React.ComponentProps<typeof WorkflowStartDetailsBody> = screen.root.findByType(WorkflowStartDetailsBody).props;
+    try {
+        await act(async () => {
+            await expect(body.prepareOrigin!({ runId: 'competing-workflow', inputs: undefined, retainedDraft: '', submittedDraft: 'Workflow question' })).rejects.toThrow('discussion_post_unavailable');
+        });
+        expect(homes.requestsFor('/v1/discussions/committed-thread/messages').filter(request => request.method === 'POST')).toHaveLength(before);
+        expect(repository.getSnapshot().mutations['ordinary-post']).toBeDefined();
+        expect(repository.getSnapshot().mutations['workflow-run:competing-workflow']).toBeUndefined();
+    } finally { await act(async () => { release.resolve(); await ordinaryPost!; }); }
+    await draft.unmount();
+    await screen.unmount();
+});
+
+it('replaces a dismissable refused Discussion post with the reviewed Workflow question', async () => {
+    const { DiscussionWorkflowStartDetails } = await import('./DiscussionWorkflowStartDetails');
+    const { WorkflowStartDetailsBody, createWorkflowStartDetailsTab } = await import('@/components/workflows/run/WorkflowStartDetails');
+    const { useDiscussionDraft } = await import('./useDiscussionDraft');
+    const { DiscussionPostRequestV1Schema } = await import('@happier-dev/protocol/discussions/api');
+    const { serverId, repository, fixture, accountLifetime } = await prepareLongDiscussion();
+    const discussion = { serverId, discussionId: 'committed-thread' };
+    const address = { kind: 'discussion' as const, discussionId: discussion.discussionId };
+    writeDiscussionSessionDraft({ scope: accountLifetime.scope, address, patch: { text: 'Retained question' } });
+    const draft = await renderHook(() => useDiscussionDraft({ scope: accountLifetime.scope, address }));
+    homes.answer(serverId, 'POST /v1/discussions/committed-thread/messages', { select: input => {
+        const request = DiscussionPostRequestV1Schema.parse(input);
+        if (request.localId === 'refused-question') return { status: 400, body: { error: 'discussion_invalid_mention' } };
+        const message = { ...fixture.messages[0]!, id: `committed-${request.localId}`, localId: request.localId,
+            seq: fixture.messages.length + 1, content: request.content };
+        return { body: { message, messageSeq: message.seq } };
+    } });
+    const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Refused question' }] };
+    await act(async () => {
+        const draftSubmission = draft.getCurrent().captureSubmittedCurrentness({ kind: 'post', discussionId: discussion.discussionId,
+            localId: 'refused-question' }, { content });
+        await repository.post({ discussionId: discussion.discussionId, localId: 'refused-question', content, draftSubmission });
+    });
+    expect(repository.getSnapshot().mutations['refused-question']).toMatchObject({ status: 'failed', recovery: 'dismiss' });
+    const tab = { ...createWorkflowStartDetailsTab({ kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, 'Panel',
+        { kind: 'discussion', discussion }), isPinned: true, isPreview: false };
+    const scope = { kind: 'global' as const };
+    const screen = await renderScreen(<DiscussionWorkflowStartDetails input={{ tab, active: true, scope, region: 'details', callbacks: {},
+        descriptor: { surfaceId: 'discussion-workflow-start', resourceKey: tab.key, scope, region: 'details', status: 'available' } }} />);
+    await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowStartDetailsBody)).toHaveLength(1));
+    const body: React.ComponentProps<typeof WorkflowStartDetailsBody> = screen.root.findByType(WorkflowStartDetailsBody).props;
+    await act(async () => {
+        await body.prepareOrigin!({ runId: 'fresh-workflow-question', inputs: undefined, retainedDraft: 'Retained question', submittedDraft: 'Reviewed workflow question' });
+    });
+    expect(repository.getSnapshot().mutations['refused-question']).toBeUndefined();
+    expect(repository.getSnapshot().mutations['workflow-run:fresh-workflow-question']).toMatchObject({ status: 'observed_success' });
+    expect(draft.getCurrent().pendingMutationAttempt).toMatchObject({ localId: 'workflow-run:fresh-workflow-question' });
+    expect(draft.getCurrent().submitted?.content).toEqual({ v: 1, parts: [{ t: 'text', text: 'Reviewed workflow question' }] });
+    await draft.unmount();
+    await screen.unmount();
+});
+
+it('detail-navigation.T2 demands the real Discussion companion only while open and publishes no unrelated Discussion chrome commits', async () => {
+    const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
+    const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
+    const { serverId, accountLifetime, repository } = await prepareLongDiscussion();
+    const publication: { current: ReturnType<typeof usePresentedDetailNavigationChrome> } = { current: null };
+    let commits = 0;
+    function Chrome() {
+        publication.current = usePresentedDetailNavigationChrome();
+        React.useLayoutEffect(() => { commits += 1; });
+        return null;
+    }
+    const selected: string[] = [];
+    const main = <DiscussionDetailsView target={{ kind: 'discussion', address: { serverId }, discussionId: 'committed-thread' }} active standaloneSurface />;
+    function MountedDiscussion() {
+        const [surface, setSurface] = React.useState<import('@/components/workspaceCockpit/discussion/discussionCockpitState').DiscussionMobileSurface>('chat');
+        return <DiscussionPaneHost discussionId="committed-thread" scope={accountLifetime.scope} phoneSurface={surface}
+            onSurfaceChange={next => { selected.push(next); setSurface(next); }} main={main} />;
+    }
+    const screen = await renderScreen(<PresentedDetailNavigationProvider><AppPaneProvider>
+        <MountedDiscussion /><Chrome />
+    </AppPaneProvider></PresentedDetailNavigationProvider>);
+    await vi.waitFor(() => expect(publication.current?.identity).toBe('committed-thread'));
+    await vi.waitFor(() => expect(repository.getSnapshot().threads['committed-thread']?.messages).toHaveLength(300));
+    await flushHookEffects();
+    expect(publication.current!.items.map(item => item.id)).toEqual(['chat', 'discussionParticipants', 'discussionAgents', 'discussionDetails']);
+    expect(screen.findHostByTestId('discussion-participants-tab')).toBeNull();
+    expect(screen.findHostByTestId('discussion-agents-tab')).toBeNull();
+    const input = screen.root.findByType(AgentInput);
+    // Chat already demands the shared roster for recipients, mentions and header faces.
+    // Opening a companion must reuse that acquisition, never add a second participant reader.
+    const rosterReads = homes.requestsFor('/v1/discussions/committed-thread/participants').length;
+    const before = homes.requests.length;
+    const read = (column: 'main' | 'side') => ({ kind: 'shell.column' as const, column, read: () => publication.current!.readColumn(column) });
+    expect(publication.current!.readColumn('main').openNavigationCustomizer).toBeTypeOf('function');
+    expect(await invokeScopeAction('shell.column.get', { column: 'main' }, undefined, read('main')))
+        .toMatchObject({ tabs: ['chat'], activeTab: 'chat' });
+    await act(async () => { await invokeScopeAction('shell.column.set', { column: 'side', visible: true, tab: 'discussionParticipants' }, undefined, read('side')); });
+    expect(selected).toEqual(['participants']);
+    expect(screen.findHostByTestId('discussion-participants-tab')).not.toBeNull();
+    expect(screen.findHostByTestId('discussion-agents-tab')).toBeNull();
+    expect(screen.root.findByType(AgentInput)).toBe(input);
+    await act(async () => { await invokeScopeAction('shell.column.set', { column: 'main', visible: true, tab: 'chat' }, undefined, read('main')); });
+    expect(selected).toEqual(['participants', 'chat']);
+    expect(screen.findHostByTestId('discussion-participants-tab')).toBeNull();
+    expect(screen.root.findByType(AgentInput)).toBe(input);
+    expect(homes.requestsFor('/v1/discussions/committed-thread/participants')).toHaveLength(rosterReads);
+    const companionRequests = homes.requests.slice(before).map(request => request.path);
+    console.info('detail-navigation.T2 additional Home paths', companionRequests);
+    expect(companionRequests.filter(path => path.startsWith('/v1/discussions/'))).toEqual([]);
+    const settled = commits;
+    await act(async () => publishMountedDiscussionChanges({ serverId, accountId: accountLifetime.scope.accountId,
+        changes: [{ kind: 'discussion', entityId: 'another-discussion', cursor: 2, changedAt: 2, hint: null }] }));
+    expect(commits).toBe(settled);
+    console.info('detail-navigation.T2 Discussion', { selected, rosterReads, addedCompanionReads: companionRequests.filter(path => path.startsWith('/v1/discussions/')).length, additionalHomePaths: companionRequests,
+        unrelatedChromeCommits: commits - settled });
+    await screen.unmount();
+});
+
+it('edits Discussion desktop placement once without seeding or changing Project App or phone choices', async () => {
+    const { DiscussionPaneHost } = await import('./DiscussionRightSidebar');
+    const { DiscussionNavigationContext } = await import('@/components/workspaceCockpit/discussion/discussionNavigation');
+    const { useNavigationSurfacePlacementActionWriter } = await import('@/components/ui/navigation/useNavigationSurfacePlacement');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { accountLifetime } = await prepareLongDiscussion();
+    const workspaceRail = { orderedIds: ['git'], placements: { git: 'hidden' as const, discussionParticipants: 'hidden' as const } };
+    const phoneItems = { orderedIds: [], placements: { discussionAgents: 'overflow' as const } };
+    storage.setState({ localSettings: { ...storage.getState().localSettings,
+        navigationSurfacePlacementsV1: { workspaceRail, detailPages: { discussion: { phone: { items: phoneItems } } } } } });
+    const observed: { navigation: React.ContextType<typeof DiscussionNavigationContext>;
+        write?: ReturnType<typeof useNavigationSurfacePlacementActionWriter> } = { navigation: null };
+    function Probe() {
+        observed.navigation = React.useContext(DiscussionNavigationContext);
+        observed.write = useNavigationSurfacePlacementActionWriter({ pageKind: 'discussion', device: 'desktop', section: 'companions' });
+        return null;
+    }
+    const screen = await renderScreen(<AppPaneProvider><DiscussionPaneHost discussionId="committed-thread"
+        scope={accountLifetime.scope} paneEnabled={false} main={<Probe />} /></AppPaneProvider>);
+    const participantPlacement = () => observed.navigation?.readColumn('side').items?.find(item => item.id === 'discussionParticipants')?.placement;
+    expect(participantPlacement()).toBe('pinned');
+    expect(storage.getState().localSettings.navigationSurfacePlacementsV1.detailPages?.discussion?.desktop).toBeUndefined();
+    let commits = 0;
+    const unsubscribe = storage.subscribe((state, previous) => {
+        if (state.localSettings.navigationSurfacePlacementsV1 !== previous.localSettings.navigationSurfacePlacementsV1) commits += 1;
+    });
+    const reads = homes.requests.length;
+    try {
+        await act(async () => { expect(await observed.write!({ orderedIds: [], placements: { discussionParticipants: 'hidden' } })).toBe(true); });
+        expect(participantPlacement()).toBe('hidden');
+        expect(commits).toBe(1);
+        const saved = storage.getState().localSettings.navigationSurfacePlacementsV1;
+        expect(saved.workspaceRail).toBe(workspaceRail);
+        expect(saved.detailPages?.discussion?.phone?.items).toBe(phoneItems);
+        expect(homes.requests).toHaveLength(reads);
+        await act(async () => { expect(await observed.write!({ orderedIds: [], placements: { discussionParticipants: 'hidden' } })).toBe(true); });
+        expect(commits).toBe(1);
+    } finally { unsubscribe(); await screen.unmount(); }
+});
+
+it('detail-navigation.T4 commits one addressed Discussion phone edit and opens More Customize without body reads', async () => {
+    await prepareLongDiscussion();
+    const { withPopoverWebGlobals } = await import('@/dev/testkit/harness/popoverHarness');
+    const restorePopoverGlobals = withPopoverWebGlobals();
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { resolveDetailNavigationItems } = await import('@/components/appShell/rightSidebar/detailNavigationItems');
+    const { DiscussionCockpitTabBar } = await import('@/components/navigation/mobile/chrome/bars/DiscussionCockpitTabBar');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { DetailNavigationCustomizer } = await import('@/components/ui/navigation/NavigationPlacementCustomizer');
+    const { resolveDiscussionNavigationCustomizer } = await import('@/components/workspaceCockpit/discussion/discussionNavigationCustomizer');
+    const workspaceRail = { orderedIds: ['git'], placements: { git: 'hidden' as const } };
+    const desktop = { companions: { orderedIds: [], placements: { discussionParticipants: 'hidden' as const } } };
+    storage.setState({ localSettings: { ...storage.getState().localSettings,
+        navigationSurfacePlacementsV1: { workspaceRail, detailPages: { discussion: { desktop } } } } });
+    const items = resolveDetailNavigationItems({ scope: 'discussion' });
+    const screen = await renderScreen(<DiscussionCockpitTabBar discussionId="committed-thread" items={items}
+        activeSurface="chat" onSurfacePress={() => { throw new Error('Customize must not select a body'); }} />);
+    await flushHookEffects();
+    let commits = 0;
+    const unsubscribe = storage.subscribe((state, previous) => {
+        if (state.localSettings.navigationSurfacePlacementsV1 !== previous.localSettings.navigationSurfacePlacementsV1) commits += 1;
+    });
+    const reads = homes.requests.length;
+    try {
+        await act(async () => screen.pressByTestId('discussion-cockpit-tab-more'));
+        expect(commits).toBe(0);
+        await act(async () => screen.root.findByType(DropdownMenu).props.onSelect('customize'));
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({ component: DetailNavigationCustomizer,
+            props: expect.objectContaining({ pageKind: 'discussion', device: 'phone' }) })));
+        const editor = await renderScreen(<DetailNavigationCustomizer {...resolveDiscussionNavigationCustomizer({ items, device: 'phone' })}
+            onClose={() => {}} />);
+        expect(homes.requests).toHaveLength(reads);
+        expect(commits).toBe(0);
+        await act(async () => editor.pressByTestId('discussion-navigation-customizer.items.placement:discussionAgents:overflow'));
+        await vi.waitFor(() => expect(commits).toBe(1));
+        const saved = storage.getState().localSettings.navigationSurfacePlacementsV1;
+        expect(saved.detailPages?.discussion?.phone?.items?.placements.discussionAgents).toBe('overflow');
+        expect(saved.detailPages?.discussion?.desktop).toBe(desktop);
+        expect(saved.workspaceRail).toBe(workspaceRail);
+        expect(homes.requests).toHaveLength(reads);
+        await act(async () => editor.pressByTestId('discussion-navigation-customizer.items.placement:discussionAgents:overflow'));
+        expect(commits).toBe(1);
+        console.info('detail-navigation.T4 Discussion', { completedEditCommits: commits, moreCustomizeBodyReads: homes.requests.length - reads });
+        await editor.unmount();
+    } finally { unsubscribe(); await screen.unmount(); restorePopoverGlobals(); }
 });

@@ -18,6 +18,7 @@ import { buildDiscussionContent } from './discussionComposerDocument';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionWorkflowRunStarted } from './useDiscussionManagedWorkflowRuns';
 import { useDiscussionWorkflowProject } from './useDiscussionWorkflowProject';
+import { buildDiscussionWorkflowQuestionLocalId } from './discussionWorkflowQuestionReference';
 
 type DiscussionWorkflowStartResource = WorkflowStartResource & Readonly<{
     origin: Readonly<{ kind: 'discussion'; discussion: DiscussionAddressV1 }>;
@@ -74,10 +75,11 @@ function DiscussionWorkflowStartBody(props: Readonly<{
     const onComplete = React.useMemo(() => ({ kind: 'originating_discussion' as const }), []);
     const prepareOrigin = React.useCallback<NonNullable<React.ComponentProps<typeof WorkflowStartDetailsBody>['prepareOrigin']>>(async request => {
         if (!accountLifetime.isCurrent()) throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
+        const localId = buildDiscussionWorkflowQuestionLocalId(request.runId);
         const snapshot = repository.getSnapshot();
         const thread = snapshot.threads[discussionId];
         const otherPosts = Object.values(snapshot.mutations).filter(mutation => mutation.kind === 'post'
-            && mutation.discussionId === discussionId && mutation.localId !== request.runId);
+            && mutation.discussionId === discussionId && mutation.localId !== localId);
         const occupied = otherPosts.some(discussionMutationBlocksComposer);
         if (occupied || !thread?.summary?.capabilities.postMessages || thread.summary.archivedAt !== null) throw new Error('discussion_post_unavailable');
         if (otherPosts.length > 0) {
@@ -88,11 +90,11 @@ function DiscussionWorkflowStartBody(props: Readonly<{
         let content: ReturnType<typeof buildDiscussionContent>;
         try { content = buildDiscussionContent(request.submittedDraft, []); }
         catch { throw new WorkflowActionError({ message: 'discussion_invalid_content', rawCode: 'discussion_invalid_content' }); }
-        const draftSubmission = draft.captureSubmittedCurrentness({ kind: 'post', discussionId, localId: request.runId },
+        const draftSubmission = draft.captureSubmittedCurrentness({ kind: 'post', discussionId, localId },
             { content, retainedCurrentness: retained.currentness });
-        const outcome = await repository.post({ discussionId, localId: request.runId, content, draftSubmission });
+        const outcome = await repository.post({ discussionId, localId, content, draftSubmission });
         const messageId = outcome.kind === 'succeeded' ? outcome.value.message.id
-            : outcome.kind === 'checking' ? await observeCommittedPost(repository, discussionId, request.runId)
+            : outcome.kind === 'checking' ? await observeCommittedPost(repository, discussionId, localId)
                 : null;
         if (messageId === null) {
             const code = outcome.kind === 'failed' ? outcome.errorCode : 'approval_required';
