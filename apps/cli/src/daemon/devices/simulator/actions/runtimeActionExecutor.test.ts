@@ -5,16 +5,21 @@ import {
     DEFAULT_SIMULATOR_STREAM_CONTROLS_V1,
     STATICALLY_UNBACKED_SIMULATOR_RUNTIME_ACTION_IDS_V1,
     classifySimulatorRuntimeActionBackingV1,
+    FeaturesResponseSchema,
     type RuntimeActionExecuteArgs,
     type SimulatorDeviceResourceV1,
     type SimulatorRuntimeActionIdV1,
 } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { SimulatorPreviewActionResultV1Schema } from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import { withActionOutputContract } from '@/testkit/actionOutputContract';
 
 import type { MachineLiveStreamCaptureStartInput } from '../../../peer/mediation/stream/captureAdapter';
 import { createMachineLiveStreamCaptureRegistry } from '../../../peer/mediation/stream/captureRegistry';
 import { createSimulatorCaptureRegistryReconciler } from '../captureRegistration';
-import type { SimulatorDaemonFeatureGate } from '../featureGate';
+import { createSimulatorDaemonFeatureGate, type SimulatorDaemonFeatureGate } from '../featureGate';
 import { createSimulatorPreviewDaemonRuntime } from '../runtime';
+import { createSimulatorDaemonRuntimeActionExecutor } from './runtimeActionExecutor';
 
 const iosResource: SimulatorDeviceResourceV1 = {
     v: 1,
@@ -83,6 +88,59 @@ const allowAllFeatureGate: SimulatorDaemonFeatureGate = {
 };
 
 describe('daemon simulator runtime action executor', () => {
+    it.each(ACTION_ID_FAMILIES_V1.devices_simulator.filter(id =>
+        id.startsWith('devices.simulator.input.') || id === 'devices.simulator.sideband.request'))(
+        'preserves the declared refusal when the native producer is unavailable for %s', async actionId => {
+            const features = FeaturesResponseSchema.parse({ features: {
+                devices: { enabled: true, simulatorPreview: { enabled: true } },
+                machines: { enabled: true, liveStream: { enabled: true } },
+                browser: { enabled: true, viewTargets: { enabled: true } },
+            }, capabilities: {} });
+            const featureGate = createSimulatorDaemonFeatureGate({ env: {},
+                resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) });
+            await featureGate.refresh();
+            const source = { simulatorId: 'sim_android', streamId: 'stream_contract',
+                sourceId: 'simulator:android:emulator-5554:screen' };
+            const runtime = createSimulatorPreviewDaemonRuntime({ machineId: 'machine_1', now: () => 2_000,
+                resources: [{ ...androidScrcpyControlResource, capture: {
+                    ...androidScrcpyControlResource.capture,
+                    streamControls: { requestKeyframe: true, snapshot: true, setQuality: true, setFps: true, setScale: true },
+                } }],
+                // Live encoder delivery is the transport boundary. No native input adapter is
+                // installed: those routes must report unavailable rather than fabricate success.
+                dispatchStreamControl: async () => ({ ok: true }),
+            });
+            const execute = withActionOutputContract(createSimulatorDaemonRuntimeActionExecutor({ routes: runtime.routes, featureGate }));
+            try {
+                const acquired = SimulatorPreviewActionResultV1Schema.parse(await execute(runtimeArgs({
+                    actionId: 'devices.simulator.lease.acquire',
+                    input: { type: 'simulator.lease.acquire', ...source, viewerId: 'viewer_contract' },
+                })));
+                if (acquired.status !== 'accepted' || !acquired.lease) throw new Error('Real simulator lease was not acquired');
+                const control = { v: 1, streamId: source.streamId, sourceId: source.sourceId,
+                    eventId: 'contract_event', leaseId: acquired.lease.leaseId } as const;
+                const inputs = {
+                    'devices.simulator.input.tap': { type: 'simulator.control.send', control: { ...control, kind: 'tap', x: 0.5, y: 0.5 } },
+                    'devices.simulator.input.swipe': { type: 'simulator.control.send', control: { ...control, kind: 'swipe', fromX: 0.2, fromY: 0.2, toX: 0.8, toY: 0.8 } },
+                    'devices.simulator.input.text': { type: 'simulator.control.send', control: { ...control, kind: 'keyboard_text', text: 'contract' } },
+                    'devices.simulator.input.key': { type: 'simulator.control.send', control: { ...control, kind: 'keyboard_key', key: 'Enter' } },
+                    'devices.simulator.input.button': { type: 'simulator.control.send', control: { ...control, kind: 'hardware_button', button: 'home' } },
+                    'devices.simulator.input.orientation': { type: 'simulator.control.send', control: { ...control, kind: 'orientation', orientation: 'landscapeLeft' } },
+                    'devices.simulator.input.pinch': { type: 'simulator.control.send', control: { ...control, kind: 'pinch', centerX: 0.5, centerY: 0.5, startDistance: 0.2, endDistance: 0.4 } },
+                    'devices.simulator.input.rotate': { type: 'simulator.control.send', control: { ...control, kind: 'rotate', centerX: 0.5, centerY: 0.5, radius: 0.2, startAngle: 0, endAngle: 1 } },
+                    'devices.simulator.sideband.request': { type: 'simulator.sideband.request', simulatorId: source.simulatorId, kind: 'capture_health' },
+                } satisfies Partial<Record<SimulatorRuntimeActionIdV1, unknown>>;
+                const result = await execute(runtimeArgs({ actionId,
+                    input: getActionSpec(actionId).inputSchema.parse(inputs[actionId as keyof typeof inputs]) }));
+                if (actionId === 'devices.simulator.input.orientation') {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+                } else {
+                    expect(result).toMatchObject({ status: 'unavailable' });
+                }
+            } finally { await runtime.stop(); }
+        },
+    );
+
     // OWNER-GATE closure (mirrors the browser/local-services daemon executors): the server
     // feature gate is required at this execution boundary, and a JavaScript/stale compiled caller
     // that omits it must fail closed for every simulator runtime action before route dispatch.

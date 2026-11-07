@@ -28,9 +28,8 @@ import { createLocalServiceActionRoutes } from './routes';
 import { createLocalServicesDaemonFeatureGate, type LocalServicesDaemonFeatureGateId } from '../featureGate';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
-import { createLocalServiceInventoryRoutes } from '../inventory/routes';
 import { createLocalServiceLauncherFeed } from '../launch/feed';
-import { createLocalServiceLauncherHistoryStore, createLocalServiceLauncherLeafRoutes } from '../launch/leaves';
+import { createLocalServiceLauncherHistoryStore } from '../launch/leaves';
 import { createLocalServiceLauncherRoutes } from '../launch/routes';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServicePreviewRoutes } from '../preview/routes';
@@ -193,16 +192,14 @@ const publicPreviewSnapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('daemon local-services runtime action executor', () => {
-    // Relocation's cross-machine producer is exercised by projectDeclarations.composed.test.ts.
-    // These cases install the real local owners; only Home HTTP is substituted.
-    const localProducerIds = [
-        ...ACTION_ID_FAMILIES_V1.local_services_inventory,
-        ...ACTION_ID_FAMILIES_V1.local_services_launcher,
-        ...ACTION_ID_FAMILIES_V1.local_services_preview,
-        ...ACTION_ID_FAMILIES_V1.local_services_public_preview,
-        ...ACTION_ID_FAMILIES_V1.local_services_actions.filter(id => id !== 'projects.service.relocate'),
+    // Success contracts live at runtimeActionExecutor.outputContract.test.ts. Keep these
+    // managed-lifecycle refusals: their real process producers are excluded from that seam.
+    const managedProducerIds = [
+        ...ACTION_ID_FAMILIES_V1.local_services_launcher.filter(id => id === 'localServices.launcher.start'),
+        ...ACTION_ID_FAMILIES_V1.local_services_actions.filter(id =>
+            id === 'localServices.actions.stopManaged' || id === 'localServices.actions.restartManaged'),
     ];
-    it.each(localProducerIds)('validates the real %s producer output against its Action spec', async actionId => {
+    it.each(managedProducerIds)('preserves the declared managed-lifecycle denial for %s', async actionId => {
         const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
         const { registry: inventoryRegistry, routes: actionRoutes } = createObservedActionRoutes();
         inventoryRegistry.replaceSnapshot({ ...inventoryRegistry.getSnapshot(), entries: inventoryRegistry.getSnapshot().entries.map(entry => ({
@@ -210,76 +207,20 @@ describe('daemon local-services runtime action executor', () => {
             endpoint: { scheme: 'http' as const, host: '127.0.0.1', port: 5173, probeState: 'ready' as const, probedAt: 2_000 },
         })) });
         const previewRegistry = createLocalServicePreviewRegistry();
-        const previewRoutes = createLocalServicePreviewRoutes({ machineId: 'machine_1', accountId: 'account_1',
-            inventoryRegistry, registry: previewRegistry, server: { token: 'fixture-token', serverBaseUrl: 'https://home.example.test',
-                http: { async post(_url, body) {
-                    const resource = LocalServicePreviewResourceV1Schema.parse(body);
-                    return { data: { resource, accessUrl: 'https://private.example.test/?previewToken=admission', expiresAt: 61_000 } };
-                }, async delete() { return { data: { ok: true } }; } },
-            } });
-        const opened = await previewRoutes.openOrCreate({ machineId: 'machine_1', sessionId: 'session_1', inventoryEntryId: 'entry_1' });
-        if (!opened.ok) throw new Error(opened.reasonCode);
         const feed = createLocalServiceLauncherFeed({ machineId: 'machine_1', accountId: 'account_1', inventoryRegistry, previewRegistry });
         const target = (await feed.getSnapshot()).targets.find(candidate => candidate.sourceClass?.kind === 'inventory_entry');
         if (!target) throw new Error('Expected the actual classified inventory launcher target');
         const history = createLocalServiceLauncherHistoryStore();
-        history.record(target.id);
-        const launcherRoutes = createLocalServiceLauncherRoutes({ feed, history,
-            leaves: createLocalServiceLauncherLeafRoutes({ machineId: 'machine_1', feed, previewRoutes, history }) });
-        let currentExposure = publicExposure;
-        const publicPreviewRoutes = createLocalServicePublicPreviewServerRoutes({ token: 'fixture-token', serverBaseUrl: 'https://home.example.test', http: {
-            async post(url) { return { data: url.endsWith('/status')
-                ? { protocolVersion: 1, snapshot: { ...publicPreviewSnapshot, exposures: [currentExposure] } } : { exposure: currentExposure } }; },
-            async delete() { currentExposure = { ...currentExposure, state: 'revoked', revokedAt: 3_100 }; return { data: { ok: true } }; },
-        } });
+        const launcherRoutes = createLocalServiceLauncherRoutes({ feed, history });
         const execute = withActionOutputContract(createLocalServicesDaemonRuntimeActionExecutor({ featureGate: enabledFeatureGate,
-            routes: { inventoryRoutes: createLocalServiceInventoryRoutes({ registry: inventoryRegistry }), launcherRoutes, previewRoutes, publicPreviewRoutes, actionRoutes } }));
-        const machine = { machineId: 'machine_1', sessionId: 'session_1' };
-        const inventoryTarget = { kind: 'inventory_entry', inventoryEntryId: 'entry_1', machineId: 'machine_1', sessionId: 'session_1' };
+            routes: { launcherRoutes, actionRoutes } }));
         const managedTarget = { kind: 'managed_service', managedServiceId: 'missing_service', machineId: 'machine_1' };
-        const action = (kind: string, target: unknown = inventoryTarget) => ({ requestId: `contract_${kind}`, action: kind, target, force: false, confirmationNonce: 'fixture-confirmation' });
-        const inputs: Record<typeof localProducerIds[number], unknown> = {
-            'localServices.inventory.list': { machineId: 'machine_1' },
-            'localServices.inventory.refresh': { machineId: 'machine_1' },
-            'localServices.launcher.snapshot': machine,
-            'localServices.launcher.start': { ...machine, targetId: target.id },
-            'localServices.launcher.openPreview': { ...machine, targetId: target.id },
-            'localServices.launcher.registerPreview': { ...machine, targetId: target.id },
-            'localServices.launcher.history.clear': { ...machine, scope: 'machine' },
-            'localServices.preview.openOrCreate': { ...machine, inventoryEntryId: 'entry_1' },
-            'localServices.preview.status': machine,
-            'localServices.preview.revoke': { machineId: 'machine_1', previewId: opened.response.preview.previewId,
-                serviceTarget: opened.response.preview.resource.serviceTarget },
-            'localServices.publicPreview.create': { ...machine, previewId: 'preview_1', mode: 'secret_link', ttlMs: 600_000, confirmation: { acknowledged: true } },
-            'localServices.publicPreview.status': { ...machine, previewId: 'preview_1' },
-            'localServices.publicPreview.revoke': { ...machine, previewId: 'preview_1', exposureId: publicExposure.exposureId },
-            'localServices.publicPreview.copyUrl': { ...machine, previewId: 'preview_1', exposureId: publicExposure.exposureId },
-            'localServices.actions.copyUrl': action('copy_url'),
-            'localServices.actions.openPreview': action('open_preview'),
-            'localServices.actions.forget': action('forget'),
-            'localServices.actions.stopManaged': action('stop_managed', managedTarget),
-            'localServices.actions.restartManaged': action('restart_managed', managedTarget),
-            'localServices.actions.terminateDetected': action('terminate_detected'),
-        };
-        const output = await execute(runtimeArgs({ actionId, input: getActionSpec(actionId).inputSchema.parse(inputs[actionId]), context: { surface: 'ui' } }));
-        expect(output).not.toMatchObject({ ok: false });
-        if (actionId === 'localServices.launcher.start' || actionId === 'localServices.actions.stopManaged'
-            || actionId === 'localServices.actions.restartManaged' || actionId === 'localServices.actions.terminateDetected') {
-            expect(output).toMatchObject({ status: 'denied' });
-        } else if (actionId === 'localServices.inventory.list' || actionId === 'localServices.inventory.refresh') {
-            expect(output).toMatchObject({ entries: [expect.objectContaining({ id: 'entry_1' })] });
-        } else if (actionId === 'localServices.launcher.history.clear') {
-            expect(output).toMatchObject({ cleared: 1 });
-        } else if (actionId === 'localServices.launcher.openPreview') {
-            expect(output).toMatchObject({ status: 'opened' });
-        } else if (actionId === 'localServices.launcher.registerPreview' || actionId === 'localServices.preview.openOrCreate'
-            || actionId === 'localServices.actions.openPreview') {
-            expect(output).toMatchObject({ status: 'existing' });
-        } else if (actionId === 'localServices.actions.copyUrl' || actionId === 'localServices.actions.forget') {
-            expect(output).toMatchObject({ status: 'succeeded' });
-        } else if (actionId === 'localServices.preview.revoke') {
-            expect(output).toMatchObject({ revoked: true });
-        }
+        const input = actionId === 'localServices.launcher.start'
+            ? { machineId: 'machine_1', sessionId: 'session_1', targetId: target.id }
+            : { requestId: `contract_${actionId}`, action: actionId === 'localServices.actions.stopManaged' ? 'stop_managed' : 'restart_managed',
+                target: managedTarget, force: false, confirmationNonce: 'fixture-confirmation' };
+        const output = await execute(runtimeArgs({ actionId, input: getActionSpec(actionId).inputSchema.parse(input), context: { surface: 'ui' } }));
+        expect(output).toMatchObject({ status: 'denied' });
     });
 
     it('opens and revokes the actual source-qualified preview through Actions without retargeting an inventory entry', async () => {

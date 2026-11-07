@@ -4,6 +4,7 @@ import type {
     PeerMediationObservabilityDeltaV1,
     RuntimeActionExecuteArgs,
 } from '@happier-dev/protocol';
+import { withActionOutputContract } from '@/testkit/actionOutputContract';
 
 import { createDaemonPeerMediationFlowEvent } from './events';
 import { createPeerMediationObservabilityDaemonRuntimeActionExecutor } from './runtimeActionExecutor';
@@ -69,13 +70,13 @@ function createExecutorHarness(overrides?: Readonly<{
     emitDelta?: (delta: PeerMediationObservabilityDeltaV1) => void;
 }>) {
     const store = createDaemonPeerMediationObservabilityStore({ nowMs: () => 1_000 });
-    const executor = createPeerMediationObservabilityDaemonRuntimeActionExecutor({
+    const executor = withActionOutputContract(createPeerMediationObservabilityDaemonRuntimeActionExecutor({
         store,
         accountId: ACCOUNT_ID,
         machineId: MACHINE_ID,
         featurePayload: overrides?.featurePayload ?? enabledFeaturePayload(),
         ...(overrides?.emitDelta ? { emitDelta: overrides.emitDelta } : {}),
-    });
+    }));
     return { store, executor };
 }
 
