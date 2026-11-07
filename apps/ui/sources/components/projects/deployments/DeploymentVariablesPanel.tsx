@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
@@ -1375,10 +1375,12 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: 6,
   },
   phase: { ...Typography.variant('body'), color: theme.colors.text.secondary },
-  source: { minWidth: 0, gap: theme.space.s2 },
+  source: { minWidth: 0, flexShrink: 1, gap: theme.space.s2 },
   sourceTitle: {
     ...Typography.variant('body'),
     color: theme.colors.text.primary,
+    // A long unbroken name (a secret's UPPER_SNAKE name) wraps inside the column instead of clipping.
+    ...(Platform.OS === 'web' ? ({ overflowWrap: 'anywhere' } as const) : {}),
   },
   mono: { ...Typography.mono() },
   addFields: { gap: theme.space.s8 },

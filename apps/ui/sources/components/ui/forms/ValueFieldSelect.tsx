@@ -29,6 +29,11 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     disabled?: boolean;
     /** Fit a narrow row to its choice. */
     compact?: boolean;
+    /**
+     * Stacked under its label in a form: the field spans the row and its menu opens at the field's width and
+     * edge, so long choices ("Caddy on vps-2 · public") read whole instead of truncating in a capped menu.
+     */
+    fill?: boolean;
     /** The field's words while nothing is chosen; without it the first choice stands in. */
     placeholder?: string;
 }>) {
@@ -56,10 +61,10 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
                 props.onSelect(id);
             }}
             placement="bottom"
-            popoverAnchorAlign="end"
+            popoverAnchorAlign={props.fill ? 'start' : 'end'}
             variant="slim"
-            matchTriggerWidth={false}
-            maxWidthCap={320}
+            matchTriggerWidth={props.fill === true}
+            {...(props.fill ? {} : { maxWidthCap: 320 })}
             showCategoryTitles={false}
             popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
@@ -80,7 +85,7 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
                         chevronColor: theme.colors.text.secondary,
                         field: resolveFieldBoxColors(theme),
                         leading: selected?.icon,
-                        fieldSpan: props.compact ? 'intrinsic' : 'content',
+                        fieldSpan: props.fill ? 'row' : props.compact ? 'intrinsic' : 'content',
                     })}
                 </HappierPressable>
             )}

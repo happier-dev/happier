@@ -340,7 +340,7 @@ function DomainAddForm(
         {!props.recordedIngress ? (
           <>
             <FieldItem label={t('projects.deployments.editors.reachThrough')}>
-              <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode"
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.ingress.mode" fill
                 label={t('projects.deployments.editors.reachThrough')}
                 items={[
                   // The place visitors reach, named as the lab does ("Caddy on vps-2 · public"), not the mechanism.
