@@ -2019,7 +2019,11 @@ for private review operands (such as a saved Profile definition) that its shared
 validates a safe review shape when it differs from executable input, and optional
 private `inputHints` describe that shape without changing Action authoring or CLI
 fields. Approval preparation writes this domain-declared private projection from
-the normalized, captured Action input to its preview. Provider credential/model
+the normalized, captured Action input to its preview. A review field declared with
+`inputType: { hostType: 'savedSecretReference' }` reads by its Saved Secret name,
+including references nested in JSON objects and arrays (`set.[].source.ref`).
+The containing binding keeps its context; an unreadable reference reads as unavailable.
+Provider credential/model
 references, default-model selections (including explicit clears), initial manual
 models, Saved Secret deletion revisions, and durable Remote Host target
 revisions remain review operands even when shared observations omit them.

@@ -259,7 +259,7 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
       && isRecord(input) && typeof input.homeId === 'string' && input.homeId.trim()) {
     return { kind: 'managedMachine', id: value.trim(), homeId: input.homeId.trim() };
   }
-  const savedSecret = readApprovalSavedSecretReference(actionId, leaf, value);
+  const savedSecret = readApprovalSavedSecretReference(actionId, leaf, value, field.inputType);
   if (savedSecret) return savedSecret;
   // A Home identity reads by the Home's name, like a `serverId` key.
   if (field.path === 'homeId') return { kind: 'home', id: value.trim() };
@@ -579,6 +579,11 @@ function isEmptyApprovalValue(value: unknown): boolean {
   return (Array.isArray(value) && value.length === 0) || (isRecord(value) && Object.keys(value).length === 0);
 }
 
+type ApprovalStructuredReferences = Readonly<{
+  path: string;
+  fields: ReadonlyMap<string, ActionInputFieldHint | null>;
+}>;
+
 function appendApprovalStructuredEntries(
   key: string | undefined,
   label: string,
@@ -586,7 +591,21 @@ function appendApprovalStructuredEntries(
   depth: number,
   output: ApprovalStructuredValueEntry[],
   widgetStructure = false,
+  references?: ApprovalStructuredReferences,
 ): void {
+  const field = references?.fields.get(references.path);
+  const declaredReference = field ? readApprovalSavedSecretReference('', undefined, value, field.inputType) : undefined;
+  if (declaredReference) {
+    output.push({ label, value: formatApprovalEntryValue(key, value), depth, reference: declaredReference });
+    return;
+  }
+  // A declared descendant must be visited even when its containing object or flat list could read as one line.
+  const containsReference = (Array.isArray(value) || isRecord(value)) && references?.fields.has(references.path) === true;
+  if (containsReference) {
+    output.push({ label, value: null, depth });
+    appendApprovalStructuredMembers(value, depth + 1, output, widgetStructure, references);
+    return;
+  }
   const encodedBytes = key === 'contentBase64' && typeof value === 'string'
     ? readCanonicalPaddedBase64DecodedLength(value) : null;
   if (encodedBytes !== null) {
@@ -677,11 +696,13 @@ function describeKindLedApprovalGroup(value: unknown): string | null {
   return words.join(' · ');
 }
 
-function appendApprovalStructuredMembers(value: unknown, depth: number, output: ApprovalStructuredValueEntry[], widgetStructure = false): void {
+function appendApprovalStructuredMembers(value: unknown, depth: number, output: ApprovalStructuredValueEntry[], widgetStructure = false,
+  references?: ApprovalStructuredReferences): void {
   const members: [string | undefined, string, unknown][] = Array.isArray(value)
     ? value.map((item, index) => [undefined, String(index + 1), item])
     : Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, humanizeApprovalKey(key), item]);
-  for (const [key, label, item] of members) appendApprovalStructuredEntries(key, label, item, depth, output, widgetStructure);
+  for (const [key, label, item] of members) appendApprovalStructuredEntries(key, label, item, depth, output, widgetStructure,
+    references ? { ...references, path: `${references.path}.${key ?? '[]'}` } : undefined);
 }
 
 /**
@@ -704,10 +725,12 @@ function describeApprovalConnectedServices(value: unknown): readonly ApprovalStr
 }
 
 /** Readable entries for one structured JSON value; scalars and flat lists read fine as they are. */
-function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false): readonly ApprovalStructuredValueEntry[] | undefined {
-  if (values.length !== 1 || isApprovalScalar(values[0])) return undefined;
+function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false,
+  references?: ApprovalStructuredReferences): readonly ApprovalStructuredValueEntry[] | undefined {
+  const containsReference = (Array.isArray(values[0]) || isRecord(values[0])) && references?.fields.has(references.path) === true;
+  if (values.length !== 1 || isApprovalScalar(values[0]) && !containsReference) return undefined;
   const output: ApprovalStructuredValueEntry[] = [];
-  appendApprovalStructuredMembers(values[0], 0, output, widgetStructure);
+  appendApprovalStructuredMembers(values[0], 0, output, widgetStructure, references);
   return output;
 }
 
@@ -848,7 +871,21 @@ export function describeApprovalActionFields(input: Readonly<{
     resolved.push({ path, title: humanizeApprovalKey(path), widget: 'json', visible: true, disabled: false,
       required: fieldSchema !== undefined && !z.safeParse(fieldSchema, undefined).success });
   }
-  const paths = resolved.map((field) => field.path);
+  const referenceFields = new Map<string, ActionInputFieldHint | null>();
+  for (const field of resolved) {
+    if (!field.inputType || !('hostType' in field.inputType) || field.inputType.hostType !== 'savedSecretReference') continue;
+    referenceFields.set(field.path, field);
+    const segments = field.path.split('.');
+    while (segments.length > 1) {
+      segments.pop();
+      const parent = segments.join('.');
+      if (!referenceFields.has(parent)) referenceFields.set(parent, null);
+    }
+  }
+  // Structured parents keep their context; their declared references are read in-place, once per member.
+  const presented = resolved.filter(field => !referenceFields.get(field.path) || !resolved.some(parent =>
+    parent.widget === 'json' && field.path.startsWith(`${parent.path}.`)));
+  const paths = presented.map((field) => field.path);
   // The Action declares which operands only identify or route the request; they read under Technical details.
   const technicalPaths = spec.approvalPresentation?.technicalInputPaths ?? [];
   const codePaths = spec.approvalPresentation?.codeInputPaths ?? [];
@@ -859,7 +896,7 @@ export function describeApprovalActionFields(input: Readonly<{
       || (isRecord(input.actionArgs) && Object.keys(input.actionArgs).length > 0))
     ? { path: '', reason: 'missing_required_context' } : null;
 
-  for (const field of resolved) {
+  for (const field of presented) {
     if (shouldHideApprovalField(field.path, paths)) continue;
     const values = getApprovalFieldValues(presentationInput, field.path);
     if (structuredAnswerPath !== undefined && field.path === structuredAnswerPath) {
@@ -910,18 +947,19 @@ export function describeApprovalActionFields(input: Readonly<{
     if (value === null) continue;
     const reference = reachPlace ? describeApprovalPlaceReference(values[0]) : describeApprovalReference(input.actionId, field, values, presentationInput);
     // A typed value that reads as one word or path ("Directory  /repo") needs no entries under it.
-    const kindValue = field.widget === 'json' && !reference && !place?.success && values.length === 1
+    const kindValue = field.widget === 'json' && !reference && !referenceFields.has(field.path) && !place?.success && values.length === 1
       ? readApprovalKindValue(values[0]) : null;
     // A typed reference already reads by its name; entries are for values nothing else can read.
     let entries = (rulesAction && field.path === 'change.rules' || field.path === 'where.rules') ? describeApprovalRuleEntries(values)
-      : rulesAction && field.path.startsWith('items.') && values.length > 1 ? values.map(value => ({
+      : (rulesAction && field.path.startsWith('items.') || referenceFields.get(field.path)) && values.length > 1 ? values.map(value => ({
         label: field.title, value: String(value), depth: 0,
         reference: describeApprovalReference(input.actionId, field, [value], presentationInput),
       }))
       : field.widget === 'json' && !reference && !place?.success ? describeApprovalStructuredValue(values,
         input.actionId.startsWith('widgets.') && (['instance', 'group', 'fragment', 'definition'].includes(field.path)
           || ['surface', 'ref', 'to'].includes(field.path)
-            && readWidgetActionSurfaceV1(input.actionArgs)?.owner.kind === 'pluginArea')) : undefined;
+            && readWidgetActionSurfaceV1(input.actionArgs)?.owner.kind === 'pluginArea'),
+        referenceFields.has(field.path) ? { path: field.path, fields: referenceFields } : undefined) : undefined;
     if (input.actionId === 'mcp.servers.tools.set' && field.path === 'tools') {
       const settings: Readonly<Record<string, string>> = { off: 'Off', ask: 'Ask', allow: 'Allow', inherit: 'Use server default' };
       entries = values.flatMap(value => isRecord(value) ? Object.entries(value).map(([name, setting]) => ({

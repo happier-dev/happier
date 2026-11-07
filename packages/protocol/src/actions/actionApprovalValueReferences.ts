@@ -1,4 +1,5 @@
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import type { InputTypeReferenceV1 } from '../inputs/inputTypes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
 import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
@@ -109,8 +110,12 @@ export function readApprovalSavedSecretReference(
   actionId: string,
   key: string | undefined,
   value: unknown,
+  inputType?: InputTypeReferenceV1,
 ): ApprovalActionReference | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
+  if (inputType && 'hostType' in inputType && inputType.hostType === 'savedSecretReference') {
+    return { kind: 'savedSecret', id: value.trim() };
+  }
   if (key === 'savedSecretId') return { kind: 'savedSecret', id: value.trim() };
   if (key !== 'secretId' || !actionId.startsWith('secrets.')) return undefined;
   try {

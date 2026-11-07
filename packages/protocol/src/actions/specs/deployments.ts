@@ -24,7 +24,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
   const irreversible = id === 'deployments.backups.prune' || id === 'deployments.backups.restore' || id === 'deployments.teardown' || id === 'deployments.targets.unlink' || id === 'deployments.environments.delete' || id === 'deployments.domains.remove';
   const preparedContentRequired = id !== 'deployments.environments.create' && id !== 'deployments.targets.link'
     && id !== 'deployments.rollback' && id !== 'deployments.teardown' && id !== 'deployments.domains.add' && !isDeploymentPromoteActionIdV1(id);
-  return {
+  const spec = {
     id, title, safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'write',
     ...(id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' || id === 'deployments.teardown' ? { safetyForInput: (input: unknown): 'safe' | 'danger' => {
       const parsed = DeploymentActionInputSchemasV1[id].safeParse(input);
@@ -220,6 +220,14 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
   } as const satisfies DeploymentActionSpec<TId>;
+  const secretPath = id === 'deployments.bindings.set' ? 'set.[].source.ref'
+    : id === 'deployments.templates.instantiate' || id === 'deployments.environments.create' ? 'bindings.[].source.ref' : null;
+  if (!secretPath) return spec;
+  // Review describes the stored ref string; the interactive Saved Secret picker instead selects a ref/revision pair.
+  return { ...spec, approvalPresentation: { ...spec.approvalPresentation, inputHints: { fields: [
+    ...spec.inputHints.fields,
+    { path: secretPath, title: 'Saved Secret', widget: 'text', inputType: { hostType: 'savedSecretReference' } },
+  ] } } };
 }
 
 /** Storage declarations and real daemon effects share this single Action front door. */
