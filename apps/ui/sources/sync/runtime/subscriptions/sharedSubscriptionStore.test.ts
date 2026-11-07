@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 import { createSharedSubscriptionStore, type SharedSubscriptionWatchOutcome } from './sharedSubscriptionStore';
 
@@ -15,6 +16,55 @@ type TestState = Readonly<{
 type TestSnapshot = Readonly<{ value: number }>;
 
 describe('createSharedSubscriptionStore', () => {
+    it('reconfigures one demanded resource promptly without adopting or settling a retired read', async () => {
+        type Input = Readonly<{ machineId: string; view: 'summary' | 'overview' }>;
+        type State = Readonly<{ value: number; view: Input['view'] | null }>;
+        const oldRead = createDeferred<number>();
+        const detailRead = createDeferred<number>();
+        const reads: Input[] = [];
+        const watches: Array<{ input: Input; signal?: AbortSignal }> = [];
+        const empty: State = { value: 0, view: null };
+        const store = createSharedSubscriptionStore({
+            emptyState: empty, createState: () => empty,
+            normalizeInput: (input: Input) => input, storeKey: (input: Input) => input.machineId,
+            retainState: true, watchAfterRefresh: true,
+            // Network boundary deliberately ignores abort to exercise late replies.
+            defaultSnapshotClient: (input: Input) => {
+                reads.push(input);
+                return input.view === 'overview' ? detailRead.promise : oldRead.promise;
+            },
+            defaultWatchClient: (input: Input, signal?: AbortSignal) => {
+                watches.push({ input, signal });
+                return new Promise<SharedSubscriptionWatchOutcome<State>>(resolve => {
+                    signal?.addEventListener('abort', () => resolve({ status: 'unavailable' }), { once: true });
+                });
+            },
+            refresh: async ({ input, snapshotClient }) => ({ value: await snapshotClient(input), view: input.view }),
+            watch: ({ input, signal, watchClient }) => watchClient(input, signal),
+            applySnapshot: (_state: State, next: State) => next,
+        });
+        const summary: Input = { machineId: 'a', view: 'summary' };
+        const overview: Input = { ...summary, view: 'overview' };
+        const release = store.subscribe(summary, () => {});
+        try {
+            expect(reads.map(input => input.view)).toEqual(['summary']);
+            store.reconfigure(overview);
+            expect(reads.map(input => input.view)).toEqual(['summary', 'overview']);
+            expect(store.isRefreshing(summary)).toBe(true);
+            oldRead.resolve(1);
+            await oldRead.promise;
+            await Promise.resolve(); await Promise.resolve();
+            // The old finally must not clear the new read's refreshing/single-flight state.
+            expect(store.isRefreshing(summary)).toBe(true);
+            expect(store.getState(summary)).toEqual(empty);
+            detailRead.resolve(2);
+            await vi.waitFor(() => expect(store.getState(summary)).toEqual({ value: 2, view: 'overview' }));
+            expect(watches.map(watch => watch.input.view)).toEqual(['overview']);
+            expect(store.isRefreshing(summary)).toBe(false);
+            release();
+            expect(watches[0]?.signal?.aborted).toBe(true);
+        } finally { oldRead.resolve(1); detailRead.resolve(2); release(); store.reset(); }
+    });
     it('rearms a watch from a direct read when its old watch answers during that read', async () => {
         let finishRead!: (value: number) => void;
         const pending = new Promise<number>(resolve => { finishRead = resolve; });

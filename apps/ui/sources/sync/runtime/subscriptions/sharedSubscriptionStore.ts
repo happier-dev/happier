@@ -138,12 +138,14 @@ export type SharedSubscriptionStore<
         options?: SharedSubscriptionStoreOptions<TSnapshotClient, TWatchClient>,
     ): () => void;
     invalidate(input: TInput): void;
+    /** Change a demanded facet at the same resource key, retiring its old transport but keeping content. */
+    reconfigure(input: TInput): void;
     publish(input: TInput, snapshot: TSnapshot, options?: Readonly<{ resumeWatch?: boolean }>): void;
     reset(): void;
 }>;
 
 type SharedSubscriptionStoreEntry<TInput, TState, TSnapshotClient, TWatchClient> = {
-    readonly input: TInput;
+    input: TInput;
     state: TState;
     snapshotClient: TSnapshotClient;
     watchClient: TWatchClient;
@@ -284,20 +286,18 @@ export function createSharedSubscriptionStore<
                 setState(entry, config.failRefresh(entry.state, entry.input, entry.nowMs, error));
             }
         } finally {
-            entry.inFlight = null;
             if (entry.abortController === abortController) {
+                entry.inFlight = null;
                 entry.abortController = null;
-            }
-            setRefreshing(entry, false);
-            // A mutation or source update during this read must not be swallowed by
-            // single-flight sharing. Coalesce those invalidations into one subsequent read.
-            if (entry.refreshRequested && entry.refCount > 0 && !abortController?.signal.aborted) {
-                const refresh = runRefresh(entry);
-                if (config.watchAfterRefresh) void refresh.then(() => runWatchLoop(entry));
-            } else if (config.watchAfterRefresh && !abortController?.signal.aborted) {
-                // Direct reads also own the wake if an old watch answered while
-                // they were pending; there may be no subscribe/invalidate waiter.
-                void runWatchLoop(entry);
+                setRefreshing(entry, false);
+                // A mutation during this read coalesces into one subsequent read.
+                // A retired read must not settle or re-arm its replacement.
+                if (entry.refreshRequested && entry.refCount > 0 && !abortController?.signal.aborted) {
+                    const refresh = runRefresh(entry);
+                    if (config.watchAfterRefresh) void refresh.then(() => runWatchLoop(entry));
+                } else if (config.watchAfterRefresh && !abortController?.signal.aborted) {
+                    void runWatchLoop(entry);
+                }
             }
         } })();
         entry.inFlight = promise;
@@ -537,6 +537,26 @@ export function createSharedSubscriptionStore<
                     }
                 }
             };
+        },
+        reconfigure(input) {
+            const normalized = config.normalizeInput(input);
+            const entry = entries.get(config.storeKey(normalized));
+            if (!entry || entry.input === normalized) return;
+            entry.input = normalized;
+            entry.abortController?.abort();
+            entry.abortController = null;
+            entry.inFlight = null;
+            entry.readStarted = false;
+            entry.refreshRequested = false;
+            stopWatch(entry);
+            entry.watchRetired = false;
+            entry.watchRecoveryRequested = false;
+            entry.watchRecoveryNeedsRefresh = false;
+            if (entry.refCount > 0) {
+                const refresh = runRefresh(entry);
+                if (config.watchAfterRefresh) void refresh.then(() => runWatchLoop(entry));
+                else runWatchLoop(entry);
+            } else setRefreshing(entry, false);
         },
         invalidate(input) {
             const normalized = config.normalizeInput(input);
