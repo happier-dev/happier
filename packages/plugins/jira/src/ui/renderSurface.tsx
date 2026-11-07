@@ -1,12 +1,13 @@
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { Button, ErrorState, LoadingState, Metadata, Text, defineUiSurface, useExecutePluginAction, usePluginTranslation, useTabPanelActivity } from '@happier-dev/plugin-ui';
-import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
-import { TriageDetailSurfaceInputV1Schema, describeTriageSourceFailureV1, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageDetailInstance, TriageDetailPanel, TriageDetailStory, TriageSourceCommentComposer, useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
+import { TriageDetailSurfaceInputV1Schema, TriageSourceConnectedAccountInputsV1, describeTriageSourceFailureV1, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { JIRA_ACTIONS, JIRA_PLUGIN_ID } from '../contracts.js';
 import { JiraDetailResultSchema, type JiraDetailResult } from '../source/detailContract.js';
 
 const action = { pluginId: JIRA_PLUGIN_ID, localId: JIRA_ACTIONS.detail };
+const commentAction = { pluginId: JIRA_PLUGIN_ID, localId: JIRA_ACTIONS.comment };
 function Overview({ input }: { input: TriageDetailSurfaceInputV1 }): React.ReactElement {
     const text = usePluginTranslation();
     const request = useTriageDetailRequest(input);
@@ -33,16 +34,22 @@ function Overview({ input }: { input: TriageDetailSurfaceInputV1 }): React.React
     if (!result) return <LoadingState title={text('plugins.jira.detail.loading', 'Reading Jira issue')} />;
     if (result.kind === 'failed') return <ErrorState title={describeTriageSourceFailureV1(result.failure, text('plugins.jira.detail.unavailable', 'Jira issue unavailable'), text)}
         action={<Button variant="secondary" title={text('plugins.jira.detail.retry', 'Retry')} onPress={retry} />} />;
+    const webUrl = input.observation.locator.webUrl;
     return <TriageDetailStory>
         <Text value={result.body || text('plugins.jira.detail.noDescription', 'No description')} />
         <Metadata entries={result.fields} />
+        <TriageSourceCommentComposer action={commentAction} sourceName="Jira" {...(webUrl === undefined ? {} : { sourceUrl: webUrl })}
+            buildInput={(body) => {
+                const entry = TriageSourceConnectedAccountInputsV1.get.safeParse({ v: 1, ...request });
+                return entry.success ? { entry: entry.data, body } : null;
+            }} />
     </TriageDetailStory>;
 }
 function JiraDetail(context: RenderContext): React.ReactElement {
     const text = usePluginTranslation();
     const parsed = TriageDetailSurfaceInputV1Schema.safeParse(context.launchInput);
     if (!parsed.success) return <ErrorState title={text('plugins.jira.detail.unavailable', 'Jira issue unavailable')} />;
-    return <TriageDetailInstance><TriageDetailPanel panel={parsed.data.panel ?? 'overview'} ariaLabel="Jira"
+    return <TriageDetailInstance scrollOwner={parsed.data.panelScrollOwner}><TriageDetailPanel scrollOwner={parsed.data.panelScrollOwner} panel={parsed.data.panel ?? 'overview'} ariaLabel="Jira"
         panels={{ overview: <Overview input={parsed.data} /> }} /></TriageDetailInstance>;
 }
 export const renderSurface = defineUiSurface(JiraDetail);

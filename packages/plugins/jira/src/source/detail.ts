@@ -1,4 +1,4 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JiraSourceContext } from '../api.js';
 import { TriageGetInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { jiraFailure, object, string } from '../api.js';
 import { jiraAdfText, projectJiraIssue } from './model.js';
@@ -6,7 +6,7 @@ import { openJiraInstance, readExactJiraIssue, jiraViewer } from './operations.j
 
 import type { JiraDetailResult } from './detailContract.js';
 export { JiraDetailResultSchema } from './detailContract.js';
-export async function readJiraDetail(raw: unknown, context: PluginInvocationContext): Promise<JiraDetailResult> {
+export async function readJiraDetail(raw: unknown, context: JiraSourceContext): Promise<JiraDetailResult> {
     const input = TriageGetInputV1Schema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input.instance, context, input.localRef);

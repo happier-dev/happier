@@ -78,6 +78,7 @@ export function projectJiraIssue(issue: JiraIssue, origin: string, viewerId: str
     const designation = display(issue.key, issue.id);
     const creator = string(object(fields.creator).displayName);
     const authorLabel = creator === undefined ? undefined : display(creator, issue.id);
+    const assignee = string(object(fields.assignee).displayName);
     const createdAtMs = Date.parse(String(fields.created));
     const dueAtMs = Date.parse(String(fields.duedate));
     const completedAtMs = Date.parse(String(fields.resolutiondate));
@@ -90,6 +91,7 @@ export function projectJiraIssue(issue: JiraIssue, origin: string, viewerId: str
         kind: 'present', localRef: jiraLocalRef(origin, issue.id),
         locator: { v: 1, displayPath: designation, webUrl: `${origin}/browse/${encodeURIComponent(issue.key)}` },
         snapshot: TriageSourceEntrySnapshotV1Schema.parse({ v: 1, title, scopeLabel, scopeUnitId: String(object(fields.project).id), designation,
+            ...(fields.assignee === null ? { assigneeLabel: null } : assignee === undefined ? {} : { assigneeLabel: display(assignee, assignee) }),
             ...(authorLabel === undefined ? {} : { authorLabel }), ...(Number.isFinite(createdAtMs) ? { createdAtMs } : {}),
             ...(Number.isFinite(dueAtMs) ? { dueDate: fields.duedate } : {}),
             ...(jiraState(fields.status).presentation === 'resolved' && Number.isFinite(completedAtMs) ? { completedAtMs } : {}),

@@ -1,0 +1,91 @@
+/** Finite Account HTTP operations; shared by declarations and portable activation. */
+import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1, TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from './contracts.js';
+import { getJiraEntry, listJiraInstances, listJiraScopeUnits, scanJiraSource } from './source/operations.js';
+import { JiraDetailResultSchema, readJiraDetail } from './source/detail.js';
+import { JiraCommentInputSchema, createJiraIssue, editJiraIssue, transitionJiraIssue, commentJiraIssue } from './source/writes.js';
+import { listJiraIssueTypes } from './source/configuration.js';
+import { JiraIssueTypesInputSchema, JiraIssueTypesResultSchema } from './source/configurationContract.js';
+const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'jira-account-runtime', exportName: 'activate' } } as const;
+const sources = TriageSourcesContributionProtocolV1;
+const access = [JIRA_ACCOUNT_PURPOSE, 'jira-api'];
+const bindings = [{ path: 'instance.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }];
+export const JIRA_ACCOUNT_ACTIONS = {
+    [JIRA_ACTIONS.issueTypes]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Read Jira issue types', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+        placementBindings: [], dangerLevel: 'safe', hostAccess: access,
+        connectedAccountPurposeBindings: [{ path: 'binding.account', purpose: JIRA_ACCOUNT_PURPOSE }],
+        inputSchema: JiraIssueTypesInputSchema.jsonSchema, resultSchema: JiraIssueTypesResultSchema.jsonSchema,
+        run: listJiraIssueTypes,
+    },
+    [JIRA_ACTIONS.create]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Create a Jira issue', surfaces: sources.operations.create.declaration.surfaces,
+        confirmation: { title: 'Create Jira issue', body: 'Create this issue on the selected Jira Cloud site?' },
+        dangerLevel: 'writesRemote', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.create.jsonSchema,
+        resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: createJiraIssue,
+    },
+    [JIRA_ACTIONS.edit]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Edit a Jira issue', surfaces: sources.operations.edit.declaration.surfaces,
+        confirmation: { title: 'Edit Jira issue', body: 'Apply these changes to the selected Jira issue?' },
+        dangerLevel: 'writesRemote', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.edit.jsonSchema,
+        resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: editJiraIssue,
+    },
+    [JIRA_ACTIONS.transition]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Transition a Jira issue', surfaces: sources.operations.transition.declaration.surfaces,
+        confirmation: { title: 'Transition Jira issue', body: 'Apply this native workflow transition to the selected Jira issue?' },
+        dangerLevel: 'writesRemote', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.transition.jsonSchema,
+        resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: transitionJiraIssue,
+    },
+    [JIRA_ACTIONS.comment]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Comment on a Jira issue', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+        confirmation: { title: 'Comment on Jira issue', body: 'Publish this comment on the selected Jira issue?' },
+        dangerLevel: 'writesRemote', hostAccess: access,
+        connectedAccountPurposeBindings: [{ path: 'entry.instance.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }],
+        inputSchema: JiraCommentInputSchema.jsonSchema,
+        resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: commentJiraIssue,
+    },
+    [JIRA_ACTIONS.listInstances]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Discover Jira sites', surfaces: sources.operations.listInstances.declaration.surfaces,
+        placementBindings: [], dangerLevel: 'safe', hostAccess: access,
+        inputSchema: TriageSourceConnectedAccountInputsV1.listInstances.jsonSchema,
+        resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema, run: listJiraInstances,
+    },
+    [JIRA_ACTIONS.scan]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Scan Jira issues', surfaces: sources.operations.scan.declaration.surfaces,
+        dangerLevel: 'safe', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.scan.jsonSchema,
+        resultSchema: sources.operations.scan.declaration.resultSchema.jsonSchema, run: scanJiraSource,
+    },
+    [JIRA_ACTIONS.listScopeUnits]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'List Jira projects', surfaces: sources.operations.listScopeUnits.declaration.surfaces,
+        placementBindings: [], dangerLevel: 'safe', hostAccess: access,
+        connectedAccountPurposeBindings: [{ path: 'draft.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }],
+        inputSchema: TriageSourceConnectedAccountInputsV1.listScopeUnits.jsonSchema,
+        resultSchema: sources.operations.listScopeUnits.declaration.resultSchema.jsonSchema, run: listJiraScopeUnits,
+    },
+    [JIRA_ACTIONS.get]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Read a Jira issue', surfaces: sources.operations.get.declaration.surfaces,
+        placementBindings: [], dangerLevel: 'safe', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
+        resultSchema: sources.operations.get.declaration.resultSchema.jsonSchema, run: getJiraEntry,
+    },
+    [JIRA_ACTIONS.detail]: {
+        execution: ACCOUNT_EXECUTION,
+        title: 'Read Jira issue details', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
+        placementBindings: [], dangerLevel: 'safe', hostAccess: access, connectedAccountPurposeBindings: bindings,
+        inputSchema: TriageSourceConnectedAccountInputsV1.get.jsonSchema,
+        resultSchema: JiraDetailResultSchema.jsonSchema, run: readJiraDetail,
+    }
+} as const;

@@ -1,17 +1,25 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import type { JiraSourceContext } from '../api.js';
+import {
+    defineProtocolObject, defineProtocolString,
+    type ProtocolComposableSchema, type ProtocolSchemaInput, type ProtocolSchemaOutput,
+} from '@happier-dev/plugin-sdk/protocol';
 import {
     TriageSourceConnectedAccountInputsV1, TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema,
     TriageTaskTransitionInputV1Schema, type TriageTaskWriteResultV1, type TriageTaskFieldsV1,
+    type TriageTaskTransitionFieldValuesV1,
 } from '@happier-dev/triage-protocol/v1';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 import { JiraFailure, invalidJira, jiraFailure, numericId, object, string, type JiraClient } from '../api.js';
 import { JIRA_PLUGIN_ID, JIRA_SOURCE_ID } from '../contracts.js';
 import { jiraAdfText, projectJiraIssue, type JiraConfiguration, type JiraIssue } from './model.js';
 import { openJiraInstance, readExactJiraIssue, jiraViewer } from './operations.js';
-import { JIRA_FIELD_IDS, readJiraCreateDirectory, readJiraTransitions, jiraTransitionRequiresFields, missingJiraValue } from './metadata.js';
+import { JIRA_FIELD_IDS, readJiraCreateDirectory, readJiraTransitions, jiraTransitionRequiredFields,
+    jiraTransitionFieldDescriptor, jiraTransitionOptionId, missingJiraValue } from './metadata.js';
 
-export const JiraCommentInputSchema = defineProtocolObject({
+export const JiraCommentInputSchema: ProtocolComposableSchema<
+    Readonly<{ entry: ProtocolSchemaInput<typeof TriageSourceConnectedAccountInputsV1.get>; body: string }>,
+    Readonly<{ entry: ProtocolSchemaOutput<typeof TriageSourceConnectedAccountInputsV1.get>; body: string }>
+> = defineProtocolObject({
     entry: TriageSourceConnectedAccountInputsV1.get,
     body: defineProtocolString({ minLength: 1 }),
 }, { policy: 'closed' });
@@ -98,8 +106,9 @@ function settledResult(result: Awaited<ReturnType<typeof settleAtMostOnceProvide
     return result;
 }
 
-export async function createJiraIssue(raw: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function createJiraIssue(raw: unknown, context: JiraSourceContext): Promise<TriageTaskWriteResultV1> {
     const input = TriageTaskCreateInputV1Schema.parse(raw);
+    if (input.initialStatusId !== undefined) return { kind: 'refused', reason: 'jira/unsupportedField' };
     try {
         if (input.kindId !== 'issue') refusal('jira/kindUnsupported');
         const { client, configuration } = await openJiraInstance(input.instance, context);
@@ -122,7 +131,7 @@ export async function createJiraIssue(raw: unknown, context: PluginInvocationCon
     } catch (error) { return failed(error); }
 }
 
-export async function editJiraIssue(raw: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function editJiraIssue(raw: unknown, context: JiraSourceContext): Promise<TriageTaskWriteResultV1> {
     const input = TriageTaskEditInputV1Schema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input.instance, context, input.localRef);
@@ -144,7 +153,59 @@ export async function editJiraIssue(raw: unknown, context: PluginInvocationConte
     } catch (error) { return failed(error); }
 }
 
-export async function transitionJiraIssue(raw: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+function transitionNativeFields(transition: Record<string, unknown>, issue: JiraIssue, values: TriageTaskTransitionFieldValuesV1): Record<string, unknown> {
+    const metadata = object(transition.fields);
+    const fields: Record<string, unknown> = {};
+    for (const { fieldId, value } of values) {
+        if (Object.hasOwn(fields, fieldId)) refusal('jira/fieldValueInvalid');
+        if (!Object.hasOwn(metadata, fieldId)) refusal('jira/fieldUnavailable');
+        const field = jiraTransitionFieldDescriptor(fieldId, metadata[fieldId]);
+        if (field.kind === 'unsupported') refusal('jira/requiredFieldUnsupported');
+        if (missingJiraValue(value) || (typeof value === 'string' && value.trim().length === 0)) refusal('jira/fieldValueInvalid');
+        const schema = object(object(metadata[fieldId]).schema);
+        if (field.kind === 'text') {
+            if (typeof value !== 'string') refusal('jira/fieldValueInvalid');
+            const adf = fieldId === 'description' || fieldId === 'environment'
+                || schema.custom === 'com.atlassian.jira.plugin.system.customfieldtypes:textarea';
+            fields[fieldId] = adf ? jiraAdfBody(value) : value;
+        } else if (field.kind === 'number') {
+            if (typeof value !== 'number' || !Number.isFinite(value)) refusal('jira/fieldValueInvalid');
+            fields[fieldId] = value;
+        } else {
+            const ids = field.kind === 'choices' ? value : [value];
+            if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string'
+                || !field.options.some(option => option.id === id)) || new Set(ids).size !== ids.length) refusal('jira/fieldValueUnavailable');
+            const nativeType = schema.type === 'array' ? schema.items : schema.type;
+            const selected = ids.map(id => nativeType === 'string' ? id : nativeType === 'user' ? { accountId: id } : { id });
+            fields[fieldId] = field.kind === 'choices' ? selected : selected[0];
+        }
+    }
+    if (jiraTransitionRequiredFields(transition, issue).some(field => missingJiraValue(fields[field.id]))) refusal('jira/transitionRequiresFields');
+    return fields;
+}
+
+function transitionFieldsMatch(issue: JiraIssue, transition: Record<string, unknown>, values: TriageTaskTransitionFieldValuesV1): boolean {
+    const metadata = object(transition.fields);
+    return values.every(({ fieldId, value }) => {
+        if (!Object.hasOwn(issue.fields, fieldId)) return false;
+        const stored = issue.fields[fieldId];
+        const field = jiraTransitionFieldDescriptor(fieldId, metadata[fieldId]);
+        if (field.kind === 'text') {
+            const text = typeof stored === 'string' ? stored : jiraAdfText(stored);
+            return typeof value === 'string' && normalizeJiraBody(text).trimEnd() === normalizeJiraBody(value).trimEnd();
+        }
+        if (field.kind === 'number') return stored === value;
+        if (field.kind === 'choice') return jiraTransitionOptionId(stored) === value;
+        if (field.kind === 'choices') {
+            if (!Array.isArray(stored) || !Array.isArray(value)) return false;
+            const actual = stored.map(jiraTransitionOptionId);
+            return actual.length === value.length && value.every(id => actual.includes(id));
+        }
+        return false;
+    });
+}
+
+export async function transitionJiraIssue(raw: unknown, context: JiraSourceContext): Promise<TriageTaskWriteResultV1> {
     const input = TriageTaskTransitionInputV1Schema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input.instance, context, input.localRef);
@@ -154,14 +215,18 @@ export async function transitionJiraIssue(raw: unknown, context: PluginInvocatio
         if (!string(transition.id)) refusal('jira/transitionUnavailable');
         const targetId = string(object(transition.to).id);
         if (!targetId) throw invalidJira('jira/transitionStatusInvalid');
-        if (jiraTransitionRequiresFields(transition, before)) refusal('jira/transitionRequiresFields');
+        const values = input.fieldValues ?? [];
+        const fields = transitionNativeFields(transition, before, values);
         let sent: Dispatch;
         return settledResult(await settleAtMostOnceProviderWrite({
-            dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}/transitions`, 'POST', { transition: { id: input.transitionId } })), mayHaveChanged,
+            dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}/transitions`, 'POST', {
+                transition: { id: input.transitionId }, ...(values.length === 0 ? {} : { fields }),
+            })), mayHaveChanged,
             confirm: async () => {
                 try {
                     const { issue, observation } = await confirmedObservation(client, configuration, input.localRef.entryId);
                     return { kind: object(issue.fields.status).id === targetId
+                        && transitionFieldsMatch(issue, transition, values)
                         && (sent.ok || object(before.fields.status).id !== targetId) ? 'applied' as const : 'uncertain' as const, observation };
                 } catch (error) { return { kind: 'uncertain' as const, failure: jiraFailure(error) }; }
             },
@@ -169,7 +234,7 @@ export async function transitionJiraIssue(raw: unknown, context: PluginInvocatio
     } catch (error) { return failed(error); }
 }
 
-export async function commentJiraIssue(raw: unknown, context: PluginInvocationContext): Promise<TriageTaskWriteResultV1> {
+export async function commentJiraIssue(raw: unknown, context: JiraSourceContext): Promise<TriageTaskWriteResultV1> {
     const input = JiraCommentInputSchema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input.entry.instance, context, input.entry.localRef);

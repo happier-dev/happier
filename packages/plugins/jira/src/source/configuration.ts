@@ -1,10 +1,10 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { JiraSourceContext } from '../api.js';
 import { invalidJira, jiraFailure, numericId, string } from '../api.js';
 import { JiraIssueTypesInputSchema, type JiraIssueTypesResult } from './configurationContract.js';
 import { readJiraCreateDirectory } from './metadata.js';
 import { openJiraInstance } from './operations.js';
 
-export async function listJiraIssueTypes(raw: unknown, context: PluginInvocationContext): Promise<JiraIssueTypesResult> {
+export async function listJiraIssueTypes(raw: unknown, context: JiraSourceContext): Promise<JiraIssueTypesResult> {
     const input = JiraIssueTypesInputSchema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input, context);

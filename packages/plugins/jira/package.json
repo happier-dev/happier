@@ -6,12 +6,16 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./happier-plugin-ui/jira-account-runtime": {
+      "happier-source": "./src/accountRuntime.ts",
+      "default": "./dist/accountRuntime.js"
+    },
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./manifest": { "happier-source": "./src/manifest.ts", "types": "./dist/manifest.d.ts", "default": "./dist/manifest.js" },
     "./happier-plugin-ui/jira-detail-native": "./src/ui/renderSurface.tsx",
     "./happier-plugin-ui/jira-settings-native": "./src/ui/renderSettingsSurface.tsx"
   },
-  "files": ["dist", ".happier-plugin", "package.json"],
+  "files": ["dist", ".happier-plugin", "package.json", "assets"],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json --happier-staged-output-script build:ui",

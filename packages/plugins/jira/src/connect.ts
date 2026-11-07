@@ -1,8 +1,9 @@
-import { Buffer } from 'node:buffer';
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import type { ConnectedAccountRuntime, ConnectedAccountAuthenticationContext, ConnectedAccountReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { jiraCloudOrigin, jiraResponseFailure, object, string } from './api.js';
 
-function authorization(email: string, token: string): string { return `Basic ${Buffer.from(`${email}:${token}`, 'utf8').toString('base64')}`; }
+function authorization(email: string, token: string): string { return `Basic ${encodeBase64(new TextEncoder().encode(`${email}:${token}`))}`; }
 function diagnostic(code: string) { return { code, severity: 'error' as const, message: 'Jira could not confirm this account. Check the site, account email and API token.' }; }
 
 async function confirm(context: Pick<ConnectedAccountAuthenticationContext, 'services' | 'signal'>,
@@ -34,6 +35,16 @@ async function health(context: ConnectedAccountReadContext, options?: { signal?:
 }
 
 /** Host credential storage owns the API token. This runtime only verifies and materializes it. */
+const materializeJiraCredentials: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options) => {
+        const origin = jiraCloudOrigin(context.configuration.values.site);
+        if (request.kind !== 'httpHeaders' || origin === null || request.origin !== origin) throw new Error('Jira credential origin mismatch');
+        if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) return { kind: 'httpHeaders', headers: {} as Record<string, string> };
+        const email = (await context.credentials.get('email', options))?.trim();
+        const token = (await context.credentials.get('token', options))?.trim();
+        if (!email || !token) throw new Error('Jira credentials are unavailable');
+        return { kind: 'httpHeaders', headers: { authorization: authorization(email, token) } };
+    };
+
 export const jiraAccountRuntime: ConnectedAccountRuntime = {
     authentication: { modes: { 'api-token': { kind: 'manual', async complete(input, context, options) {
         const origin = jiraCloudOrigin(context.configuration.values.site);
@@ -48,13 +59,10 @@ export const jiraAccountRuntime: ConnectedAccountRuntime = {
     } } } },
     refresh: health, status: health,
     async revoke() { return { status: 'remoteUnsupported' }; },
-    async materialize(request, context, options) {
-        const origin = jiraCloudOrigin(context.configuration.values.site);
-        if (request.kind !== 'httpHeaders' || origin === null || request.origin !== origin) throw new Error('Jira credential origin mismatch');
-        if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) return { kind: 'httpHeaders', headers: {} as Record<string, string> };
-        const email = (await context.credentials.get('email', options))?.trim();
-        const token = (await context.credentials.get('token', options))?.trim();
-        if (!email || !token) throw new Error('Jira credentials are unavailable');
-        return { kind: 'httpHeaders', headers: { authorization: authorization(email, token) } };
-    },
+    materialize: materializeJiraCredentials,
+};
+
+export const jiraPortableAccountRuntime: ConnectedAccountPortableRuntime = {
+    authentication: jiraAccountRuntime.authentication,
+    materialize: materializeJiraCredentials,
 };

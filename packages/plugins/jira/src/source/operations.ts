@@ -1,4 +1,5 @@
-import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
+import type { JiraSourceContext } from '../api.js';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
     TriageListInstancesInputV1Schema, TriageListInstancesResultV1Schema,
@@ -20,14 +21,14 @@ import { encodeJiraConfiguration, jiraConfiguredScopeUnits, jiraProjectIncluded,
 function sameAccount(a: ConnectedAccountRef, b: ConnectedAccountRef): boolean {
     return a.accountId === b.accountId && a.service.pluginId === b.service.pluginId && a.service.localId === b.service.localId;
 }
-async function listedAccounts(context: PluginInvocationContext) {
+async function listedAccounts(context: JiraSourceContext) {
     const outcome = await readTriageSourceAccountListingV1({ connectedAccounts: context.services.connectedAccounts,
         purpose: JIRA_ACCOUNT_PURPOSE, signal: context.signal });
     if (outcome.kind === 'failed') throw invalidJira('jira/accountListingUnavailable');
     return outcome.kind === 'unbound' ? { status: 'complete' as const, accounts: [] } : outcome.listing;
 }
 
-export async function listJiraInstances(input: unknown, context: PluginInvocationContext): Promise<TriageListInstancesResultV1> {
+export async function listJiraInstances(input: unknown, context: JiraSourceContext): Promise<TriageListInstancesResultV1> {
     TriageListInstancesInputV1Schema.parse(input);
     try {
         const listing = await listedAccounts(context);
@@ -54,7 +55,7 @@ export async function listJiraInstances(input: unknown, context: PluginInvocatio
     } catch (error) { return { kind: 'failed', failure: jiraFailure(error) }; }
 }
 
-export async function openJiraInstance(instance: Pick<TriageConfiguredSourceInstanceV1, 'binding' | 'configuration' | 'localInstanceKey'>, context: PluginInvocationContext,
+export async function openJiraInstance(instance: Pick<TriageConfiguredSourceInstanceV1, 'binding' | 'configuration' | 'localInstanceKey'>, context: JiraSourceContext,
     ref?: TriageSourceEntryLocalRefV1): Promise<{ client: JiraClient; configuration: JiraConfiguration }> {
     if (!isTriageSourceConnectedAccountInstanceV1(instance) || instance.binding.purpose !== JIRA_ACCOUNT_PURPOSE) throw invalidJira('jira/bindingInvalid');
     const configuration = readJiraConfiguration(instance.configuration.token);
@@ -71,7 +72,7 @@ export async function openJiraInstance(instance: Pick<TriageConfiguredSourceInst
 }
 
 /** Jira REST v3 project/search owns visibility, search and offset paging. */
-export async function listJiraScopeUnits(raw: unknown, context: PluginInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+export async function listJiraScopeUnits(raw: unknown, context: JiraSourceContext): Promise<TriageListScopeUnitsResultV1> {
     const input = TriageListScopeUnitsInputV1Schema.parse(raw);
     try {
         const configuration = readJiraConfiguration(input.draft.configuration.token);
@@ -133,7 +134,7 @@ function jql(configuration: JiraConfiguration, completedSinceMs?: number): strin
     return `${selected}${selected ? ' ' : ''}ORDER BY updated DESC, id DESC`;
 }
 
-export async function scanJiraSource(raw: unknown, context: PluginInvocationContext): Promise<TriageScanResultV1> {
+export async function scanJiraSource(raw: unknown, context: JiraSourceContext): Promise<TriageScanResultV1> {
     const input = TriageScanInputV1Schema.parse(raw);
     const completedSinceMs = input.completed?.kindIds.includes('issue') ? input.completed.sinceMs : undefined;
     try {
@@ -176,7 +177,7 @@ export async function readExactJiraIssue(client: JiraClient, configuration: Jira
     return issue;
 }
 
-export async function getJiraEntry(raw: unknown, context: PluginInvocationContext): Promise<TriageGetResultV1> {
+export async function getJiraEntry(raw: unknown, context: JiraSourceContext): Promise<TriageGetResultV1> {
     const input = TriageGetInputV1Schema.parse(raw);
     try {
         const { client, configuration } = await openJiraInstance(input.instance, context, input.localRef);
