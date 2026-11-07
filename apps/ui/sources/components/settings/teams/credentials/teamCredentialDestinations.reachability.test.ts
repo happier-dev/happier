@@ -13,6 +13,7 @@ import {
     teamCredentialLimitsPath,
     teamCredentialRequestPolicyPath,
     teamCredentialUsagePath,
+    teamCredentialAggregateUsagePath,
     teamCredentialsPath,
 } from '../teamsRoutes';
 
@@ -40,6 +41,7 @@ const DESTINATIONS = [
     teamCredentialActivityPath(ADDRESS, RESOURCE_ID),
     teamCredentialLimitsPath(ADDRESS, RESOURCE_ID),
     teamCredentialUsagePath(ADDRESS, RESOURCE_ID),
+    teamCredentialAggregateUsagePath(ADDRESS),
     teamCredentialExternalApiPath(ADDRESS, RESOURCE_ID),
 ] as const;
 

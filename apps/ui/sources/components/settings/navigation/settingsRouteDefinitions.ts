@@ -7,11 +7,6 @@ type SettingsRouteChromeDefinition = Readonly<{
     navigator?: SettingsNestedNavigator;
     headerBackTitleKey?: TranslationKeyNoParams;
     headerShown?: boolean;
-    /**
-     * An entity page names itself in its own `PageHeader alwaysShowTitle` (a Team, a member, a
-     * Group), so the phone header keeps an empty title: one title on the page.
-     */
-    headsItself?: boolean;
     name: string;
     titleKey?: TranslationKeyNoParams;
 }>;
@@ -25,7 +20,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     // API tokens are one collection (the rail + a token's detail) under its own nested stack.
     { name: 'account/api-tokens', titleKey: 'settingsApiTokens.title' },
     { name: 'index', navigator: 'account/api-tokens', titleKey: 'settingsApiTokens.title' },
-    { name: '[tokenId]', navigator: 'account/api-tokens', titleKey: 'settingsApiTokens.title', headsItself: true },
+    { name: '[tokenId]', navigator: 'account/api-tokens', titleKey: 'settingsApiTokens.title' },
     { name: 'acp-backend', titleKey: 'settings.acpCatalogBackendEditorTitle' },
     { name: 'acp', titleKey: 'settings.acpCatalog' },
     { name: 'actions', titleKey: 'common.actions' },
@@ -41,15 +36,17 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'appearance/themes/import', titleKey: 'settingsAppearance.themeProfiles.importProfile' },
     { name: 'appearance/themes/export', titleKey: 'settingsAppearance.themeProfiles.exportProfile' },
     { name: 'attachments', titleKey: 'settings.attachments' },
+    { name: 'deployments', titleKey: 'projects.deployments.title' },
     { name: 'connect/claude', headerShown: false },
     { name: 'coordination', titleKey: 'settingsCoordination.title' },
     // Connected services is one collection (its rail + the detail) under its own nested stack; the
     // index of every service is its unselected detail (lab `csvc` C1/C2).
     { name: 'connected-services', titleKey: 'settings.connectedServices' },
     { name: 'index', navigator: 'connected-services', titleKey: 'settings.connectedServices' },
-    { name: 'connect', navigator: 'connected-services', titleKey: 'settings.connectedServices', headsItself: true },
+    { name: 'connect', navigator: 'connected-services', titleKey: 'settings.connectedServices' },
     { name: '[serviceId]', navigator: 'connected-services', titleKey: 'connectedServices.fallbackName' },
-    { name: 'account', navigator: 'connected-services', titleKey: 'settings.connectedServices', headsItself: true },
+    { name: 'account', navigator: 'connected-services', titleKey: 'settings.connectedServices' },
+    { name: 'gateway', navigator: 'connected-services', titleKey: 'settings.connectedServices' },
     { name: 'sign-in', navigator: 'connected-services', titleKey: 'connectedServicesCollection.agentSignInTitle' },
     { name: 'secrets', navigator: 'connected-services', titleKey: 'settings.secrets' },
     { name: 'provider-state-sharing', navigator: 'connected-services', titleKey: 'connectedServicesSettings.perAgentTitle' },
@@ -68,7 +65,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'home/[serverId]', titleKey: 'homeGovernance.title' },
     { name: 'index', navigator: 'home/[serverId]', titleKey: 'homeGovernance.title' },
     { name: 'people/index', navigator: 'home/[serverId]', titleKey: 'homeGovernance.people' },
-    { name: 'people/[accountId]', navigator: 'home/[serverId]', titleKey: 'homeGovernance.people', headsItself: true },
+    { name: 'people/[accountId]', navigator: 'home/[serverId]', titleKey: 'homeGovernance.people' },
     { name: 'policies', navigator: 'home/[serverId]', titleKey: 'homeGovernance.policies' },
     { name: 'teams', navigator: 'home/[serverId]', titleKey: 'homeGovernance.teams' },
     { name: 'reach', navigator: 'home/[serverId]', titleKey: 'homeGovernance.reach.title' },
@@ -78,6 +75,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'runtime', navigator: 'home/[serverId]', titleKey: 'homeGovernance.runtime.title' },
     { name: 'server-settings', navigator: 'home/[serverId]', titleKey: 'homeGovernance.console.serverSettings' },
     { name: 'activity', navigator: 'home/[serverId]', titleKey: 'homeGovernance.activity.title' },
+    { name: 'usage', navigator: 'home/[serverId]', titleKey: 'teams.credentials.usage.title' },
     { name: 'policies/identity/new', navigator: 'home/[serverId]', titleKey: 'identityAdministration.createTitle' },
     { name: 'policies/identity/[providerId]/index', navigator: 'home/[serverId]', titleKey: 'identityAdministration.title' },
     { name: 'policies/identity/[providerId]/edit', navigator: 'home/[serverId]', titleKey: 'identityAdministration.editTitle' },
@@ -101,33 +99,33 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'embeds', titleKey: 'settingsEmbeds.title' },
     { name: 'index', navigator: 'embeds', titleKey: 'settingsEmbeds.title' },
     { name: 'new', navigator: 'embeds', titleKey: 'settingsEmbeds.newTitle' },
-    { name: '[tokenId]', navigator: 'embeds', titleKey: 'settingsEmbeds.title', headsItself: true },
-    { name: 'machines', titleKey: 'settings.machines', headsItself: true },
-    { name: 'index', navigator: 'machines', titleKey: 'settings.machines', headsItself: true },
+    { name: '[tokenId]', navigator: 'embeds', titleKey: 'settingsEmbeds.title' },
+    { name: 'machines', titleKey: 'settings.machines' },
+    { name: 'index', navigator: 'machines', titleKey: 'settings.machines' },
     { name: '[id]/index', navigator: 'machines', titleKey: 'settings.machines' },
     { name: '[id]/[page]', navigator: 'machines', titleKey: 'settings.machines' },
     { name: 'managed/[id]', navigator: 'machines', titleKey: 'settings.machines' },
     { name: 'add', navigator: 'machines', titleKey: 'settings.addMachine' },
     { name: 'add/[provisioner]', navigator: 'machines', titleKey: 'settings.addMachine' },
     { name: 'presets/new', navigator: 'machines', titleKey: 'machinePresets.newPreset' },
-    { name: 'presets/[presetId]', navigator: 'machines', titleKey: 'machinePresets.title', headsItself: true },
+    { name: 'presets/[presetId]', navigator: 'machines', titleKey: 'machinePresets.title' },
     { name: 'this-computer', navigator: 'machines', titleKey: 'settingsMachines.thisComputerTitle' },
-    { name: 'defaults', navigator: 'machines', titleKey: 'settingsMachines.defaultsTitle', headsItself: true },
+    { name: 'defaults', navigator: 'machines', titleKey: 'settingsMachines.defaultsTitle' },
     { name: 'pools/[poolId]', navigator: 'machines', titleKey: 'machinePools.title' },
     { name: 'pools/new', navigator: 'machines', titleKey: 'machinePools.add' },
     // Skills: the list beside the selected skill or the homepage (P6 §4.1).
     // On a phone the homepage is its own large title (lab hs A2p), so the bar carries only Back.
-    { name: 'skills', titleKey: 'capabilities.skills.title', headsItself: true },
-    { name: 'index', navigator: 'skills', titleKey: 'capabilities.skills.title', headsItself: true },
+    { name: 'skills', titleKey: 'capabilities.skills.title' },
+    { name: 'index', navigator: 'skills', titleKey: 'capabilities.skills.title' },
     // A skill's page heads itself (its name, purpose and facts), so the bar carries only Back.
-    { name: 'new', navigator: 'skills', titleKey: 'promptLibrary.newSkill', headsItself: true },
-    { name: 'found', navigator: 'skills', titleKey: 'capabilities.skillsFound.title', headsItself: true },
-    { name: 'updates', navigator: 'skills', titleKey: 'capabilities.skillsUpdates.updates.title', headsItself: true },
-    { name: 'choose', navigator: 'skills', titleKey: 'capabilities.skills.home.choose', headsItself: true },
-    { name: '[skillId]', navigator: 'skills', titleKey: 'capabilities.skills.title', headsItself: true },
+    { name: 'new', navigator: 'skills', titleKey: 'promptLibrary.newSkill' },
+    { name: 'found', navigator: 'skills', titleKey: 'capabilities.skillsFound.title' },
+    { name: 'updates', navigator: 'skills', titleKey: 'capabilities.skillsUpdates.updates.title' },
+    { name: 'choose', navigator: 'skills', titleKey: 'capabilities.skills.home.choose' },
+    { name: '[skillId]', navigator: 'skills', titleKey: 'capabilities.skills.title' },
     { name: 'mcp-server', titleKey: 'settings.mcpServersEditorTitle' },
-    { name: 'mcp', titleKey: 'settings.mcpServers', headsItself: true },
-    { name: 'index', navigator: 'mcp', titleKey: 'settings.mcpServers', headsItself: true },
+    { name: 'mcp', titleKey: 'settings.mcpServers' },
+    { name: 'index', navigator: 'mcp', titleKey: 'settings.mcpServers' },
     { name: 'new', navigator: 'mcp', titleKey: 'mcpSettings.newServer' },
     { name: 'found', navigator: 'mcp', titleKey: 'capabilities.mcp.foundOnMachines' },
     { name: '[serverId]', navigator: 'mcp', titleKey: 'settings.mcpServersEditorTitle' },
@@ -143,6 +141,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'plugins/[pluginId]/[pageId]', titleKey: 'settingsPlugins.detailTitle' },
     { name: 'plugins/sources', titleKey: 'settingsPlugins.sourceAdministration.title' },
     { name: 'plugins/development', titleKey: 'settingsPlugins.views.development' },
+    { name: 'plugins/publish', titleKey: 'settingsPlugins.publish.title' },
     { name: 'plugins/diagnostics', titleKey: 'settingsPlugins.views.diagnostics' },
     { name: 'profiles', titleKey: 'settingsFeatures.profiles' },
     { name: 'index', navigator: 'profiles', titleKey: 'settingsFeatures.profiles' },
@@ -207,9 +206,9 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'index', navigator: 'server', titleKey: 'settings.servers' },
     { name: 'device', navigator: 'server', titleKey: 'addFlows.thisDeviceTitle' },
     { name: 'add', navigator: 'server', titleKey: 'addFlows.addHome' },
-    { name: '[homeId]', navigator: 'server', titleKey: 'settings.servers', headsItself: true },
+    { name: '[homeId]', navigator: 'server', titleKey: 'settings.servers' },
     { name: 'groups/new', navigator: 'server', titleKey: 'addFlows.newGroup' },
-    { name: 'groups/[groupId]', navigator: 'server', titleKey: 'addFlows.groupsTitle', headsItself: true },
+    { name: 'groups/[groupId]', navigator: 'server', titleKey: 'addFlows.groupsTitle' },
     { name: 'session', titleKey: 'settings.sessions' },
     { name: 'session/composer', titleKey: 'settingsSession.composer.title' },
     { name: 'session/handoff', titleKey: 'settingsSession.handoff.title' },
@@ -218,6 +217,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'session/provider-limits', titleKey: 'settingsSession.providerLimits.title' },
     { name: 'session/resume', titleKey: 'settingsSession.resume.title' },
     { name: 'session/runtime', titleKey: 'settingsSession.runtime.title' },
+    { name: 'session/spaces', titleKey: 'sessionsList.spacesTitle' },
     { name: 'session/sections', titleKey: 'sessionsList.sectionsMenuTitle' },
     { name: 'session/tool-rendering', titleKey: 'settingsSession.toolRendering.title' },
     { name: 'session/transcript', titleKey: 'settingsSession.transcript.title' },
@@ -229,13 +229,13 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'teams', titleKey: 'teams.title' },
     { name: 'index', navigator: 'teams', titleKey: 'teams.title' },
     { name: 'new', navigator: 'teams', titleKey: 'teams.create.title' },
-    { name: '[serverId]/[teamId]/index', navigator: 'teams', titleKey: 'teams.title', headsItself: true },
+    { name: '[serverId]/[teamId]/index', navigator: 'teams', titleKey: 'teams.title' },
     { name: '[serverId]/[teamId]/members/index', navigator: 'teams', titleKey: 'teams.tabs.members' },
     { name: '[serverId]/[teamId]/members/add', navigator: 'teams', titleKey: 'teams.tabs.members' },
-    { name: '[serverId]/[teamId]/members/[membershipId]', navigator: 'teams', titleKey: 'teams.tabs.members', headsItself: true },
+    { name: '[serverId]/[teamId]/members/[membershipId]', navigator: 'teams', titleKey: 'teams.tabs.members' },
     { name: '[serverId]/[teamId]/groups/index', navigator: 'teams', titleKey: 'teams.tabs.groups' },
     { name: '[serverId]/[teamId]/groups/new', navigator: 'teams', titleKey: 'teams.tabs.groups' },
-    { name: '[serverId]/[teamId]/groups/[groupId]', navigator: 'teams', titleKey: 'teams.tabs.groups', headsItself: true },
+    { name: '[serverId]/[teamId]/groups/[groupId]', navigator: 'teams', titleKey: 'teams.tabs.groups' },
     { name: '[serverId]/[teamId]/invitations/index', navigator: 'teams', titleKey: 'teams.tabs.invitations' },
     { name: '[serverId]/[teamId]/settings', navigator: 'teams', titleKey: 'teams.tabs.settings' },
     { name: '[serverId]/[teamId]/authentication', navigator: 'teams', titleKey: 'teams.tabs.authentication' },
@@ -252,6 +252,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     // instead of falling back to the raw Expo Router segment.
     { name: '[serverId]/[teamId]/credentials/index', navigator: 'teams', titleKey: 'teams.credentials.title' },
     { name: '[serverId]/[teamId]/credentials/new', navigator: 'teams', titleKey: 'teams.credentials.create.title' },
+    { name: '[serverId]/[teamId]/credentials/usage', navigator: 'teams', titleKey: 'teams.credentials.usage.title' },
     { name: '[serverId]/[teamId]/credentials/[resourceId]/index', navigator: 'teams', titleKey: 'teams.credentials.title' },
     { name: '[serverId]/[teamId]/credentials/[resourceId]/edit', navigator: 'teams', titleKey: 'teams.credentials.edit.title' },
     { name: '[serverId]/[teamId]/credentials/[resourceId]/access', navigator: 'teams', titleKey: 'teams.credentials.audience.title' },
@@ -267,7 +268,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'voice/service', titleKey: 'settingsVoice.pages.conversations.serviceTitle' },
     { name: 'voice/privacy', titleKey: 'settingsVoice.intents.privacy.title' },
     { name: 'voice/advanced', titleKey: 'settingsVoice.intents.advanced.title' },
-    { name: 'voice-history', titleKey: 'settingsVoice.history.title' },
+    { name: 'voice/history', titleKey: 'settingsVoice.history.title' },
 ] as const;
 
 /** Every registered settings route name, with its navigator prefix (`prompts/skills/[id]/files/edit`). */

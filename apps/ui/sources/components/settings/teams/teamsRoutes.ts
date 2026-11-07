@@ -1,5 +1,5 @@
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 export type TeamCredentialConnectedAccountSourceHint = Readonly<{
     kind: 'connected_account';
@@ -260,6 +260,10 @@ export function teamCredentialLimitsPath(address: TeamAddress, resourceId: strin
 
 export function teamCredentialUsagePath(address: TeamAddress, resourceId: string): `/settings/teams/${string}/${string}/credentials/${string}/usage` {
     return `${teamCredentialDetailPath(address, resourceId)}/usage`;
+}
+
+export function teamCredentialAggregateUsagePath(address: TeamAddress): `/settings/teams/${string}/${string}/credentials/usage` {
+    return `${teamCredentialsPath(address)}/usage`;
 }
 
 export function teamCredentialExternalApiPath(address: TeamAddress, resourceId: string): `/settings/teams/${string}/${string}/credentials/${string}/external-api` {

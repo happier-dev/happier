@@ -21,6 +21,10 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamCredentialUsage, useTeamCredentialUsageWriteRefresh } from '@/hooks/teams/useTeamCredentialResources';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { HomeAdministrationSection } from '@/components/settings/home/governance/HomeAdministrationSection';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
     resolveAvailableCostModes,
@@ -46,14 +50,16 @@ import {
     limitReached,
     limitSubjectLine,
     offeredTeamCredentialUsageBreakdowns,
-    resolveTeamCredentialUsageStartTimeSeconds,
     orderTeamCredentialLimitsByRemaining,
     usageBreakdownLabel,
     usageBreakdownPresentation,
     usageRequestMetricLabel,
+    resolveTeamCredentialUsageStartTimeSeconds,
 } from './teamCredentialPresentation';
 import { exportTeamCredentialUsageCsv } from './teamCredentialUsageExport';
-import { useTeamCredentialResourceView } from './useTeamCredentialResourceView';
+import { useTeamCredentialResourceView, type TeamCredentialResourceView } from './useTeamCredentialResourceView';
+
+type UsageSubject = NonNullable<TeamCredentialUsageQueryInputV1['subject']>;
 
 /**
  * Labels for the metrics the shared usage chart can draw. Request points are
@@ -128,15 +134,18 @@ function seriesBucketLabel(timestampSeconds: number, period: UsagePeriod): strin
  * quietly folded into them.
  */
 const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
-    context: TeamSectionContext;
-    resourceId: string;
+    scope: ServerAccountScope;
+    address: TeamAddress | null;
+    target: Pick<TeamCredentialUsageQueryInputV1, 'resourceId' | 'subject'>;
+    view?: TeamCredentialResourceView;
+    featureEnabled: boolean;
+    displayName: string;
 }>) {
-    const { context, resourceId } = props;
-    const view = useTeamCredentialResourceView({ context, resourceId });
-    const resource = view.resource;
-    const catalogResource = view.catalogResource;
+    const { scope, address, target, view, featureEnabled } = props;
+    const resource = view?.resource ?? null;
+    const catalogResource = view?.catalogResource ?? null;
+    const aggregate = target.subject !== undefined;
 
-    const { theme } = useUnistyles();
     const [period, setPeriod] = React.useState<UsagePeriod>('30days');
     const [metric, setMetric] = React.useState<UsageVolumeMetric>('tokens');
     const [breakdown, setBreakdown] = React.useState<TeamCredentialUsageBreakdownDimensionV1 | null>(null);
@@ -160,27 +169,27 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     }), [nowMs, period]);
 
     const input = React.useMemo<TeamCredentialUsageQueryInputV1>(() => ({
-        resourceId,
+        ...target,
         startMs: range.startMs,
         endMs: range.endMs,
         granularity: range.granularity,
         costMode,
         ...(breakdown === null ? {} : { breakdown }),
-    }), [breakdown, costMode, range, resourceId]);
+    }), [breakdown, costMode, range, target]);
 
     // A Group or member allowance names who it governs. Both rosters belong to
     // the same authority that may read these rules at all, and neither is read
     // for a recipient, who sees only their own remaining amount.
     const administersLimits = resource?.capabilities.manageLimits === true;
     const groupsRoster = useTeamGroups({
-        scope: context.scope,
-        address: context.address,
+        scope,
+        address,
         archived: 'active',
         enabled: administersLimits,
     });
     const membersRoster = useTeamMembersRoster({
-        scope: context.scope,
-        address: context.address,
+        scope,
+        address,
         filter: 'all',
         enabled: administersLimits,
     });
@@ -197,9 +206,9 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
 
     // Usage is read only once this route is open and the resource exists;
     // the list projection never opens it per row.
-    const usageEnabled = view.featureEnabled && (resource !== null || catalogResource !== null);
+    const usageEnabled = featureEnabled && (aggregate || resource !== null || catalogResource !== null);
     const usage = useTeamCredentialUsage({
-        scope: context.scope,
+        scope,
         input,
         resourceRevision: resource?.revision ?? catalogResource?.resourceRevision ?? null,
         enabled: usageEnabled,
@@ -216,28 +225,28 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         }
     }, [nowMs, usage.reload]);
     useTeamCredentialUsageWriteRefresh({
-        scope: context.scope,
-        resourceId,
+        scope,
+        ...target,
         enabled: usageEnabled,
         reading: usage.status === 'loading',
         refresh: refreshToNow,
     });
 
-    if (!view.featureEnabled || (view.resolved && resource === null && catalogResource === null)) {
+    if (!featureEnabled || (!aggregate && view?.resolved && resource === null && catalogResource === null)) {
         return (
             <SurfaceStateCard
                 testID="team-credential-usage-unavailable"
-                kind={view.featureEnabled ? 'empty' : 'unavailable'}
+                kind={featureEnabled ? 'empty' : 'unavailable'}
                 size="pane"
                 iconName="key"
-                title={view.featureEnabled ? t('teams.errors.notFound') : t('teams.credentials.unavailable')}
-                reason={view.featureEnabled ? t('teams.credentials.detail.notFound') : undefined}
+                title={featureEnabled ? t('teams.errors.notFound') : t('teams.credentials.unavailable')}
+                reason={featureEnabled ? t('teams.credentials.detail.notFound') : undefined}
             />
         );
     }
 
-    if (resource === null && catalogResource === null) {
-        if (view.error) {
+    if (!aggregate && resource === null && catalogResource === null) {
+        if (view?.error) {
             return (
                 <ItemGroup>
                     <SurfaceStateCard
@@ -269,9 +278,9 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
      * usage owner's own rule so the screen offers exactly the dimensions the
      * Home will answer, rather than a control that silently returns nothing.
      */
-    const administers = resource !== null
-        && (view.viewer?.manageCredentials === true
-            || resource.custodianAccountId === context.scope.accountId);
+    const administers = aggregate || (resource !== null
+        && (view?.viewer?.manageCredentials === true
+            || resource.custodianAccountId === scope.accountId));
     const dimensions = offeredTeamCredentialUsageBreakdowns(administers);
     // Independent completeness facts, stated separately because they have
     // different causes: material used outside Happier is never recorded, a
@@ -346,7 +355,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
         requests: bucket.totals.requestCount,
         reportCount: bucket.totals.eventCount,
     })) ?? [];
-    const resourceName = resource?.displayName ?? catalogResource?.displayName ?? '';
+    const resourceName = resource?.displayName ?? catalogResource?.displayName ?? props.displayName;
 
     return (
         <>
@@ -394,98 +403,12 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {result !== null ? (
-                <ItemGroup
-                    title={t('teams.credentials.usage.title')}
-                    description={completeness || undefined}
-                    // Usage follows new writes by itself; this brings the period's end up to now.
-                    action={(
-                        <SectionActionButton
-                            testID="team-credential-usage-refresh"
-                            icon="arrow-clockwise"
-                            title={t('common.refresh')}
-                            loading={usage.status === 'loading'}
-                            onPress={refreshToNow}
-                        />
-                    )}
-                >
-                    {!showRequests || coverage === null ? null : (
-                        <Item
-                            testID="team-credential-usage-requests"
-                            // The Home names completeness. The UI never derives
-                            // it from the resource's current delivery settings.
-                            title={usageRequestMetricLabel(coverage.requestCountCoverage)}
-                            detail={formatTokenCountLong(coverage.requestAdmissionCount)}
-                            showChevron={false}
-                        />
-                    )}
-                    <Item
-                        testID="team-credential-usage-tokens"
-                        title={limitMetricLabel('total_tokens')}
-                        detail={coverage?.tokenCoverage === 'unavailable'
-                            || (coverage?.tokenCoverage === 'partial' && result.totals.tokens.total === 0)
-                            ? t('common.unavailable')
-                            : formatTokenCountLong(result.totals.tokens.total)}
-                        showChevron={false}
-                    />
-                    <Item
-                        testID="team-credential-usage-cost"
-                        title={limitMetricLabel('cost_usd')}
-                        // An unavailable cost is never rendered as zero: a
-                        // missing price is not a free request. The amount itself
-                        // comes from the shared usage owner so the same events
-                        // cannot read differently here and on the dashboard.
-                        detail={costUsd === null
-                            ? t('teams.credentials.usage.costUnknown')
-                            : formatUsageCost(costUsd, result.totals.cost.currency)}
-                        subtitle={costUsd === null ? undefined : costProvenanceLabel(result.totals.cost, costMode)}
-                        showChevron={false}
-                    />
-                </ItemGroup>
-            ) : null}
-
-            {result !== null && series.length > 0 && chartMetrics.length > 0 ? (
-                <ItemGroup title={t('usage.usageOverTime')}>
-                    <StackedSeriesChart
-                        testID="team-credential-usage-series"
-                        theme={projectPluginUiTheme(theme)} label={metricLabel(selectedMetric)} variant="bar" size="full" minimumMaximum={1}
-                        {...seriesMotion} showReadout={false}
-                        unknownLabel={t('common.unavailable')}
-                        barWidth={26} barSlotWidth={42} barGap={10} barLeadingInset={4} barMinHeight={10} barTrackColor={theme.colors.surface.inset}
-                        barEmphasis="maximum" showPeakValue showPointLabels showScaleValues
-                        series={[{ id: selectedMetric, label: selectedMetric === 'requests' ? usageRequestMetricLabel(result.coverage.requestCountCoverage) : metricLabel(selectedMetric), color: theme.colors.text.link,
-                            points: series.map((point) => ({ id: String(point.timestamp), x: point.timestamp, label: seriesBucketLabel(point.timestamp, period),
-                                y: selectedMetric === 'tokens' ? point.tokens : selectedMetric === 'cost' ? point.cost : point.requests ?? null })) }]}
-                        coordinateFormatter={(timestampSeconds) => seriesBucketDate(timestampSeconds, period)}
-                        valueFormatter={usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency)}
-                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency),
-                            (timestampSeconds) => seriesBucketDate(timestampSeconds, period))}
-                        renderFrame={usageSeriesFrame(series.length, { accentColor: theme.colors.text.link,
-                            resolveContent: usageVolumeLens(series, result.totals.cost.currency, (timestamp) => seriesBucketLabel(timestamp, period), usageRequestMetricLabel(result.coverage.requestCountCoverage)) })}
-                    />
-                    <Item
-                        testID="team-credential-usage-series-list-toggle"
-                        title={showSeriesList ? t('usage.showLess') : t('usage.showAll')}
-                        onPress={() => setShowSeriesList((current) => !current)}
-                        showChevron={false}
-                    />
-                    {showSeriesList ? series.map((point) => (
-                        <Item
-                            key={point.timestamp}
-                            testID="team-credential-usage-series-list-row"
-                            title={seriesBucketLabel(point.timestamp, period)}
-                            // The table alternative reads the same metric the
-                            // chart draws; a chart-only fact is not accessible.
-                            detail={selectedMetric === 'cost'
-                                ? formatUsageCost(point.cost, result.totals.cost.currency)
-                                : selectedMetric === 'requests'
-                                    ? `${formatTokenCountLong(point.requests)} ${usageRequestMetricLabel(result.coverage.requestCountCoverage)}`
-                                    : `${formatTokenCountLong(point.tokens)} ${t('usage.tokens')}`}
-                            showChevron={false}
-                        />
-                    )) : null}
-                </ItemGroup>
-            ) : null}
+            <TeamCredentialUsageSummary result={result} period={period} costMode={costMode}
+                showRequests={showRequests} completeness={completeness} costUsd={costUsd} series={series}
+                chartMetrics={chartMetrics} selectedMetric={selectedMetric}
+                seriesMotion={seriesMotion} showSeriesList={showSeriesList}
+                onToggleSeriesList={() => setShowSeriesList(current => !current)}
+                refreshing={usage.status === 'loading'} onRefresh={refreshToNow} />
 
             <ItemGroup><DropdownMenu open={breakdownOpen} onOpenChange={setBreakdownOpen} selectedId={breakdown ?? 'none'} items={[{ id: 'none', testID: 'team-credential-usage-breakdown:none', title: t('teams.credentials.usage.breakdownNone') }, ...dimensions.map((id) => ({ id, testID: `team-credential-usage-breakdown:${id}`, title: usageBreakdownLabel(id) }))]} onSelect={(id) => setBreakdown(id === 'none' ? null : dimensions.find((dimension) => dimension === id) ?? breakdown)} itemTrigger={{ title: t('teams.credentials.usage.breakdownLabel'), subtitle: administers ? undefined : t('teams.credentials.usage.breakdownRestricted'), itemProps: { testID: 'team-credential-usage-breakdown-trigger' } }} /></ItemGroup>
 
@@ -502,7 +425,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 ) : (
                     <ItemGroup title={usageBreakdownLabel(breakdown)}>
                         {(result.breakdown ?? []).map((entry) => {
-                            const presentation = usageBreakdownPresentation(breakdown, entry, context.scope.accountId);
+                            const presentation = usageBreakdownPresentation(breakdown, entry, scope.accountId);
                             return (
                                 <Item
                                     key={entry.key}
@@ -622,7 +545,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                                 setExportNotice(null);
                                 try {
                                     const exported = await exportTeamCredentialUsageCsv({
-                                        scope: context.scope,
+                                        scope,
                                         resourceName,
                                         query: input,
                                         // Retain the displayed ranked-row scope; the export
@@ -645,7 +568,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-error"
-                        kind="error"
+                        kind={usage.error.kind === 'forbidden' || usage.error.kind === 'unauthorized' ? 'denied' : 'error'}
                         size="line"
                         title={credentialFailureMessage(usage.error)}
                         action={{ label: t('common.retry'), onPress: () => void usage.reload(), testID: 'team-credential-usage-retry' }}
@@ -654,7 +577,7 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
                 </ItemGroup>
             ) : null}
 
-            {view.error ? (
+            {view?.error ? (
                 <ItemGroup>
                     <SurfaceStateCard
                         testID="team-credential-usage-resource-error"
@@ -670,19 +593,156 @@ const CredentialUsage = React.memo(function CredentialUsage(props: Readonly<{
     );
 });
 
+
+/** The real usage totals and chart, without the Account-bound resource reader. */
+export function TeamCredentialUsageSummary(props: Readonly<{
+    result: ReturnType<typeof useTeamCredentialUsage>['result'];
+    period: UsagePeriod;
+    costMode: UsageCostMode;
+    showRequests: boolean;
+    completeness: string;
+    costUsd: number | null;
+    series: readonly { timestamp: number; tokens: number; cost: number; requests: number; reportCount: number }[];
+    chartMetrics: readonly UsageVolumeMetric[];
+    selectedMetric: UsageVolumeMetric;
+    seriesMotion: ReturnType<typeof useUsageSeriesMotion>;
+    showSeriesList: boolean;
+    onToggleSeriesList: () => void;
+    refreshing: boolean;
+    onRefresh: () => void;
+}>): React.ReactElement {
+    const { result, period, costMode, showRequests, completeness, costUsd, series,
+        chartMetrics, selectedMetric, seriesMotion, showSeriesList, onToggleSeriesList,
+        refreshing, onRefresh } = props;
+    const coverage = result?.coverage ?? null;
+    const { theme } = useUnistyles();
+    return <>
+            {result !== null ? (
+                <ItemGroup
+                    title={t('teams.credentials.usage.title')}
+                    description={completeness || undefined}
+                    // Usage follows new writes by itself; this brings the period's end up to now.
+                    action={(
+                        <SectionActionButton
+                            testID="team-credential-usage-refresh"
+                            icon="arrow-clockwise"
+                            title={t('common.refresh')}
+                            loading={refreshing}
+                            onPress={onRefresh}
+                        />
+                    )}
+                >
+                    {!showRequests || coverage === null ? null : (
+                        <Item
+                            testID="team-credential-usage-requests"
+                            // The Home names completeness. The UI never derives
+                            // it from the resource's current delivery settings.
+                            title={usageRequestMetricLabel(coverage.requestCountCoverage)}
+                            detail={formatTokenCountLong(coverage.requestAdmissionCount)}
+                            showChevron={false}
+                        />
+                    )}
+                    <Item
+                        testID="team-credential-usage-tokens"
+                        title={limitMetricLabel('total_tokens')}
+                        detail={coverage?.tokenCoverage === 'unavailable'
+                            || (coverage?.tokenCoverage === 'partial' && result.totals.tokens.total === 0)
+                            ? t('common.unavailable')
+                            : formatTokenCountLong(result.totals.tokens.total)}
+                        showChevron={false}
+                    />
+                    <Item
+                        testID="team-credential-usage-cost"
+                        title={limitMetricLabel('cost_usd')}
+                        // An unavailable cost is never rendered as zero: a
+                        // missing price is not a free request. The amount itself
+                        // comes from the shared usage owner so the same events
+                        // cannot read differently here and on the dashboard.
+                        detail={costUsd === null
+                            ? t('teams.credentials.usage.costUnknown')
+                            : formatUsageCost(costUsd, result.totals.cost.currency)}
+                        subtitle={costUsd === null ? undefined : costProvenanceLabel(result.totals.cost, costMode)}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+            ) : null}
+
+            {result !== null && series.length > 0 && chartMetrics.length > 0 ? (
+                <ItemGroup title={t('usage.usageOverTime')}>
+                    <StackedSeriesChart
+                        testID="team-credential-usage-series"
+                        theme={projectPluginUiTheme(theme)} label={metricLabel(selectedMetric)} variant="bar" size="full" minimumMaximum={1}
+                        {...seriesMotion} showReadout={false}
+                        unknownLabel={t('common.unavailable')}
+                        barWidth={26} barSlotWidth={42} barGap={10} barLeadingInset={4} barMinHeight={10} barTrackColor={theme.colors.surface.inset}
+                        barEmphasis="maximum" showPeakValue showPointLabels showScaleValues
+                        series={[{ id: selectedMetric, label: selectedMetric === 'requests' ? usageRequestMetricLabel(result.coverage.requestCountCoverage) : metricLabel(selectedMetric), color: theme.colors.text.link,
+                            points: series.map((point) => ({ id: String(point.timestamp), x: point.timestamp, label: seriesBucketLabel(point.timestamp, period),
+                                y: selectedMetric === 'tokens' ? point.tokens : selectedMetric === 'cost' ? point.cost : point.requests ?? null })) }]}
+                        coordinateFormatter={(timestampSeconds) => seriesBucketDate(timestampSeconds, period)}
+                        valueFormatter={usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency)}
+                        renderBucket={usageSeriesTooltip(theme.colors.text.link, 'usage-volume-point-trigger', usageSeriesValueFormatter(selectedMetric, result.totals.cost.currency),
+                            (timestampSeconds) => seriesBucketDate(timestampSeconds, period))}
+                        renderFrame={usageSeriesFrame(series.length, { accentColor: theme.colors.text.link,
+                            resolveContent: usageVolumeLens(series, result.totals.cost.currency, (timestamp) => seriesBucketLabel(timestamp, period), usageRequestMetricLabel(result.coverage.requestCountCoverage)) })}
+                    />
+                    <Item
+                        testID="team-credential-usage-series-list-toggle"
+                        title={showSeriesList ? t('usage.showLess') : t('usage.showAll')}
+                        onPress={onToggleSeriesList}
+                        showChevron={false}
+                    />
+                    {showSeriesList ? series.map((point) => (
+                        <Item
+                            key={point.timestamp}
+                            testID="team-credential-usage-series-list-row"
+                            title={seriesBucketLabel(point.timestamp, period)}
+                            // The table alternative reads the same metric the
+                            // chart draws; a chart-only fact is not accessible.
+                            detail={selectedMetric === 'cost'
+                                ? formatUsageCost(point.cost, result.totals.cost.currency)
+                                : selectedMetric === 'requests'
+                                    ? `${formatTokenCountLong(point.requests)} ${usageRequestMetricLabel(result.coverage.requestCountCoverage)}`
+                                    : `${formatTokenCountLong(point.tokens)} ${t('usage.tokens')}`}
+                            showChevron={false}
+                        />
+                    )) : null}
+                </ItemGroup>
+            ) : null}
+
+    </>;
+}
+
+const ResourceUsage = React.memo(function ResourceUsage(props: Readonly<{
+    context: TeamSectionContext; resourceId: string;
+}>) {
+    const view = useTeamCredentialResourceView(props);
+    return <CredentialUsage scope={props.context.scope} address={props.context.address}
+        target={{ resourceId: props.resourceId }} view={view} featureEnabled={view.featureEnabled} displayName="" />;
+});
+
 export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsageScreen(props: Readonly<{
     serverId: string;
-    teamId: string;
-    resourceId: string;
-}>) {
+} & ({ teamId: string; resourceId: string; subject?: never }
+    | { subject: UsageSubject; teamId?: never; resourceId?: never })>) {
+    const featureEnabled = useFeatureEnabled('teams.credentialResources', { scopeKind: 'spawn', serverId: props.serverId });
+    if (props.subject?.kind === 'home') {
+        return <HomeAdministrationSection serverId={props.serverId} title={t('teams.credentials.usage.title')}>
+            {(context) => <CredentialUsage scope={context.scope} address={null} target={{ subject: props.subject }}
+                featureEnabled={featureEnabled} displayName={context.homeName} />}
+        </HomeAdministrationSection>;
+    }
     return (
         <TeamSection
             serverId={props.serverId}
-            teamId={props.teamId}
+            teamId={props.subject?.teamId ?? props.teamId}
             title={t('teams.credentials.usage.title')}
             description={t('teams.pages.credentialUsage')}
         >
-            {(context) => <CredentialUsage context={context} resourceId={props.resourceId} />}
+            {(context) => props.subject
+                ? <CredentialUsage scope={context.scope} address={context.address} target={{ subject: props.subject }}
+                    featureEnabled={featureEnabled} displayName={context.team.name} />
+                : <ResourceUsage context={context} resourceId={props.resourceId} />}
         </TeamSection>
     );
 });

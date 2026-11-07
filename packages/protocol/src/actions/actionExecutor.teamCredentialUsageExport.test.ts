@@ -15,6 +15,25 @@ const query = { resourceId: 'resource-1', startMs: 0, endMs: 1000, granularity: 
 const context = { surface: 'cli', serverId: 'home-1', expectedAccountId: 'alice' } as const;
 
 describe('Team credential usage export Action', () => {
+  it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
+    'answers the same $kind subject on the agent surface and preserves refusal', async subject => {
+      const requests: unknown[] = [];
+      let denied = false;
+      // Home-domain transport is the network boundary; the real executor owns admission and codecs.
+      const executor = createActionExecutor({ homeDomainAction: async request => {
+        requests.push(request.input);
+        return denied ? { ok: false, errorCode: 'forbidden', error: 'forbidden' } : result;
+      } } as ActionExecutorDeps);
+      const input = { subject, startMs: 0, endMs: 1000, granularity: 'day' };
+      expect(await executor.execute('teams.credentials.usage.query', input, { ...context, surface: 'agent' }))
+        .toMatchObject({ ok: true, result });
+      expect(requests).toEqual([{ ...input, costMode: 'auto' }]);
+      denied = true;
+      expect(await executor.execute('teams.credentials.usage.query', input, { ...context, surface: 'agent' }))
+        .toMatchObject({ ok: false, errorCode: 'forbidden' });
+    },
+  );
+
   it('exports only the selected ranked rows through the existing authorized usage read', async () => {
     const requests: { actionId: string; input: unknown }[] = [];
     // Home-domain transport is the network boundary; admission, schemas and CSV remain real.

@@ -152,8 +152,12 @@ export function useTeamCredentialResourceCatalog(params: Readonly<{
         if (!active) return;
         return observeTeamCredentialResourceCatalog({ serverId, accountId }, { serverId: addressServerId, teamId });
     }, [active, serverId, accountId, addressServerId, teamId]);
+    const subscribeCatalog = React.useCallback((listener: () => void) => subscribeTeamsSnapshots(listener, {
+        scope: active ? { serverId, accountId } : null,
+        credentialCatalogs: [{ address: { serverId: addressServerId, teamId } }],
+    }), [active, serverId, accountId, addressServerId, teamId]);
     const snapshot = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribeCatalog,
         () => (active ? getTeamCredentialResourceCatalogSnapshot(scope, address) : null),
         () => null,
     );
@@ -526,7 +530,7 @@ export function useTeamCredentialUsage(params: Readonly<{
         ? serverAccountScopedResourceKey(
             scope,
             'team-credential-usage-resource',
-            `${params.resourceRevision ?? -1}:${params.input.resourceId}`,
+            `${params.resourceRevision ?? -1}:${JSON.stringify({ resourceId: params.input.resourceId, subject: params.input.subject })}`,
         )
         : '';
     const stateRef = React.useRef(state);
@@ -583,8 +587,9 @@ export function useTeamCredentialUsage(params: Readonly<{
                 ? previous
                 : {
                     ...previous,
+                    ...(outcome.failure.retryable ? {} : { result: null, resultKey: '', nextCursor: null }),
                     status: 'error',
-                    partial: continuing && previous.result !== null,
+                    partial: outcome.failure.retryable && continuing && previous.result !== null,
                     loadingMore: false,
                     error: outcome.failure,
                 });
@@ -623,7 +628,8 @@ export function useTeamCredentialUsage(params: Readonly<{
  */
 export function useTeamCredentialUsageWriteRefresh(params: Readonly<{
     scope: ServerAccountScope | null;
-    resourceId: string;
+    resourceId?: string;
+    subject?: TeamCredentialUsageQueryInputV1['subject'];
     enabled: boolean;
     reading: boolean;
     refresh: () => void;
@@ -635,14 +641,14 @@ export function useTeamCredentialUsageWriteRefresh(params: Readonly<{
     React.useEffect(() => {
         if (serverId === null) return;
         pending.current = false;
-        return subscribeTeamCredentialUsageChanged({ serverId, resourceId: params.resourceId }, () => {
+        return subscribeTeamCredentialUsageChanged({ serverId, resourceId: params.resourceId, subject: params.subject }, () => {
             if (latest.current.reading) {
                 pending.current = true;
                 return;
             }
             latest.current.refresh();
         });
-    }, [params.resourceId, serverId]);
+    }, [params.resourceId, params.subject?.kind, params.subject?.kind === 'team' ? params.subject.teamId : null, serverId]);
     React.useEffect(() => {
         if (params.reading || !pending.current) return;
         pending.current = false;

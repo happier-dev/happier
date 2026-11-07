@@ -2693,7 +2693,7 @@ export function handleEphemeralSocketUpdate(params: {
         applyUsageSocketUpdate(updateData, sourceServerId, sourceAccountId);
     } else if (updateData.type === 'team-credential-usage-changed') {
         if (!shouldContinue() || !sourceServerId) return Promise.resolve();
-        notifyTeamCredentialUsageChanged({ serverId: sourceServerId, resourceId: updateData.resourceId });
+        notifyTeamCredentialUsageChanged({ serverId: sourceServerId, ...updateData });
     } else if (updateData.type === 'external-session-transcript-invalidated') {
         if (!shouldContinue()) return Promise.resolve();
         return Promise.resolve(updateExternalSessionTranscript?.(updateData as ExternalSessionTranscriptUpdatedEphemeralUpdate));

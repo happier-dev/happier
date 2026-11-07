@@ -83,6 +83,10 @@ export function homeAdministrationActivityPath(serverId: string): `/settings/hom
     return `${homeAdministrationOverviewPath(serverId)}/activity`;
 }
 
+export function homeAdministrationUsagePath(serverId: string): `/settings/home/${string}/usage` {
+    return `${homeAdministrationOverviewPath(serverId)}/usage`;
+}
+
 /** The audit trail narrowed to events about one person (`home.audit.list{targetId}`). */
 export function homeAdministrationPersonActivityPath(serverId: string, accountId: string): `/settings/home/${string}/activity?targetId=${string}` {
     return `${homeAdministrationActivityPath(serverId)}?targetId=${encodeURIComponent(accountId)}`;

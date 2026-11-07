@@ -83,6 +83,17 @@ afterEach(() => {
 });
 
 describe('TeamCredentialsScreen', () => {
+    it('opens aggregate usage for a credential administrator even with no shared credentials', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, CREDENTIALS_LIST_PATH, { body: {
+            resources: [], viewer: teamCredentialViewerFixture({ manageCredentials: true }),
+        } });
+        const screen = await renderCredentials(serverId);
+        await waitForTestId(screen, 'team-credentials-usage');
+        screen.pressByTestId('team-credentials-usage');
+        expect(routerPush).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/credentials/usage`);
+    });
+
     it.each([
         { alsoAdministered: false, readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } },
         { alsoAdministered: true, readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } },
@@ -499,7 +510,6 @@ describe('TeamCredentialsScreen', () => {
             'teams.credentials.requestPolicy.summaryNone',
             'teams.credentials.limits.empty',
             'teams.credentials.limits.metric.requests',
-            'teams.credentials.usage.title',
             'private.plugin-id',
             'private-service-id',
             'private-source-group-id',

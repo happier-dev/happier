@@ -19,7 +19,7 @@ import { ConnectedServiceMark } from '@/components/settings/connectedServices/Co
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
-import { teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
+import { teamCredentialAggregateUsagePath, teamCredentialCreatePath, teamCredentialDetailPath } from '../teamsRoutes';
 import {
     resourceAdministrationSummaryLines,
     resourceAccessibilityLabel,
@@ -81,14 +81,22 @@ function mayOfferCredential(
 const ShareCredentialAction = React.memo(function ShareCredentialAction(props: Readonly<{ context: TeamSectionContext }>) {
     const router = useRouter();
     const { featureEnabled, projection, rows } = useTeamCredentialsProjection(props.context);
-    if (!featureEnabled || rows.length === 0 || !mayOfferCredential(projection.viewer, props.context)) return null;
+    if (!featureEnabled) return null;
     return (
-        <SectionActionButton
+        <>
+        {projection.viewer?.manageCredentials === true ? <SectionActionButton
+            testID="team-credentials-usage"
+            icon="chart-bar"
+            title={t('teams.credentials.usage.title')}
+            onPress={() => router.push(teamCredentialAggregateUsagePath(props.context.address))}
+        /> : null}
+        {rows.length > 0 && mayOfferCredential(projection.viewer, props.context) ? <SectionActionButton
             testID="team-credentials-share"
             icon="plus"
             title={t('teams.credentials.create.action')}
             onPress={() => router.push(teamCredentialCreatePath(props.context.address))}
-        />
+        /> : null}
+        </>
     );
 });
 

@@ -23,6 +23,7 @@ installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+const { TeamCredentialUsageScreen } = await import('./TeamCredentialUsageScreen');
 
 vi.mock('@/components/ui/popover', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
@@ -108,7 +109,6 @@ function usageResult(overrides?: Readonly<{
 }
 
 async function renderUsage(serverId: string) {
-    const { TeamCredentialUsageScreen } = await import('./TeamCredentialUsageScreen');
     return renderScreen(
         <TeamCredentialUsageScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
     );
@@ -204,6 +204,77 @@ async function addRecipientHome(): Promise<string> {
 }
 
 describe('TeamCredentialUsageScreen', () => {
+    it('offers aggregate usage in the Home administration destination owner only for administrators', async () => {
+        const { resolveHomeConsoleDestinations } = await import('@/components/settings/home/governance/homeConsoleDestinations');
+        const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
+        const admin = homeGovernanceProjectionFixture();
+        const destination = resolveHomeConsoleDestinations(admin).flat().find(row => row.id === 'usage');
+        expect(destination?.path('home-1')).toBe('/settings/home/home-1/usage');
+        expect(resolveHomeConsoleDestinations({ ...admin, capabilities: { ...admin.capabilities, viewAdministration: false } })
+            .flat().some(row => row.id === 'usage')).toBe(false);
+    });
+
+    it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
+        'reads the $kind aggregate through the existing usage Action without resource reads', async (subject) => {
+            const serverId = await addHome();
+            const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
+            harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+            harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 8400 }) });
+            const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={subject} />);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('8,400'));
+            expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(1);
+            expect(harness.requestsFor(USAGE_QUERY_PATH)[0]?.input).toMatchObject({ subject });
+            expect(harness.requestsFor(USAGE_QUERY_PATH)[0]?.input).not.toHaveProperty('resourceId');
+            expect(harness.requestsFor(CREDENTIAL_GET_PATH)).toHaveLength(0);
+            expect(harness.requestsFor(TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1)).toHaveLength(0);
+        },
+    );
+
+    it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)('renders the $kind aggregate query owner refusal as denied rather than empty usage', async subject => {
+        const serverId = await addHome();
+        const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
+        harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+        harness.answer(serverId, USAGE_QUERY_PATH, { status: 404, body: { error: 'not_found_or_not_visible' } });
+        const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={subject} />);
+        await waitForTestId(screen, 'team-credential-usage-error');
+        expect(screen.findAllByTestId('team-credential-usage-error').some(node => node.props.kind === 'denied')).toBe(true);
+        expect(screen.getTextContent()).toContain('teams.credentials.detail.notFound');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-series');
+    });
+
+    it.each([{ kind: 'team', teamId: 'team-1' }, { kind: 'home' }] as const)(
+        'refreshes the $kind aggregate only on relevant pushed usage writes', async subject => {
+            const { notifyTeamCredentialUsageChanged } = await import('@/sync/engine/teams/teamCredentialUsageChanges');
+            const serverId = await addHome();
+            const { homeGovernanceProjectionFixture } = await import('@/dev/testkit/fixtures/homeGovernanceFixtures');
+            harness.answer(serverId, '/v1/home/governance/get', { body: homeGovernanceProjectionFixture() });
+            harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 4200 }) });
+            const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={subject} />);
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('4,200'));
+            const reads = harness.requestsFor(USAGE_QUERY_PATH).length;
+            notifyTeamCredentialUsageChanged({ serverId: 'other-home', resourceId: 'other-resource', teamId: 'team-1' });
+            if (subject.kind === 'team') notifyTeamCredentialUsageChanged({ serverId, resourceId: 'other-resource', teamId: 'other-team' });
+            expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(reads);
+            harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 8400 }) });
+            notifyTeamCredentialUsageChanged({ serverId, resourceId: 'resource-not-loaded', teamId: 'team-1' });
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('8,400'));
+            expect(harness.requestsFor(USAGE_QUERY_PATH)).toHaveLength(reads + 1);
+        },
+    );
+
+    it('withdraws retained aggregate totals when a refresh is refused', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, USAGE_QUERY_PATH, { body: usageResult({ totalTokens: 4200 }) });
+        const screen = await renderScreen(<TeamCredentialUsageScreen serverId={serverId} subject={{ kind: 'team', teamId: 'team-1' }} />);
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('4,200'));
+        harness.answer(serverId, USAGE_QUERY_PATH, { status: 403, body: { error: 'forbidden' } });
+        screen.pressByTestId('team-credential-usage-refresh');
+        await waitForTestId(screen, 'team-credential-usage-error');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-tokens');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-credential-usage-export');
+    });
+
     it('names the Group or person each limit governs, says a Group allowance is shared, and lists the tightest first', async () => {
         const serverId = await addHome();
         harness.answer(serverId, GROUPS_LIST_PATH, {
@@ -774,7 +845,13 @@ describe('TeamCredentialUsageScreen', () => {
         const shownQuery = harness.requestsFor(USAGE_QUERY_PATH).at(-1)?.input;
         const reads = harness.requestsFor(USAGE_QUERY_PATH).length;
         const click = vi.fn();
-        vi.stubGlobal('document', { createElement: () => ({ click, remove: vi.fn(), style: {} }), body: { appendChild: vi.fn() } });
+        // Browser document is the export boundary; loading feedback also mounts styles in it.
+        vi.stubGlobal('document', {
+            createElement: () => ({ click, remove: vi.fn(), style: {} }),
+            getElementById: () => null,
+            head: { appendChild: vi.fn() },
+            body: { appendChild: vi.fn() },
+        });
         vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-usage-export');
         vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
         screen.pressByTestId('team-credential-usage-export');

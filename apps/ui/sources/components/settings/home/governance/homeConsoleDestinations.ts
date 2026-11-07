@@ -16,6 +16,7 @@ import {
     homeAdministrationServerSettingsPath,
     homeAdministrationSignInProvidersPath,
     homeAdministrationTeamsPath,
+    homeAdministrationUsagePath,
 } from './homeAdministrationRoutes';
 
 export type HomeConsoleDestinationId =
@@ -30,7 +31,8 @@ export type HomeConsoleDestinationId =
     | 'data'
     | 'runtime'
     | 'server-settings'
-    | 'activity';
+    | 'activity'
+    | 'usage';
 
 export type HomeConsoleDestination = Readonly<{
     id: HomeConsoleDestinationId;
@@ -70,6 +72,7 @@ export const HOME_CONSOLE_DESTINATION_GROUPS: readonly (readonly HomeConsoleDest
     ],
     [
         { id: 'activity', titleKey: 'homeGovernance.activity.title', icon: 'clock-counter-clockwise', path: homeAdministrationActivityPath, available: viewsAdministration },
+        { id: 'usage', titleKey: 'teams.credentials.usage.title', icon: 'chart-bar', path: homeAdministrationUsagePath, available: viewsAdministration },
     ],
 ];
 
