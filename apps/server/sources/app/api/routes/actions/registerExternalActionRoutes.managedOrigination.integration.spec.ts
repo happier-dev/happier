@@ -715,7 +715,8 @@ describe('ordinary Account managed Action origination', () => {
         const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
             caller: { kind: 'session', sessionId: source.session.id, starterDepth: 0, turnDepth: 1 },
             sourceTurnId: 'captured-setup-turn', callerPermissionMode: 'default', requestId: selected.requestId });
-        const token = await auth.createToken(selected.account.id, undefined, { kind, authority: 'account_automation',
+        const token = await auth.createToken(selected.account.id, undefined, { kind,
+            authority: kind === 'account' ? 'present_user' : 'account_automation',
             authenticationEvidence: [{ kind: 'home_method', methodId: 'email_password' }] });
         const installationProof = signMachineInstallationProof({ privateKey: selected.keys.secretKey,
             payload: { version: 1, accountId: selected.account.id, ...selected.controller,
