@@ -72,7 +72,7 @@ await import('./machineContributionRegistryProjection');
 
 describe('machine contribution registry projection ops', () => {
     it('reads exact Machine source declarations for an Account target through the existing target RPC', async () => {
-        const { PluginContributesV2Schema } = await import('@happier-dev/protocol');
+        const { PluginContributesV2Schema} = await import('@happier-dev/protocol/plugins/contributions/v2');
         const { defineProtocolObject, defineProtocolLiteral } = await import('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
         const { rehydratePluginContributionPointSemanticsV1 } = await import('@happier-dev/protocol/plugins/contributions/targeted');
         const { PluginJsonSchemaV2Schema } = await import('@happier-dev/protocol/plugins/contributions/public-types');
@@ -104,6 +104,9 @@ describe('machine contribution registry projection ops', () => {
         const protocol = result.sourceDeclarations[0]!.manifest.contributes.pluginContributionPoints[0]!.protocols[0]!;
         const schemaParses = vi.spyOn(PluginJsonSchemaV2Schema, 'safeParse');
         try {
+            expect(rehydratePluginContributionPointSemanticsV1(protocol)?.descriptor?.safeParse({ authority: 'first' }).success).toBe(true);
+            expect(schemaParses.mock.calls.length).toBe(1);
+            schemaParses.mockClear();
             for (let index = 0; index < 100; index += 1) {
                 expect(rehydratePluginContributionPointSemanticsV1(protocol)?.descriptor?.safeParse({ authority: 'first' }).success).toBe(true);
             }
@@ -123,11 +126,12 @@ describe('machine contribution registry projection ops', () => {
                     serverId: serverAId, pluginId: mountedTarget.pluginId, readMode: 'sourceDeclarations',
                 });
                 expect(fresh).toEqual({ supported: true, sourceDeclarations: [replacement] });
-                expect(schemaParses.mock.calls.length).toBeGreaterThan(0);
+                expect(schemaParses.mock.calls.length).toBe(0);
                 if (!fresh.supported) throw new Error('Point refusal must not reject the declaration');
                 const semantics = rehydratePluginContributionPointSemanticsV1(fresh.sourceDeclarations[0]!
                     .manifest.contributes.pluginContributionPoints[0]!.protocols[0]!);
                 expect(semantics?.descriptor?.safeParse({ authority: 'replacement' }).success ?? false).toBe(accepted);
+                expect(schemaParses.mock.calls.length).toBeGreaterThan(0);
                 expect(rehydratePluginContributionPointSemanticsV1(protocol)?.descriptor?.safeParse({ authority: 'first' }).success).toBe(true);
             }
         } finally { schemaParses.mockRestore(); }
@@ -135,6 +139,54 @@ describe('machine contribution registry projection ops', () => {
             method: RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ,
             payload: expect.objectContaining({ pluginId: mountedTarget.pluginId, readMode: 'sourceDeclarations' }),
         }));
+    });
+
+    it('reads a Machine\'s source declarations once per projection revision across targeted operations', async () => {
+        const { PluginContributesV2Schema } = await import('@happier-dev/protocol/plugins/contributions/v2');
+        const contributes = PluginContributesV2Schema.parse({ targetedPluginContributions: [{ id: 'external-source',
+            target: { pluginId: mountedTarget.pluginId, pointId: 'sources' }, protocol: { id: 'external-source', version: 1 },
+            descriptor: {}, operations: {} }] });
+        const row = { manifest: { id: 'acme.source', contributes: { actions: contributes.actions,
+            pluginContributionPoints: contributes.pluginContributionPoints,
+            targetedPluginContributions: contributes.targetedPluginContributions, ui: { renderers: contributes.ui.renderers } } },
+            occurrenceId: 'source-current', sourceCustody: { kind: 'development', registeredRootId: 'source-root' } };
+        machineRpcWithServerScopeMock.mockImplementation(async () => structuredClone({
+            status: 'sourceDeclarations', pluginId: mountedTarget.pluginId, sourceDeclarations: [row],
+        }));
+        const { machinePluginTargetedSourceDeclarationsRead, publishMachineContributionRegistryProjectionInvalidation } = await import('./machineContributionRegistryProjection');
+        const read = () => machinePluginTargetedSourceDeclarationsRead('machine-1', { serverId: serverAId, pluginId: mountedTarget.pluginId });
+        const reads = () => machineRpcWithServerScopeMock.mock.calls
+            .filter(([call]) => call.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ).length;
+        // Each admitted targeted operation asks for the current declarations; an unchanged registry answers from custody.
+        for (let operation = 0; operation < 4; operation += 1) {
+            expect(await read()).toMatchObject({ supported: true, sourceDeclarations: [{ occurrenceId: 'source-current' }] });
+        }
+        expect(reads()).toBe(1);
+        // A registry change advances the Machine projection revision: the next operation reads fresh declarations.
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: serverAId }, 'authority');
+        await read();
+        await read();
+        expect(reads()).toBe(2);
+    });
+
+    it('reads a mounted target once per projection revision across its mount, re-open and Account-origin callers', async () => {
+        machineRpcWithServerScopeMock.mockImplementation(async () => structuredClone({ status: 'current',
+            targetedContributions: targetedSnapshot({ pluginId: 'acme.preview', occurrenceId: 'target-current' }),
+            targetedSurfaceMounts: [] }));
+        const { machinePluginUiTargetedContributionsRead, publishMachineContributionRegistryProjectionInvalidation } = await import('./machineContributionRegistryProjection');
+        const read = () => machinePluginUiTargetedContributionsRead('machine-1', { serverId: serverAId, pluginId: 'acme.preview' });
+        const reads = () => machineRpcWithServerScopeMock.mock.calls
+            .filter(([call]) => call.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ).length;
+        // The mount, its re-open revalidation and an Account-origin page's Machine read ask the same question.
+        for (let caller = 0; caller < 3; caller += 1) {
+            expect(await read()).toMatchObject({ supported: true, targetedContributions: { target: { occurrenceId: 'target-current' } } });
+        }
+        const equal = reads();
+        // Any invalidation, refresh included, advances the revision: the next caller reads afresh.
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: serverAId }, 'refresh');
+        await read();
+        await read();
+        expect({ equal, afterRefresh: reads() }).toEqual({ equal: 1, afterRefresh: 2 });
     });
 
     async function configureNetworkForCase() {
@@ -802,7 +854,7 @@ describe('machine contribution registry projection ops', () => {
         mod.publishMachineContributionRegistryProjectionInvalidation({
             machineId: 'machine-1',
             serverId: 'server-a',
-        });
+        }, 'authority');
         const refreshed = mod.machineContributionRegistryProjectionDescribe('machine-1', { serverId: 'server-a' });
         await vi.waitFor(() => expect(pendingResolvers).toHaveLength(2));
 
@@ -814,7 +866,7 @@ describe('machine contribution registry projection ops', () => {
         await expect(refreshed).resolves.toMatchObject({ supported: true, projection: { generation: 2 } });
     });
 
-    it('invalidates every mounted projection scope after the authenticated socket reconnects', async () => {
+    it('invalidates only the reconnected Home projection scopes', async () => {
         const mod = await import('./machineContributionRegistryProjection');
         const machineOneScope = { machineId: 'machine-1', serverId: 'server-a' };
         const machineTwoScope = { machineId: 'machine-2', serverId: 'server-b' };
@@ -833,12 +885,17 @@ describe('machine contribution registry projection ops', () => {
                 machineTwoListener,
             );
 
-        mod.publishMachineContributionRegistryProjectionReconnect();
+        mod.publishMachineContributionRegistryProjectionRefresh('server-a');
 
         expect(mod.getMachineContributionRegistryProjectionRevision(machineOneScope)).toBe(machineOneRevision + 1);
-        expect(mod.getMachineContributionRegistryProjectionRevision(machineTwoScope)).toBe(machineTwoRevision + 1);
+        expect(mod.getMachineContributionRegistryProjectionRevision(machineTwoScope)).toBe(machineTwoRevision);
         expect(machineOneListener).toHaveBeenCalledOnce();
+        expect(machineTwoListener).not.toHaveBeenCalled();
+
+        mod.publishMachineContributionRegistryProjectionRefresh('server-b');
+        expect(mod.getMachineContributionRegistryProjectionRevision(machineTwoScope)).toBe(machineTwoRevision + 1);
         expect(machineTwoListener).toHaveBeenCalledOnce();
+        expect(machineOneListener).toHaveBeenCalledOnce();
 
         unsubscribeMachineOne();
         unsubscribeMachineTwo();
@@ -1657,8 +1714,6 @@ describe('machine contribution registry projection ops', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },

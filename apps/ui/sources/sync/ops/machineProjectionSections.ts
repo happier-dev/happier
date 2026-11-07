@@ -1,6 +1,7 @@
 import { DaemonContributionRegistryProjectionSectionsResponseSchema, reassembleDaemonProjectionSections,
-    DaemonProjectionSectionBodyResponseSchema, computeDaemonProjectionSectionDigest, demandedDaemonProjectionSections,
+    DaemonProjectionSectionBodyResponseSchema, computeDaemonProjectionSectionDigestAsync, demandedDaemonProjectionSections,
     DAEMON_PROJECTION_SECTION_STALE_CODE, type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { digest as platformDigest } from '@/platform/digest';
 import { parseDaemonContributionRegistryProjectionDescribeResponse } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { RpcError } from '@/sync/runtime/rpcErrors';
 import type { DaemonProjectionHydrationRejection } from './machineContributionRegistryProjection';
@@ -18,6 +19,35 @@ export type DaemonProjectionSectionCache = Readonly<{
     bodies: Map<string, readonly string[]>;
     pendingReads: Map<string, Promise<readonly string[] | undefined>>;
 }>;
+
+/**
+ * A section digest's bytes inside the request's `includeDigests` array: a JSON string of 64
+ * lowercase hex characters. The protocol fixes that width (the request schema rejects any other
+ * digest), so each admitted peer costs the same bytes and is never serialized to be sized.
+ */
+const DIGEST_JSON_BYTES = 2 + 64;
+
+/**
+ * Packs omitted peer digests into one section-read request within the frame
+ * budget: the longest candidate prefix whose complete request fits. Only the
+ * digest array grows, by one fixed-width digest plus a separator per peer, so
+ * the request is sized once and the fit is arithmetic. Sizing each peer made
+ * every omitted-peer read of every Machine re-measure up to a frame of digests.
+ */
+export function packSectionReadIncludeDigests(
+    requestBytes: (includeDigests: readonly string[]) => number,
+    candidates: readonly string[],
+    frameBytes: number,
+): string[] {
+    // n peers add n digests and n - 1 separators to the empty array.
+    const fit = Math.floor((frameBytes - requestBytes([]) + 1) / (DIGEST_JSON_BYTES + 1));
+    return candidates.slice(0, Math.max(0, fit));
+}
+
+/** The protocol content address, hashed on the platform's native SHA-256 (WebCrypto / expo-crypto). */
+function computeSectionDigest(body: readonly string[]): Promise<string> {
+    return computeDaemonProjectionSectionDigestAsync(body, bytes => platformDigest('SHA-256', bytes));
+}
 
 export async function readDeferredProjection(params: Readonly<{
     manifest: DaemonProjectionDeferredSectionsResponse;
@@ -48,10 +78,11 @@ export async function readDeferredProjection(params: Readonly<{
             if (page.digest !== digest || page.offset !== offset || !page.chunk.length
                 || (page.nextOffset !== null && page.nextOffset !== offset + page.chunk.length)) throw new InvalidDaemonProjectionSection('section-page-position');
             chunks.push(page.chunk);
-            for (const extra of page.bodies ?? []) {
-                if (!includeDigests.includes(extra.digest) || computeDaemonProjectionSectionDigest(extra.body) !== extra.digest) {
-                    throw new InvalidDaemonProjectionSection('included-section');
-                }
+            const extras = page.bodies ?? [];
+            if (extras.some(extra => !includeDigests.includes(extra.digest))) throw new InvalidDaemonProjectionSection('included-section');
+            const extraDigests = await Promise.all(extras.map(extra => computeSectionDigest(extra.body)));
+            if (extras.some((extra, index) => extraDigests[index] !== extra.digest)) throw new InvalidDaemonProjectionSection('included-section');
+            for (const extra of extras) {
                 bodies.set(extra.digest, extra.body);
                 params.shared?.bodies.set(extra.digest, extra.body);
             }
@@ -61,11 +92,12 @@ export async function readDeferredProjection(params: Readonly<{
             if (page.nextOffset === null) break;
             offset = page.nextOffset;
         }
-        const value = frame && params.manifest.sectionFrameVersion === 2 ? [chunks.join('')] : json(chunks.join(''));
+        // An index frame travels as its raw index text; bodies travel as their span array.
+        const value = frame ? [chunks.join('')] : json(chunks.join(''));
         if (!Array.isArray(value) || !value.every((span): span is string => typeof span === 'string')) {
             throw new InvalidDaemonProjectionSection('section-spans');
         }
-        if (computeDaemonProjectionSectionDigest(value) !== digest) throw new InvalidDaemonProjectionSection('section-digest');
+        if (await computeSectionDigest(value) !== digest) throw new InvalidDaemonProjectionSection('section-digest');
         bodies.set(digest, value);
         params.shared?.bodies.set(digest, value);
         return value;
@@ -149,7 +181,10 @@ export async function readDeferredProjection(params: Readonly<{
         const keysAre = (value: unknown, keys: readonly string[]): value is Record<string, unknown> => Boolean(value
             && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length
             && keys.every(key => Object.hasOwn(value, key)));
-        const validFragment = section === 'base'
+        const validFragment = section === 'searchProviders'
+            ? keysAre(fragment, ['projection']) && keysAre(fragment.projection, ['actionsById', 'familiesById'])
+                && keysAre(fragment.projection.familiesById, ['pluginUi'])
+            : section === 'base'
             ? keysAre(fragment, ['protocolVersion', 'projectionDigest', 'projection'])
                 && keysAre(fragment.projection, ['v', 'generation', 'diagnostics'])
             : section.startsWith('familiesById.')

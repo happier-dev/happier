@@ -16,8 +16,29 @@ export type MachineContributionRegistryProjectionScope = Readonly<{
     serverId: string | null;
 }>;
 
+/**
+ * Why a Machine projection is asked again. `refresh` re-reads the same
+ * authority (registry adoption, settings change, Retry): readers
+ * keep their last-good projection current while it is in flight. `authority`
+ * means the answering authority itself changed (daemon identity, occurrence
+ * replacement, retirement): readers fail closed until the new answer. A real
+ * transport loss already withdraws Machine presence, which demotes readers
+ * without an invalidation.
+ */
+export type MachineContributionRegistryProjectionInvalidationReason = 'refresh' | 'authority';
+
 const projectionRevisionByScope = new Map<string, number>();
+const authorityRevisionByScope = new Map<string, number>();
 const projectionListenersByScope = new Map<string, Set<() => void>>();
+
+function readProjectionRevision(key: string): number {
+    const revision = projectionRevisionByScope.get(key);
+    if (revision !== undefined) return revision;
+    // Direct readers retain answers after their surface unmounts. Keep their
+    // existing revision slot so an explicit Home refresh includes those answers.
+    projectionRevisionByScope.set(key, 0);
+    return 0;
+}
 
 export function machineContributionRegistryProjectionScopeKey(
     scope: MachineContributionRegistryProjectionScope,
@@ -32,7 +53,14 @@ export function machineContributionRegistryProjectionScopeKey(
 export function getMachineContributionRegistryProjectionRevision(
     scope: MachineContributionRegistryProjectionScope,
 ): number {
-    return projectionRevisionByScope.get(machineContributionRegistryProjectionScopeKey(scope)) ?? 0;
+    return readProjectionRevision(machineContributionRegistryProjectionScopeKey(scope));
+}
+
+/** Advances only on `authority` invalidations; projection currentness gates on it. */
+export function getMachineContributionRegistryProjectionAuthorityRevision(
+    scope: MachineContributionRegistryProjectionScope,
+): number {
+    return authorityRevisionByScope.get(machineContributionRegistryProjectionScopeKey(scope)) ?? 0;
 }
 
 export function subscribeMachineContributionRegistryProjectionInvalidation(
@@ -61,21 +89,32 @@ export function captureMachineContributionRegistryProjectionScope(
     const key = machineContributionRegistryProjectionScopeKey(scope, resolveScopeId);
     return {
         key,
-        readRevision: () => projectionRevisionByScope.get(key) ?? 0,
+        readRevision: () => readProjectionRevision(key),
         subscribe: (listener: () => void) => subscribeProjectionKey(key, listener),
     };
 }
 
 export function publishMachineContributionRegistryProjectionInvalidation(
     scope: MachineContributionRegistryProjectionScope,
+    /** Required: an omitted reason once demoted every Machine on Retry. */
+    reason: MachineContributionRegistryProjectionInvalidationReason,
 ): void {
     const key = machineContributionRegistryProjectionScopeKey(scope);
     projectionRevisionByScope.set(key, (projectionRevisionByScope.get(key) ?? 0) + 1);
+    if (reason === 'authority') authorityRevisionByScope.set(key, (authorityRevisionByScope.get(key) ?? 0) + 1);
     for (const listener of projectionListenersByScope.get(key) ?? []) listener();
 }
 
-export function publishMachineContributionRegistryProjectionReconnect(): void {
-    for (const key of [...projectionListenersByScope.keys()]) {
+/** Explicit Home-wide refresh, including directly read, unmounted scopes. */
+export function publishMachineContributionRegistryProjectionRefresh(
+    serverId: string | null = getActiveServerSnapshot().serverId,
+): void {
+    if (!serverId) return;
+    const resolvedServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    for (const key of new Set([...projectionRevisionByScope.keys(), ...projectionListenersByScope.keys()])) {
+        // Scope keys are produced only by machineContributionRegistryProjectionScopeKey.
+        const [scopeServerId] = JSON.parse(key) as [string, string];
+        if (scopeServerId !== resolvedServerId) continue;
         projectionRevisionByScope.set(key, (projectionRevisionByScope.get(key) ?? 0) + 1);
         for (const listener of projectionListenersByScope.get(key) ?? []) listener();
     }

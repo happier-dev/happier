@@ -1,12 +1,11 @@
-import { omit } from 'zod/mini';
 import {
     DaemonContributionRegistryProjectionDescribeResponseSchema,
     DaemonPluginUiTargetedContributionsReadResponseSchema,
-    PluginProjectionV2Schema,
     type DaemonContributionRegistryProjectionAutomationEligibleEventsV1,
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
     type DaemonPluginUiTargetedContributionsReadResponse,
     type PluginProjectionV2,
+    type MachineRecipeReadTargetV1,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export type DaemonContributionRegistryProjection = PluginProjectionV2;
@@ -18,26 +17,19 @@ export type DaemonContributionRegistryProjectionDescribeParsedResponse = Readonl
     /** Daemon-selected Composer renderers; the UI may only exact-match these rows. */
     composerSurfaceCatalog?: readonly DaemonPluginUiComposerSurfaceCatalogEntryV1[];
     automationEligibleEvents?: DaemonContributionRegistryProjectionAutomationEligibleEventsV1;
+    machineRecipeTarget?: MachineRecipeReadTargetV1;
 }>;
 
-/** The response envelope's siblings; the projection is parsed by its own schema. */
-const DescribeResponseSiblingsSchema = omit(DaemonContributionRegistryProjectionDescribeResponseSchema, {
-    projection: true,
-});
-
 /**
- * Parses the machine-wide describe response once: every part by the one
- * schema that owns it, so the projection is validated exactly once.
+ * Admits the machine-wide describe response through its Protocol owner.
  */
 export function parseDaemonContributionRegistryProjectionDescribeResponse(
     raw: unknown,
 ): DaemonContributionRegistryProjectionDescribeParsedResponse | null {
-    const parsed = DescribeResponseSiblingsSchema.safeParse(raw);
+    const parsed = DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(raw);
     if (!parsed.success) return null;
-    const projection = PluginProjectionV2Schema.safeParse((raw as Readonly<{ projection?: unknown }>).projection);
-    if (!projection.success) return null;
     return Object.freeze({
-        projection: projection.data,
+        projection: parsed.data.projection,
         ...(parsed.data.projectionDigest === undefined ? {} : { projectionDigest: parsed.data.projectionDigest }),
         ...(parsed.data.composerSurfaceCatalog === undefined
             ? {}
@@ -45,6 +37,9 @@ export function parseDaemonContributionRegistryProjectionDescribeResponse(
         ...(parsed.data.automationEligibleEvents === undefined
             ? {}
             : { automationEligibleEvents: parsed.data.automationEligibleEvents }),
+        ...(parsed.data.machineRecipeTarget === undefined
+            ? {}
+            : { machineRecipeTarget: parsed.data.machineRecipeTarget }),
     });
 }
 

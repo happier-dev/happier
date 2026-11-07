@@ -4,6 +4,12 @@ import {
   DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema,
   DaemonContributionRegistryProjectionDescribeRequestSchema,
   DaemonContributionRegistryProjectionDescribeResponseSchema,
+  DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema,
+  DaemonContributionRegistryProjectionSectionsResponseSchema,
+  reassembleDaemonProjectionSections,
+  buildDeferredDaemonProjectionSections, DaemonProjectionDeferredSectionsResponseSchema,
+  DaemonProjectionSectionBodyResponseSchema, DAEMON_PROJECTION_SECTION_FRAME_BYTES,
+  computeDaemonProjectionSectionDigest, computeDaemonProjectionSectionDigestAsync,
   DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
   DaemonPluginUiTargetedSurfaceMountV1Schema,
   DaemonPluginUiTargetedContributionsReadRequestSchema,
@@ -18,6 +24,7 @@ import {
   DaemonPluginComposerReferenceSearchResponseSchema,
   DaemonPluginUiResourceReadRequestSchema,
   DaemonPluginUiResourceWatchOpenRequestSchema,
+  DaemonPluginUiResourceWatchNextResponseSchema,
   DaemonPluginSettingsWatchRequestSchema,
   DaemonPluginSettingsWatchResponseSchema,
   DaemonPluginUiArtifactBytesReadRequestSchema,
@@ -57,6 +64,24 @@ it('preserves cold Bot template descriptors in the canonical daemon family proje
   const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
     familiesById: { botTemplates: { family: 'botTemplates', entriesById: { [entry.id]: entry } } } });
   expect(projection.familiesById.botTemplates?.entriesById[entry.id]).toEqual(entry);
+});
+
+describe('private daemon Action read observation wire', () => {
+  it('admits a closed Action request and content-free signal while preserving Resource digest requirements', () => {
+    const actionRead = { machineId: 'machine', qualifiedActionId: 'acme.source/state',
+      expectedContributorOccurrenceId: 'source-occurrence', requiredReadOnly: true, executionSurface: 'cli', input: {},
+      invocation: { kind: 'clientPluginAction', clientActionBinding: { pluginId: 'acme.account',
+        contributionLocalId: 'aggregate', occurrenceId: 'account-occurrence' } } };
+    const open = { machineId: 'machine', callerPluginId: 'acme.source', expectedCallerOccurrenceId: 'source-occurrence',
+      subscriptionId: 'read-watch', resource: { actionRead } };
+    expect(DaemonPluginUiResourceWatchOpenRequestSchema.safeParse(open).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchOpenRequestSchema.safeParse({ ...open,
+      resource: { actionRead: { ...actionRead, inventedAuthority: true } } }).success).toBe(false);
+    expect(DaemonPluginUiResourceWatchNextResponseSchema.safeParse({ ok: true, status: 'event',
+      event: { version: 1, subscriptionId: 'read-watch', kind: 'readInvalidated' } }).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchNextResponseSchema.safeParse({ ok: true, status: 'event',
+      event: { version: 1, subscriptionId: 'read-watch', kind: 'invalidated' } }).success).toBe(false);
+  });
 });
 
 /**
@@ -149,6 +174,97 @@ function createValidDeclarativeProjectedModelV1(): PluginDeclarativeProjectedMod
 }
 
 describe('daemon contribution registry projection (wire)', () => {
+  it('pages oversized and escaped section bodies, with index frames as raw text', () => {
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1, installedPackagesById: {
+        'acme.one': { id: 'acme.one', displayName: '\"\\\n😀'.repeat(30_000), enabled: true,
+          source: { kind: 'bundled', locator: 'acme.one' } },
+        'acme.two': { id: 'acme.two', displayName: 'Two', enabled: true,
+          source: { kind: 'bundled', locator: 'acme.two' } },
+      } } });
+    const built = buildDeferredDaemonProjectionSections(response);
+    expect(DaemonProjectionDeferredSectionsResponseSchema.parse(built.manifest)).toEqual(built.manifest);
+    const indexDigest = built.manifest.sections.installedPackagesById!;
+    const fetch = (digest: string, frame = false) => {
+      let offset = 0;
+      const chunks: string[] = [];
+      for (;;) {
+        const page = DaemonProjectionSectionBodyResponseSchema.parse(built.read(digest, offset, []));
+        expect(new TextEncoder().encode(JSON.stringify(page)).length).toBeLessThanOrEqual(DAEMON_PROJECTION_SECTION_FRAME_BYTES);
+        chunks.push(page.chunk);
+        if (page.nextOffset === null) break;
+        expect(page.nextOffset).toBeGreaterThan(offset);
+        offset = page.nextOffset;
+      }
+      const spans: string[] = frame ? [chunks.join('')] : JSON.parse(chunks.join(''));
+      expect(computeDaemonProjectionSectionDigest(spans)).toBe(digest);
+      return spans;
+    };
+    const framed = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(JSON.parse(fetch(indexDigest, true)[0]!));
+    const packed = DaemonProjectionSectionBodyResponseSchema.parse(built.read(indexDigest, 0,
+      framed.parts.flatMap(part => typeof part === 'string' ? [] : [part.digest])));
+    expect(new TextEncoder().encode(JSON.stringify(packed)).length).toBeLessThanOrEqual(DAEMON_PROJECTION_SECTION_FRAME_BYTES);
+    expect(packed.bodies).toHaveLength(1);
+    expect(packed.bodies?.[0]?.body.join('')).toContain('acme.two');
+    const held = new Map(framed.parts.flatMap(part => typeof part === 'string' ? [] : [[part.digest, fetch(part.digest)] as const]));
+    expect(reassembleDaemonProjectionSections(framed, held)?.response).toEqual({ projection: { installedPackagesById: response.projection.installedPackagesById } });
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({ machineId: 'm', sectionRead: { digest: indexDigest, offset: 0 } }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({ machineId: 'm', selection: 'agents', deferredSections: true }).success).toBe(false);
+    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, sectionFrameVersion: 3 }).success).toBe(false);
+    const { sectionFrameVersion: _version, ...unversioned } = built.manifest;
+    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse(unversioned).success).toBe(false);
+    expect(DaemonProjectionDeferredSectionsResponseSchema.safeParse({ ...built.manifest, extra: true }).success).toBe(false);
+    expect(built.read('b'.repeat(64), 0)).toBeNull();
+  });
+  it('addresses section bodies by the same SHA-256 hex on every engine', async () => {
+    const { createHash } = await import('node:crypto');
+    const vectors: readonly (readonly string[])[] = [[], [''], ['{"a":1}', ',"b":'], ['é', '\u2028', '😀\uD83D'],
+      ['\"\\\n😀'.repeat(200_000)]];
+    const node = (bytes: Uint8Array) => new Uint8Array(createHash('sha256').update(bytes).digest());
+    const web = async (bytes: Uint8Array) => new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array(bytes)));
+    for (const body of vectors) {
+      const noble = computeDaemonProjectionSectionDigest(body);
+      expect(noble).toMatch(/^[a-f0-9]{64}$/u);
+      expect(computeDaemonProjectionSectionDigest(body, node)).toBe(noble);
+      await expect(computeDaemonProjectionSectionDigestAsync(body, web)).resolves.toBe(noble);
+    }
+    // Pinned: the address of the empty body never changes with the engine.
+    expect(computeDaemonProjectionSectionDigest([])).toBe(createHash('sha256').update('[]').digest('hex'));
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1, installedPackagesById: {} } });
+    expect(buildDeferredDaemonProjectionSections(response, { sha256: node }).manifest)
+      .toEqual(buildDeferredDaemonProjectionSections(response).manifest);
+  });
+
+  it('keeps unchanged replies closed and full replies compatible with older daemons', () => {
+    const unchanged = { protocolVersion: 1, unchanged: true, projectionDigest: 'a'.repeat(64) };
+    expect(DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema.parse(unchanged)).toEqual(unchanged);
+    expect(DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema.safeParse({
+      ...unchanged, projection: {},
+    }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse(unchanged).success).toBe(false);
+    const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, familiesById: {} });
+    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection }).projectionDigest)
+      .toBeUndefined();
+    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({
+      protocolVersion: 1, projection, projectionDigest: 42,
+    }).success).toBe(false);
+  });
+
+  it('validates an optional full-describe content witness without changing legacy requests', () => {
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.parse({ machineId: 'machine' }))
+      .toEqual({ machineId: 'machine' });
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.parse({
+      machineId: 'machine', knownProjectionDigest: 'a'.repeat(64),
+    })).toMatchObject({ knownProjectionDigest: 'a'.repeat(64) });
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'machine', knownProjectionDigest: 42,
+    }).success).toBe(false);
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'machine', selection: 'agents', knownProjectionDigest: 'a'.repeat(64),
+    }).success).toBe(false);
+  });
+
   it('accepts the complete normalized Agent lifecycle declaration', () => {
     const projected = {
       id: 'acme-lifecycle',
@@ -1266,6 +1382,14 @@ describe('daemon contribution registry projection (wire)', () => {
   });
 
   it('uses only the host-derived target Action and field identity to resolve Connected Account options', () => {
+    const nativeOption = { value: { pluginId: 'acme.accounts', localId: 'service' },
+      label: 'gh', nativeServicePath: 'nativeService' };
+    expect(DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.safeParse({
+      ok: true, options: [nativeOption],
+    }).success).toBe(true);
+    expect(DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.safeParse({
+      ok: true, options: [{ ...nativeOption, value: { ...nativeOption.value, accountId: 'forged' } }],
+    }).success).toBe(false);
     const request = DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema.parse({
       machineId: 'm1',
       expectedOccurrenceId: 'action-occurrence-7',
@@ -1658,7 +1782,7 @@ describe('daemon contribution registry projection (wire)', () => {
       backendsById: {},
       familiesById: {},
     }).success).toBe(false);
-    for (const selection of ['agents', 'settings', 'connectedAccountAdmission'] as const) {
+    for (const selection of ['agents', 'settings', 'connectedAccountAdmission', 'machineRecipes'] as const) {
       expect(DaemonContributionRegistryProjectionDescribeRequestSchema.parse({ machineId: 'm1', selection }))
         .toEqual({ machineId: 'm1', selection });
     }
@@ -1763,9 +1887,30 @@ describe('daemon contribution registry projection (wire)', () => {
       occurrenceId: 'source-occurrence', sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY,
     }] };
     expect(DaemonPluginUiTargetedContributionsReadResponseSchema.parse(withSource)).toMatchObject(withSource);
+    const targetCustody = {
+      manifest: { id: 'acme.target', contributes: {
+        actions: [], pluginContributionPoints: [], targetedPluginContributions: [], ui: { renderers: [] },
+      } },
+      occurrenceId: 'target-occurrence', sourceCustody: CONTRIBUTOR_SOURCE_CUSTODY,
+    };
+    // The producer includes the physical target's custody even when only
+    // external plugins contribute operations to it.
+    const withTarget = { ...withSource, sourceDeclarations: [targetCustody, ...withSource.sourceDeclarations] };
+    expect(DaemonPluginUiTargetedContributionsReadResponseSchema.parse(withTarget)).toMatchObject(withTarget);
+    expect(DaemonPluginUiTargetedContributionsReadResponseSchema.safeParse({ ...withSource,
+      sourceDeclarations: [{ ...targetCustody, manifest: { ...targetCustody.manifest, id: 'acme.unrelated' } }],
+    }).success).toBe(false);
+    expect(DaemonPluginUiTargetedContributionsReadResponseSchema.safeParse({ ...withTarget,
+      sourceDeclarations: [targetCustody, targetCustody],
+    }).success).toBe(false);
   });
 
   it('carries current Event Automation composer siblings without changing PluginProjectionV2', () => {
+    // Full describe is additive on the older daemon: the explicit offer must
+    // not require a fallback request or retire ordinary portable discovery.
+    expect(DaemonContributionRegistryProjectionDescribeRequestSchema.safeParse({
+      machineId: 'machine-events', supportedEventObservationBindingVersions: [1],
+    }).success).toBe(true);
     const automationEligibleEvents = [{
       event: {
         id: 'acme.events/repository/updated',
@@ -1774,6 +1919,10 @@ describe('daemon contribution registry projection (wire)', () => {
         sourceCustody: { kind: 'development', registeredRootId: 'events-root' },
         title: 'Repository updated',
         description: null,
+        localizedPresentation: {
+          title: { key: 'events.repository.title', fallback: 'Repository updated ({count})', params: { count: 2 } },
+          description: { key: 'events.repository.description', fallback: 'A repository changed.' },
+        },
         payloadSchema: { type: 'object', additionalProperties: false },
         automation: {
           v: 1,
@@ -1819,14 +1968,33 @@ describe('daemon contribution registry projection (wire)', () => {
     });
 
     expect(parsed.automationEligibleEvents).toEqual(automationEligibleEvents);
+    const executionOrigin = { serverIdentityId: 'srv_events', sourceRef: {
+      machineId: 'machine-events', pluginId: 'acme.events', sourceCustody: automationEligibleEvents[0].event.sourceCustody,
+    } };
+    const binding = { executionOrigin, materializationRef: {
+      machineId: 'machine-events', pluginId: 'acme.events', materializationId: 'admitted-observer',
+    } };
+    const withBinding = { protocolVersion: 1, projection: { v: 2, generation: 1 },
+      automationEligibleEvents: [{ ...automationEligibleEvents[0], observationBinding: binding }] };
+    expect(DaemonContributionRegistryProjectionDescribeResponseSchema.parse(withBinding)
+      .automationEligibleEvents?.[0]).toMatchObject({ observationBinding: binding });
+    for (const invalidBinding of [
+      { ...binding, materializationRef: { ...binding.materializationRef, machineId: 'other-machine' } },
+      { ...binding, materializationRef: { ...binding.materializationRef, pluginId: 'other.plugin' } },
+      { ...binding, executionOrigin: { ...executionOrigin, sourceRef: { ...executionOrigin.sourceRef,
+        sourceCustody: { kind: 'development', registeredRootId: 'retired-source' } } } },
+      { ...binding, trusted: true },
+    ]) {
+      expect(DaemonContributionRegistryProjectionDescribeResponseSchema.safeParse({ ...withBinding,
+        automationEligibleEvents: [{ ...automationEligibleEvents[0], observationBinding: invalidBinding }],
+      }).success).toBe(false);
+    }
     expect(PluginProjectionV2Schema.safeParse({
       v: 2,
       generation: 1,
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-
-
       resourcesById: {},
       settingsById: {},
       familiesById: {},
@@ -2083,8 +2251,6 @@ describe('daemon contribution registry projection (wire)', () => {
           },
         },
         actionsById: {},
-
-
         resourcesById: {},
         diagnostics: [],
       },
@@ -3052,7 +3218,11 @@ describe('daemon contribution registry projection (wire)', () => {
 
     expect(PluginProjectionV2Schema.safeParse(projection).success).toBe(true);
 
+    const { occurrenceId: _occurrence, ...declaration } = entry;
+    expect(PluginDeclaredUiEntryV1Schema.safeParse(declaration).success).toBe(true);
+
     for (const invalidEntry of [
+      { ...entry, occurrenceId: undefined },
       { ...entry, action: 'entries/search-v1' },
       { ...entry, action: { pluginId: 'other.plugin', localId: 'entries/search-v1' } },
       { ...entry, identity: { pluginId: 'acme.search', localId: 'other' } },

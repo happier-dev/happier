@@ -1,12 +1,10 @@
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
-import { randomUUID } from '@/platform/randomUUID';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { buildMachinePluginActionExecuteRequest, isMachinePluginActionScopeCurrent } from './machinePluginActionRequest';
 import type { PluginActionInvocationSurfaceV2 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import type { DaemonPluginTargetedSourceDeclarationV1, DaemonPluginUiResourceDeclarationsByPluginIdV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { MachineRecipeReadTargetV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { preparePluginContributionPointDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import {
@@ -19,8 +17,7 @@ import {
     type DaemonPluginSettingsWatchResponse,
 } from '@happier-dev/protocol/rpc';
 import { DaemonContributionRegistryProjectionDescribeUnchangedResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { DaemonContributionRegistryProjectionSectionsResponseSchema, reassembleDaemonProjectionSections,
-    DaemonProjectionDeferredSectionsResponseSchema, demandedDaemonProjectionSections,
+import { DaemonProjectionDeferredSectionsResponseSchema, daemonProjectionSectionsCover,
     DAEMON_PROJECTION_SECTION_FRAME_BYTES, DAEMON_PROJECTION_SECTION_STALE_CODE,
     type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
@@ -39,10 +36,13 @@ import {
     type DaemonContributionRegistryProjectionDescribeParsedResponse,
 } from '@/sync/api/daemon/daemonContributionRegistryProjectionProtocol';
 import { buildProjectionDescribeRequest, readProjectionClientContext, type ProjectionDescribeSelection } from './machineProjectionRequest';
-import { InvalidDaemonProjectionSection, readDeferredProjection, type DeferredDaemonProjection, type DaemonProjectionSectionCache } from './machineProjectionSections';
+import { InvalidDaemonProjectionSection, packSectionReadIncludeDigests, readDeferredProjection, type DeferredDaemonProjection, type DaemonProjectionSectionCache } from './machineProjectionSections';
 export type { DeferredDaemonProjection, DaemonProjectionSectionCache } from './machineProjectionSections';
 import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
+import { randomUUID } from '@/platform/randomUUID';
 // The projection revision/listener registry lives in its own dependency-light
 // owner so the canonical machine-state writer can advance it without importing
 // this RPC module. It is re-exported here because this is the seam every
@@ -56,7 +56,7 @@ import {
 export {
     getMachineContributionRegistryProjectionRevision,
     publishMachineContributionRegistryProjectionInvalidation,
-    publishMachineContributionRegistryProjectionReconnect,
+    publishMachineContributionRegistryProjectionRefresh,
     subscribeMachineContributionRegistryProjectionInvalidation,
     type MachineContributionRegistryProjectionScope,
 } from './machineContributionRegistryProjectionRevision';
@@ -107,9 +107,10 @@ export type MachineContributionRegistryProjectionDescribeResult = (
         composerSurfaceCatalog?: readonly DaemonPluginUiComposerSurfaceCatalogEntryV1[];
         /** Global current Event-automation composer facts from the same projection response. */
         automationEligibleEvents?: DaemonContributionRegistryProjectionAutomationEligibleEventsV1;
+        machineRecipeTarget?: MachineRecipeReadTargetV1;
     }>
     | Readonly<{ supported: false; reason: MachineContributionRegistryProjectionFailureReason }>
-) & Readonly<{ /** Content-free branch name, including when a legacy full read recovered. */
+) & Readonly<{ /** Content-free name of the section check that refused the hydration. */
     deferredHydrationRejection?: DaemonProjectionHydrationRejection }>;
 
 
@@ -336,7 +337,6 @@ export async function machineContributionRegistryProjectionDescribe(
         machineId: payload.machineId,
         serverId: opts?.serverId ?? null,
     } satisfies MachineContributionRegistryProjectionScope;
-    let hydrationRejection: DaemonProjectionHydrationRejection | undefined;
     try {
             const invoke = (request: typeof payload, signal = opts?.signal) => machineRpcWithServerScope<unknown, typeof payload>({
                 machineId: payload.machineId,
@@ -353,7 +353,7 @@ export async function machineContributionRegistryProjectionDescribe(
             const hydrate = async (manifest: DaemonProjectionDeferredSectionsResponse) => {
                 // Parallel carrier reads belong to this hydration, including
                 // its failure. A retired batch must not retain sibling reads
-                // while fallback, fresh demand or stale recovery starts.
+                // while fresh demand or stale recovery starts.
                 const abort = new AbortController();
                 const cancel = () => abort.abort();
                 opts?.signal?.addEventListener('abort', cancel, { once: true });
@@ -366,16 +366,12 @@ export async function machineContributionRegistryProjectionDescribe(
                         shared: opts?.sectionCache,
                         signal: abort.signal,
                         read: (digest, offset, candidates) => {
-                            const includeDigests: string[] = [];
-                            const request = () => ({ ...payload, sectionRead: { digest, offset, includeDigests }, deferredSections: true as const,
-                                ...(manifest.sectionFrameVersion === 2 ? { sectionFrameVersion: 2 as const } : {}) });
-                            for (const candidate of candidates) {
-                                includeDigests.push(candidate);
-                                if (new TextEncoder().encode(JSON.stringify(request())).length > DAEMON_PROJECTION_SECTION_FRAME_BYTES) {
-                                    includeDigests.pop(); break;
-                                }
-                            }
-                            return invoke(DaemonContributionRegistryProjectionDescribeRequestSchema.parse(request()), abort.signal);
+                            const request = (includeDigests: readonly string[]) => ({ ...payload,
+                                sectionRead: { digest, offset, includeDigests: [...includeDigests] }, deferredSections: true as const });
+                            const includeDigests = packSectionReadIncludeDigests(
+                                peers => new TextEncoder().encode(JSON.stringify(request(peers))).length,
+                                candidates, DAEMON_PROJECTION_SECTION_FRAME_BYTES);
+                            return invoke(DaemonContributionRegistryProjectionDescribeRequestSchema.parse(request(includeDigests)), abort.signal);
                         },
                     });
                 } catch (error) {
@@ -384,19 +380,6 @@ export async function machineContributionRegistryProjectionDescribe(
                 } finally {
                     opts?.signal?.removeEventListener('abort', cancel);
                 }
-            };
-            const fullDescribe = async (deferredHydrationRejection: DaemonProjectionHydrationRejection): Promise<MachineContributionRegistryProjectionDescribeResult> => {
-                hydrationRejection = deferredHydrationRejection;
-                // One compatibility read, never recursive negotiation or a retry.
-                // No held digest: even an unchanged reply cannot answer this read.
-                const request = payload;
-                if (request.selection !== undefined) return { supported: false, reason: 'invalid-response', deferredHydrationRejection };
-                const { deferredSections: _deferred, sectionRead: _read, sectionFrameVersion: _version,
-                    supportedSectionFrameVersions: _versions, knownProjectionDigest: _digest,
-                    knownSectionDigests: _sections, ...fullRequest } = request;
-                const parsed = parseDaemonContributionRegistryProjectionDescribeResponse(await invoke(fullRequest));
-                return parsed ? { supported: true, ...parsed, deferredHydrationRejection }
-                    : { supported: false, reason: 'invalid-response', deferredHydrationRejection };
             };
             const hydrateResult = async (initialManifest: DaemonProjectionDeferredSectionsResponse): Promise<MachineContributionRegistryProjectionDescribeResult> => {
                 let manifest = initialManifest;
@@ -418,7 +401,6 @@ export async function machineContributionRegistryProjectionDescribe(
                 catch (error) {
                     if (opts?.signal?.aborted) return { supported: false, reason: 'aborted' };
                     if (error instanceof InvalidDaemonProjectionSection) {
-                        if (manifest.sectionFrameVersion === undefined) return await fullDescribe(error.reason);
                         return { supported: false, reason: 'invalid-response', deferredHydrationRejection: error.reason };
                     }
                     throw error;
@@ -437,8 +419,8 @@ export async function machineContributionRegistryProjectionDescribe(
                     || unchanged.data.projectionDigest !== opts.knownProjection.projectionDigest) {
                     return { supported: false, reason: 'invalid-response' };
                 }
-                if (opts.deferredProjection && demandedDaemonProjectionSections(opts.deferredProjection.manifest, opts.sections)
-                    .some(id => !opts.deferredProjection!.loadedSections.includes(id))) {
+                if (opts.deferredProjection && !daemonProjectionSectionsCover(opts.deferredProjection.manifest,
+                    opts.deferredProjection.loadedSections, opts.sections)) {
                     return await hydrateResult(opts.deferredProjection.manifest);
                 }
                 return { supported: true, ...opts.knownProjection,
@@ -447,26 +429,13 @@ export async function machineContributionRegistryProjectionDescribe(
             if (response && typeof response === 'object' && 'deferredSections' in response) {
                 if (opts?.selection) return { supported: false, reason: 'invalid-response' };
                 const manifest = DaemonProjectionDeferredSectionsResponseSchema.safeParse(response);
-                if (!manifest.success) return await fullDescribe('manifest-admission');
+                if (!manifest.success) return { supported: false, reason: 'invalid-response', deferredHydrationRejection: 'manifest-admission' };
                 return await hydrateResult(manifest.data);
             }
-            let completeResponse = response;
-            let sectionBodies: ReadonlyMap<string, readonly string[]> | undefined;
-            if (response && typeof response === 'object' && 'sectioned' in response) {
-                const held = opts?.sectionCache?.bodies ?? opts?.sectionBodies;
-                if (opts?.selection || !held) return { supported: false, reason: 'invalid-response' };
-                const framed = DaemonContributionRegistryProjectionSectionsResponseSchema.safeParse(response);
-                if (!framed.success) return { supported: false, reason: 'invalid-response' };
-                const assembled = reassembleDaemonProjectionSections(framed.data, held);
-                if (!assembled) return { supported: false, reason: 'invalid-response' };
-                completeResponse = assembled.response;
-                sectionBodies = assembled.bodies;
-            }
-            const parsed = parseDaemonContributionRegistryProjectionDescribeResponse(completeResponse);
+            const parsed = parseDaemonContributionRegistryProjectionDescribeResponse(response);
             if (!parsed) return { supported: false, reason: 'invalid-response' };
             return {
                 supported: true,
-                ...(sectionBodies ? { sectionBodies } : {}),
                 projection: parsed.projection,
                 ...(parsed.projectionDigest === undefined ? {} : { projectionDigest: parsed.projectionDigest }),
                 ...(parsed.composerSurfaceCatalog === undefined
@@ -475,14 +444,37 @@ export async function machineContributionRegistryProjectionDescribe(
                 ...(parsed.automationEligibleEvents === undefined
                     ? {}
                     : { automationEligibleEvents: parsed.automationEligibleEvents }),
+                ...(parsed.machineRecipeTarget === undefined
+                    ? {}
+                    : { machineRecipeTarget: parsed.machineRecipeTarget }),
             };
         } catch (error) {
-            const diagnostic = hydrationRejection ? { deferredHydrationRejection: hydrationRejection } : {};
             if (isRpcMethodNotFoundError(error) || isRpcMethodNotAvailableError(error)) {
-                return { supported: false, reason: 'not-supported', ...diagnostic };
+                return { supported: false, reason: 'not-supported' };
             }
-            return { supported: false, reason: classifyMachineProjectionReadError(error), ...diagnostic };
+            return { supported: false, reason: classifyMachineProjectionReadError(error) };
         }
+}
+
+type SourceDeclarationsAnswer = Extract<NonNullable<ReturnType<typeof parseDaemonPluginUiTargetedContributionsReadResponse>>, Readonly<{ status: 'sourceDeclarations' }>>;
+
+function isSourceDeclarationsAnswer(value: unknown, pluginId: string): value is SourceDeclarationsAnswer {
+    return Boolean(value && typeof value === 'object' && (value as { status?: unknown }).status === 'sourceDeclarations'
+        && (value as { pluginId?: unknown }).pluginId === pluginId);
+}
+
+/** A retained answer keeps one prepared declaration list, so repeated operations share its identity. */
+const preparedSourceDeclarations = new WeakMap<SourceDeclarationsAnswer, MachinePluginTargetedSourceDeclarationsReadResult>();
+function readPreparedSourceDeclarations(answer: SourceDeclarationsAnswer): MachinePluginTargetedSourceDeclarationsReadResult {
+    let prepared = preparedSourceDeclarations.get(answer);
+    if (!prepared) {
+        prepared = { supported: true, sourceDeclarations: answer.sourceDeclarations.map(row => ({ ...row,
+            manifest: { ...row.manifest,
+                contributes: preparePluginContributionPointDeclarationsV1(row.manifest.contributes) },
+        })) };
+        preparedSourceDeclarations.set(answer, prepared);
+    }
+    return prepared;
 }
 
 function decodeTargetedContributionsReadResponse(raw: unknown) {
@@ -529,7 +521,18 @@ export async function machinePluginUiTargetedContributionsRead(
                 payload,
                 operationTimeoutMs: null,
                 signal: opts.signal,
-                readAdmission: projectionReadAdmission(scope, payload),
+                // A target's answer (its points and mounts, or its source declarations) changes only with the
+                // Machine's registry, which advances the projection revision on every invalidation. Each caller
+                // asks (a mount, its re-open, an Account-origin page); equal revisions answer from the one kept answer.
+                readAdmission: retainedReadAdmission({
+                    key: JSON.stringify([opts.readMode ?? 'targetedContributions', machineContributionRegistryProjectionScopeKey(scope), payload]),
+                    version: String(getMachineContributionRegistryProjectionRevision(scope)),
+                    pending: projectionReadAdmission(scope, payload),
+                    retain: value => (opts.readMode === 'sourceDeclarations'
+                        ? isSourceDeclarationsAnswer(value, payload.pluginId)
+                        : isCurrentTargetedContributionsAnswer(value, payload.pluginId)) ? value : undefined,
+                    onAnswer: () => {},
+                }),
                 decodeResult: decodeTargetedContributionsReadResponse,
             });
             if (isRpcMethodNotFoundResult(response)) {
@@ -541,13 +544,10 @@ export async function machinePluginUiTargetedContributionsRead(
                 return { supported: false, reason: 'unavailable', code: parsed.code };
             }
             if (opts.readMode === 'sourceDeclarations') {
-                if (parsed.status !== 'sourceDeclarations' || parsed.pluginId !== payload.pluginId) {
+                if (!isSourceDeclarationsAnswer(parsed, payload.pluginId)) {
                     return { supported: false, reason: 'invalid-response' };
                 }
-                return { supported: true, sourceDeclarations: parsed.sourceDeclarations.map(row => ({ ...row,
-                    manifest: { ...row.manifest,
-                        contributes: preparePluginContributionPointDeclarationsV1(row.manifest.contributes) },
-                })) };
+                return readPreparedSourceDeclarations(parsed);
             }
             if (parsed.status !== 'current') return { supported: false, reason: 'invalid-response' };
             // A snapshot for another plugin, or mounts for another target,
@@ -574,6 +574,13 @@ export async function machinePluginUiTargetedContributionsRead(
             }
             return { supported: false, reason: classifyMachinePluginTransportError(error) };
         }
+}
+
+/** Only a current answer for the asked plugin is kept; refusals and another plugin's slice are not. */
+function isCurrentTargetedContributionsAnswer(value: unknown, pluginId: string): boolean {
+    if (!value || typeof value !== 'object' || (value as { status?: unknown }).status !== 'current') return false;
+    const target = (value as { targetedContributions?: { target?: { pluginId?: unknown } } }).targetedContributions?.target;
+    return target?.pluginId === pluginId;
 }
 
 /** The same target-read transport, requesting current Machine sources for an invoking Account target. */
@@ -993,24 +1000,80 @@ export async function machinePluginActionFormConnectedAccountOptionsResolve(
 }
 
 /**
- * Action schemas by routed machine scope and qualified Action id. The bulk
- * projection omits them, so this is the one reader: an Action occurrence's
- * declaration cannot change, so a settled answer is kept for that occurrence
- * and concurrent readers share one request. A reloaded plugin has a new
- * occurrence id, which replaces the entry and re-reads. Failures are not kept.
+ * Settled Machine reads whose answer is fixed for one version of their question: an Action
+ * occurrence's schemas, or a plugin's source declarations at one Machine projection revision.
+ * Concurrent readers share one request; a settled answer is kept for that version and route
+ * binding (Account and credentials) and replaced when either changes. Failures are not kept.
  */
-type ActionSchemaRead = {
-    occurrenceId: string;
+type RetainedRead = {
+    version: string;
     bindingKey: string;
     scope: readonly (object | string)[];
-    result?: DaemonPluginActionSchemasReadResponse;
+    result?: unknown;
 };
-const actionSchemaReadsByKey = new Map<string, ActionSchemaRead>();
+const retainedReadsByKey = new Map<string, RetainedRead>();
 
-/** Forgets every shared in-flight projection read and memoised Action schema. */
+/** Forgets every shared in-flight projection read and retained answer. */
 export function resetMachineProjectionReadsForTests(): void {
     resetAdmittedMachineRpcReadsForTests();
-    actionSchemaReadsByKey.clear();
+    retainedReadsByKey.clear();
+}
+
+/**
+ * Wraps the in-flight admission with the retained answer. `retain` returns the value to keep
+ * (or undefined to keep nothing); `onAnswer` receives the retained value, cached or fresh.
+ */
+function retainedReadAdmission(params: Readonly<{
+    key: string;
+    version: string;
+    pending: MachineRpcReadAdmission;
+    retain(value: unknown): unknown;
+    onAnswer(value: unknown): void;
+}>): MachineRpcReadAdmission {
+    const { key, version, pending } = params;
+    return {
+        async run<T>(input: MachineRpcReadAdmissionInput<T>): Promise<T> {
+            const incumbent = retainedReadsByKey.get(key);
+            const matches = incumbent?.version === version
+                && incumbent.bindingKey === input.binding.key
+                && incumbent.scope.length === input.binding.scope.length
+                && incumbent.scope.every((part, index) => part === input.binding.scope[index]);
+            const entry: RetainedRead = matches ? incumbent : {
+                version, bindingKey: input.binding.key, scope: input.binding.scope,
+            };
+            if (entry.result !== undefined) {
+                params.onAnswer(entry.result);
+                return entry.result as T;
+            }
+            retainedReadsByKey.set(key, entry);
+            const forget = () => {
+                if (retainedReadsByKey.get(key) === entry) retainedReadsByKey.delete(key);
+            };
+            const response = await pending.run({ ...input,
+                onPhysicalAcquire: signal => {
+                    const release = input.onPhysicalAcquire(signal);
+                    signal.addEventListener('abort', forget, { once: true });
+                    return async () => {
+                        signal.removeEventListener('abort', forget);
+                        if (signal.aborted) forget();
+                        await release();
+                    };
+                },
+                resolve: async (signal, onIssued) => {
+                    try {
+                        const value = await input.resolve(signal, onIssued);
+                        input.binding.assertCurrent();
+                        const retained = signal.aborted ? undefined : params.retain(value);
+                        if (retained === undefined) forget();
+                        else if (retainedReadsByKey.get(key) === entry) entry.result = retained;
+                        return value;
+                    } catch (error) { forget(); throw error; }
+                },
+            }) as T;
+            if (entry.result !== undefined) params.onAnswer(entry.result);
+            return response;
+        },
+    };
 }
 
 export async function machinePluginActionSchemasRead(
@@ -1031,7 +1094,7 @@ export async function machinePluginActionSchemasRead(
     } catch {
         return { supported: false, reason: 'error' };
     }
-    const key = JSON.stringify([
+    const key = JSON.stringify(['actionSchemas',
         machineContributionRegistryProjectionScopeKey({ machineId, serverId: opts.serverId ?? null }),
         payload.qualifiedActionId,
     ]);
@@ -1041,57 +1104,22 @@ export async function machinePluginActionSchemasRead(
         const response = await machineRpcWithServerScope<unknown, typeof payload>({
             machineId, serverId: opts.serverId, method: RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ,
             payload, operationTimeoutMs: null, signal: opts.signal,
-            readAdmission: {
-                async run<T>(input: MachineRpcReadAdmissionInput<T>): Promise<T> {
-                    const incumbent = actionSchemaReadsByKey.get(key);
-                    const matches = incumbent?.occurrenceId === payload.expectedOccurrenceId
-                        && incumbent.bindingKey === input.binding.key
-                        && incumbent.scope.length === input.binding.scope.length
-                        && incumbent.scope.every((part, index) => part === input.binding.scope[index]);
-                    const entry: ActionSchemaRead = matches ? incumbent : {
-                        occurrenceId: payload.expectedOccurrenceId, bindingKey: input.binding.key, scope: input.binding.scope,
-                    };
-                    if (entry.result) {
-                        admittedResult = entry.result;
-                        return entry.result as T;
-                    }
-                    actionSchemaReadsByKey.set(key, entry);
-                    const forget = () => {
-                        if (actionSchemaReadsByKey.get(key) === entry) actionSchemaReadsByKey.delete(key);
-                    };
-                    const response = await pending.run({ ...input,
-                        onPhysicalAcquire: signal => {
-                            const release = input.onPhysicalAcquire(signal);
-                            signal.addEventListener('abort', forget, { once: true });
-                            return async () => {
-                                signal.removeEventListener('abort', forget);
-                                if (signal.aborted) forget();
-                                await release();
-                            };
-                        },
-                        resolve: async (signal, onIssued) => {
-                            try {
-                                const value = await input.resolve(signal, onIssued);
-                                const parsed = DaemonPluginActionSchemasReadResponseSchema.safeParse(value);
-                                input.binding.assertCurrent();
-                                if (!parsed.success || !parsed.data.ok || signal.aborted) forget();
-                                else if (actionSchemaReadsByKey.get(key) === entry) entry.result = Object.freeze({
-                                    ...parsed.data,
-                                    ...(parsed.data.inputSchema === undefined ? {} : {
-                                        inputSchema: normalizePluginJsonSchema(parsed.data.inputSchema),
-                                    }),
-                                    ...(parsed.data.outputSchema === undefined ? {} : {
-                                        outputSchema: normalizePluginJsonSchema(parsed.data.outputSchema),
-                                    }),
-                                });
-                                return value;
-                            } catch (error) { forget(); throw error; }
-                        },
-                    }) as T;
-                    admittedResult = entry.result;
-                    return response;
+            // An Action occurrence's declaration cannot change; a reloaded plugin is a new occurrence.
+            readAdmission: retainedReadAdmission({ key, version: payload.expectedOccurrenceId, pending,
+                retain: (value) => {
+                    const parsed = DaemonPluginActionSchemasReadResponseSchema.safeParse(value);
+                    return !parsed.success || !parsed.data.ok ? undefined : Object.freeze({
+                        ...parsed.data,
+                        ...(parsed.data.inputSchema === undefined ? {} : {
+                            inputSchema: normalizePluginJsonSchema(parsed.data.inputSchema),
+                        }),
+                        ...(parsed.data.outputSchema === undefined ? {} : {
+                            outputSchema: normalizePluginJsonSchema(parsed.data.outputSchema),
+                        }),
+                    });
                 },
-            },
+                onAnswer: (value) => { admittedResult = value as DaemonPluginActionSchemasReadResponse; },
+            }),
         });
         // The route has admitted this exact occurrence and Account binding.
         // Re-parsing its owned answer would copy the schemas on every dispatch

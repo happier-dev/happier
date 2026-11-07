@@ -1,3 +1,4 @@
+import { daemonProjectionSectionsCover } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { MachineContributionRegistryProjectionDescribeResult } from '@/sync/ops/machineContributionRegistryProjection';
 
 type ReadyProjection = Extract<MachineContributionRegistryProjectionDescribeResult, { supported: true }>;
@@ -9,7 +10,8 @@ export function mergeProjectionSections(incoming: ReadyProjection, previous: Rea
     if (!next || next.manifest.projectionDigest !== (before?.manifest.projectionDigest ?? previous.projectionDigest)) return incoming;
     // A full answer already covers every section of this same manifest.
     if (!before) return previous;
-    if (before.loadedSections.every(section => next.loadedSections.includes(section))) return incoming;
+    if (daemonProjectionSectionsCover(next.manifest, next.loadedSections, before.loadedSections)) return incoming;
+    if (daemonProjectionSectionsCover(next.manifest, before.loadedSections, next.loadedSections)) return previous;
 
     const loaded = new Set(next.loadedSections);
     const field = <K extends keyof ReadyProjection['projection']>(name: K): ReadyProjection['projection'][K] =>
@@ -25,10 +27,14 @@ export function mergeProjectionSections(incoming: ReadyProjection, previous: Rea
             ...incoming.projection,
             installedPackagesById: field('installedPackagesById'),
             agentsById: field('agentsById'),
-            actionsById: field('actionsById'),
+            actionsById: loaded.has('searchProviders') && !loaded.has('actionsById')
+                ? { ...previous.projection.actionsById, ...incoming.projection.actionsById } : field('actionsById'),
             resourcesById: field('resourcesById'),
             settingsById: field('settingsById'),
-            familiesById: { ...previous.projection.familiesById, ...incoming.projection.familiesById },
+            familiesById: { ...previous.projection.familiesById, ...incoming.projection.familiesById,
+                ...(loaded.has('searchProviders') && !loaded.has('familiesById.pluginUi') && previous.projection.familiesById.pluginUi
+                    ? { pluginUi: previous.projection.familiesById.pluginUi } : {}),
+            },
         },
         deferredProjection: {
             manifest: next.manifest,

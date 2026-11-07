@@ -4,7 +4,14 @@ import { resolveHostedWebFrameCapability } from '@/components/plugins/hostedWeb/
 import { getPreferredLanguage } from '@/text';
 
 type DescribeRequest = ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>;
-export type ProjectionDescribeSelection = Readonly<{ selection?: 'agents' | 'connectedAccountAdmission' }>;
+type DiscoveryRequest = Extract<DescribeRequest, { deferredSections?: true }>;
+export type ProjectionDescribeSelection = Readonly<{ selection?: 'agents' | 'connectedAccountAdmission' }>
+    | (Readonly<{ selection: 'machineRecipes' }> & Pick<DiscoveryRequest, 'recipeRefs'>)
+    | Readonly<{
+        selection: 'mountedActions';
+        callers: Extract<DescribeRequest, { selection: 'mountedActions' }>['callers'];
+        actions: Extract<DescribeRequest, { selection: 'mountedActions' }>['actions'];
+    }>;
 
 export async function readProjectionClientContext(machineId: string, locale: string = getPreferredLanguage()) {
     const reactNativeHostRuntimeIdentity = resolveNativeReactNativeHostRuntimeIdentity();
@@ -26,11 +33,16 @@ export async function buildProjectionDescribeRequest(machineId: string, opts?: R
     knownProjection?: Readonly<{ projectionDigest: string }>;
 }> & ProjectionDescribeSelection): Promise<DescribeRequest> {
     return DaemonContributionRegistryProjectionDescribeRequestSchema.parse(
-        opts?.selection === 'agents' || opts?.selection === 'connectedAccountAdmission'
+        opts?.selection === 'machineRecipes'
+            ? { machineId, selection: 'machineRecipes',
+                ...(opts.recipeRefs === undefined ? {} : { recipeRefs: opts.recipeRefs }) }
+            : opts?.selection === 'agents' || opts?.selection === 'connectedAccountAdmission'
                 ? { machineId, selection: opts.selection }
+            : opts?.selection === 'mountedActions'
+                ? { machineId, selection: opts.selection, locale: opts.locale ?? getPreferredLanguage(), callers: opts.callers, actions: opts.actions }
                 : { ...await readProjectionClientContext(machineId, opts?.locale),
                     deferredSections: true as const,
-                    supportedSectionFrameVersions: [2],
+                    supportedEventObservationBindingVersions: [1],
                     ...(opts?.knownProjection ? { knownProjectionDigest: opts.knownProjection.projectionDigest } : {}) },
     );
 }
