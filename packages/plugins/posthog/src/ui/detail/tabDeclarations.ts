@@ -1,3 +1,4 @@
+import type { TriageDetailPanelScrollOwnerV1 } from '@happier-dev/triage-protocol/v1';
 /**
  * The PostHog detail body's tab declarations.
  *
@@ -43,7 +44,7 @@ export type PosthogDetailTabDeclarationV1 = Readonly<{
     retainedState: string;
     readPlane: PosthogDetailTabReadPlaneV1;
     /** The single component that owns this panel's vertical scrolling. */
-    scrollOwner: 'scrollArea' | 'list';
+    scrollOwner: TriageDetailPanelScrollOwnerV1;
 }>;
 
 export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = Object.freeze([

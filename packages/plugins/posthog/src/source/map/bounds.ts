@@ -1,7 +1,7 @@
 /**
  * Projection bounds are shared contract values, not source-local numbers.
  *
- * The Triage contract owns the display-text, fact-value, and fact-count limits. This
+ * The Triage contract owns the display-text and fact-value limits. This
  * source deliberately declares none of its own: inventing a tighter local cap would
  * create a second decision-maker for the same concept and would mark ordinary complete
  * issues as truncated for no reason. The caller supplies the shared values, and every
@@ -14,8 +14,6 @@ export type PosthogProjectionBounds = Readonly<{
     textUtf8Bytes: number;
     /** Shared per-fact-value limit, in UTF-8 bytes. */
     factValueUtf8Bytes: number;
-    /** Shared projected fact-count limit. */
-    maxFacts: number;
 }>;
 
 const encoder = new TextEncoder();

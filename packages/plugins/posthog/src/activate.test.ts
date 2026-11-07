@@ -1,3 +1,4 @@
+import { activate as activateAccount } from './accountRuntime.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
@@ -13,8 +14,11 @@ describe('PostHog plugin activation', () => {
             actions: { register: registerAction },
             connectedAccounts: { register: registerAccount },
             composerReferences: { register: registerComposerReference },
+            backgroundServices: { register: vi.fn() },
+            events: { register: vi.fn() },
         } as never);
 
+        activateAccount({ actions: { register: registerAction }, connectedAccounts: { register: vi.fn() } } as never);
         expect(registerAction.mock.calls.map(([id]) => id).sort()).toEqual(
             Object.values(POSTHOG_ACTION_IDS).sort(),
         );

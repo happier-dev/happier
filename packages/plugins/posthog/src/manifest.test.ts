@@ -98,6 +98,15 @@ function defineScanBindingProbe(bindingPath: string) {
 }
 
 describe('PostHog plugin manifest', () => {
+    it('exports checkpoint Collection callbacks through its author entry', async () => {
+        const entry = await import('./index.js');
+        const collections = PLUGIN_MANIFEST.contributes.accountCollections;
+        expect(collections).not.toHaveLength(0);
+        expect(entry).toHaveProperty('collectionMigrations', Object.fromEntries(
+            collections.map((collection) => [collection.id, []]),
+        ));
+    });
+
     it('publishes the manifest subpath consumed by the bundled-plugin registry', async () => {
         const packageJson = JSON.parse(
             await readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -154,7 +163,12 @@ describe('PostHog plugin manifest', () => {
         const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
         expect(actions.has('posthog/capability')).toBe(false);
         for (const id of Object.values(POSTHOG_ACTION_IDS)) {
-            expect(actions.get(id)?.execution).toEqual({ target: 'daemon' });
+            if (id === POSTHOG_ACTION_IDS.setupIssueEvent || id === POSTHOG_ACTION_IDS.resetIssueEvent) {
+                expect(actions.get(id)?.execution).toEqual({ target: 'daemon' });
+                expect(actions.get(id)?.hostAccess ?? []).toEqual([]);
+                continue;
+            }
+            expect(actions.get(id)?.execution).toEqual({ target: 'account', account: { artifactId: 'posthog-account-runtime', exportName: 'activate' } });
             expect(actions.get(id)?.hostAccess)
                 .toEqual([POSTHOG_CONNECTED_ACCOUNT_PURPOSE, 'posthog-network']);
         }
@@ -274,7 +288,7 @@ describe('PostHog plugin manifest', () => {
         const reveal = actions.get('posthog/code-variables');
 
         expect(reveal).toMatchObject({
-            execution: { target: 'daemon' },
+            execution: { target: 'account', account: { artifactId: 'posthog-account-runtime', exportName: 'activate' } },
             dangerLevel: 'safe',
             confirmation: { title: expect.anything(), body: expect.anything() },
             surfaces: ['ui', 'agent', 'mcp', 'cli'],

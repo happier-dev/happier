@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TriageDetailSurfaceInputV1Schema,
@@ -38,7 +37,6 @@ import {
 const SHARED_BOUNDS = {
     textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     factValueUtf8Bytes: MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-    maxFacts: MAX_TRIAGE_ROW_FACTS_V1 - 1,
 };
 const TEAM_UUID = '00000000-0000-4000-8000-0000000000d1';
 

@@ -12,9 +12,7 @@
  * would cost one CRUD call per issue against a budget shared with everything else in
  * the customer's organization. It is detail-only.
  *
- * The priority order below is the source-owned part of this projection: it decides
- * which facts survive when the shared count limit binds. The limit itself is supplied
- * by the caller.
+ * The source-owned priority order below keeps the available facts in a stable reading order.
  */
 
 import type { PosthogIssueQueryDetail, PosthogIssueRow, PosthogTopFrame } from '../../api/types/issues.js';
@@ -53,7 +51,7 @@ export type PosthogFact =
     | Readonly<{ id: 'firstSeen' | 'lastSeen'; kind: 'timestamp'; atMs: number }>;
 
 /**
- * Stable selection order. Impact evidence outranks provenance, and provenance outranks
+ * Stable reading order. Impact evidence outranks provenance, and provenance outranks
  * the first-seen timestamp, which the row identity already implies.
  */
 export const POSTHOG_FACT_PRIORITY: readonly PosthogFactId[] = [
@@ -167,8 +165,5 @@ export function projectPosthogFacts(
         : release.version ?? release.commitId ?? release.branch ?? release.repoName ?? release.project ?? null);
 
     candidates.sort((left, right) => factOrder(left.id) - factOrder(right.id));
-    if (candidates.length > bounds.maxFacts) {
-        truncated = true;
-    }
-    return { facts: candidates.slice(0, bounds.maxFacts), truncated };
+    return { facts: candidates, truncated };
 }

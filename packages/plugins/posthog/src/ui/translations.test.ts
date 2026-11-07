@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
 
 /**
  * The PostHog surface catalog, guarded.
@@ -23,12 +24,13 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
 
 type Messages = Readonly<Record<string, string | undefined>>;
 
-const TRANSLATIONS = PLUGIN_MANIFEST.contributes.ui.translations;
+const TRANSLATIONS = PLUGIN_MANIFEST.contributes.ui?.translations ?? [];
+const PACKAGED = readPluginTranslationResources(new URL('../../', import.meta.url), PLUGIN_MANIFEST);
 
 function messagesFor(locale: string): Messages {
     const entry = TRANSLATIONS.find((row) => row.locale === locale);
     if (entry === undefined) throw new Error(`manifest declares no ${locale} translations`);
-    return entry.messages;
+    return PACKAGED[entry.locale as keyof typeof PACKAGED];
 }
 
 const LOCALES: readonly string[] = TRANSLATIONS.map((row) => row.locale);

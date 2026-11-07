@@ -3,8 +3,8 @@
  *
  * A provider-valid issue always stays visible. This projection never rejects a whole
  * entity for exceeding a byte ceiling: overlong title and description text is
- * Unicode-safe truncated to the shared display bound, facts are selected in a stable
- * source-owned priority order and bounded by the shared fact count, and the entry
+ * Unicode-safe truncated to the shared display bound, facts retain their stable
+ * source-owned priority order, and the entry
  * records `projectionTruncated` when anything was shortened or dropped. Identity,
  * native state, and the destructive `suppressed` semantics are never truncated or
  * substituted, and a missing required identity or state is a malformed-row diagnostic

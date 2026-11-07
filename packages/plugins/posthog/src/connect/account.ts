@@ -1,3 +1,4 @@
+import type { ConnectedAccountPortableRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 /**
  * The `posthog-api` Connected Account runtime.
  *
@@ -243,6 +244,26 @@ async function readHealth(
     return { status: 'connected', displayName: connectionDisplayName(confirmation.origin) };
 }
 
+const materializePosthogCredentials: NonNullable<ConnectedAccountPortableRuntime['materialize']> = async (request, context, options) => {
+        if (request.kind !== 'httpHeaders') {
+            throw new Error('PostHog connected accounts support HTTP-header materialization only');
+        }
+        const origin = readConfiguredOrigin(context.configuration);
+        if (origin === null || request.origin !== origin) {
+            throw new Error('PostHog connected accounts cannot materialize credentials for this origin');
+        }
+        if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) {
+            return { kind: 'httpHeaders', headers: EMPTY_HTTP_HEADERS };
+        }
+        const personalApiKey
+            = (await context.credentials.get(POSTHOG_PERSONAL_API_KEY_FIELD_ID, options))?.trim()
+                ?? '';
+        if (personalApiKey === '') {
+            throw new Error('PostHog connected-account credentials are unavailable');
+        }
+        return { kind: 'httpHeaders', headers: { authorization: `Bearer ${personalApiKey}` } };
+    };
+
 const posthogConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
     authentication: {
         modes: {
@@ -263,27 +284,14 @@ const posthogConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = 
     async status(context, options) {
         return readHealth(context, options);
     },
-    async materialize(request, context, options) {
-        if (request.kind !== 'httpHeaders') {
-            throw new Error('PostHog connected accounts support HTTP-header materialization only');
-        }
-        const origin = readConfiguredOrigin(context.configuration);
-        if (origin === null || request.origin !== origin) {
-            throw new Error('PostHog connected accounts cannot materialize credentials for this origin');
-        }
-        if (!request.headerNames.some((name) => name.toLowerCase() === 'authorization')) {
-            return { kind: 'httpHeaders', headers: EMPTY_HTTP_HEADERS };
-        }
-        const personalApiKey
-            = (await context.credentials.get(POSTHOG_PERSONAL_API_KEY_FIELD_ID, options))?.trim()
-                ?? '';
-        if (personalApiKey === '') {
-            throw new Error('PostHog connected-account credentials are unavailable');
-        }
-        return { kind: 'httpHeaders', headers: { authorization: `Bearer ${personalApiKey}` } };
-    },
+    materialize: materializePosthogCredentials,
 };
 
 export const posthogConnectedAccountRuntime = Object.freeze(
     posthogConnectedAccountRuntimeDefinition,
 );
+
+export const posthogPortableAccountRuntime: ConnectedAccountPortableRuntime = {
+    authentication: posthogConnectedAccountRuntime.authentication,
+    materialize: materializePosthogCredentials,
+};

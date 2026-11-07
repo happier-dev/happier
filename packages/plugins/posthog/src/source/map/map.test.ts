@@ -1,5 +1,4 @@
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
@@ -18,7 +17,7 @@ import { normalizePosthogApiOrigin, type PosthogApiOrigin } from '../../connect/
 import { buildPosthogEntryLocator, type PosthogEntryLocator } from '../identity.js';
 import { utf8ByteLength, type PosthogProjectionBounds } from './bounds.js';
 import { buildPosthogEntrySnapshot, buildPosthogScopeLabel } from './entrySnapshot.js';
-import { POSTHOG_FACT_PRIORITY, projectPosthogFacts } from './facts.js';
+import { projectPosthogFacts } from './facts.js';
 import { buildPosthogPresentObservation } from './observation.js';
 import { mapPosthogIssueState } from './state.js';
 
@@ -28,14 +27,13 @@ const SINGLE_LINE_V1 = new RegExp(TRIAGE_SINGLE_LINE_STRING_PATTERN_V1, 'u');
 const PUBLISHED_BOUNDS: PosthogProjectionBounds = {
     textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     factValueUtf8Bytes: MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-    maxFacts: MAX_TRIAGE_ROW_FACTS_V1 - 1,
 };
 
 /**
  * Deliberately looser than the published ceilings, and derived from them so it stays
  * that way.
  *
- * These checks exercise priority order, count selection, and Unicode-safe truncation.
+ * These checks exercise priority order and Unicode-safe truncation.
  * If the shared ceiling itself bound first they would prove the ceiling instead of the
  * behavior, so the harness sits above it — but as a multiple of the published symbols,
  * never as its own numbers. A literal here would be a second ledger for a limit
@@ -45,7 +43,6 @@ const PUBLISHED_BOUNDS: PosthogProjectionBounds = {
 const LOOSE_BOUNDS: PosthogProjectionBounds = {
     textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1 * 8,
     factValueUtf8Bytes: MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1 * 8,
-    maxFacts: POSTHOG_FACT_PRIORITY.length,
 };
 
 function requireOrigin(raw: string): PosthogApiOrigin {
@@ -178,16 +175,17 @@ describe('projectPosthogFacts', () => {
         expect(ids).not.toContain('sessions');
     });
 
-    it('drops the lowest-priority facts first when the shared count limit binds', () => {
+    it('preserves all available facts beyond row display density', () => {
         const [first] = fixtureRows();
         if (first === undefined) throw new Error('fixture must have a first row');
 
-        const { facts, truncated } = projectPosthogFacts(first, { ...LOOSE_BOUNDS, maxFacts: 3 });
+        const { facts, truncated } = projectPosthogFacts(first, LOOSE_BOUNDS);
 
         // This scan row has no detail enrichment, so priority is applied among the
         // candidates actually present rather than requiring detail-only facts.
-        expect(facts.map((fact) => fact.id)).toEqual(['occurrences', 'lastSeen', 'users']);
-        expect(truncated).toBe(true);
+        expect(facts.map((fact) => fact.id)).toEqual(expect.arrayContaining(['occurrences', 'lastSeen', 'users', 'sessions']));
+        expect(facts.length).toBeGreaterThan(4);
+        expect(truncated).toBe(false);
     });
 });
 

@@ -21,6 +21,7 @@ export { activate } from './activate.js';
 export {
     PLUGIN_MANIFEST,
     PLUGIN_MANIFEST as manifest,
+    collectionMigrations,
     POSTHOG_PLUGIN,
 } from './manifest.js';
 export {

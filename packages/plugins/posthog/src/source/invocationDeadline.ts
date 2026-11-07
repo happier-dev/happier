@@ -7,11 +7,11 @@
  * production reads supply no extra duration and inherit the invocation caller's signal.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { PosthogSourceContext } from '../api/invocationClient.js';
 import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 
 export async function runPosthogBoundedInvocation<T>(
-    context: PluginInvocationContext,
+    context: PosthogSourceContext,
     timeoutMs: number | undefined,
     run: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
