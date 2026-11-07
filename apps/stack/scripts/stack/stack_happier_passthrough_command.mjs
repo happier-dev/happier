@@ -76,6 +76,9 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
 
   await withStackEnv({
     stackName,
+    // CLI dispatch reads the runtime selected by startup. Session creation's
+    // existing daemon preflight owns any needed lifecycle reconciliation.
+    reconcileDaemonRuntimeState: false,
     fn: async ({ env, runtimeState }) => {
       if (env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
         const { config } = await loadDevTargetsConfig({ stackName, env });

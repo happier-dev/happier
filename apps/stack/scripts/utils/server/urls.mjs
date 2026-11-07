@@ -3,7 +3,6 @@ import { join } from 'node:path';
 
 import { getStackName, resolveActiveStackEnvFilePath, resolveStackEnvPath } from '../paths/paths.mjs';
 import { preferStackLocalhostHost, preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
-import { resolvePublicServerUrl } from '../../tailscale.mjs';
 import { readPinnedServerPortFromEnvFile, resolveServerPortFromEnv } from './port.mjs';
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 import { hasTrustedStackRuntimeLifecycle, readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../stack/runtime_state.mjs';
@@ -161,6 +160,7 @@ export async function resolveServerUrls({ env = process.env, serverPort, allowEn
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env, serverPort });
+  const { resolvePublicServerUrl } = await import('../../tailscale.mjs');
   const resolved = await resolvePublicServerUrl({
     internalServerUrl,
     defaultPublicUrl,

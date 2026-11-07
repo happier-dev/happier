@@ -1,7 +1,3 @@
-import { startLocalDaemonWithAuth } from '../daemon.mjs';
-
-import { resolveStackDaemonCommandContext } from './stack_daemon_command.mjs';
-
 export function requiresStackDaemonPreflight(childArgs) {
   const args = childArgs.map((value) => String(value ?? '').trim());
   if (args.includes('--help') || args.includes('-h')) {
@@ -26,6 +22,7 @@ export async function ensureStackDaemonPreflight({
   cliIdentity = 'default',
   activeRuntimeState = null,
 } = {}) {
+  const { resolveStackDaemonCommandContext } = await import('./stack_daemon_command.mjs');
   const daemonContext = await resolveStackDaemonCommandContext({
     rootDir,
     stackName,
@@ -34,6 +31,7 @@ export async function ensureStackDaemonPreflight({
     argv,
     activeRuntimeState,
   });
+  const { startLocalDaemonWithAuth } = await import('../daemon.mjs');
   await startLocalDaemonWithAuth({
     cliBin: daemonContext.cliBin,
     cliEntrypoint: daemonContext.cliEntrypoint,

@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { findRunningExpoStateInRoot, looksLikeExpoMetro } from '../expo/expo.mjs';
 import { isTcpPortListening } from '../net/ports.mjs';
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
-import { fetchHappierHealth } from '../server/server.mjs';
 
 function toPort(value) {
   const n = Number(value);
@@ -13,7 +12,7 @@ function toPort(value) {
 export async function resolveVerifiedStackServerEndpoint(
   { port, host = '127.0.0.1' } = {},
   {
-    fetchHappierHealthImpl = fetchHappierHealth,
+    fetchHappierHealthImpl = async (...args) => (await import('../server/server.mjs')).fetchHappierHealth(...args),
     isTcpPortListeningImpl = isTcpPortListening,
   } = {},
 ) {

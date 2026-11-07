@@ -21,7 +21,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     const { runCaptureResult } = await import('../utils/proc/proc.mjs');
     // The retained-runtime wrapper selects the correct auth home and daemon host.
     // Keep the envelope private: only the owner's authenticated boolean is exposed.
-    const result = await runCaptureResult(process.execPath, [join(rootDir, 'scripts/stack_commands.mjs'),
+    const result = await runCaptureResult(process.execPath, [join(rootDir, 'scripts/stack.mjs'),
       'happier', stackName, '--runtime', '--', 'auth', 'status', '--json'], { cwd: rootDir, env: process.env });
     let auth = { authenticated: false };
     for (const line of result.out.split(/\r?\n/)) {

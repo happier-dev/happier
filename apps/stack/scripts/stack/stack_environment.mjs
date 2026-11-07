@@ -19,7 +19,6 @@ import {
   readStackRuntimeStateFile,
 } from '../utils/stack/runtime_state.mjs';
 import { readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
-import { checkDaemonState } from '../daemon.mjs';
 import { loadDevTargetsConfig, parseDevTargetsConfig } from '../utils/dev_targets/config.mjs';
 import { resolveRemoteStackStatePaths } from '../utils/dev_targets/remote_commands.mjs';
 import { writeJsonAtomic } from '../utils/fs/json.mjs';
@@ -178,7 +177,7 @@ export async function withStackEnv({
         internalServerUrl: runtimeEndpoint.internalServerUrl ?? '',
         env,
       }, {
-        checkDaemonStateImpl: checkDaemonState,
+        checkDaemonStateImpl: async (...args) => (await import('../daemon.mjs')).checkDaemonState(...args),
       })
     : refreshedRuntimeState;
 

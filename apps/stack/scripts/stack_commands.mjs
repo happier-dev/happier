@@ -1,5 +1,5 @@
 import './utils/env/env.mjs';
-import { emitSourceStartSuperseded } from './runtime/shared/pending_source_start.mjs';
+import { reportStackCommandFailure } from './stack/command_failure.mjs';
 import { chmod, copyFile, mkdir, readFile, readdir, rename } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
@@ -2592,27 +2592,6 @@ async function main() {
     });
     return;
   }
-  if (cmd === 'happier') {
-    const { runStackHappierPassthroughCommand } = await import('./stack/stack_happier_passthrough_command.mjs');
-    await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough });
-    return;
-  }
-  if (cmd === 'bug-report') {
-    const bugReportPassthroughRaw = passthrough[0] === '--' ? passthrough.slice(1) : passthrough;
-    const separatorIndex = bugReportPassthroughRaw.indexOf('--');
-    const bugReportPassthrough =
-      separatorIndex === -1
-        ? ['bug-report', ...bugReportPassthroughRaw]
-        : [
-            ...bugReportPassthroughRaw.slice(0, separatorIndex),
-            '--',
-            'bug-report',
-            ...bugReportPassthroughRaw.slice(separatorIndex + 1),
-          ];
-    const { runStackHappierPassthroughCommand } = await import('./stack/stack_happier_passthrough_command.mjs');
-    await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough: bugReportPassthrough });
-    return;
-  }
   if (STACK_BACKGROUND_SCRIPT_BY_COMMAND.has(cmd)) {
     if (passthrough.includes('--verify')) {
       const { runVerifiedStackStart } = await import('./stack/stack_reload_verification.mjs');
@@ -2753,12 +2732,4 @@ async function main() {
   console.log(`[stack] unknown command: ${cmd}`);
 }
 
-main().catch((err) => {
-  emitSourceStartSuperseded(err);
-  const message = err instanceof Error ? err.message : String(err);
-  console.error('[stack] failed:', message);
-  if (process.env.DEBUG && err instanceof Error && err.stack) {
-    console.error(err.stack);
-  }
-  process.exit(1);
-});
+main().catch(reportStackCommandFailure);

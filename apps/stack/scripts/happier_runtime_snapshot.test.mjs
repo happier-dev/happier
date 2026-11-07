@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,64 @@ function stackRootDirFromMeta(metaUrl) {
   const scriptsDir = dirname(fileURLToPath(metaUrl));
   return dirname(scriptsDir);
 }
+
+test('prepared stack CLI dispatch loads no preparation, provisioning or lifecycle graph', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'prepared-cli-cost' });
+  const cliDir = join(fixture.stackDir, 'source-runtime', 'bundle', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await mkdir(dirname(entrypoint), { recursive: true });
+  await writeFile(entrypoint, `{ const args = process.argv.slice(2); ${buildStubHappierServerSetSource()} }\n`
+    + 'console.log(JSON.stringify(process.argv.slice(2)));\n');
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({
+    version: 1, stackName: fixture.stackName, ownerPid: process.pid,
+    sourceRuntimeIdentities: { daemon: { selected: 'prepared', loaded: 'prepared' } },
+    sourceRuntimeLaunch: { cliDir, entrypoint },
+  }));
+  await writeFile(join(fixture.stackDir, 'env'), `HAPPIER_STACK_REPO_DIR=${dirname(dirname(rootDir))}\n`
+    + 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\n');
+  const observations = join(fixture.root, 'preparation-loads.jsonl');
+  const preload = join(fixture.root, 'observe-loads.mjs');
+  await writeFile(observations, '');
+  // Observe the real module-loader boundary without replacing internal owners.
+  await writeFile(preload, `import { registerHooks } from 'node:module';
+import { appendFileSync } from 'node:fs';
+globalThis.__recordStackCliPreparation = name => appendFileSync(${JSON.stringify(observations)}, JSON.stringify(name)+'\\n');
+registerHooks({load(url, context, next) {
+  if (/\\/(?:stack_commands|daemon|build_source_runtime|prepareSourceRuntimeReload|tailscale|home_descriptor_readiness)\\.mjs$/.test(url)) {
+    globalThis.__recordStackCliPreparation(url);
+  }
+  const result = next(url, context);
+  if (url.endsWith('/source_author_inputs.mjs') && result.source) {
+    let observed = 0;
+    const source = String(result.source).replace(/(export function (readSourceAuthorDependencyIdentity|readSourceRuntimeDependencyIdentity)\\([^)]*\\)\\s*\\{)/g,
+      (declaration, name) => { observed++; return declaration + 'globalThis.__recordStackCliPreparation(' + JSON.stringify(name) + ');'; });
+    if (observed !== 2) throw new Error('Dependency digest observation unavailable');
+    return { ...result, source };
+  }
+  return result;
+}});\n`);
+  const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_STORAGE_DIR: fixture.storageDir, HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+    HAPPIER_STACK_REPO_DIR: dirname(dirname(rootDir)), HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --import=${JSON.stringify(preload)}` };
+  for (const { argv, forwarded } of [
+    { argv: ['happier', fixture.stackName, '--', '--version'], forwarded: ['--version'] },
+    { argv: [fixture.stackName, 'happier', '--', 'server', 'list', '--json'], forwarded: ['server', 'list', '--json'] },
+    { argv: ['bug-report', fixture.stackName, '--', '--help'], forwarded: ['bug-report', '--help'] },
+  ]) {
+    const result = await runNode([join(rootDir, 'bin/hstack.mjs'), 'stack', ...argv],
+      { cwd: rootDir, env });
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), forwarded, 'the selected runtime must receive the requested command');
+  }
+  const missing = await runNode([join(rootDir, 'bin/hstack.mjs'), 'stack', 'happier', `${fixture.stackName}-missing`, '--', '--version'],
+    { cwd: rootDir, env });
+  assert.equal(missing.code, 1);
+  assert.match(missing.stderr, /^\[stack\] failed:/m, 'dispatch must retain the Stack failure envelope');
+  assert.deepEqual((await readFile(observations, 'utf8')).trim().split('\n').filter(Boolean), [],
+    'prepared CLI calls must not load preparation, provisioning or lifecycle owners');
+});
 
 async function createSourceCliFixture(t, options = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-cli-fixture-' });
