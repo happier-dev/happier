@@ -122,8 +122,10 @@ export function resolveExistingManagedJavaScriptRuntimeCommand(processEnv: NodeJ
   const managedPath = managedJavaScriptRuntimeBinPath(processEnv);
   try {
     accessSync(managedPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-    accessSync(resolveManagedNodeBinaryPath(processEnv), process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-    return managedPath;
+    const nodeBinaryPath = resolveManagedNodeBinaryPath(processEnv);
+    accessSync(nodeBinaryPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
+    // cmd.exe cannot preserve multiline launcher arguments through the managed wrapper.
+    return process.platform === 'win32' ? nodeBinaryPath : managedPath;
   } catch {
     return null;
   }
@@ -294,7 +296,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
         await rm(join(installDir, 'current'), { recursive: true, force: true });
         await mkdir(installDir, { recursive: true });
         await rename(nextDir, join(installDir, 'current'));
-        return managedJavaScriptRuntimeBinPath(processEnv);
+        return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
       } finally {
         await rm(nextDir, { recursive: true, force: true });
         await rm(scratchDir, { recursive: true, force: true });

@@ -52,10 +52,10 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
     expect(resolveJavaScriptRuntimeExecutable({ isBunRuntime: false })).toBe(process.execPath);
   });
 
-  it('prefers an installed managed JavaScript runtime wrapper under bun', () => {
+  it('prefers an installed managed JavaScript runtime under bun', () => {
     const happyHomeDir = createTempDirSync('happier-js-runtime-');
     tempDirs.add(happyHomeDir);
-    const wrapperPath = join(happyHomeDir, 'tools', 'js-runtime', 'current', 'bin', 'happier-js-runtime');
+    const wrapperPath = join(happyHomeDir, 'tools', 'js-runtime', 'current', 'bin', process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime');
     const runtimeBinaryPath =
       process.platform === 'win32'
         ? join(happyHomeDir, 'tools', 'js-runtime', 'current', 'runtime', 'node.exe')
@@ -79,7 +79,7 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
       isBunRuntime: true,
       currentExecPath: '/tmp/happier',
       processEnv: { ...process.env },
-    })).toBe(wrapperPath);
+    })).toBe(process.platform === 'win32' ? runtimeBinaryPath : wrapperPath);
   });
 
   it('uses the current bun executable under the direct bun runtime', () => {

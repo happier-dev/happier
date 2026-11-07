@@ -1,10 +1,16 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isProviderCliPathRunnable, resolveJavaScriptRuntimeCommand } from './index.js';
+import {
+    managedJavaScriptRuntimeBinPath,
+    resolveExistingManagedJavaScriptRuntimeCommand,
+    resolveJavaScriptRuntimePathEntries,
+} from './managedJavaScriptRuntime.js';
+import { resolveWindowsCommandInvocation } from '../process/index.js';
 
 function makeExecutableFile(path: string, content: string): void {
   writeFileSync(path, content, 'utf8');
@@ -12,6 +18,7 @@ function makeExecutableFile(path: string, content: string): void {
 }
 
 describe('managedJavaScriptRuntime binary-safe selection', () => {
+    const tempDirs: string[] = [];
     const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
     const originalJsRuntimePath = process.env.HAPPIER_JS_RUNTIME_PATH;
     const originalPathext = process.env.PATHEXT;
@@ -24,7 +31,40 @@ describe('managedJavaScriptRuntime binary-safe selection', () => {
         else process.env.HAPPIER_JS_RUNTIME_PATH = originalJsRuntimePath;
         if (originalPathext === undefined) delete process.env.PATHEXT;
         else process.env.PATHEXT = originalPathext;
+        for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     });
+
+    it.each(['win32', 'linux', 'darwin'] as const)(
+        'preserves multiline launcher arguments with the managed runtime on %s', (platform) => {
+            Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+            const homeDir = mkdtempSync(join(tmpdir(), 'happier-managed-runtime-argv-'));
+            tempDirs.push(homeDir);
+            const env = { HAPPIER_HOME_DIR: homeDir, PATH: '' };
+            const wrapper = managedJavaScriptRuntimeBinPath(env);
+            const nodeDir = join(homeDir, 'tools', 'js-runtime', 'current', 'runtime', ...(platform === 'win32' ? [] : ['bin']));
+            const node = join(nodeDir, platform === 'win32' ? 'node.exe' : 'node');
+            mkdirSync(join(wrapper, '..'), { recursive: true });
+            mkdirSync(nodeDir, { recursive: true });
+            makeExecutableFile(wrapper, platform === 'win32'
+                ? '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n'
+                : '#!/bin/sh\nexec "$(dirname "$0")/../runtime/bin/node" "$@"\n');
+            makeExecutableFile(node, '');
+            const expectedCommand = platform === 'win32' ? node : wrapper;
+            const args = ['claude_remote_launcher.cjs', '--append-system-prompt', '# Session title\r\n\r\nKeep "quotes" & %literal%\nnext line', '--input-format', 'stream-json'];
+
+            expect(resolveExistingManagedJavaScriptRuntimeCommand(env)).toBe(expectedCommand);
+            for (const isBunRuntime of [true, false]) {
+                const command = resolveJavaScriptRuntimeCommand({
+                    isBunRuntime,
+                    processEnv: env,
+                    currentExecPath: join(homeDir, platform === 'win32' ? 'happier.exe' : 'happier'),
+                });
+                expect(command).toBe(expectedCommand);
+                expect(resolveWindowsCommandInvocation({ command: command!, args, env })).toEqual({ command: expectedCommand, args });
+                expect(resolveJavaScriptRuntimePathEntries({ processEnv: env, runtimeCommand: command })).toEqual([nodeDir]);
+            }
+        },
+    );
 
     it('does not treat node on PATH as a runtime fallback for stale bun bundles', () => {
         const root = join(tmpdir(), `happier-cli-common-js-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);

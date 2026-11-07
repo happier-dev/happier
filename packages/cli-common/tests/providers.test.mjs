@@ -417,10 +417,12 @@ test('ensureManagedJavaScriptRuntimeCommand installs a managed Node runtime and 
         }
       },
     });
-    assert.equal(command, managedJavaScriptRuntimeBinPath(env));
+    assert.equal(command, process.platform === 'win32'
+      ? join(homeDir, 'tools', 'js-runtime', 'current', 'runtime', 'node.exe')
+      : managedJavaScriptRuntimeBinPath(env));
     assert.equal(downloadedArchivePath?.startsWith(expectedScratchRoot), true);
 
-    const wrapper = await readFile(command, 'utf8');
+    const wrapper = await readFile(managedJavaScriptRuntimeBinPath(env), 'utf8');
     assert.doesNotMatch(wrapper, /pnpm|fake-pnpm/);
     assert.match(wrapper, /runtime/);
     assert.match(wrapper, /node(?:\.exe)?/);
@@ -482,8 +484,11 @@ test('ensureManagedJavaScriptRuntimeCommand serializes concurrent first-run boot
 
     const [firstCommand, secondCommand] = await Promise.all([firstInstall, secondInstall]);
 
-    assert.equal(firstCommand, managedJavaScriptRuntimeBinPath(env));
-    assert.equal(secondCommand, managedJavaScriptRuntimeBinPath(env));
+    const expectedCommand = process.platform === 'win32'
+      ? join(homeDir, 'tools', 'js-runtime', 'current', 'runtime', 'node.exe')
+      : managedJavaScriptRuntimeBinPath(env);
+    assert.equal(firstCommand, expectedCommand);
+    assert.equal(secondCommand, expectedCommand);
     assert.equal(fetchCalls, 1);
     assert.equal(existsSync(join(homeDir, 'tools', 'js-runtime', 'next')), false);
     assert.equal(existsSync(join(homeDir, 'tools', 'js-runtime', '.lock', 'bootstrap.lock')), false);

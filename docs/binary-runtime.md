@@ -70,6 +70,13 @@ quoting, including npm JavaScript wrappers and wrappers whose target is missing
 or still a text placeholder. Recognition does not choose a different installation
 or modify the subprocess environment.
 
+In current development source (not yet released), managed JavaScript runtime
+selection returns `current/runtime/node.exe` directly on Windows, for both existing
+installations and first bootstrap. The generated `.cmd` wrapper remains an install
+artifact; internal launches bypass it so multiline arguments and trailing protocol
+flags reach the child intact. POSIX selection and explicit runtime overrides keep
+their existing behavior.
+
 In current development source (not yet released), filtered Claude and terminal
 launcher environments share `apps/cli/src/utils/env/windowsSystemEnv.ts` for the
 Windows system-variable baseline. They retain inherited installation and shared

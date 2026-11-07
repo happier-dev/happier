@@ -12,9 +12,11 @@ import {
 
 describe('ensureManagedJavaScriptRuntimeCommand bootstrap', () => {
   const tempDirs: string[] = [];
+  const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    if (originalPlatformDescriptor) Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -30,7 +32,8 @@ describe('ensureManagedJavaScriptRuntimeCommand bootstrap', () => {
     )).rejects.toBe(reason);
   });
 
-  it('selects the existing skip-links policy for the verified managed Node archive', async () => {
+  it.each(['win32', 'linux', 'darwin'] as const)('bootstraps a runnable managed command with the skip-links policy on %s', async (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
     const homeDir = join(tmpdir(), `happier-managed-runtime-links-${randomUUID()}`);
     tempDirs.push(homeDir);
     const env = { ...process.env, HAPPIER_HOME_DIR: homeDir, PATH: '' };
@@ -58,7 +61,9 @@ describe('ensureManagedJavaScriptRuntimeCommand bootstrap', () => {
       extractGitHubReleaseAsset,
     });
 
-    expect(command).toBe(managedJavaScriptRuntimeBinPath(env));
+    expect(command).toBe(platform === 'win32'
+      ? join(homeDir, 'tools', 'js-runtime', 'current', 'runtime', 'node.exe')
+      : managedJavaScriptRuntimeBinPath(env));
     expect(extractGitHubReleaseAsset).toHaveBeenCalledWith(expect.objectContaining({
       skipTarLinks: true,
     }));
