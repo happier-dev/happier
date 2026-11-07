@@ -218,6 +218,11 @@ export type MachineServiceWatchChoice = Readonly<{
   watched: boolean;
 }>;
 
+/** Present the producer's name resolution; native identity stays on its own line. */
+export function machineServiceDisplayName(service: Pick<MachineServiceRowV1, 'name' | 'nameResolution'>): string {
+  return service.nameResolution === 'unresolved_environment' ? t('machineServices.unresolvedEnvironment') : service.name;
+}
+
 /**
  * What the Machine found that the person can watch (lab `services/watch`), by kind then name. A candidate whose
  * native instance a listed row already watches is held back, matched by the protocol's one native identity key.
@@ -227,11 +232,14 @@ export function machineServiceWatchChoices(
   rows: readonly Pick<MachineServiceRowV1, 'nativeInstance'>[],
 ): readonly MachineServiceWatchChoice[] {
   const watched = new Set(rows.flatMap(row => row.nativeInstance ? [machineServiceNativeIdentityKeyV1(row.nativeInstance)] : []));
-  return candidates.map((candidate): MachineServiceWatchChoice => ({
-    candidateId: candidate.candidateId, revision: candidate.revision, name: candidate.name, kind: candidate.adapter.localId,
-    nativeResourceId: candidate.nativeResourceId, phase: candidate.observation.phase,
-    watched: watched.has(machineServiceNativeIdentityKeyV1(candidate)),
-  })).sort((left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name));
+  return candidates.map((candidate): MachineServiceWatchChoice => {
+    const identity = machineServiceNativeIdentityKeyV1(candidate);
+    return {
+      candidateId: candidate.candidateId, revision: candidate.revision, name: machineServiceDisplayName(candidate),
+      kind: candidate.adapter.localId, nativeResourceId: candidate.nativeResourceId, phase: candidate.observation.phase,
+      watched: watched.has(identity),
+    };
+  }).sort((left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name));
 }
 
 /**

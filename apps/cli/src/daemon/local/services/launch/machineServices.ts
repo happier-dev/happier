@@ -18,7 +18,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { preserveUnconfirmedNativeProcess } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { createMachineServiceRowProjection } from './machineServiceRowProjection';
+import { createMachineServiceRowProjection, projectMachineServiceName } from './machineServiceRowProjection';
 import { selectVisibleMachineProjectServices, type MachineServiceDisclosureRequest } from './machineServiceDisclosure';
 
 type Invocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & MachineServiceDisclosureRequest;
@@ -176,7 +176,7 @@ export function createMachineServicesRuntime(input: Readonly<{
         const selected = serviceId ? intent?.byId.get(serviceId) : undefined;
         const watches = environmentId ? [] : serviceId ? selected ? [selected] : [] : intent!.watches.watches;
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-        if (!lease) return intent?.watches.watches.length ? { rows: watches.map(rows.unknown), handles: [] } : null;
+        if (!lease) return intent?.watches.watches.length ? { rows: watches.map(watch => rows.unknown(watch, target.machineId)), handles: [] } : null;
         try {
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
@@ -201,7 +201,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const candidate = registry === lease.registry ? adoptedHandles.get(watch.watchId) : undefined;
                 const handle = candidate && sameWatch(candidate.watch, watch) && candidate.isCurrent()
                     && !candidate.retirementSignal.aborted ? candidate : undefined;
-                projectedRows.push(handle ? await readRow(handle) : rows.unknown(watch));
+                projectedRows.push(handle ? await readRow(handle) : rows.unknown(watch, target.machineId));
                 if (handle) handles.push(handle);
             }
             return { rows: projectedRows, handles };
@@ -215,6 +215,8 @@ export function createMachineServicesRuntime(input: Readonly<{
             target.manifest.contributes.projectNativeAdapters.filter(declaration => declaration.roles.includes('nativeServiceLifecycle'))
                 .map(declaration => ({ pluginId: target.pluginId, localId: declaration.id })));
         const candidates: MachineServiceDiscoveryCandidateV1[] = [];
+        const admittedRows = new Map((readIntent()?.watches.watches ?? [])
+            .map(watch => [machineServiceNativeIdentityKeyV1(watch), rows.unknown(watch, target.machineId)] as const));
         const failures: Extract<MachineServicesDiscoveryResultV1, { kind: 'snapshot' }>['failures'] = [];
         for (const reference of references) {
             signal?.throwIfAborted();
@@ -230,10 +232,12 @@ export function createMachineServicesRuntime(input: Readonly<{
                     for (const candidate of result.candidates) {
                         const incumbent = registry.projectManagedServices.resolveNativeService(candidate.instance, target);
                         if (incumbent && incumbent.authority !== 'machine') continue;
+                        const admittedRow = admittedRows.get(machineServiceNativeIdentityKeyV1(candidate.instance));
                         candidates.push(MachineServiceDiscoveryCandidateV1Schema.parse({
                             candidateId: machineServiceNativeIdentityKeyV1(candidate.instance),
                             revision: revision([machineServiceNativeIdentityKeyV1(candidate.instance), candidate.name]),
-                            name: candidate.name, ...candidate.instance, observation: candidate.observation,
+                            ...projectMachineServiceName({ name: candidate.name, adapter: candidate.instance.adapter }, admittedRow),
+                            ...candidate.instance, observation: candidate.observation,
                         }));
                     }
                     failures.push(...result.failures.map(failure => ({ adapter: reference, code: failure.code })));

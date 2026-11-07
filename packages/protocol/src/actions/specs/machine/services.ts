@@ -12,7 +12,7 @@ export { MachineServiceExecInputV1Schema, MachineServiceExecResultV1Schema,
   type MachineServiceExecInputV1, type MachineServiceExecResultV1 } from '../../../local/services/serviceExecV1.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../../local/services/actionIdsV1.js';
 import { MachineServiceWatchV1Schema } from '../../../machines/machineServiceWatchesV1.js';
-import { MachineDeploymentServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
+import { MachineDeploymentServiceIdentityV1Schema, MachineServiceIdentityV1Schema } from '../../../local/services/serviceIdentityV1.js';
 import { HealthCheckStatusV1Schema } from '../../../deployments/healthCheckV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../../actionSpecs.js';
@@ -29,7 +29,10 @@ const unavailable = lazyZodSchema(() => z.strictObject({ kind: z.literal('unavai
 
 /** A projection of the canonical admitted handle, never another native observation owner. */
 export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
+  /** The admitted identity for service-subject consumers; Workspace services have no such identity. */
+  identity: z.optional(MachineServiceIdentityV1Schema),
   serviceId: id(), name: id(), authority: z.enum(['project', 'machine', 'plugin']),
+  nameResolution: z.optional(z.literal('unresolved_environment')),
   lifecyclePurpose: MachineServiceWatchV1Schema.shape.lifecyclePurpose,
   generation: z.nullable(id()), state: z.enum(['starting', 'running', 'detecting', 'healthy', 'unhealthy', 'stopping', 'stopped', 'failed', 'unknown']),
   unavailableReason: z.optional(ManagedServiceUnavailableReasonV1Schema),
@@ -62,7 +65,11 @@ export const MachineServiceRowV1Schema = lazyZodSchema(() => z.strictObject({
 })));
 export type MachineServiceRowV1 = z.infer<typeof MachineServiceRowV1Schema>;
 export const MachineServiceDiscoveryCandidateV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Present when this native candidate already has an admitted service owner. */
+  identity: z.optional(MachineServiceIdentityV1Schema),
   candidateId: id(), revision: id(), name: id(), adapter: MachineServiceWatchV1Schema.shape.adapter,
+  /** The native name is retained when no Environment instance can resolve a Happier-owned project. */
+  nameResolution: z.optional(z.literal('unresolved_environment')),
   nativeResourceId: MachineServiceWatchV1Schema.shape.nativeResourceId,
   observation: z.extend(ManagedServiceNativeStateV1Schema, { endpoint: z.nullable(z.string()) }),
 }));

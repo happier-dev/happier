@@ -6126,7 +6126,7 @@ const fr: typeof en = {
         investigateUnavailable: 'Enquêter n’est pas disponible pour cette alerte.',
         notSetUpTitle: 'Aucune enquête configurée',
         notSetUpBody: 'Configurez-en une dans PRs, Issues & Tasks, puis réessayez.',
-        placementTitle: 'Choisir où enquêter',
+        placementTitle: 'Choisir où travailler',
         placementReason: {
             controller_required: 'Son contrôleur est inconnu. Choisis la machine sur laquelle travailler.',
             machine_unreachable: 'Sa machine est hors ligne. Choisis-en une autre, ou réessaie quand elle sera revenue.',
@@ -6136,7 +6136,7 @@ const fr: typeof en = {
         placementOffline: 'Hors ligne',
         placementAnyFolder: 'N’importe quel dossier',
         placementAgent: 'Agent',
-        placementConfirm: 'Enquêter ici',
+        placementConfirm: 'Commencer ici',
     },
 };
 
@@ -8336,6 +8336,7 @@ const machineDetailPageTranslations = { fr: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "Ouvrir un shell",
                 unwatch: "Arrêter de surveiller",
@@ -15321,10 +15322,10 @@ const widgetAddTranslations = { fr: {
         saveFailed: 'Impossible d’enregistrer. Réessaie.',
         homeTitle: 'Ajouter à l’accueil',
         homeHint: 'Toi seul vois ton accueil · sur tous tes appareils',
+        homeAskDraft: 'Mets sur mon accueil quelque chose qui montre ',
         addWidgets: 'Ajouter des widgets',
         addToHome: 'Ajouter à l’accueil',
         addToBoard: 'Ajouter au tableau',
-        homeAskDraft: 'Mets sur mon accueil quelque chose qui montre ',
         addToCompanion: 'Ajouter au compagnon',
         editInputs: 'Modifier les entrées…',
         width: 'Largeur',
@@ -15432,6 +15433,11 @@ const widgetDefinitionTranslations = { fr: {
         visualShareTitle: "Partager",
         visualSaveMenu: "Enregistrer comme artefact…",
         visualShareMenu: "Partager un lien…",
+        visualCopyToSessionMenu: "Copier dans une autre session…",
+        visualCopyToSessionTitle: "Copier dans une session",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Copié dans ${session}. C’est une copie indépendante sur le tableau de cette session.`,
+        visualCopySourceChanged: "Ce visuel a changé pendant ton choix. Copie-le à nouveau pour prendre la version actuelle.",
+        visualCopyFailed: "La copie n’a pas pu être faite. Ce visuel est inchangé.",
         visualSavedCopy: "Enregistré dans ton compte comme copie indépendante. Créer un lien public reste un choix distinct.",
         visualSaveFailed: "La copie n’a pas pu être enregistrée. Le visuel de ta session est conservé.",
         saveMenuSubtitle: "Une copie pour l’accueil et tes tableaux",

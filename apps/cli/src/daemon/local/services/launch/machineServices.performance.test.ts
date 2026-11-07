@@ -309,7 +309,11 @@ describe('Machine Services exact demand cost', () => {
             ] });
             expect(samples, 'one explicit list samples each visible service once').toBe(2);
             if (listed.kind === 'snapshot') for (const service of listed.services) {
-                expect(service.native?.displayName, 'generated Compose identities are not presentation names').toBeUndefined();
+                const composeService = service.name;
+                expect(service.identity).toEqual({ kind: 'deployment', machineId: target.machineId,
+                    environmentId: 'environment', environmentInstanceId: 'instance', composeService,
+                    serviceId: `instance/${composeService}` });
+                expect(service.native?.displayName, 'native hashes resolve through their admitted Environment service').toBe(composeService);
             }
             expect(JSON.stringify(listed)).not.toContain('/private/data');
             expect(JSON.stringify(listed)).not.toContain('runtimeFacts');
@@ -404,6 +408,8 @@ describe('Machine Services exact demand cost', () => {
                 return value.services;
             };
             const first = await read();
+            expect(first[0]?.identity).toEqual({ kind: 'adopted', machineId: target.machineId,
+                serviceId: 'web', watchId: 'web', watchRevision: first[0]?.watchRevision });
             expect(first[0]?.native?.displayName, 'non-Compose native names remain visible').toBe(`happier-${'a'.repeat(64)}`);
             const nativeAtRest = nativeReads;
             for (let index = 0; index < 10; index++) {

@@ -6120,7 +6120,7 @@ const de: typeof en = {
         investigateUnavailable: 'Untersuchen ist für diese Warnung nicht verfügbar.',
         notSetUpTitle: 'Keine Untersuchung eingerichtet',
         notSetUpBody: 'Richte eine in PRs, Issues & Tasks ein und versuche es erneut.',
-        placementTitle: 'Wähle, wo untersucht wird',
+        placementTitle: 'Wähle, wo gearbeitet wird',
         placementReason: {
             controller_required: 'Der Controller ist nicht bekannt. Wähle die Maschine, auf der gearbeitet wird.',
             machine_unreachable: 'Die Maschine ist offline. Wähle eine andere oder versuche es erneut, wenn sie zurück ist.',
@@ -6130,7 +6130,7 @@ const de: typeof en = {
         placementOffline: 'Offline',
         placementAnyFolder: 'Beliebiger Ordner',
         placementAgent: 'Agent',
-        placementConfirm: 'Hier untersuchen',
+        placementConfirm: 'Hier starten',
     },
 };
 
@@ -8330,6 +8330,7 @@ const machineDetailPageTranslations = { de: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "Shell öffnen",
                 unwatch: "Nicht mehr beobachten",
@@ -14762,10 +14763,10 @@ const widgetAddTranslations = { de: {
         saveFailed: 'Konnte nicht gespeichert werden. Versuche es erneut.',
         homeTitle: 'Zur Startseite hinzufügen',
         homeHint: 'Nur du siehst deine Startseite · auf jedem Gerät',
+        homeAskDraft: 'Leg auf meine Startseite etwas, das zeigt ',
         addWidgets: 'Widgets hinzufügen',
         addToHome: 'Zur Startseite hinzufügen',
         addToBoard: 'Zum Board hinzufügen',
-        homeAskDraft: 'Leg auf meine Startseite etwas, das zeigt ',
         addToCompanion: 'Zum Begleiter hinzufügen',
         editInputs: 'Eingaben bearbeiten…',
         width: 'Breite',
@@ -14873,6 +14874,11 @@ const widgetDefinitionTranslations = { de: {
         visualShareTitle: "Teilen",
         visualSaveMenu: "Als Artefakt speichern …",
         visualShareMenu: "Link teilen …",
+        visualCopyToSessionMenu: "In eine andere Sitzung kopieren …",
+        visualCopyToSessionTitle: "In eine Sitzung kopieren",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Nach ${session} kopiert. Es ist eine eigenständige Kopie auf dem Board dieser Sitzung.`,
+        visualCopySourceChanged: "Dieses Visual hat sich während deiner Auswahl geändert. Kopiere es erneut, um die aktuelle Version zu übernehmen.",
+        visualCopyFailed: "Die Kopie konnte nicht erstellt werden. Dieses Visual ist unverändert.",
         visualSavedCopy: "Als eigene Kopie in deinem Konto gespeichert. Ein öffentlicher Link ist eine separate Entscheidung.",
         visualSaveFailed: "Die Kopie konnte nicht gespeichert werden. Deine Sitzungsansicht bleibt erhalten.",
         saveMenuSubtitle: "Eine Kopie für Home und deine Boards",

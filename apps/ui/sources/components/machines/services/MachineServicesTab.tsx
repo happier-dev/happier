@@ -41,6 +41,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 import {
   compareMachineServices,
+  machineServiceDisplayName,
   machineServiceEnvironmentIds,
   machineServiceGroupEnvironmentId,
   machineServiceGroupKeys,
@@ -241,7 +242,7 @@ function MachineServicesList(
           {phone ? environmentLink(item.environmentId) : null}
         </View>
       ),
-      title: (item) => item.kind === 'environment' ? environmentTitle(item.environmentId) : item.row.name,
+      title: (item) => item.kind === 'environment' ? environmentTitle(item.environmentId) : machineServiceDisplayName(item.row),
       // Line 2 (lab `services/list`): the state only when it needs the person, then what the service is and the native
       // instance it watches ("systemd · caddy.service"). Nothing is shown that the producer doesn't supply.
       // On a wide page Memory and Up stand in their own columns; a phone's row says them here instead.
@@ -272,7 +273,7 @@ function MachineServicesList(
       action: (item) => item.kind === 'environment' && !phone ? environmentLink(item.environmentId) : null,
       accessibilityLabel: (item) => item.kind === 'environment'
         ? `${environmentTitle(item.environmentId)}, ${t('machineServices.environmentRow.services', { count: item.rows.length })}`
-        : `${item.row.name}, ${t(`machineServices.state.${item.row.state}`)}`,
+        : `${machineServiceDisplayName(item.row)}, ${t(`machineServices.state.${item.row.state}`)}`,
       testID: (item) => item.kind === 'environment'
         ? `machine-services-environment-${item.environmentId}` : `machine-service-${item.row.serviceId}`,
       columnTitles: { title: t('machineServices.columns.service'), titleMeta: t('machineServices.columns.port') },

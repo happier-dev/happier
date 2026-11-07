@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compareMachineServices,
   machineServiceControls,
+  machineServiceDisplayName,
   machineServiceGroupKeys,
   machineServiceGroupOf,
   machineServiceHealthQualifier,
@@ -39,6 +40,17 @@ function row(name: string, patch: Partial<Row> = {}): Row {
 }
 const SYSTEMD = { pluginId: 'happier.machine.services', localId: 'systemd' };
 describe('Machine services presentation', () => {
+  it('presents unresolved names only from the producer marker and leaves native identity intact', () => {
+    const nativeName = 'happier-' + 'a'.repeat(48);
+    const unresolved = row(nativeName, { nameResolution: 'unresolved_environment', native: {
+      phase: 'running', readiness: 'ready', displayName: nativeName } });
+    expect(machineServiceDisplayName(unresolved)).toBe('Unresolved environment service');
+    expect(machineServiceDisplayName(row(nativeName))).toBe(nativeName);
+    expect(machineServiceDisplayName(row('Payments API'))).toBe('Payments API');
+    expect(unresolved.name).toBe(nativeName);
+    expect(machineServiceIdentityLine(unresolved)).toContain(nativeName);
+  });
+
   it('keeps an inaccessible Environment service visible without health attention, preserving warnings for readable Environments and independent watches', () => {
     const service = row('web', { authority: 'project', lifecyclePurpose: 'deployment',
       environmentId: 'env-prod', state: 'unhealthy' });
@@ -155,6 +167,25 @@ describe('Machine services presentation', () => {
       ['docker', 'redis', true], ['systemd', 'cron', false], ['systemd', 'fail2ban', false],
     ]);
     expect(choices[1]).toMatchObject({ candidateId: 'c-cron', revision: 'r-cron', nativeResourceId: 'cron.unit', phase: 'stopped' });
+  });
+  it('consumes the producer display label without deriving it from another row', () => {
+    const adapter = { pluginId: 'happier.machine.services', localId: 'compose' };
+    const nativeResourceId = JSON.stringify(['docker-engine', `happier-${'a'.repeat(64)}`]);
+    const candidate = { candidateId: 'native-compose', revision: 'r1', name: 'Production database',
+      adapter, nativeResourceId, observation: { phase: 'running' as const, readiness: 'not_reported' as const, endpoint: null } };
+    const service = row('An older watch label', { nativeInstance: { adapter, nativeResourceId } });
+    expect(machineServiceWatchChoices([candidate], [service])[0]).toMatchObject({
+      candidateId: 'native-compose', name: 'Production database', watched: true,
+    });
+    // An unowned native project keeps the producer's name; a different identity must never borrow a service label.
+    expect(machineServiceWatchChoices([candidate], [row('Other database', {
+      nativeInstance: { adapter, nativeResourceId: JSON.stringify(['other-engine', `happier-${'a'.repeat(64)}`]) },
+    })])[0]).toMatchObject({ name: candidate.name, watched: false });
+    const unresolved = { ...candidate, name: `happier-${'b'.repeat(64)}`,
+      nameResolution: 'unresolved_environment' as const };
+    expect(machineServiceWatchChoices([unresolved], [])[0]).toMatchObject({
+      name: 'Unresolved environment service', nativeResourceId,
+    });
   });
   it('says how much memory a service uses and how long it has run only from what its source reported', () => {
     const now = 10 * 3_600_000;

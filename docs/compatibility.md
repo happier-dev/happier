@@ -7123,6 +7123,25 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 backup destination descriptors publish `credentialRoles` as closed
+`{ role, optional?: boolean }` entries instead of role-name strings. Omission or
+`false` means required; the bundled S3 descriptor marks its session token optional
+from the same role requirements as its open Action. Protocol, SDK, bundled
+publication and UI readers change together; old strict development readers reject
+the new shape. No Environment binding format, Action input, wire epoch or
+compatibility adapter changes.
+
+Unreleased 0.3 Triage exact `get` and `entries/reobserve-v1` results add optional
+`detailData`, transient source-owned JSON presentation passed to the embedded
+detail input. Task editing consumes the existing optional `taskFields` from that
+same read. The get/reobserve result arms remain closed with the new field
+declared; the detail envelope remains additive-open/drop, and the source owns
+its inner schema. Matching development producers and readers reload together;
+older strict development result readers reject the new field. No persisted
+format, authority, identity or wire epoch changes. Embedded targeted input keeps
+strict JSON and role validation; the 8 KiB `openSurface` navigation bound remains
+on navigation and no longer constrains embedded typed presentation.
+
 Unreleased 0.3 `doc.comment.reply` accepts optional initial `participants` through
 the existing `DiscussionInitialParticipantsV1` schema, only when starting a new
 passage Discussion. The Action input, participant identities and nested passage

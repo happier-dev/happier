@@ -504,6 +504,9 @@ describe('Machine service watch front door', () => {
             const listed = MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list', input: target, context }));
             if (listed.kind !== 'snapshot' || !listed.services[0]) throw new Error('Expected admitted service');
             const service = listed.services[0];
+            await writeFile(nativeState, JSON.stringify({ ...JSON.parse(await readFile(nativeState, 'utf8')), name: 'Raw native project' }));
+            expect(await runtime.execute({ actionId: 'machines.services.discovery', input: target, context }))
+                .toMatchObject({ kind: 'snapshot', candidates: [{ name: service.name, identity: service.identity }] });
             expect(service).toMatchObject({ authority: 'machine', lifecyclePurpose: 'deployment', state: 'running',
                 nativeInstance: { adapter, nativeResourceId: 'user/worker.service' }, baseUrl: 'http://127.0.0.1:45432', port: 45432,
                 generation: expect.any(String), native: { phase: 'running', readiness: 'not_reported' },

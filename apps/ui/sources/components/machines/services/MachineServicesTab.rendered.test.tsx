@@ -23,6 +23,11 @@ import { measureMountedCollections } from '@/dev/testkit/render/renderInCollecti
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
+import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
+import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { TriageReadSessionHandoffChoicesInputV1Schema, TriageSessionHandoffChoicesV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from '../../../../../../packages/plugins/triage/src/actions/configuredActionRunProtocol';
+import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 
 // Only Home HTTP, Machine RPC and Socket boundaries are substituted. The tab, Actions,
 // credential admission, Resource lifecycle, collection and detail hooks stay real.
@@ -167,7 +172,7 @@ async function mount(options: Readonly<{ online?: boolean; params?: MachinePageT
             online={online} params={params} setParams={next => { setParams(next); update(next); }} />;
     }
     // The Machine page shell presents its tabs as a page, which is where the page sentence and its action show.
-    const screen = await renderScreen(<ListPresentationProvider value="page"><Route /></ListPresentationProvider>);
+    const screen = await renderScreen(<AccountNoticeInvestigationBoundary><ListPresentationProvider value="page"><Route /></ListPresentationProvider></AccountNoticeInvestigationBoundary>);
     await measureMountedCollections(screen);
     return { screen, setParams, goOffline: async () => { await act(async () => { setPresence(false); }); } };
 }
@@ -195,6 +200,63 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 describe('MachineServicesTab rendered production wiring', () => {
+    it.each(['deployment', 'adopted'] as const)('investigates an unhealthy %s service using its admitted identity through Triage', async kind => {
+        const identity = kind === 'deployment'
+            ? { kind, machineId, environmentId: 'production', environmentInstanceId: 'instance-a', composeService: 'api', serviceId: 'instance-a/api' }
+            : { kind, machineId, serviceId: 'opaque-watched-service', watchId: 'watch-a', watchRevision: 'watch-revision-a' };
+        const row = service('API', { serviceId: identity.serviceId, identity, state: 'unhealthy',
+            capabilities: { start: false, stop: false, restart: false, logs: false, accounting: false } });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const handoffs: unknown[] = [];
+        // The contributed plugin realm is the execution boundary. Account custody, the Action
+        // front door and investigation domain stay real; Triage's published schemas admit both sides.
+        const unregister = registerCurrentUiContextActionPort(() => ({
+            readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {},
+            invokeAction: async request => {
+                expect(request.action.pluginId).toBe('happier.triage');
+                if (request.action.localId === 'actions/read-v1') {
+                    TriageReadSessionHandoffChoicesInputV1Schema.parse(request.input);
+                    return { ok: true, result: TriageSessionHandoffChoicesV1Schema.parse({ v: 1, kind: 'choices', defaultActionId: 'investigate',
+                        actions: [{ label: 'Investigate', launchMode: 'start', startable: true,
+                            selection: { configuredActionId: 'investigate', sessionChoice: { kind: 'configured' },
+                                agentChoice: { kind: 'configured' }, delivery: 'configured' } }] }) };
+                }
+                expect(request.action.localId).toBe('sessions/run-configured-v1');
+                handoffs.push(TriageRunConfiguredActionInputV1Schema.parse(request.input));
+                return { ok: true, result: TriageRunConfiguredActionResultV1Schema.parse({ v: 1,
+                    handoff: { kind: 'unavailable', reason: 'catalogUnavailable' } }) };
+            },
+        }));
+        try {
+            const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+            await vi.waitFor(() => expect(screen.findAllByType(AgentActionButton)).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.findAllByType(AgentActionButton)[0]?.props.launchMode).toBe('start'));
+            const button = screen.findAllByType(AgentActionButton)[0]!;
+            await act(async () => { button.props.onLaunch(button.props.launchMode); });
+            await vi.waitFor(() => expect(handoffs).toHaveLength(1));
+            const subject = { kind: 'service', target: { kind: 'host', page: 'machine_service', machine: { serverId, machineId }, service: identity } };
+            expect(handoffs).toEqual([expect.objectContaining({ handoff: expect.objectContaining({
+                task: 'investigate', configuredActionId: 'investigate', delivery: 'send',
+                context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }],
+            }) })]);
+            await vi.waitFor(() => expect(screen.findByTestId('machine-service-investigate.unavailable')).not.toBeNull());
+        } finally { unregister(); }
+    });
+
+    it.each(['healthy', 'running', 'missingIdentity', 'expectedStop'] as const)('offers no investigation for %s service data', async scenario => {
+        const row = service('API', { state: scenario === 'missingIdentity' || scenario === 'expectedStop' ? 'unhealthy' : scenario,
+            ...(scenario === 'missingIdentity' ? {} : { identity: { kind: 'adopted', machineId,
+                serviceId: 'api', watchId: 'watch-API', watchRevision: 'revision-a' } }),
+            ...(scenario === 'expectedStop' ? { health: { status: 'down', observedAtMs: Date.now(), freshness: 'current', expectedDown: 'stop' } } : {}),
+            capabilities: { start: false, stop: false, restart: false, logs: false, accounting: false } });
+        answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));
+        machineTransport.rpc.mockResolvedValue({ kind: 'service', service: row });
+        const { screen } = await mount({ params: { id: 'services', page: 'service', service: row.serviceId } });
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-facts')).not.toBeNull());
+        expect(screen.findAllByType(AgentActionButton)).toHaveLength(0);
+    });
+
     it('retains settled Services detail and its guided automation step during credential resolution', () => withPopoverWebGlobals(async () => {
         const row = service('Continuity', { capabilities: { start: true, stop: true, restart: true, logs: false, accounting: false } });
         answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [row] }));

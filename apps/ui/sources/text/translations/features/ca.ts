@@ -6128,7 +6128,7 @@ const ca: typeof en = {
         investigateUnavailable: 'Investigar no està disponible per a aquesta alerta.',
         notSetUpTitle: 'No hi ha cap investigació configurada',
         notSetUpBody: 'Configura’n una a PRs, Issues & Tasks i torna-ho a provar.',
-        placementTitle: 'Tria on investigar',
+        placementTitle: 'Tria on treballar',
         placementReason: {
             controller_required: 'No se’n coneix el controlador. Tria la màquina on treballar.',
             machine_unreachable: 'La seva màquina està fora de línia. Tria’n una altra o torna-ho a provar quan torni.',
@@ -6138,7 +6138,7 @@ const ca: typeof en = {
         placementOffline: 'Fora de línia',
         placementAnyFolder: 'Qualsevol carpeta',
         placementAgent: 'Agent',
-        placementConfirm: 'Investiga aquí',
+        placementConfirm: 'Comença aquí',
     },
 };
 
@@ -8338,6 +8338,7 @@ const machineDetailPageTranslations = { ca: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "Obre un intèrpret d’ordres",
                 unwatch: "Deixa de vigilar",
@@ -15296,10 +15297,10 @@ const widgetAddTranslations = { ca: {
         saveFailed: 'No s’ha pogut desar. Torna-ho a provar.',
         homeTitle: 'Afegeix a l’inici',
         homeHint: 'Només tu veus el teu inici · a tots els dispositius',
+        homeAskDraft: 'Posa al meu inici alguna cosa que mostri ',
         addWidgets: 'Afegeix ginys',
         addToHome: 'Afegeix a l’inici',
         addToBoard: 'Afegeix al tauler',
-        homeAskDraft: 'Posa al meu inici alguna cosa que mostri ',
         addToCompanion: 'Afegeix a l’acompanyant',
         editInputs: 'Edita les entrades…',
         width: 'Amplada',
@@ -15407,6 +15408,11 @@ const widgetDefinitionTranslations = { ca: {
         visualShareTitle: "Comparteix",
         visualSaveMenu: "Desa com a artefacte…",
         visualShareMenu: "Comparteix un enllaç…",
+        visualCopyToSessionMenu: "Copia a una altra sessió…",
+        visualCopyToSessionTitle: "Copia a una sessió",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Copiat a ${session}. És una còpia independent al tauler d’aquesta sessió.`,
+        visualCopySourceChanged: "Aquest visual ha canviat mentre triaves. Torna’l a copiar per agafar la versió actual.",
+        visualCopyFailed: "No s’ha pogut fer la còpia. Aquest visual no ha canviat.",
         visualSavedCopy: "Desat al teu compte com a còpia pròpia. Crear un enllaç públic és una decisió independent.",
         visualSaveFailed: "No s’ha pogut desar la còpia. El contingut visual de la sessió es conserva.",
         saveMenuSubtitle: "Una còpia per a l’inici i els teus taulers",

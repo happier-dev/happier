@@ -6128,7 +6128,7 @@ const it: typeof en = {
         investigateUnavailable: 'Indaga non è disponibile per questo avviso.',
         notSetUpTitle: 'Nessuna indagine configurata',
         notSetUpBody: 'Configurane una in PRs, Issues & Tasks, poi riprova.',
-        placementTitle: 'Scegli dove indagare',
+        placementTitle: 'Scegli dove lavorare',
         placementReason: {
             controller_required: 'Il suo controller non è noto. Scegli la macchina su cui lavorare.',
             machine_unreachable: 'La sua macchina è offline. Scegline un’altra o riprova quando torna disponibile.',
@@ -6138,7 +6138,7 @@ const it: typeof en = {
         placementOffline: 'Offline',
         placementAnyFolder: 'Qualsiasi cartella',
         placementAgent: 'Agente',
-        placementConfirm: 'Indaga qui',
+        placementConfirm: 'Inizia qui',
     },
 };
 
@@ -8338,6 +8338,7 @@ const machineDetailPageTranslations = { it: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "Apri shell",
                 unwatch: "Smetti di monitorare",
@@ -15275,10 +15276,10 @@ const widgetAddTranslations = { it: {
         saveFailed: 'Impossibile salvare. Riprova.',
         homeTitle: 'Aggiungi alla Home',
         homeHint: 'Solo tu vedi la tua Home · su ogni dispositivo',
+        homeAskDraft: 'Metti nella mia Home qualcosa che mostri ',
         addWidgets: 'Aggiungi widget',
         addToHome: 'Aggiungi alla Home',
         addToBoard: 'Aggiungi alla bacheca',
-        homeAskDraft: 'Metti nella mia Home qualcosa che mostri ',
         addToCompanion: 'Aggiungi al compagno',
         editInputs: 'Modifica input…',
         width: 'Larghezza',
@@ -15386,6 +15387,11 @@ const widgetDefinitionTranslations = { it: {
         visualShareTitle: "Condividi",
         visualSaveMenu: "Salva come artefatto…",
         visualShareMenu: "Condividi link…",
+        visualCopyToSessionMenu: "Copia in un’altra sessione…",
+        visualCopyToSessionTitle: "Copia in una sessione",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Copiato in ${session}. È una copia indipendente sulla bacheca di quella sessione.`,
+        visualCopySourceChanged: "Questo visual è cambiato mentre sceglievi. Copialo di nuovo per prendere la versione attuale.",
+        visualCopyFailed: "Impossibile creare la copia. Questo visual non è cambiato.",
         visualSavedCopy: "Salvato nel tuo account come copia indipendente. Creare un link pubblico è una scelta separata.",
         visualSaveFailed: "Impossibile salvare la copia. Il contenuto visivo della sessione è ancora qui.",
         saveMenuSubtitle: "Una copia per Home e le tue bacheche",

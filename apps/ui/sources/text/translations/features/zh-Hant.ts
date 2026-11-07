@@ -6118,7 +6118,7 @@ const zhHant: typeof en = {
         investigateUnavailable: '此警示無法進行調查。',
         notSetUpTitle: '尚未設定調查',
         notSetUpBody: '請在 PRs, Issues & Tasks 中設定後再試一次。',
-        placementTitle: '選擇調查位置',
+        placementTitle: '選擇工作位置',
         placementReason: {
             controller_required: '控制器未知。請選擇要工作的機器。',
             machine_unreachable: '機器已離線。請選擇其他機器，或在恢復後重試。',
@@ -6128,7 +6128,7 @@ const zhHant: typeof en = {
         placementOffline: '離線',
         placementAnyFolder: '任意資料夾',
         placementAgent: '代理',
-        placementConfirm: '在此調查',
+        placementConfirm: '在此開始',
     },
 };
 
@@ -8328,6 +8328,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "開啟 Shell",
                 unwatch: "停止關注",
@@ -15253,10 +15254,10 @@ const widgetAddTranslations = { 'zh-Hant': {
         saveFailed: '無法儲存。請重試。',
         homeTitle: '新增到首頁',
         homeHint: '只有你能看到你的首頁 · 在所有裝置上',
+        homeAskDraft: '在我的首頁放一個顯示',
         addWidgets: '新增小工具',
         addToHome: '新增到首頁',
         addToBoard: '新增到看板',
-        homeAskDraft: '在我的首頁放一個顯示',
         addToCompanion: '新增到夥伴',
         editInputs: '編輯輸入…',
         width: '寬度',
@@ -15364,6 +15365,11 @@ const widgetDefinitionTranslations = { 'zh-Hant': {
         visualShareTitle: "分享",
         visualSaveMenu: "儲存為工件…",
         visualShareMenu: "分享連結…",
+        visualCopyToSessionMenu: "複製到另一個工作階段…",
+        visualCopyToSessionTitle: "複製到工作階段",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `已複製到 ${session}。這是該工作階段看板上的獨立副本。`,
+        visualCopySourceChanged: "在你選擇時此視覺內容已變更。請再次複製以取得目前版本。",
+        visualCopyFailed: "無法建立副本。此視覺內容未變更。",
         visualSavedCopy: "已作為獨立副本儲存至你的帳戶。建立公開連結需另外確認。",
         visualSaveFailed: "無法儲存副本。工作階段中的視覺內容仍然保留。",
         saveMenuSubtitle: "用於首頁和你的看板的副本",

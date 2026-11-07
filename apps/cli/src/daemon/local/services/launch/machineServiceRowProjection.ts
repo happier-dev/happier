@@ -1,4 +1,4 @@
-import type { MachineServiceRowV1, MachineServiceWatchV1 } from '@happier-dev/protocol';
+import type { MachineServiceDiscoveryCandidateV1, MachineServiceIdentityV1, MachineServiceRowV1, MachineServiceWatchV1 } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -9,12 +9,30 @@ export type MachineServiceRowChange = Readonly<{
     serverId: string; homeServerIdentityId: string | null; machineId: string; handle: ServiceHandle; row: MachineServiceRowV1 | null;
 }>;
 
+const isHappierComposeName = (name: string) => /^happier-(?:g-)?[a-f0-9]{64}$/u.test(name);
+
+/** Rows and discovery share the admitted label/identity; native hashes never establish Environment provenance. */
+export function projectMachineServiceName(
+    candidate: Readonly<{ name: string; adapter?: MachineServiceDiscoveryCandidateV1['adapter'] }>,
+    service?: Pick<MachineServiceRowV1, 'name' | 'identity'>,
+): Pick<MachineServiceDiscoveryCandidateV1, 'name' | 'identity' | 'nameResolution'> {
+    const name = service?.name ?? candidate.name;
+    return { name, ...(service?.identity ? { identity: service.identity } : {}),
+        ...(service?.identity?.kind !== 'deployment' && candidate.adapter?.pluginId === 'happier.machine.services'
+            && candidate.adapter.localId === 'compose' && isHappierComposeName(name)
+            ? { nameResolution: 'unresolved_environment' as const } : {}),
+    };
+}
+
 /** Projects retained service facts without native or access reads. */
 export function createMachineServiceRowProjection(watchRevision: (watch: MachineServiceWatchV1) => string) {
     const observed = new WeakMap<ServiceHandle, MachineServiceRowV1>();
     const unavailable = new WeakMap<MachineServiceWatchV1, MachineServiceRowV1>();
     const published = new WeakMap<ServiceHandle, MachineServiceRowV1>();
     const listeners = new Map<string, Set<(change: MachineServiceRowChange) => void>>();
+    const watchIdentity = (watch: MachineServiceWatchV1, machineId: string): Extract<MachineServiceIdentityV1, { kind: 'adopted' }> => Object.freeze({
+        kind: 'adopted', machineId, serviceId: watch.watchId, watchId: watch.watchId, watchRevision: watchRevision(watch),
+    });
     const targetOf = (handle: ServiceHandle) => handle.kind === 'workspace' ? handle.workspace : handle;
     const deliver = (handle: ServiceHandle, row: MachineServiceRowV1 | null) => {
         const target = targetOf(handle);
@@ -33,16 +51,19 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
         read(handle: ServiceHandle): MachineServiceRowV1 {
             const snapshot = handle.snapshot();
             const previous = observed.get(handle);
+            const identity = previous?.identity ?? (handle.kind === 'environment' ? handle.identity
+                : handle.kind === 'adopted' ? watchIdentity(handle.watch, handle.machineId) : undefined);
+            const name = handle.kind === 'adopted' ? handle.watch.name : handle.kind === 'environment' ? handle.composeService : snapshot.id;
             const endpoint = readManagedServiceEndpointUrl(snapshot.baseUrl, {
                 hostPolicy: managedServiceEndpointHostPolicyForMode(snapshot.mode),
             });
-            // Happier's Compose project/generation hashes identify custody, not a human name.
+            // Resolve native custody names through the admitted handle, never by stripping their hash.
             const compose = handle.kind === 'environment'
                 || (handle.kind === 'workspace' && handle.nativeTool === 'compose')
                 || (handle.kind === 'adopted' && handle.instance.adapter.pluginId === 'happier.machine.services'
                     && handle.instance.adapter.localId === 'compose');
             const displayName = compose && snapshot.nativeDisplayName !== undefined
-                && /^happier-(?:g-)?[a-f0-9]{64}$/u.test(snapshot.nativeDisplayName) ? undefined : snapshot.nativeDisplayName;
+                && isHappierComposeName(snapshot.nativeDisplayName) ? name : snapshot.nativeDisplayName;
             const native = snapshot.mode === 'native'
                 ? { phase: snapshot.nativePhase ?? 'unknown', readiness: snapshot.readiness ?? 'not_reported',
                     ...(displayName !== undefined ? { displayName } : {}) } as const
@@ -75,7 +96,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             };
             const row: MachineServiceRowV1 = {
                 serviceId: handle.serviceId,
-                name: handle.kind === 'adopted' ? handle.watch.name : handle.kind === 'environment' ? handle.composeService : snapshot.id,
+                ...projectMachineServiceName({ name, ...(handle.kind === 'adopted' ? { adapter: handle.instance.adapter } : {}) }, { name, identity }),
                 authority: handle.kind === 'adopted' ? 'machine' : 'project',
                 lifecyclePurpose: handle.lifecyclePurpose, generation: handle.instanceId, state: snapshot.state,
                 baseUrl: endpoint.ok ? endpoint.endpoint.baseUrl : null,
@@ -92,7 +113,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 }) } : {}),
                 ...(handle.kind === 'adopted' ? {
                     // A watch edit replaces its immutable adopted handle.
-                    watchId: handle.watch.watchId, watchRevision: previous?.watchRevision ?? watchRevision(handle.watch),
+                    watchId: handle.watch.watchId, watchRevision: identity?.kind === 'adopted' ? identity.watchRevision : watchRevision(handle.watch),
                     nativeInstance: handle.instance,
                 } : {}),
                 capabilities: sameStrictJsonValue(previous?.capabilities, capabilities)
@@ -103,13 +124,15 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             observed.set(handle, next);
             return next;
         },
-        unknown(watch: MachineServiceWatchV1): MachineServiceRowV1 {
+        unknown(watch: MachineServiceWatchV1, machineId: string): MachineServiceRowV1 {
             const previous = unavailable.get(watch);
             if (previous) return previous;
+            const identity = watchIdentity(watch, machineId);
             const row: MachineServiceRowV1 = Object.freeze({
-                serviceId: watch.watchId, name: watch.name, authority: 'machine',
+                serviceId: watch.watchId, authority: 'machine',
+                ...projectMachineServiceName({ name: watch.name, adapter: watch.adapter }, { name: watch.name, identity }),
                 lifecyclePurpose: watch.lifecyclePurpose, generation: null, state: 'unknown',
-                unavailableReason: 'admission_unavailable', watchId: watch.watchId, watchRevision: watchRevision(watch),
+                unavailableReason: 'admission_unavailable', watchId: watch.watchId, watchRevision: identity.watchRevision,
                 nativeInstance: Object.freeze({ adapter: watch.adapter, nativeResourceId: watch.nativeResourceId }),
                 native: Object.freeze({ phase: 'unknown', readiness: 'not_reported' }),
                 capabilities: Object.freeze({ start: false, stop: false, restart: false, logs: false, accounting: false }),

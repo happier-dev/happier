@@ -1,9 +1,11 @@
 import * as React from 'react';
+import { useAuth } from '@/auth/context/AuthContext';
+import { ActivityPersonalSessionMembershipProvider } from '@/activity/source/activityPersonalSessionMembership';
 import { Stack } from 'expo-router';
 import { View, useWindowDimensions, Platform } from 'react-native';
 import { getStorage, useActiveServerAccountScope, useLocalSetting } from '@/sync/domains/state/storage';
 import { ResizableDockedPane, type ResizableDockedPaneCommitMeta } from '@/components/ui/panels/ResizableDockedPane';
-import { resolveSidebarDockMaxWidthPx, SIDEBAR_DEFAULT_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
+import { resolveFoldAlignedSidebarWidthPx, resolveSidebarDockMaxWidthPx, SIDEBAR_DEFAULT_WIDTH_PX, SIDEBAR_DOCK_MIN_WIDTH_PX } from './sidebarSizing';
 import { AppRail } from './appRail/AppRail';
 import { AppShellColumn } from './appRail/AppShellColumn';
 import { AppShellTitleStrip } from './appRail/AppShellTitleStrip';
@@ -18,16 +20,16 @@ import {
 import { useAppShellLocation } from './appRail/useAppShellLocation';
 import { AppShellColumnContext, type AppShellColumnState } from './appRail/appShellColumnContext';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
-import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
-import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
 import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegion';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { AppShellMaterialFrame, resolveColumnDrawnWidthPx } from './AppShellMaterialFrame';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { AccountNoticeInvestigationBoundary } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
+import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { useWorkspaceShellEnabled } from '@/components/appShell/workspace/useWorkspaceShellEnabled';
 import { WorkspaceShell } from '@/components/appShell/workspace/WorkspaceShell';
+import type { CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createWorkspaceBarGeometry, WorkspaceBarGeometryContext } from '@/components/appShell/workspace/titleBar/workspaceBarGeometry';
 import { registerShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamily';
 import { VoiceTopBarPresenceMount } from '@/components/voice/presence/VoiceTopBarPresence';
@@ -37,11 +39,12 @@ import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurn
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
+import { NavigatorSafeAreaBleed, useHorizontalSafeArea } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
 
 /** The title strip's trailing Voice node (Top bar mode); one element, so the strip's memo holds. */
 const VOICE_TOP_BAR_TRAILING = <VoiceTopBarPresenceMount />;
-const TITLE_STRIP_TRAILING_ROW = { flexDirection: 'row', alignItems: 'center' } as const;
-const TITLE_STRIP_TRAILING = <View style={TITLE_STRIP_TRAILING_ROW}><AppShellTitleMoreSlot />{VOICE_TOP_BAR_TRAILING}</View>;
 
 // Like the docked column, a peeked one keeps its wheel and touch scrolling from document scroll locks.
 const stopPeekScrollPropagation = (event: { stopPropagation?: () => void }) => event.stopPropagation?.();
@@ -54,6 +57,25 @@ const renderPeekColumn = (column: AppShellColumnModel) => (
     </View>
 );
 
+/** The strip's workspace tabs and history controls subscribe here, beside the route tree rather than above it. */
+function ShellTitleStrip(props: Readonly<{
+    columnVisible: boolean;
+    columnToggleAvailable: boolean;
+    onToggleColumn: () => void;
+    catalog: readonly CompactAppDestination[];
+}>) {
+    const workspace = useOptionalWorkspaceNavigation();
+    const active = workspace?.active === true;
+    return <AppShellTitleStrip columnVisible={props.columnVisible}
+        columnToggleAvailable={props.columnToggleAvailable} onToggleColumn={props.onToggleColumn}
+        navigation={active ? workspace : undefined}
+        workspaceCatalog={active ? props.catalog : undefined}
+        trailing={TITLE_STRIP_TRAILING} />;
+}
+
+const TITLE_STRIP_TRAILING_ROW = { flexDirection: 'row', alignItems: 'center' } as const;
+const TITLE_STRIP_TRAILING = <View style={TITLE_STRIP_TRAILING_ROW}><AppShellTitleMoreSlot />{VOICE_TOP_BAR_TRAILING}</View>;
+
 const ROUTE_STACK_OPTIONS = { lazy: false, headerShown: false } as const;
 const DESTINATION_STACK_OPTIONS = { ...ROUTE_STACK_OPTIONS, contentStyle: { backgroundColor: 'transparent' } } as const;
 
@@ -61,16 +83,20 @@ export const SidebarNavigator = React.memo(function SidebarNavigator() {
     // Dedicated destinations/presenters own their surface. Do not mount the full rail's
     // subscriptions or let the workspace shell replace their app-owned route.
     if (resolveDesktopWindowContext().chrome === 'destination') {
-        return <NavigatorSafeAreaBleed><Stack screenOptions={DESTINATION_STACK_OPTIONS} screenLayout={renderAppStackScreen} /></NavigatorSafeAreaBleed>;
+        return <AccountNoticeInvestigationBoundary>
+            <NavigatorSafeAreaBleed><Stack screenOptions={DESTINATION_STACK_OPTIONS} screenLayout={renderAppStackScreen} /></NavigatorSafeAreaBleed>
+        </AccountNoticeInvestigationBoundary>;
     }
     return <FullSidebarNavigator />;
 });
 
 const FullSidebarNavigator = React.memo(() => {
-
+    const { isAuthenticated } = useAuth();
     const accountScope = useActiveServerAccountScope();
     const { execute, isCurrent } = useMountedActionExecution(accountScope);
-    const workspace = useOptionalWorkspaceNavigation();
+    // The route tree reads only whether the workspace hosts it; tab, title and sync
+    // changes reach the title strip and workspace shell leaves that read them.
+    const workspaceActive = useWorkspaceNavigationActive();
     // The onboarding journey host owns the whole viewport until its session ends
     // (visual spec v3 §5): the post-auth setup beats must never render beside the
     // live app sidebar. Reuse the route-based sidebar-bypass seam rather than
@@ -88,6 +114,8 @@ const FullSidebarNavigator = React.memo(() => {
         return destination ? resolveAppRailEntryColumn(destination) : null;
     }, [catalog]);
     const { width: windowWidth } = useWindowDimensions();
+    const foldMetrics = useWindowFoldMetrics();
+    const horizontalSafeArea = useHorizontalSafeArea();
     const sidebarCollapsed = useLocalSetting('sidebarCollapsed');
     const sidebarWidthPx = useLocalSetting('sidebarWidthPx');
     const rightPanelPlacement = useLocalSetting('rightPanelPlacement');
@@ -111,11 +139,15 @@ const FullSidebarNavigator = React.memo(() => {
     // The column shows when the open destination has one and the person has not hidden it; the rail
     // stays either way. Hidden chrome reserves no horizontal space.
     const columnShown = showSidebar && !sidebarCollapsed && column.kind !== 'none';
+    const foldAlignedSidebarWidthPx = columnShown ? resolveFoldAlignedSidebarWidthPx({
+        foldMetrics,
+        sidebarStartPx: horizontalSafeArea.left + APP_RAIL_WIDTH_PX,
+    }) : null;
     const columnFocus = usePaneRegionFocusBoundary('navigation', columnShown);
     const sidebarWidth = React.useMemo(() => {
         if (!columnShown) return 0;
-        return dragSidebarWidthPx ?? effectiveSidebarWidthPx;
-    }, [columnShown, dragSidebarWidthPx, effectiveSidebarWidthPx]);
+        return foldAlignedSidebarWidthPx ?? dragSidebarWidthPx ?? effectiveSidebarWidthPx;
+    }, [columnShown, dragSidebarWidthPx, effectiveSidebarWidthPx, foldAlignedSidebarWidthPx]);
     const shellLeftPx = showSidebar ? APP_RAIL_WIDTH_PX + sidebarWidth : 0;
     const appShellState = React.useMemo<AppShellColumnState>(
         () => ({ present: showSidebar, columnVisible: columnShown }),
@@ -137,18 +169,21 @@ const FullSidebarNavigator = React.memo(() => {
     }, [execute, isCurrent]);
 
     const handleSidebarWidthDrag = React.useCallback((nextWidthPx: number | null, dragMeta?: ResizableDockedPaneCommitMeta | null) => {
-        setDragSidebarWidthPx(nextWidthPx);
-        setSidebarOvershootPx(dragMeta?.overshootPx ?? 0);
-    }, []);
+        setDragSidebarWidthPx(foldAlignedSidebarWidthPx === null ? nextWidthPx : null);
+        setSidebarOvershootPx(foldAlignedSidebarWidthPx === null ? dragMeta?.overshootPx ?? 0 : 0);
+    }, [foldAlignedSidebarWidthPx]);
 
     const handleSidebarCollapse = React.useCallback(() => {
+        if (foldAlignedSidebarWidthPx !== null) return;
         fireAndForget(requestSetColumnVisible(false), { tag: 'SidebarNavigator.collapse' });
-    }, [requestSetColumnVisible]);
+    }, [foldAlignedSidebarWidthPx, requestSetColumnVisible]);
 
     const handleSidebarWidthCommit = React.useCallback((nextWidthPx: number) => {
         setDragSidebarWidthPx(null);
+        // A resize already in progress can finish after native geometry fixes the pane to the crease.
+        if (foldAlignedSidebarWidthPx !== null) return;
         getStorage().getState().applyLocalSettings({ sidebarWidthPx: nextWidthPx }, { source: 'ui' });
-    }, []);
+    }, [foldAlignedSidebarWidthPx]);
     const handleSidebarWidthReset = React.useCallback(() => {
         handleSidebarWidthCommit(SIDEBAR_DEFAULT_WIDTH_PX);
     }, [handleSidebarWidthCommit]);
@@ -171,9 +206,9 @@ const FullSidebarNavigator = React.memo(() => {
         <ResizableDockedPane
             widthPx={sidebarWidth}
             // The rows and the handle follow the column's rubber-banded edge, never paint past it.
-            drawnWidthPx={sidebarOvershootPx !== 0 ? resolveColumnDrawnWidthPx(sidebarWidth, sidebarOvershootPx) : undefined}
-            minWidthPx={SIDEBAR_DOCK_MIN_WIDTH_PX}
-            maxWidthPx={sidebarMaxWidthPx}
+            drawnWidthPx={foldAlignedSidebarWidthPx ?? (sidebarOvershootPx !== 0 ? resolveColumnDrawnWidthPx(sidebarWidth, sidebarOvershootPx) : undefined)}
+            minWidthPx={foldAlignedSidebarWidthPx ?? SIDEBAR_DOCK_MIN_WIDTH_PX}
+            maxWidthPx={foldAlignedSidebarWidthPx ?? sidebarMaxWidthPx}
             resizeEdge="right"
             onDragWidthPx={handleSidebarWidthDrag}
             onCommitWidthPx={handleSidebarWidthCommit}
@@ -197,38 +232,51 @@ const FullSidebarNavigator = React.memo(() => {
         </ResizableDockedPane>
     );
 
-    // Responsive chrome changes geometry, never the route navigator or its ancestry.
+    // A sidebar resize re-renders this navigator on every pointer move; the route tree and the
+    // title strip keep their element identity so React stops here and the pages only reflow.
+    const routes = React.useMemo(() => <>
+        <View style={[{ flex: 1, minWidth: 0, minHeight: 0 }, workspaceActive && { display: 'none' }]}>
+            <Stack screenOptions={ROUTE_STACK_OPTIONS} screenLayout={renderAppStackScreen} />
+        </View>
+        {workspaceActive ? <WorkspaceShell catalog={catalog} /> : null}
+    </>, [catalog, workspaceActive]);
+    const columnToggleAvailable = column.kind !== 'none';
+    const titleStrip = React.useMemo(() => (showSidebar || workspaceActive ? (
+        <ShellTitleStrip key="title-strip" columnVisible={columnShown}
+            columnToggleAvailable={columnToggleAvailable} onToggleColumn={handleToggleColumn}
+            catalog={catalog} />
+    ) : null), [catalog, columnShown, columnToggleAvailable, handleToggleColumn, showSidebar, workspaceActive]);
+
+    // Dedicated presenter webviews own their paint; the app's sheet would fill their clear backing.
+    // Responsive chrome changes geometry, never the ordinary route navigator or its ancestry.
     return (
         <AppShellColumnContext.Provider value={appShellState}>
         <WorkspaceBarGeometryContext.Provider value={workspaceBarGeometry}>
         <AppShellPeekProvider enabled={showSidebar} currentId={column.kind === 'none' ? null : location.railEntryId} columnShown={columnShown}>
+        <ActivityPersonalSessionMembershipProvider enabled={isAuthenticated}>
         <InboxSummaryProvider>
+        <NavigatorSafeAreaBleed>
         <AppShellMaterialFrame
             showChrome={showSidebar}
             dragEnabled={showSidebar && Platform.OS === 'web' && isDesktopHost()}
             leftOffsetPx={shellLeftPx}
             sidebarWidth={sidebarWidth}
-            columnResizeState={{ collapseArmed: sidebarCollapseArmed, overshootPx: sidebarOvershootPx, dragging: dragSidebarWidthPx !== null }}
+            columnResizeState={foldAlignedSidebarWidthPx === null
+                ? { collapseArmed: sidebarCollapseArmed, overshootPx: sidebarOvershootPx, dragging: dragSidebarWidthPx !== null }
+                : { collapseArmed: false, overshootPx: 0, dragging: false }}
             rightPanelPlacement={rightPanelPlacement}
-            titleStrip={showSidebar || workspace?.active ? (
-                <AppShellTitleStrip key="title-strip" columnVisible={columnShown}
-                    columnToggleAvailable={column.kind !== 'none'} onToggleColumn={handleToggleColumn}
-                    navigation={workspace?.active ? workspace : undefined}
-                    workspaceCatalog={workspace?.active ? catalog : undefined}
-                    trailing={TITLE_STRIP_TRAILING} />
-            ) : null}
+            titleStrip={titleStrip}
             rail={showSidebar ? <AppRail key="rail" /> : null}
             column={columnShown ? columnContent : null}
             peek={showSidebar ? <AppShellPeekLayer key="column-peek"
                 widthPx={columnShown ? sidebarWidth : effectiveSidebarWidthPx}
                 resolveColumn={resolvePeekColumn} renderColumn={renderPeekColumn} /> : null}
         >
-            <View style={[{ flex: 1, minWidth: 0, minHeight: 0 }, workspace?.active && { display: 'none' }]}>
-                <Stack screenOptions={ROUTE_STACK_OPTIONS} />
-            </View>
-            {workspace?.active ? <WorkspaceShell catalog={catalog} /> : null}
+            {routes}
         </AppShellMaterialFrame>
+        </NavigatorSafeAreaBleed>
         </InboxSummaryProvider>
+        </ActivityPersonalSessionMembershipProvider>
         </AppShellPeekProvider>
         </WorkspaceBarGeometryContext.Provider>
         </AppShellColumnContext.Provider>

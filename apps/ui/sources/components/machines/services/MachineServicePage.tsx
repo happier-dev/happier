@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 
+import { InvestigationAgentActionButtons, type InvestigationAgentActionButtonModel } from '@/components/inbox/detail/InvestigationAgentActionButtons';
+import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
+import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useMachinePortEntry } from '@/components/machines/localServices/MachinePortActions';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
@@ -30,6 +33,7 @@ import { canAdoptMachineService } from './adoption/machineServiceAdoptionPresent
 import { showMachineServiceAdoption } from './adoption/MachineServiceAdoptionSheet';
 import {
   machineServiceControls,
+  machineServiceDisplayName,
   machineServiceDeclaredFacts,
   machineServiceGroupEnvironmentId,
   machineServiceGroupOf,
@@ -49,6 +53,8 @@ import {
 } from './useMachineServiceDetail';
 import { useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
 import { useMachineServiceActions } from './useMachineServiceActions';
+
+const SERVICE_AGENT_ACTIONS = { agentActions: 'withDefault', composerOnUnresolvedPlacement: true } as const;
 
 /**
  * One service on a Machine (lab `machine/services/detail`), pushed inside the Services tab like Storage's and Guard's
@@ -146,6 +152,7 @@ function MachineServicePresent(props: Readonly<{
 }>) {
   const { theme } = useUnistyles();
   const { service, machineName } = props;
+  const serviceName = machineServiceDisplayName(service);
   const group = machineServiceGroupOf(service);
   const environmentId = machineServiceGroupEnvironmentId(group);
   const environmentIds = React.useMemo(() => environmentId ? [environmentId] : NO_IDS, [environmentId]);
@@ -180,9 +187,10 @@ function MachineServicePresent(props: Readonly<{
   // Run a command (P30 §463) reaches a deployed service's own container at the generation the page shows.
   const generation = service.generation;
   const runCommand = !serviceActions.command || generation === null ? null : () => showServiceCommandSheet({
-    serverId: props.serverId, machineId: props.machineId, machineName, serviceName: service.name,
+    serverId: props.serverId, machineId: props.machineId, machineName, serviceName,
     place: header ? keeper : null, target: { kind: 'current', serviceId: service.serviceId, expectedGeneration: generation } });
-  const facts = React.useMemo(() => serviceFacts(service, detail), [service, detail]);
+  const expectedStop = machineServiceExpectedStop(service);
+  const facts = React.useMemo(() => serviceFacts(service, detail, expectedStop), [service, detail, expectedStop]);
   // A process start proves running since; only a health transition proves healthy since.
   const healthSince = service.health?.since;
   const runningSince = service.state === 'running' || service.state === 'healthy' ? service.accounting?.startedAtMs : undefined;
@@ -197,16 +205,32 @@ function MachineServicePresent(props: Readonly<{
   const adopt = adoptable && !props.offline;
   const triggerSubject = React.useMemo(() => ({ kind: 'service' as const, machineId: props.machineId, serviceId: service.serviceId }),
     [props.machineId, service.serviceId]);
+  const investigateSubject = React.useMemo(() => props.active && !expectedStop && service.identity
+    && (service.state === 'unhealthy' || service.state === 'failed') ? {
+      kind: 'service' as const,
+      target: { kind: 'host' as const, page: 'machine_service' as const,
+        machine: { serverId: props.serverId, machineId: props.machineId }, service: service.identity },
+    } : null, [props.active, props.serverId, props.machineId, expectedStop, service.identity, service.state]);
+  const investigation = useInvestigateFailure(investigateSubject, SERVICE_AGENT_ACTIONS);
+  const fallbackInvestigate: readonly InvestigationAgentActionButtonModel[] = [{
+    label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
+  }];
   return (
     <View testID="machine-service-page">
       <MachineTabSubHead
-        title={service.name}
+        title={serviceName}
         mark={<Icon name={machineServiceIcon(service)} size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
         back={props.back}
         description={meta || null}
       >
-        {visible || portOpen || adopt || menuStop || menuStart || runCommand || serviceActions.shell || serviceActions.unwatch ? (
+        {investigateSubject || visible || portOpen || adopt || menuStop || menuStart || runCommand || serviceActions.shell || serviceActions.unwatch ? (
           <View style={styles.controls} testID="machine-service-controls">
+            {investigateSubject ? <InvestigationAgentActionButtons
+              actions={investigation.actions ?? fallbackInvestigate}
+              pending={investigation.pending}
+              compact={false}
+              onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
+            /> : null}
             {adopt ? (
               <RoundButton
                 testID="machine-service-adopt"
@@ -222,7 +246,7 @@ function MachineServicePresent(props: Readonly<{
                 size="small"
                 display="secondary"
                 title={t('machineServices.control.open')}
-                accessibilityLabel={t('machineServices.control.openLabel', { service: service.name })}
+                accessibilityLabel={t('machineServices.control.openLabel', { service: serviceName })}
                 leading={<Icon name="arrow-square-out" size={14} color={theme.colors.text.primary} />}
                 loading={portOpen.reading}
                 disabled={portOpen.reading || portOpen.reason !== null}
@@ -234,7 +258,7 @@ function MachineServicePresent(props: Readonly<{
               size="small"
               display="secondary"
               title={t(`machineServices.control.${visible}`)}
-              accessibilityLabel={`${t(`machineServices.control.${visible}`)} ${service.name}`}
+              accessibilityLabel={`${t(`machineServices.control.${visible}`)} ${serviceName}`}
               leading={<Icon name={visible === 'restart' ? 'arrow-clockwise' : 'play'} size={14} color={theme.colors.text.primary} />}
               loading={control.pending === visible}
               disabled={control.pending !== null}
@@ -242,7 +266,7 @@ function MachineServicePresent(props: Readonly<{
             /> : null}
             {menuStop || menuStart || runCommand || serviceActions.shell || serviceActions.unwatch ? (
               <ServiceMoreMenu
-                serviceName={service.name}
+                serviceName={serviceName}
                 stop={menuStop}
                 start={menuStart}
                 onRunCommand={runCommand}
@@ -257,6 +281,10 @@ function MachineServicePresent(props: Readonly<{
       </MachineTabSubHead>
       <ItemGroup surface="none" header="none" testID="machine-service-state">
         {props.stale}
+        {investigateSubject && investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner
+          outcome={investigation.outcome} serverId={props.serverId} testID="machine-service-investigate"
+          onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending}
+        /> : null}
         {serviceActions.outcome ? <SurfaceStateCard
           testID="machine-service-unwatch-outcome"
           size="line"
@@ -273,7 +301,7 @@ function MachineServicePresent(props: Readonly<{
         ) : null}
         {adoptable ? (
           <Text variant="body" testID="machine-service-watched-note" style={[styles.since, { color: theme.colors.text.secondary }]}>
-            {t('machineServices.adopt.watchedNote', { service: service.name })}
+            {t('machineServices.adopt.watchedNote', { service: serviceName })}
           </Text>
         ) : null}
         {since === null ? null : (
@@ -290,14 +318,14 @@ function MachineServicePresent(props: Readonly<{
             testID="machine-service-control-outcome"
             kind={control.outcome.kind === 'unavailable' ? 'unavailable' : 'error'}
             size="line"
-            title={controlOutcomeCopy(control.outcome, service.name, machineName)}
+            title={controlOutcomeCopy(control.outcome, serviceName, machineName)}
             reason={control.outcome.kind === 'unavailable' ? t('machineServices.control.unavailableRemedy') : undefined}
             diagnosticCode={control.outcome.errorCode}
           />
         ) : control.outcome ? (
           <Text variant="meta" testID="machine-service-control-outcome"
             style={[styles.outcome, control.outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.foreground }]}>
-            {controlOutcomeCopy(control.outcome, service.name, machineName)}
+            {controlOutcomeCopy(control.outcome, serviceName, machineName)}
           </Text>
         ) : null}
       </ItemGroup>
@@ -320,7 +348,7 @@ function MachineServicePresent(props: Readonly<{
       ) : null}
       <ItemGroup
         title={t('machineServices.logs.title')}
-        description={t('machineServices.logs.description', { service: service.name })}
+        description={t('machineServices.logs.description', { service: serviceName })}
         surface="none"
       >
         <MachineServiceLogs
@@ -333,7 +361,7 @@ function MachineServicePresent(props: Readonly<{
         />
       </ItemGroup>
       {/* What starts here by itself (OPS-AUTOMATIONS-1102 D2): triggers on this service's Machine, set up from here. */}
-      <SubjectTriggersSection subject={triggerSubject} subjectName={service.name} />
+      <SubjectTriggersSection subject={triggerSubject} subjectName={serviceName} />
     </View>
   );
 }
@@ -421,12 +449,12 @@ function controlOutcomeCopy(outcome: MachineServiceControlOutcome, service: stri
  * the port, memory from the detail's one accounting sample, and the declared Compose replicas, limits and restart
  * policy. Declared replicas are not an observed count; a missing counter says so instead of reading as zero.
  */
-function serviceFacts(service: MachineServiceRowV1, detail: MachineServiceDetailFacts | null): FactStripFact[] {
+function serviceFacts(service: MachineServiceRowV1, detail: MachineServiceDetailFacts | null,
+  expectedStop: ReturnType<typeof machineServiceExpectedStop>): FactStripFact[] {
   // Health is the service's state alone, in its tone; what kind of service it is stays on the identity line.
   // A running service its own health source hasn't verified says so beside Running; it never reads as healthy.
   const qualifier = machineServiceHealthQualifier(service);
   // A stop the person asked for is that stop, in no warning tone (lab `services/states` "Stopped by you").
-  const expectedStop = machineServiceExpectedStop(service);
   const tone = expectedStop ? 'secondary' : qualifier === 'failing' || qualifier === 'degraded' ? 'warning' : machineServiceStateTone(service.state);
   const state = expectedStop ? t(`machineServices.expectedDown.${expectedStop}`) : t(`machineServices.state.${service.state}`);
   const facts: FactStripFact[] = [{

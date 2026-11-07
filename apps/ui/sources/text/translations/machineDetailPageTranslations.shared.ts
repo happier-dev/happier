@@ -2043,6 +2043,7 @@ export const english = {
         },
     },
     machineServices: {
+        unresolvedEnvironment: 'Unresolved environment service',
         actions: {
             shell: "Open shell",
             unwatch: "Stop watching",

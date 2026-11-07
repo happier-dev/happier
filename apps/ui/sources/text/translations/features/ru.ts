@@ -6155,7 +6155,7 @@ const ru: typeof en = {
         investigateUnavailable: 'Расследование недоступно для этого оповещения.',
         notSetUpTitle: 'Расследование не настроено',
         notSetUpBody: 'Настройте его в PRs, Issues & Tasks и повторите попытку.',
-        placementTitle: 'Выберите, где расследовать',
+        placementTitle: 'Выберите, где работать',
         placementReason: {
             controller_required: 'Контроллер неизвестен. Выберите машину для работы.',
             machine_unreachable: 'Машина не в сети. Выберите другую или повторите, когда она вернётся.',
@@ -6165,7 +6165,7 @@ const ru: typeof en = {
         placementOffline: 'Не в сети',
         placementAnyFolder: 'Любая папка',
         placementAgent: 'Агент',
-        placementConfirm: 'Расследовать здесь',
+        placementConfirm: 'Начать здесь',
     },
 };
 
@@ -8365,6 +8365,7 @@ const machineDetailPageTranslations = { ru: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "Открыть оболочку",
                 unwatch: "Перестать отслеживать",
@@ -15306,10 +15307,10 @@ const widgetAddTranslations = { ru: {
         saveFailed: 'Не удалось сохранить. Попробуйте ещё раз.',
         homeTitle: 'Добавить на главную',
         homeHint: 'Только вы видите свою главную · на всех устройствах',
+        homeAskDraft: 'Добавь на мою главную то, что показывает ',
         addWidgets: 'Добавить виджеты',
         addToHome: 'Добавить на главную',
         addToBoard: 'Добавить на доску',
-        homeAskDraft: 'Добавь на мою главную то, что показывает ',
         addToCompanion: 'Добавить в компаньон',
         editInputs: 'Изменить входные данные…',
         width: 'Ширина',
@@ -15417,6 +15418,11 @@ const widgetDefinitionTranslations = { ru: {
         visualShareTitle: "Поделиться",
         visualSaveMenu: "Сохранить как артефакт…",
         visualShareMenu: "Поделиться ссылкой…",
+        visualCopyToSessionMenu: "Копировать в другую сессию…",
+        visualCopyToSessionTitle: "Копировать в сессию",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `Скопировано в ${session}. Это независимая копия на доске этой сессии.`,
+        visualCopySourceChanged: "Этот визуал изменился, пока вы выбирали. Скопируйте его снова, чтобы взять текущую версию.",
+        visualCopyFailed: "Не удалось создать копию. Этот визуал не изменился.",
         visualSavedCopy: "Сохранено в вашем аккаунте как отдельная копия. Создание публичной ссылки — отдельный выбор.",
         visualSaveFailed: "Не удалось сохранить копию. Визуализация сессии сохранена.",
         saveMenuSubtitle: "Копия для главной и ваших досок",

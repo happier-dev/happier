@@ -6123,7 +6123,7 @@ const ja: typeof en = {
         investigateUnavailable: 'このアラートでは調査を利用できません。',
         notSetUpTitle: '調査が設定されていません',
         notSetUpBody: 'PRs, Issues & Tasks で設定してから、もう一度お試しください。',
-        placementTitle: '調査する場所を選択',
+        placementTitle: '作業する場所を選択',
         placementReason: {
             controller_required: 'コントローラーが不明です。作業するマシンを選んでください。',
             machine_unreachable: 'マシンがオフラインです。別のマシンを選ぶか、復帰後にもう一度お試しください。',
@@ -6133,7 +6133,7 @@ const ja: typeof en = {
         placementOffline: 'オフライン',
         placementAnyFolder: '任意のフォルダー',
         placementAgent: 'エージェント',
-        placementConfirm: 'ここで調査',
+        placementConfirm: 'ここで開始',
     },
 };
 
@@ -8333,6 +8333,7 @@ const machineDetailPageTranslations = { ja: translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "シェルを開く",
                 unwatch: "監視を停止",
@@ -15258,10 +15259,10 @@ const widgetAddTranslations = { ja: {
         saveFailed: '保存できませんでした。もう一度お試しください。',
         homeTitle: 'ホームに追加',
         homeHint: 'ホームはあなただけに表示されます · すべてのデバイスで',
+        homeAskDraft: 'ホームに次を表示するものを置いて：',
         addWidgets: 'ウィジェットを追加',
         addToHome: 'ホームに追加',
         addToBoard: 'ボードに追加',
-        homeAskDraft: 'ホームに次を表示するものを置いて：',
         addToCompanion: 'コンパニオンに追加',
         editInputs: '入力を編集…',
         width: '幅',
@@ -15369,6 +15370,11 @@ const widgetDefinitionTranslations = { ja: {
         visualShareTitle: "共有",
         visualSaveMenu: "アーティファクトとして保存…",
         visualShareMenu: "リンクを共有…",
+        visualCopyToSessionMenu: "別のセッションにコピー…",
+        visualCopyToSessionTitle: "セッションにコピー",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `${session} にコピーしました。そのセッションのボード上の独立したコピーです。`,
+        visualCopySourceChanged: "選択中にこのビジュアルが変更されました。最新版を取り込むにはもう一度コピーしてください。",
+        visualCopyFailed: "コピーできませんでした。このビジュアルは変更されていません。",
         visualSavedCopy: "独立したコピーとしてアカウントに保存しました。公開リンクの作成は別途選択します。",
         visualSaveFailed: "コピーを保存できませんでした。セッションのビジュアルは残っています。",
         saveMenuSubtitle: "ホームやボード用のコピー",

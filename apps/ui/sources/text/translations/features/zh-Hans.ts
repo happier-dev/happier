@@ -6118,7 +6118,7 @@ const zhHans: typeof en = {
         investigateUnavailable: '此警报无法进行调查。',
         notSetUpTitle: '尚未设置调查',
         notSetUpBody: '请在 PRs, Issues & Tasks 中设置后重试。',
-        placementTitle: '选择调查位置',
+        placementTitle: '选择工作位置',
         placementReason: {
             controller_required: '控制器未知。请选择要工作的机器。',
             machine_unreachable: '机器已离线。请选择其他机器，或在恢复后重试。',
@@ -6128,7 +6128,7 @@ const zhHans: typeof en = {
         placementOffline: '离线',
         placementAnyFolder: '任意文件夹',
         placementAgent: '代理',
-        placementConfirm: '在此调查',
+        placementConfirm: '在此开始',
     },
 };
 
@@ -8328,6 +8328,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             },
         },
         machineServices: {
+            unresolvedEnvironment: english.machineServices.unresolvedEnvironment,
             actions: {
                 shell: "打开 Shell",
                 unwatch: "停止关注",
@@ -15253,10 +15254,10 @@ const widgetAddTranslations = { 'zh-Hans': {
         saveFailed: '无法保存。请重试。',
         homeTitle: '添加到首页',
         homeHint: '只有你能看到你的首页 · 在所有设备上',
+        homeAskDraft: '在我的首页放一个显示',
         addWidgets: '添加小组件',
         addToHome: '添加到首页',
         addToBoard: '添加到看板',
-        homeAskDraft: '在我的首页放一个显示',
         addToCompanion: '添加到伴侣',
         editInputs: '编辑输入…',
         width: '宽度',
@@ -15364,6 +15365,11 @@ const widgetDefinitionTranslations = { 'zh-Hans': {
         visualShareTitle: "分享",
         visualSaveMenu: "保存为工件…",
         visualShareMenu: "分享链接…",
+        visualCopyToSessionMenu: "复制到另一个会话…",
+        visualCopyToSessionTitle: "复制到会话",
+        visualCopiedToSession: ({ session }: Readonly<{ session: string }>) => `已复制到 ${session}。这是该会话看板上的独立副本。`,
+        visualCopySourceChanged: "在你选择时此视觉内容已更改。请再次复制以获取当前版本。",
+        visualCopyFailed: "无法创建副本。此视觉内容未更改。",
         visualSavedCopy: "已作为独立副本保存到你的账户。创建公开链接需要另外确认。",
         visualSaveFailed: "无法保存副本。会话中的可视内容仍然保留。",
         saveMenuSubtitle: "用于主页和你的看板的副本",
