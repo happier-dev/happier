@@ -1,5 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { PushTokensRemoteAlertProjectionV2Schema } from '../push/pushTokenRegistration.js';
+import { SessionSystemRecordInvalidationV1Schema } from '../sessions/board/changeHint.js';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';
 import { ManagedMachineRefV1Schema } from '../machines/managed/managedMachineV1.js';
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
@@ -8,8 +10,9 @@ import { AutomationRunStateV3Schema } from '../automations/automationRunStateV3.
 import { AutomationRunStateChangedHostEventV1Schema } from '../plugins/events/hostReferencesV1.js';
 import { ExternalSessionTranscriptInvalidationV1Schema } from '../sessions/external/secureRefreshV1.js';
 import { ExternalSessionStorageStateV1Schema } from '../sessions/external/operationV1.js';
-import { ExecutionRunPublicStateSchema } from '../execution/runs/responseSchemas.js';
+import { ExecutionRunSessionUpdateStateSchema } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunMachineActivityEphemeralV1Schema } from '../execution/runs/activityV1.js';
+import { ScmDiffSummaryResultUpdateEphemeralSchema } from '../scm/diffSummaryResult.js';
 import { SessionMessageRoleSchema } from '../sessions/messages/sessionMessageRole.js';
 import { PendingActivationRequestedEphemeralV1Schema } from '../sessions/messages/sessionInputAdmission.js';
 import { SessionMessageReplyPendingHintV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
@@ -27,7 +30,7 @@ import {
   SessionRuntimeActivityStateSchema,
 } from '../sessions/runtime/activity/sessionRuntimeActivity.js';
 import { SessionOwnerMetadataEnvelopeV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
-import { PendingActivationAuthorizationV1Schema } from '../sessions/pending/pendingActivationAuthorizationV1.js';
+import { PendingActivationAuthorizationV1Schema, PendingActivationFailureDetailsV1Schema } from '../sessions/pending/pendingActivationAuthorizationV1.js';
 import { ParticipantExecutionRunRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import { ActivityMessageReferenceV2Schema } from '../push/activityRemoteAlert.js';
 import { MachineKeyBasisV1Schema } from '../machines/machineContentKeyTransitionV1.js';
@@ -37,8 +40,12 @@ import { DevcontainerChildProjectionV1Schema } from '../machines/managed/devcont
 import { AccountEncryptionCurrentnessResponseSchema } from '../account/encryptionMode.js';
 import { SessionMessageV1Schema } from '../sessions/messages/sessionMessagesPageV1.js';
 import { SessionMessageObservationFactsV1Schema } from '../sessions/messages/sessionMessageObservationFactsV1.js';
+import { SessionUpdateBodySchema } from './sessionUpdate.js';
+import { ApiTokenEmbedConfigChangedV1Schema } from '../embed/embedConfigV1.js';
+import { PluginWebhookHeartbeatReceiptEphemeralV1Schema } from '../plugins/webhooks/endpointV1.js';
 
 const TimestampMsSchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0)));
+
 /** Routing hint for private requester custody; it grants no Run-reading authority. */
 export const WorkflowRequesterScopeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('workflow_trigger'),
@@ -92,38 +99,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     /** Where the Session's transcript lives (an imported external session starts `machine_only`). */
     currentStorageState: z.optional(ExternalSessionStorageStateV1Schema),
   }),
-  z.looseObject({
-    t: z.literal('update-session'),
-    id: z.string(),
-    projectKey: z.optional(z.nullable(z.string())),
-    metadata: z.optional(VersionedNullableStringSchema),
-    metadataLayoutVersion: z.optional(z.number().check(z.int(), z.nonnegative())),
-    ownerMetadata: z.optional(z.strictObject({
-      value: SessionOwnerMetadataEnvelopeV1Schema,
-    })),
-    agentState: z.optional(VersionedNullableStringSchema),
-    active: z.optional(z.boolean()),
-    activeAt: z.optional(TimestampMsSchema),
-    lastViewedSessionSeq: z.optional(z.number().check(z.int(), z.minimum(0))),
-    unreadSince: z.optional(z.nullable(TimestampMsSchema)),
-    viewer: z.optional(SessionViewerProjectionV1Schema),
-    pendingPermissionRequestCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-    pendingUserActionRequestCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-    pendingRequestObservedAt: z.optional(z.nullable(TimestampMsSchema)),
-    latestReadyEventSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0)))),
-    latestReadyEventAt: z.optional(z.nullable(TimestampMsSchema)),
-    latestReadyEventLocalId: z.optional(z.string().check(z.minLength(1))),
-    latestTurnId: z.optional(z.nullable(TurnIdSchema)),
-    latestTurnStatus: z.optional(z.nullable(PrimaryTurnStatusV1Schema)),
-    latestTurnStatusObservedAt: z.optional(z.nullable(TimestampMsSchema)),
-    lastRuntimeIssue: z.optional(z.nullable(SessionRuntimeIssueV1Schema)),
-    runtimeActivityState: z.optional(SessionRuntimeActivityStateSchema),
-    runtimeActivityActiveCount: z.optional(z.number().check(z.int(), z.minimum(0))),
-    runtimeActivityObservedAt: z.optional(z.nullable(TimestampMsSchema)),
-    runtimeActivityRevision: z.optional(z.number().check(z.int(), z.minimum(0))),
-    meaningfulActivityAt: z.optional(TimestampMsSchema),
-    archivedAt: z.optional(z.nullable(TimestampMsSchema)),
-  }),
+  SessionUpdateBodySchema,
   z.looseObject({
     t: z.literal('pending-changed'),
     sid: z.string(),
@@ -136,6 +112,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     meaningfulActivityAt: z.optional(TimestampMsSchema),
     pendingActivationRequestId: z.optional(z.string().check(z.trim(), z.minLength(1))),
     pendingActivationAuthorization: z.optional(z.nullable(PendingActivationAuthorizationV1Schema)),
+    pendingActivationFailureDetails: z.optional(z.nullable(PendingActivationFailureDetailsV1Schema)),
     managedWakeTargetV1: z.optional(ManagedWakeTargetV1Schema),
   }),
   z.looseObject({
@@ -196,6 +173,9 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     // Advisory commit routing only; unknown kinds remain coarse at the reader.
     changeKinds: z.optional(z.array(z.string())),
     entityIds: z.optional(z.array(z.string())),
+    artifactKinds: z.optional(z.array(z.string())),
+    // Complete routing; any Account entity other than an addressed record leaves this absent.
+    sessionSystemRecords: z.optional(z.array(SessionSystemRecordInvalidationV1Schema)),
   }),
   z.looseObject({
     t: z.literal('delete-session'),
@@ -204,6 +184,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.looseObject({
     t: z.literal('update-account'),
     id: z.string(),
+    remoteAlertPolicyStatus: z.optional(PushTokensRemoteAlertProjectionV2Schema.shape.accountRemoteAlerts.shape.status),
     // Omitted on profile-only updates; null withdraws encryption admission.
     encryptionCurrentness: z.optional(z.nullable(AccountEncryptionCurrentnessResponseSchema)),
     name: z.optional(z.nullable(z.string())),
@@ -211,6 +192,7 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
   z.looseObject({
     t: z.literal('account-settings-changed'),
     settingsVersion: z.number().check(z.int(), z.minimum(0)),
+    remoteAlertPolicyStatus: z.optional(PushTokensRemoteAlertProjectionV2Schema.shape.accountRemoteAlerts.shape.status),
   }),
   z.looseObject({
     t: z.literal('new-machine'),
@@ -437,6 +419,9 @@ export const SessionPersonalEventEphemeralV1Schema = lazyZodSchema(() => z.discr
 export type SessionPersonalEventEphemeralV1 = z.infer<typeof SessionPersonalEventEphemeralV1Schema>;
 
 export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminatedUnion('type', [
+  PluginWebhookHeartbeatReceiptEphemeralV1Schema,
+  ApiTokenEmbedConfigChangedV1Schema,
+  ScmDiffSummaryResultUpdateEphemeralSchema,
   SessionMessageReplyPendingHintV1Schema,
   PendingActivationRequestedEphemeralV1Schema,
   // Hottest live event first: delta ticks stream at the live cadence (~25Hz per active segment).
@@ -455,7 +440,7 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
   z.looseObject({
     type: z.literal('execution-run-updated'),
     sessionId: z.string(),
-    run: ExecutionRunPublicStateSchema,
+    run: ExecutionRunSessionUpdateStateSchema,
   }).check(z.refine(value => value.machineId === undefined && value.runId === undefined)),
   z.looseObject({
     type: z.literal('transcript-stream-segment'),

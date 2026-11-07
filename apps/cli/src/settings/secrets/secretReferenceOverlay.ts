@@ -1,9 +1,9 @@
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import type { ProviderErrorV1 } from '@happier-dev/protocol';
 import { savedSecretOperationAdmissionReason, type SavedSecretCatalogResourceInputV1, type SavedSecretMaterializerV1, type SavedSecretOperationAdmissionFailureReason } from './savedSecretCatalog';
 
 export type LaunchSecretReferenceOverlayFailureReasonV1 = 'undeclared_requirement' | SavedSecretOperationAdmissionFailureReason;
@@ -15,8 +15,8 @@ export class LaunchSecretReferenceOverlayError extends Error {
   }
 }
 
-export function readLaunchSecretReferenceOverlayProviderErrorCodeV1(
-  reason: LaunchSecretReferenceOverlayFailureReasonV1 | SavedSecretOperationAdmissionFailureReason,
+function readLaunchSecretReferenceOverlayProviderErrorCodeV1(
+  reason: LaunchSecretReferenceOverlayFailureReasonV1,
 ): 'provider_settings_invalid' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_binding_changed' {
   switch (reason) {
     case 'undeclared_requirement': return 'provider_settings_invalid';
@@ -26,6 +26,23 @@ export function readLaunchSecretReferenceOverlayProviderErrorCodeV1(
     case 'reference_unavailable': return 'provider_secret_unavailable';
     case 'reference_stale': case 'reference_collision_migration_required': return 'provider_binding_changed';
   }
+}
+
+/** The launch projection as one Provider refusal; a Saved Secret reason rides along unchanged. */
+export function createLaunchSecretReferenceOverlayProviderErrorV1(
+  reason: LaunchSecretReferenceOverlayFailureReasonV1,
+  context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
+): ProviderErrorV1 {
+  return createProviderErrorV1(readLaunchSecretReferenceOverlayProviderErrorCodeV1(reason),
+    reason === 'undeclared_requirement' ? context : { ...context, savedSecretReason: reason });
+}
+
+/** Thrown-refusal carrier: keeps the projected code and adds the typed Provider error as details. */
+export function attachLaunchSecretReferenceOverlayProviderError<
+  E extends Error & { readonly reason: LaunchSecretReferenceOverlayFailureReasonV1 },
+>(error: E): E & { code: ProviderErrorV1['code']; details: { providerError: ProviderErrorV1 } } {
+  const providerError = createLaunchSecretReferenceOverlayProviderErrorV1(error.reason);
+  return Object.assign(error, { code: providerError.code, details: { providerError } });
 }
 
 /** Shared exact-reference behavior; Profile default/recovery policy stays in its owner. */
@@ -98,13 +115,4 @@ export function resolveProjectSecretReferenceEnvironment(params: ProjectSecretRe
     }
   }
   return environment;
-}
-
-/** The launch projection as one Provider refusal; a Saved Secret reason rides along unchanged. */
-export function createLaunchSecretReferenceOverlayProviderErrorV1(
-  reason: LaunchSecretReferenceOverlayFailureReasonV1,
-  context: Readonly<{ connectionId?: string; machineId?: string; sourceProfileId?: string }> = {},
-): ProviderErrorV1 {
-  return createProviderErrorV1(readLaunchSecretReferenceOverlayProviderErrorCodeV1(reason),
-    reason === 'undeclared_requirement' ? context : { ...context, savedSecretReason: reason });
 }

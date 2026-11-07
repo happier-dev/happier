@@ -42,6 +42,50 @@ See also [Team lifecycle, policy, and branding](teams.md),
 | Discussion mutations, including Agent provenance | `apps/server/sources/app/discussions/mutations.ts` |
 | Discussion grants and recipient keys | `apps/server/sources/app/discussions/accessService.ts`, consuming `app/teams/resourceGrantAccess.ts` |
 
+## List omission and concurrent exact reads (0.3 development)
+
+Selected secondary Homes refresh through push, reconnect and gap recovery without
+a periodic refresh. Web lifecycle recovery uses visibility, pageshow and resume
+events. Each loaded browser tab owns an in-memory cursor identity; it does not
+renew a cross-tab presence lease. Reloading starts a fresh tab scope using the
+existing snapshot and catch-up path. Blocked-cursor events evaluate cursor-lag
+diagnostics without a sleep-detection timer.
+
+The ordinary list and exact Session response carry an optional `observationCursor` from the
+viewing Account's existing change sequence. The server reads it in the same content snapshot
+as the rows and returns that admitted capture without a second policy evaluation. Only the present-user
+Sync consumer receives this Account-wide observation; automation and restricted Session
+credentials do not. It is a read-order witness, not an
+access grant or permission to advance the client's applied change cursor.
+
+Transcript pages, exact-message and action-reference lookups, and reply projections
+likewise admit the finite read once in their content snapshot. They finish from
+that captured access, publication and content state without a post-snapshot policy
+replay or a second reply snapshot. The next request admits again and observes
+revocation. Live socket delivery remains a separate recipient content-read boundary;
+its current disclosure authorization is not retained from the originating write.
+
+The client membership owner is `sync/engine/sessions/snapshotMembership.ts`. Ordinary-list
+omission never proves access withdrawal, even for an exhausted page with a newer observation
+cursor. Reconciliation adds listed Sessions while retaining previously readable Sessions and
+pending exact reads. This keeps off-page and pinned Sessions available for their existing
+exact-read hydration and repair. Explicit access pushes and authoritative exact-read refusals
+use the existing teardown owner and fence outstanding reads.
+
+Direct share revocation and deletion retain their explicit teardown. Pure Team/Group changes
+instead publish AccountChange and refresh the demanded list. A secondary Home reads the
+Session ids named by that wake through the existing exact list-projection reader when
+it retains those rows; authoritative absence retires only that Home's row. Duplicate
+ids share one read and unrelated retained rows are not fetched. Retained off-head rows are not
+re-read one by one on refresh: access is enforced at the next natural request or reconnect,
+and an exact read's authoritative absence retires that Session. Account suspension also
+withdraws credentials and sockets. Machine
+control withdrawal retains readable Session history; terminal custody and Archive have their
+own lifecycle. Ordinary handoff changes execution placement without transferring Session
+ownership. Older producers may omit the optional observation cursor; ordinary-list omission
+does not establish withdrawal with either producer shape. The server continues to authorize
+each exact read and controls live delivery and stream retirement.
+
 ## One access decision, two presentations
 
 `projectEffectiveSessionAccess` in `sessionAccess.ts` is the only place that turns a loaded
@@ -193,6 +237,14 @@ HTTP requests and responses stay strict. See [Actions](actions.md) for the
 canonical mutation and answering-client reorder owners. These are development
 contracts; source presence does not establish released rail or roster UI.
 
+The ordinary list refresh treats pins and the organization snapshot as additive.
+An unavailable pin read keeps the personal pin and uses the existing
+metadata-unavailable presentation when a cold row exists. An organization failure
+keeps its own error and retained arrangement. Neither failure rejects an otherwise materialized list
+page or prevents its next-page cursor from advancing. A later refresh or explicit
+Session open can recover the pin. Explicit required hydration used by change-feed
+recovery still must succeed before that recovery checkpoints its changes.
+
 ## Read state, Follow, and awareness
 
 These three answer different questions and must not be collapsed:
@@ -206,6 +258,14 @@ These three answer different questions and must not be collapsed:
   persisted and owns no unread, Follow, attention or notification decision. See
   [protocol.md](protocol.md#session-awareness-development).
 
+In 0.3 development, `follow.preferences.set` writes the four relationship choices as
+`defaultRules: { assigned, direct, team, group }`, alongside any supplied
+`managerPolicy`, `runReportPolicy` and `discussionReceivePolicy`. The shared reader
+also accepts the legacy four top-level booleans and normalizes both forms to the
+existing Account columns. This names the existing operational defaults; arbitrary
+private rules still use the ordinary Follow rule owner. Omitted creation policies
+keep their saved values, and existing relationships are unchanged.
+
 In 0.3 development source, the UI retains admitted runtime observations separately from
 Session content rows, at the exact Home and Session address. After existing admission and
 normalization, the Session publication owner classifies an already-active row's coupled
@@ -214,19 +274,33 @@ liveness carrier. It retains the incoming clock pair before freshness normalizat
 debounced older renewal cannot masquerade as a content change after a newer presence
 transition has correctly fenced its activity clock. Socket projections and hydrated/list
 snapshots share this owner: timely carriers refresh the observation without advancing
-content time or replacing the row. An originally unchanged activity clock and actual
-semantic changes retain normal publication. The socket projection preserves absent optional
-facts rather than synthesizing new own `undefined` fields. Patch coalescers batch ordered
+content time or replacing the row. An `updatedAt`-only commit receipt likewise retains the
+incumbent content row; actual semantic and authority changes retain normal publication.
+Socket and HTTP projections preserve absent optional facts rather than synthesizing new
+own `undefined` fields. Committed owner-tuple writes publish their complete admitted owner
+projection, including envelope provenance, through the same reader/projector as hydration;
+an HTTP echo does not create a second projection for that commit. Patch coalescers batch ordered
 projectors, not pre-normalized rows: the store admits each operation against the preceding
 row and derives publication, membership, index and persistence impact from the final state.
 Net-zero batches retain their original row and root identities. Awareness
 and its existing freshness clock read the observation; actual stop, offline and stale-to-live
 transitions still notify consumers. Equal-time observations are stop-wins. The same compact
-record retains the suppressed full-publication clock so an older in-flight inventory cannot
-overwrite a newer admitted row; pure ephemerals never advance that inventory witness.
+record retains the suppressed full-publication clock. The scoped ordering reader uses that
+witness for inventory/hydration currentness, lifecycle replay, thinking resurrection and
+fallback pending/transcript ordering, without changing content sorting or display clocks.
+Session-list grouping and Activity recency use meaningful activity (or creation), not the raw
+receipt clock. The opened "Put under…" chooser deliberately snapshots last-receipt recency:
+its ranking and relative-time label read that exact-Home witness directly, without replacing
+the retained row. A receipt alone seeds only compact runtime facts and cannot invent presence.
+Activity and Work inventory presentation consume the admitted compact row with exact-Home,
+tuple-current held facets; they do not reconstruct a full Session on every projection pass.
+The same lifecycle, metadata and pending owners serve those facets and an explicitly presented
+full request control. A newer summary cannot invent a request body from an older Agent tuple.
+Pure ephemerals never advance the witness, and raw observation admission rejects thinking
+resurrection at or before it; a genuinely later observation remains fresh.
 Account resets and Session removal clear the same owner. This is a client projection
-correction, not a new wire format or server fanout cutover: supported older clients still
-require the incumbent durable heartbeat delivery. The socket parser accepts absent or matching
+correction, not a new wire format. The server delivers an active heartbeat to the whole
+publication audience as the `activity` ephemeral (see Follow availability below). The socket parser accepts absent or matching
 legacy `sid` aliases and rejects contradictory Session routing identities before projection.
 
 In 0.3 development source, reverse `follow.list` inspection delegates to the Session Follow
@@ -252,8 +326,11 @@ Follow list inspection in 0.3 development accepts an optional `limit` and a sour
 `cursor`. With no limit, the owner returns the complete admitted list. A limited read
 returns `continuation` while more source relations remain, and the Action reports partial
 coverage until the last page. Cursors bind the exact Account and inspection direction;
-each page applies current access again and does not freeze membership. Private rules are
-returned with the first Following page, rather than repeated on every source page.
+each page applies current access again and does not freeze membership. The optional
+`sourceKinds` set selects relation kinds before pagination and binds the continuation
+to that selection. Private rules are returned with the first Following page when
+no kind selector is present, rather than repeated on every source page;
+kind-selected reads omit that census.
 
 In development source, Session and Account Voice Follow observations and
 acknowledgements use the authenticated socket's lifetime and cancellation, without
@@ -278,16 +355,286 @@ receiver audience and mute remain current checks. An idle manager therefore
 uses the ordinary policy and Pending wake path without first taking a foreground
 turn to recover the source through receiver-owned authority.
 
+An exact question-handler offer also asks that route owner whether the same
+handler-bound original already has admitted Pending or Message custody. The
+dispatcher excludes that represented handler before another Pending POST,
+including during late receiver catch-up. Unrelated Agent-state bookkeeping does
+not change the original key; passing the question to a different handler does.
+This read reuses the existing input custody and access checks. Fresh source
+versions and final native request/handler admission remain fenced as before;
+an observation is neither a new receipt nor permission to answer.
+
+Passing up changes the assigned handler, not the asking Session that owns the
+request. The form identifies `questionOwnerSessionId` and supplies the exact
+`session.user_action.answer` routing arguments. A manager or grandmanager must
+target that original owner, not its own handler Session. Answer lookup and
+completion stay at the original request store.
+
+The daemon's connected-service projection consumer respects the Account change's
+qualified service scope. It reconciles only runtime targets configured for, or
+still holding an active binding to, an affected service; an unscoped snapshot
+continues to reconcile all targets. An email-only change must not rematerialize
+coding-agent credentials and hold the Account feed ahead of a question wake.
+
+Receiver reconciliation uses an exact, cursor-relative
+`session-follow-receiver:<sessionId>` entry on the existing Account change feed.
+The relation invalidation owner publishes it transactionally to the receiver's
+current audience alongside the ordinary Session projection. A later Pending or
+metadata write cannot overwrite that separate wake. Installed and requester
+Account daemons consume it through the same receiver admission; a generic change
+to the receiver's Session row does not itself demand another Follow observation.
+The UI retains the ordinary Session projection and treats the receiver-demand key
+as neither an Account Settings/Profile change nor a Usage change.
+Reconnect and gap recovery still inspect retained originals. The wake contains
+no content or authority: Home, Account, Machine, installation, access, policy and
+currentness are rechecked before delivery. Source-range traversal shares its
+already-admitted Session transport with rule-facts preparation within that pass;
+it retains no Session snapshot across operations.
+The same pass prepares supplemental Project and organization filter facts once
+for its source and admitted rule snapshot, then shares them across its original
+messages, questions and terminal occurrence. A new pass reads fresh facts; a
+changed rule snapshot prepares the facts required by that new configuration.
+Original-route verification and final Pending admission still run per original.
+The server observes a source's current destinations through the existing
+set-oriented context-admission owner, retaining each destination's audience and
+custody checks without repeating source reads for every Follow relation.
+
+Private-rule discovery already names a changed source and candidate receiver.
+It dispatches that source through the same ordered range owner, without first
+reading receiver-wide inactive observations. That owner refreshes rule progress
+and verifies original, route and delivery authority. Concurrent requester source
+hints retain their exact source identities; only an actual receiver invalidation
+or lost feed continuity requests broad recovery. The request-count contract is
+zero receiver-wide reads for source-only discovery or settled idle, and one per
+exact receiver invalidation, not one per native Turn: a Turn can commit several
+distinct source facts, and each admitted range still has one source-detail loader.
+
+Source publication hands Session-original ranges to the daemon's destination
+Session context. The receiver's retained requester owns original scheduling for
+both source offers and receiver catch-up; the source requester's separate rule
+cache does not admit that receiver's originals. Overlapping offers and unchanged
+redelivery therefore share one Pending admission, while a distinct source Turn
+still creates its own input. Pending retains its existing local-id idempotency.
+
+In 0.3 development, the Account daemon also retains rule definitions, defaults
+and scoped receiver-progress discovery across ordinary source arrivals. Rule
+changes refresh configuration once. The admitted observation retains scoped
+progress for Session receivers whose membership, inception and source frontiers
+are unchanged; an Account-only rule edit does not make each source re-read the
+rule endpoint. New Session membership or changed inception/progress still needs
+its server-owned first-range discovery. Reconnect or an exact accepted-progress
+receiver push withdraws the affected projection. Concurrent demand shares its
+next read. Neither a generic Session arrival nor an unrelated receiver push
+reloads that projection. Traversal still reads the current source tail and final
+delivery still proves original, progress, access, mute and currentness authority;
+the retained projection is discovery, not an admission grant.
+
+The existing content-free request-completion log distinguishes inactive receiver
+recovery (`session-follow:receiver-recovery`) from the final fresh check for a
+manager waiting Turn or a selected ordinary/manager/rule stalled Turn
+(`session-follow:manager-turn-admission`). These
+labels are diagnostic only and do not supply admission authority.
+
+Ordinary followers, managers and rule-only receivers can consume a selected
+stalled Turn through the existing no-original V1 observation and provider-accepted
+frontier ACK. A selected wake can resume an eligible inactive receiver; next-turn
+delivery waits for ordinary input. Selection alone neither writes a Pending input
+nor advances delivered progress, and an explicit Stop still holds automatic wake.
+
+For rule-only delivery, the admitting Account daemon evaluates its
+private rules; the existing private rule `sources[]` progress entry retains the
+selected presence fence and delivery decision without advancing `delivered`.
+Home projects only `relation: 'rule'`, aggregate `effectiveDelivery`, the exact
+presence/Turn witness and public frontier facts. Rule ids, versions, filters and
+private progress do not enter the no-original observation, source-key control,
+wake event or ACK. Rule edits/removal, delivery mute and recovered presence
+withdraw pending selection. Overlapping physical and rule routes share one
+worker card while acceptance settles every represented route.
+
+This is an unreleased 0.3 extension of the closed Follow V1 wire objects, not a
+new npm-version or wire epoch. Current readers still accept physical V1
+observations; the new authority-bearing rule arm requires matching current
+producer and consumers. The inspected 0.2 predecessor has no such no-original
+Follow seam, so no reverse-development adapter or additional persisted store
+is introduced. The private progress endpoint's `accepted` result admits pending
+selection only; delivered progress still requires the provider-accepted ACK.
+
+The projection writer distinguishes Pending bookkeeping, metadata-only and
+runtime-activity projection writes from source changes. Those writes still
+refresh ordinary Session readers without invalidating outgoing Follow receivers;
+Agent-state, transcript, Turn and lifecycle changes retain source invalidation.
+
+The same distinction reaches the installed and requester daemons on the existing
+Account change feed. A projection-only hint carries `followSourceChanged: false`
+and `followSourceUnchangedSinceCursor`, the existing Account cursor before that
+run of projection writes. The AccountChange publication owner preserves that
+cursor when later title/read projections coalesce. A daemon skips source-rule
+discovery and range traversal only after its feed has consumed that preceding
+cursor; an unseen original coalesced under a later title still demands traversal.
+Unknown or older hints retain ordinary source recovery. A metadata-only
+notification therefore performs no Follow GETs, while a committed source message
+still traverses its range. This adds no retained daemon snapshot or signal, and
+does not change Pending custody, original admission or delivered frontiers.
+
+The Account-lifetime original scheduling owner retains unfinished admission and
+selection decisions, indexed by source and receiver. Accepted Pending/Message
+custody and applied Follow frontiers remain authoritative: the dispatcher retires
+scheduling entries only from the common applied frontier of the contributing
+routes, including its actual terminal Turn witness. That witness also excludes
+the consumed Turn from reselection. An unrelated source push therefore visits no
+other source's scheduling entries, while admitted work without its applied
+witness remains retained. Scheduling settlement never creates a delivery ACK.
+
+The same Session push carries the content-free advisory
+`followReceiverAvailabilityChanged` decision. Publisher registration, retirement,
+access-loss retirement and active/inactive transitions set it. An active publisher
+touch (the released 60-second heartbeat of an already-active Session) changes no
+durable row fact: it persists only the liveness fence (`lastActiveAt`) and writes
+no AccountChange or Account cursor. Its current publication audience, including
+shared viewers under the realtime publication policy, receives the new `activeAt`
+as the `activity` ephemeral without `thinking`, which keeps their 120-second runtime
+freshness without a catch-up read. Inactive → active recovery still publishes. 0.3
+does not keep the earlier durable heartbeat for released 0.2 viewers (0.2 and 0.3
+components are not mixed).
+
+The AccountChange owner OR-coalesces availability and retains its original
+Account cursor in `followReceiverAvailabilityChangedAtCursor`. Readers release a
+receiver-held original only for that receiver's unconsumed availability event,
+an exact Run push, or Account reconnect/full recovery. A consumed event retained
+under a later title is false for that reader. Follow receiver-progress hints
+cannot release receiver-held admissions. Older servers omit the field; only an
+own-receiver change with held work permits `legacy_unqualified` recovery.
+Neither hint grants input authority or advances accepted progress. Stop publishes
+availability when the runtime becomes inactive; Resume publishes it when the
+runtime registers its publisher again. Clearing explicit-stop metadata requires
+no separate Follow cue. Final admission still rechecks the receiver's stop and
+publisher state.
+
+Terminal Session Follow in 0.3 development selects the host's persisted Turn
+before merging ordinary, manager and matching-rule routes. The exact
+`sourceTurn: { id, status }` determines `finished` for a completed Turn and
+`failed_or_stopped` for a failed or cancelled Turn. Native ready timing does not
+create another original; silent host-loss failures use the same Turn path.
+Waiting requests and observed stalls remain separate source facts. Hydration
+opens only the selected Turn's anchored final message and cannot reclassify its
+outcome from a later Session or review-Run state.
+
+Current policy is rechecked at the effect boundary. A private rule's exact
+selected delivery vote stays with its pinned-version admission witness; the
+server combines surviving votes with current ordinary/manager policies without
+opening private rules. Its effective mode controls wake versus natural-turn
+intake separately from the immutable original receipt. Native ordinary personal
+failure fallback uses the same verified Turn and real publisher proof, retaining
+the incumbent Activity eligibility owner without granting unavailable private
+rules or creating Session delivery effects.
+Failed/cancelled native markers retain their existing committed receipt in the
+host's per-Turn transcript state. Only after the host terminal mutation persists
+does that owner notify the incumbent daemon/Activity path; append callbacks no
+longer announce those terminal facts early. A deferred append reuses its existing
+commit observation and Session lifetime, without delaying Turn retirement or
+adding notification durability.
+
+Source-owned Account private terminal effects additionally retain the native
+terminal receipt as `terminalSourceMessage: { localId, seq }` in personal progress.
+The exact committed record and verified Turn/status are checked together. The
+existing Account rule `delivered.readyEventSeq` orders these current-state cues:
+an older or equal terminal sequence has no effect and cannot replace a newer
+cue. This does not advance transcript-prefix progress or promise delivery of
+every historical Turn. Without that receipt, source-owned Account private effects
+fail closed; off-source host-loss recovery remains receiver-owned under C1 §4.5,
+and existing server explicit alerts and UI Inbox projection are unchanged.
+
+In 0.3 development, Follow Inbox rows remain derived: the Activity dispatcher
+does not write a private notice Artifact for a Follow occurrence. Follow progress
+records source acceptance, not an outward channel receipt. The existing
+`dispatchActivityNotificationAsync` owner writes one INFO-level file record,
+`[activityNotifications] Dispatch outcome`, for each dispatch, including a quiet
+zero-attempt result or a preparation failure. Read the JSON after that marker in
+the serving daemon's log, or the owned runner's log when its rich notification
+owner sends. Correlate `sourceSessionId` with `sourceTurnId`, or
+`sourceMessageSeq` for a committed ready original; `occurrenceId` reuses the
+canonical opaque Follow occurrence key when one exists. Channel counts and
+per-channel ids/status/cause codes contain no notification content or endpoints.
+`deliveredChannels` means adapter/provider acceptance, not device display;
+`failedChannels` means no acceptance was confirmed for that attempt, not proof
+that a remote effect could not have occurred. A missing record remains unknown,
+including while dispatch is pending or INFO logging is disabled. An Important
+completed Turn is quiet and can correctly report zero outward attempts; that
+record does not independently prove the derived Inbox row was displayed.
+
+The channel catalog is the Account's independent `notification-channels` entity
+row, not the plugin contribution registry. Daemon warm-up is process-local;
+runner preference bootstrap alone does not load this row. Activity dispatch
+demands a missing/loading catalog through the existing Account catalog loader
+only for its captured, still-current Account lifetime and matching credentials.
+Explicit supplied catalogs and unavailable/partial results remain fail-closed;
+dispatch never substitutes legacy preferences or an empty channel list. Catalog
+preparation failure occurs before selecting push, webhook or plugin channels,
+so zero attempted channels with a cause is not a successful quiet result.
+
+Personal receiver evaluation in 0.3 development uses the captured app Account
+lifetime and the same pure Protocol rule evaluator as the source daemon. Private
+definitions retain the census reader's Home, Account, credential and mode checks;
+originals use current Session read access and that Session's actual content keys.
+Same-Account source-produced originals remain source-daemon work. The
+receiver-person observation and personal-progress arms carry exact original and
+rule-version identities without claiming Machine or publisher authority. The
+server verifies foreign Session ownership, read access, the caller's private
+rule, mute, inception and existing progress before accepting an effect. Replay
+and a second device share that per-rule progress; no enrollment or delivery log
+is added. A recovery claim without a server-known recovery fact remains pending
+as `recovery_unverified`; terminal status or an absent publisher alone is not
+such a fact. Known receiver-evaluated pending work uses “Waiting for an authorized
+device” while its authorized app lifetime is unavailable. For never-read sources,
+the personal read-state owner projects a boundary for each exact rule version
+from its existing inception. Originals before that boundary stay excluded; later
+originals count as unread until the viewer's normal read or mark-read advances the
+existing private cursor. The app selects only its currently matching rule's
+projected boundary and policy. No initial cursor, Follow enrollment or receipt
+store is written, and disabling, deleting or changing the rule removes its future
+match contribution. The app withholds personal progress until the incumbent
+Activity-to-Inbox classifier represents the original. Loaded-runtime replay and
+the presentation look-check remain integration work, not release claims.
+
 In development source, configured Execution Run and Workflow Run follows read
 the Run's own original through the Follow occurrence-route owner.
+The Account daemon retains only active Run/Discussion Follow interests in its
+existing Account list projection. Reconnect and Follow configuration changes
+refresh that projection; a recreated Account lifetime loads it on first demand.
+Session arrivals select only that Session's Run interests from the projection,
+without another Follow-list request or an inventory scan. Exact Run/output,
+Workflow and Discussion changes retain their source-scoped reads. These interests
+select discovery work only: current source, policy, access and accepted progress
+remain decisions of the occurrence-route and personal-delivery owners.
 Execution Runs retain their terminal occurrence id, including recovered host
 loss; Workflow Runs retain their revision and typed state. An Execution Run source
 has exactly one anchor: its Session, or its Machine for a detached Run with no
 Session. Both use the existing Machine frontier RPC and current source admission;
 a Machine anchor never fabricates a Session or borrows another Run's identity.
+For a Session-backed Run on a shared Machine, the Session owner remains the
+placement/read principal, while transport targets the Machine's actual custodian
+Account. The frontier witness rechecks custody, installation, committed placement
+and publisher before mutation or acknowledgement; the request stays Session-bound.
+An unavailable Run frontier is held by the existing Account-lifetime route reader,
+not re-probed by unrelated arrivals or rule changes. On the existing Run occurrence
+route, `includeTargetMachineId=true` opts into an optional `targetMachineId` on an
+authorized Session-backed `409/source_unavailable` refusal. It comes only from the
+same canonical committed placement decision used by that read, never Session metadata
+or a caller-supplied target. A held Run with this hint resumes on its own Machine's
+reconnect, its exact `execution-run-updated`, or actual Account reconnect/full recovery.
+A fieldless refusal retains broad Machine recovery, including with an older server.
+Old daemons omit the opt-in and receive the unchanged response their strict parser accepts.
+The optional closed `releaseReason` query records `exact_run`, `target_machine`,
+`account_reconnect`, `full_recovery` or `legacy_broad` in the existing
+`followSourceRoute` completion record; it is a caller diagnostic, not an authorization
+or availability fact. Neither query changes the strict request body or adds a poll.
 Detached Run admission follows the existing custodian-only Run get/list policy;
 general shared-Machine access does not grant private Run inventory or permit
 its disclosure into a Session with a broader audience.
+A Session's `execution-run-updated` carries Run state and content-free turn
+witnesses (ids and state). The server reads this frame in clear in every Account
+mode, so a turn's result stays on Run reads and the transcript, and the server
+refuses a frame that carries one.
 Detached semantic Run changes reuse `execution-run-updated` with only Machine
 and Run identity for the custodian Account. The server admits the current
 Machine installation and credential; it neither publishes a detached Session
@@ -300,8 +647,31 @@ advances or fabricates a terminal cursor. Source notifications
 and receiver reconnect both use that read. Session receivers then use the shared
 policy and Pending admission. They do not substitute a parent Session's transcript frontier for a
 Run result. Repeated observations reuse the original's destination-scoped input
-identity; accepted input and source-owned progress determine replay. Mute,
-source access and destination admission are checked again before delivery.
+identity; accepted input and source-owned progress determine replay. In 0.3
+development, mute, source access and destination policy are decided at new
+original admission. Retained bounded delivery uses the original's admitted
+custody and exact publisher identity; policy withdrawal applies to the next
+admission, while explicit Stop still holds execution.
+In 0.3 development, a Session-backed Run's admitted terminal observation also
+carries a WorkerUpdate made from that exact retained status, source pointer and
+existing sanitized runtime-issue recovery facts when reported. The Follow source owner rechecks the terminal occurrence through
+the same Machine frontier read; failure, cancellation and timeout remain distinct.
+The receiver renders the outcome through the existing WorkerUpdate prompt/card
+path, within its existing Follow context allowance, and acknowledges only after
+that exact input is accepted. Missing source evidence or insufficient context
+keeps the original pending. This projection carries no result body, deliverables,
+keys or native Run-read authority; source inspection still requires an
+independently authorized read. Sender notices and final provider input share that
+informational instruction. This is development source, with loaded-runtime replay
+still required.
+The public Follow set/get/list and reverse inspection use that same retained Run
+frontier for availability, never relation membership alone. A known running Run
+without attention has no pending original; an undelivered terminal or permission
+original is pending until its existing acceptance/progress owner settles it.
+Missing current source evidence leaves availability unavailable and pending
+unknown. Reads probe only authorized selected Run sources outside database
+snapshots, then readmit the source and viewer before returning. This projection
+adds no source-content access or background polling.
 Run wake admission uses the receiving Session's most recent protected,
 person-written input as its existing check-in root, not a later agent input's
 inherited source root. Without a person input, the exact Run occurrence's
@@ -317,7 +687,10 @@ For supported Account occurrences, the captured authorized Account daemon uses t
 dispatcher and source-owned personal Follow progress. That acceptance advances
 the Run cursor and admits one outward channel attempt; channel success is not
 the acceptance fact. Inbox Run rows stay derived from the Run owner's attention
-projection and recede when the owner settles them. Run Follow does not write a
+projection and recede when the owner settles them. A demanded Run roster retains
+last-known rows across refresh failures and publishes loading and failure alongside
+them; an unavailable baseline or refresh cannot make Inbox report caught up.
+Run Follow does not write a
 private Account notice with an independent lifetime, and retired development
 Run notice copies are no longer admitted as Inbox notices. A crash after source
 acceptance can leave the source-backed Inbox state without a channel alert.
@@ -329,8 +702,18 @@ revision; a sibling output or the enclosing Run settling is not that occurrence.
 The source reader captures pending revision baselines and catches up an already
 settled selection when no later-revision boundary was requested. Accepted
 one-shot identities remain in that Follow row as source-backed Inbox receipts
-until opened or cleared; they are no longer active routing interest. Clearing
-receipts with `clearOnceDeliveries: true` does not remove armed intents or change
+until opened or cleared; they are no longer active routing interest. A failed
+source read is not a receipt deletion. In 0.3 development, a
+typed Execution Run source-unavailable or read-transport outage retains an already-admitted terminal header and
+its fulfilled notice within the same Account lifetime, while reporting partial
+source coverage. This receipt-header retention does not add stale running
+activity or permission rows. An access refusal, malformed response or unknown
+failure withdraws the header; it cannot preserve content across an access change.
+A cold Inbox still needs the Run owner's readable header: the private receipt
+contains an occurrence identity/outcome, not a copied title, content or time.
+Run activity and Home reconnect re-read that source; successful recovery projects
+the same receipt once without a new Follow acceptance or Artifact write.
+Clearing receipts with `clearOnceDeliveries: true` does not remove armed intents or change
 the persistent policy. Replacing the armed-intent array preserves unrelated
 fulfilled receipts; explicitly rearming the same intent replaces its receipt.
 `once: null` explicitly clears all Run convenience custody.
@@ -410,6 +793,21 @@ and Discussion participant delivery must consume this same read at their own
 integration boundaries; their source files are not evidence of those consumers
 being live yet. There is no released 0.3 Mute UI claim here.
 
+Session- and Run-source Follow observations remain settlement demand while muted; they
+do not authorize hydration or a model turn. The final Pending owner validates the
+original's current source, receiver and route authority, retains suppression in
+the existing discarded input under `session_input_muted`, and settles its existing
+relation/rule or Run terminal/revision progress. Permission originals retain their
+exact discarded input identity without advancing the Run's terminal cursor.
+Removing the mute cannot requeue that original, including
+an open question whose Agent-state carrier later changes. Suppressed custody has
+no effective delivery and no native acceptance; it cannot prepare a source key
+or hydrate source context. It is hidden from the receiver's discarded-input
+history, while the sender keeps the muted outcome. A fresh eligible original
+after removal uses the ordinary admission path. This is development source
+behavior; the composed loaded-runtime and Discussion-participant closure remain
+separate validation obligations.
+
 ## First-class Home Discussions (development)
 
 The 0.3 development refactor makes a Discussion an independent Home resource, with its
@@ -437,12 +835,29 @@ policy used by Artifacts. View reads, edit posts, and owner/admin manages the re
 Self-leave removes only the caller's direct grant; inherited Team/Group access can remain.
 The owner must transfer ownership or archive instead of leaving an ownerless resource.
 
+In development source, Account automation may publish with Account authorship into
+a Discussion that Account owns. The native Action approval policy still applies;
+approval preserves `account_automation` rather than elevating the requester.
+This requires the owner's own unscoped credentials; a credential carrying
+Session content-disclosure scope cannot use the Account-publisher alternative.
+Non-owner automation gains no publishing permission from this path. Session
+publishers still require their own participant admission and answer policy; an
+Account-owned Discussion does not authorize an uninvited Session to speak.
+
 Selected committed messages use exact selection on the existing `discussion.read`
 owner rather than scanning conversation history. Reply ancestors and approved-publication
 recovery retain fresh Discussion access and key acquisition; a protected question's
 `throughSeq` ceiling is applied before disclosure. Local retry IDs are readable only
 for the authenticated author's messages. This is the current undeployed 0.3 contract,
 not a compatibility adapter or a second message cache.
+
+In unreleased 0.3 source, signed native `discussion.read` and
+`discussion.attachment.read` requests carry the selected Discussion through
+the existing Action root. The HTTP preparation owner admits its summary/key read;
+attachment decoding also reads the exact committed message and blob reference
+before downloading and verifying bytes. That attachment proof does not authorize
+a history scan, another Discussion, a roster read or a write. Missing
+scope, access or keys stays a typed refusal, never a plaintext fallback.
 
 Clients capture the Home/Account scope with `{serverId, discussionId}`. Create and first
 post have separate retry identities, retained across an uncertain response. A raw Discussion
@@ -481,6 +896,27 @@ Session-addressed drafts remain stored and are not read at the new Discussion ad
 
 ### Discussion client data and controls
 
+In unreleased 0.3 source, Get a second opinion and Discuss open the shared
+[Start pane or sheet](app-shell-panes.md), including in transcript hosts without
+pane columns. The inline participant, recipe and Where controls prepare the
+existing opinion request. Ask retains the source-disclosure preview and pending
+approval; only an accepted result replaces Start with the Discussion. The source
+marker reopens that result. Quoted source and the request controller remain
+memory-only while their pane lives: after a reload, reopen from the source
+answer if the retained request is unavailable.
+
+Starting a Workflow from a Discussion likewise keeps its configuration and
+accepted Run in that Details destination. The existing Workflow controller owns
+reviewed inputs and pending submission across dismissal; the Discussion adapter
+keeps report-back and draft currentness. Ordinary Discussion creation, replies
+and prepared text sent to a Session continue through their existing owners.
+
+In unreleased 0.3 source, `DiscussionWaitingApprovalCard` uses the shared
+approval prompt and inline decision footer also used in the transcript. A
+private Discussion draft offers **Post** and **Decline**; **Review** opens the
+full request. The card consumes the same decision owner and does not create a
+second publication path.
+
 Development file attachments consume the Session intake, file/folder source model,
 draft manager and inline-token owners. A folder retains relative leaf paths and empty
 directories; Home stores its private physical leaves under the committed message's
@@ -507,8 +943,25 @@ metadata with its existing installation identity. The upload route checks the
 current Machine/Session binding before byte intake and again in the prepared
 message transaction, then derives the same Agent producer and applies the same
 Discussion access, draft-review and reply-return rules as ordinary publication.
+Signed uploads accept Account and paired-daemon terminal bearers through the
+same installed-publisher admission as Machine socket publication: current
+Machine custody, installation and original Session authority remain required.
+Signed Action roots do not substitute for that carrier. For reviewed posts,
+the mutation owner also requires a non-deleted built-in approval Artifact in
+the publishing Account and producer Session; the daemon validates its private
+decision and exact approved Discussion input before signing the upload.
 An external credential alone supplies neither this host attestation nor upload
 authority. No separate attachment writer, credential or staging store is added.
+
+Reviewed post/reply preparation uses the deciding person's Account for current
+resource and key reads, including when the decision arrives through the signed
+daemon ingress. That ingress must carry the matching Artifact's signed `approve`
+admission and the original Home, Account and Machine. The original Session's HTTP
+carrier remains immutable approval provenance; it is withdrawn from these replay
+reads so a retired turn cannot block the reviewed upload. The host still reopens
+the executing approval and compares the exact content, blob identities and file
+sources before reading bytes. This does not admit an unapproved or unrelated
+external credential.
 
 An attachment is not addressing. For an admitted Follow original, final normal/steer
 preparation rereads only the exact question and its admitted reply ancestors through
@@ -630,6 +1083,14 @@ excludes already admitted people and backing Sessions; candidate labels and read
 display facts, not permission to invite, start work or disclose content. The hook runs only
 when selection is demanded and retires with its captured Account lifetime.
 
+In 0.3 development source, that same inventory carries the admitted Session Bot marker
+into the shared Invite/Ask presenter. Bots follow ordinary Sessions and use the Bot chip;
+Ask retains its model-first ordering. Promotion and demotion update the candidate's display
+identity without a second inventory or per-row read. A Bot still selects the same concrete
+Session through `discussion.invite`; its marker changes neither access nor source-disclosure
+admission. The existing second-opinion preview defaults foreign runtime Accounts to quote-only
+and own Sessions/model choices to source read, with disclosure still confirmed on Ask.
+
 Session invite/reviewer candidates retain the ordinary Session display `label` and
 expose `titleReadable`, derived by the existing Home-qualified
 `readableSessionDisplayTitle` owner. A locked placeholder is not a readable title;
@@ -694,6 +1155,18 @@ envelope retain that absence. Neither case becomes guessed plaintext. The server
 `projectDiscussionsForViewerInTx` resolves and admits any independent Doc source before
 including the envelope. Revoked or deleted Doc sources leave authorized Discussion metadata
 readable while omitting that message body; a Discussion grant alone cannot disclose it.
+
+Development summaries also carry write-time, server-visible non-content facts:
+`roundOutcomeV1` identifies the latest admitted Fresh opinions or Answer + review Run,
+with its answer count, synthesis presence and settled state. Workflow admission and
+accepted progress writes maintain it; a superseded Run cannot overwrite a newer round.
+Fresh-opinion counts become known at the existing outcomes projection, not on each
+individual answer arrival. `openCommentCount` counts passage roots matching a Doc anchor;
+ordinary replies and same-identity retries do not increment it. Archive projects zero,
+and restore exposes the retained count. `doc.read` consumes the same count through its
+existing admitted summary pages. Unknown or missing count facts remain unavailable.
+These fields contain no title, question, answer or other user text, and list reads
+select them with the existing Discussion page without per-row reads.
 
 In development source, executable reads also retain the destination Session from the
 verified signed Session Action original or restricted runtime principal. Before returning
@@ -807,14 +1280,24 @@ Home is not the viewer.
 
 Development summaries also carry optional `participantAccounts` and
 `participantSessionIds` display facts, batched with the existing list projection.
-The people are the owner and explicit Account invitees, including people who have
-not posted; Team and Group grants do not expand into private member identities.
+The people are the owner, explicit Account invitees, and Accounts already disclosed
+by this Discussion's messages as authors or qualified requesters. Team and Group
+grants do not expand into private member identities, so a member who has never
+participated remains absent.
 Agent references name active bound Sessions and use the existing admitted Session
 presentation. Sanitized Account profiles come from the shared Account actor
 projector. Omission means the producer has not supplied roster display facts;
-recent authors are not a substitute for current participants. These facts grant
-no additional access, and removed participants disappear on the next admitted
-summary refresh.
+recent-author metadata is not a second participant inventory. These facts grant
+no additional access. An explicit invitee who never participated disappears after
+removal; a disclosed author or requester remains available as a historical actor.
+
+Historical Discussion message and requester actors use that same projector with
+the Discussion access owner's current audience. The optional `accessibility`
+fact is `former` when the historical Account is no longer in that audience even
+if its neutral profile remains readable; the shared Account presenter then uses
+the existing Former member label. It is display-only and cannot admit a read or
+mutation. Rejoining through a Team or Group grant changes that disclosed actor back
+to `current`; it does not reveal other members of the collective grant.
 
 ### Public Actions and composer integration
 
@@ -854,6 +1337,14 @@ Current source shares `HappierThreadMessage` and `HappierReplyQuote` from
 `packages/plugin-ui/src/presentation/content/**` between core and external
 plugin adapters. The Doc passage adapter consumes already-opened C5 content;
 an unavailable source carries no cached quote text or navigation callback.
+The passage form's filled box belongs to `HappierReplyQuote` itself, so core's
+second-opinion and annotation passages and plugin passages share one anatomy.
+`HappierAccountByline` (`packages/plugin-ui/src/presentation/account/**`) is the
+one transcript byline presenter: core's `SessionMessageAccountByline` binds its
+visibility rule, localized name and avatar to it, and the public `AccountByline`
+localizes a classified label (Protocol `classifyAccountActorLabelV1` kinds) through
+the host-reserved `happier.plugin-ui.accountActor.*` strings. Classification stays
+in Protocol; visibility, approval and currentness stay with the app.
 Discussion controls, regions and reference declarations consume the Account app-shell declaration union,
 Administration's selected per-plugin execution origin and the daemon's existing
 Composer renderer catalog. They do not infer an execution Machine from the
@@ -895,6 +1386,12 @@ the key-holding client opens the exact committed assistant answer or Doc passage
 through its ordinary reader. Missing or mode-mismatched E2EE material is an
 error, never a plaintext or quote-only fallback. Non-Voice source reads do not
 inherit Voice's transcript-sharing preference.
+
+For a historical owner-readable E2EE Session with no recipient-envelope tuple,
+preview permits the same Account-key read attempt as ordinary Session hydration.
+It still requires current Account key readiness and a successful exact transcript
+opening; a present invalid envelope, non-owner access or mode mismatch cannot use
+that compatibility path. Notification previews retain their stricter key rule.
 
 Session sources select their known committed `messageId` through the existing semantic
 `session.transcript.get` owner, rather than paging transcript bodies. Preview and Ask each
@@ -1181,6 +1678,15 @@ entitled reviewer uses the existing approval decision/replay path; publication
 retains the original Agent identity and rechecks current participant, reviewer,
 Discussion grant and key readiness. The draft body stays in the approval
 Artifact, outside the public Discussion message history.
+For a Discussion Post, the reviewing client hands the decision to the exact
+daemon before recording consent. That daemon owns the approval transition and
+publication together; leaving the review page cannot interrupt a separate
+browser-owned consent-to-replay step.
+After Home authenticates and accepts the decision's strict HTTP envelope,
+disconnecting that reviewing client ends observation, not the daemon's decision
+or publication. The daemon still validates the exact approval, current authority
+and original custody; this does not guarantee delivery of a request the client
+never sent or survive daemon termination.
 Its immutable `discussionDraftReview: true` presentation fact distinguishes an
 open deliberate draft from ordinary Action confirmation in the private Inbox;
 it grants no decision or publication authority.
@@ -1215,6 +1721,34 @@ pre-publication refusals remain typed. A failed read-only preparation request re
 `discussions_unavailable` (or `cancelled` when that read is aborted), not publication
 uncertainty: no append has been attempted. An uncertain append acknowledgement remains an
 unknown outcome under the same original retry identity, not another approval or a wake.
+
+The development original-input progress keeps return publication separate from the native
+answer in `returnPublication`. A closed failure records its code, phase and retryability;
+a definite refusal releases only publication custody, preserving the completed native
+result. The original question projects that participant's failed return through its
+existing delivery-status row. Transient failures retain pending custody without another
+publication attempt from duplicate hints; the existing transport reconnect or an advancing
+native result can make recovery eligible again. No reply-specific timer is added.
+An unknown feature probe remains unavailable and retryable; a proved disabled feature
+or absent endpoint remains unsupported. Admission still fails closed in either case.
+An `approval_pending` result retains the exact approval Artifact instead of repeatedly
+executing the same Action. Its approved replay owns publication. Reject or Cancel of
+ordinary Action confirmation records an exact-Artifact publication refusal and preserves
+the native answer. Deliberate draft review retains its distinct typed decline outcome.
+If approved publication fails, replay records the typed failure on that same original
+through `discussion_publication`, bound to the exact approval Artifact. Withdrawing
+speaking policy before Post therefore exposes `discussion_answer_policy_denied` on the
+original question without posting the draft. Retryable failures release the approval
+hold into ordinary pending return recovery; repeating the decision can finish a lost
+settlement acknowledgement without repeating publication or the resource change.
+Workflow publication-state changes use the existing original-reply hint with its captured
+`workflowRunId`, addressed to the original Machine. Equal writes emit no new hint. The
+existing Workflow recovery callback carries that exact Run through the recovery reader
+and storage query, preserving Account, assigned Machine and pending-custody admission.
+Concurrent hints retain every distinct Run; an unrelated hint never retries a held
+non-Session result. Startup, reconnect and explicit resume retain broad recovery.
+Missing-receipt diagnostics identify the original input, question and admitted turn using
+content-free fields, so a refusal can be correlated without logging the answer body.
 
 Reviewed post/reply replay uses that same `discussion-agent-post-v1` event's closed
 `approved_replay` Machine carrier. The installed owning daemon validates the executing
@@ -1330,8 +1864,11 @@ question/participant/cutoff tuple. Happier-supplied context and `discussion.read
 cannot exceed that cutoff, and provider dispatch rechecks the original custody.
 That recheck reads the original's settled authority and exact admission receipt:
 initial settlement deliberately removes the untrusted request metadata. It
-retains the original authority and encrypted content while revalidating current
-permissions, mute, participation and Pending admission. It does not restore a
+retains the original authority and encrypted content without re-evaluating
+permissions, mute or participation for that admitted original. Pending still
+checks its exact destination, publisher identity and active custody; an exact
+settled original uses its retained exchange state rather than a fresh check-in
+preference. New originals retain current admission checks. It does not restore a
 request into the transcript or treat authority-free held custody as admitted.
 Two queued questions retain separate contexts rather than merging their
 cutoffs. These checks cannot erase content already ingested by a retained native

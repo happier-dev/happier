@@ -7,6 +7,7 @@ export type CodexAppServerErrorPayload = Readonly<{
   transportFailureWithoutResponse: boolean;
   httpStatus?: number;
   providerErrorCode?: 'model_not_found';
+  requestId?: string;
 }>;
 
 export function readCodexAppServerErrorPayload(
@@ -79,7 +80,9 @@ export function readCodexAppServerErrorPayload(
     }
   }
 
+  const requestId = trimStringValue(error.requestId ?? error.request_id);
   return {
+    ...(requestId ? { requestId } : {}),
     message:
       trimStringValue(error.message) ??
       (value instanceof Error ? value.message : null),

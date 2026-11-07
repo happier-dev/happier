@@ -1,6 +1,6 @@
-import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunPublicStateSchema, type ExecutionRunSessionUpdateState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { projectExecutionRunRequestedConfiguration, projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import type { ExecutionRunState } from './executionRunTypes';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
@@ -34,6 +34,7 @@ export function projectExecutionRunPublicState(
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
     ...(resolvedSelection ? { resolvedSelection } : {}),
     permissionMode: run.permissionMode, retentionPolicy: run.retentionPolicy, runClass: run.runClass, ioMode: run.ioMode,
+    approvalProfileId: run.approvalProfileId ?? null,
     status: run.status, lifecycle: resolveExecutionRunLifecycle(run, controller).projection,
     ...(run.inputTurns ? { inputTurns: run.inputTurns } : {}),
     ...(typeof turnInFlight === 'boolean' ? { turnInFlight } : {}),
@@ -43,4 +44,18 @@ export function projectExecutionRunPublicState(
     startedAtMs: run.startedAtMs, ...(run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}),
     ...(run.finishedAtMs !== undefined ? { finishedAtMs: run.finishedAtMs } : {}), ...(run.error ? { error: run.error } : {}),
   });
+}
+
+function projectInputTurnWitness({ result: _result, error: _error, ...witness }: ExecutionRunInputTurnV1) {
+  return witness;
+}
+
+/** The server reads Session socket frames in clear, so turn content stays on Run reads and the transcript. */
+export function projectExecutionRunSessionUpdateState(run: ExecutionRunPublicState): ExecutionRunSessionUpdateState {
+  const { inputTurns, ...state } = run;
+  if (!inputTurns) return state;
+  const { occurrenceId, current, last } = inputTurns;
+  return { ...state, inputTurns: { occurrenceId,
+    ...(current ? { current: projectInputTurnWitness(current) } : {}),
+    ...(last ? { last: projectInputTurnWitness(last) } : {}) } };
 }

@@ -27,6 +27,23 @@ import { projectConnectedServiceRuntimeAuthTargetInput } from '../runtimeAuth/pr
 import { validateConnectedServiceGroupMutationCurrentness } from '../accountGroups/generation/validateGroupMutationCurrentness';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { logger } from '@/utils/logger';
+import { readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { createExecutionRunConnectedServicesBridge } from '../runs/executionRunMaterialization';
+import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { resolveExecutionRunConnectedServicesEnv } from '@/agent/runtime/bridges/executionRun/runtime/connectedServicesEnv';
+import { projectExecutionRunError } from '@/agent/runtime/bridges/executionRun/errors';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { requestExecutionRunConnectedServicesMaterialization } from '@/daemon/controlClient';
+import { isValidConnectedServiceRunMaterializeToken } from '../runs/capabilityToken';
+import * as persistence from '@/persistence';
+import { switchSessionConnectedServiceAuth } from './switchSessionConnectedServiceAuth';
+import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
+import { createSessionConnectedServiceAccountAdoptionVerifier } from './sessionConnectedServiceAccountAdoptionVerification';
+import { createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { resolveSessionConnectedServiceSwitchContinuity } from './continuity';
 
 function qualifiedApiForRecord(record: ReturnType<typeof buildConnectedServiceCredentialRecord>) {
   const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(record.serviceId);
@@ -76,7 +93,215 @@ beforeAll(async () => {
 afterAll(async () => await runtimeFixture?.dispose());
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
-  afterEach(() => { vi.restoreAllMocks(); io.mockReset(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); io.mockReset(); });
+  it.each(['accepted', 'refused', 'unverified'] as const)('preserves the runner adoption result through an exhausted-account switch (%s)', async (outcome) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-account-switch-transport-'));
+    const sessionId = 'c1234567890123456789012345';
+    try {
+      materializationRecord = buildConnectedServiceCredentialRecord({ now: 1_000, serviceId: 'openai-codex',
+        profileId: 'healthy', kind: 'oauth', oauth: { accessToken: 'fixture-healthy-access', refreshToken: 'fixture-refresh',
+          idToken: 'fixture-id', providerAccountId: 'provider-healthy', providerEmail: null, scope: null, tokenType: null } });
+      const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId('openai-codex');
+      if (!service) throw new Error('Missing fixture service');
+      const api = qualifiedApiForRecord(materializationRecord);
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v4/connect/qualified/credential') return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+          ref: { service, accountId: 'healthy' }, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+          credentialRevision: CREDENTIAL_REVISION, configurationRevision: null,
+          content: { t: 'plain', v: materializationRecord }, metadata: { scopes: [] },
+        }) };
+        if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+        if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
+          id: sessionId, encryptionMode: 'plain', metadata: '{}', dataEncryptionKey: null,
+        }) } };
+        throw new Error(`Unexpected HTTP path: ${path}`);
+      });
+      const bindings = (profileId: string): ConnectedServiceBindingsV2 => ({ v: 2, bindingsByServiceId: {
+        [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId },
+      } });
+      const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: sessionId, pid: 123, spawnOptions: {
+        directory: root, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: bindings('exhausted'),
+      } };
+      let activeProviderAccount = 'provider-exhausted';
+      // The runner process boundary receives the real projected RPC request and
+      // returns its published apply result. No switch, adapter, codec or verifier is mocked.
+      bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: async (event, payload) => {
+        expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+        expect(payload).toMatchObject({ method: `${sessionId}:session.connectedServiceAuth.applyGeneration` });
+        if (outcome === 'refused') return { ok: true, result: { ok: false, errorCode: 'credential_revision_superseded', error: 'credential_revision_superseded' } };
+        activeProviderAccount = 'provider-healthy';
+        return { ok: true, result: { ok: true, appliedVia: 'direct_live_hot_auth', activeAccountId: activeProviderAccount,
+          ...(outcome === 'accepted' ? { verification: { providerAccountId: activeProviderAccount, activeAccountId: activeProviderAccount,
+            proofStrength: 'exact', source: 'applied_credential' } } : {}) } };
+      } }));
+      const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+      runtimeRegistry.registerTarget({ pid: tracked.pid, sessionId, agentId: 'codex', connectedServicesBindingsRaw: bindings('exhausted') });
+      const result = await switchSessionConnectedServiceAuth({
+        core: createConnectedServiceSessionAuthSwitchCore(), getChildren: () => [tracked], api,
+        qualifiedConnectedAccountApi: { readGroup: async () => null, listAccounts: async () => ({ service, accounts: [{
+          ref: { service, accountId: 'healthy' }, status: 'connected', authenticationModeId: 'oauth',
+          revisionSemantics: 'revisioned', credentialRevision: CREDENTIAL_REVISION,
+          configurationReady: true, configurationRevision: null, scopes: [],
+        }] }) },
+        materializeRuntimeAuthSelection: input => materializeSessionConnectedServiceRuntimeAuthSelection({
+          credentials: { token: 'fixture-token', encryption: null }, api: api as unknown as ApiClient,
+          activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+          connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings, processEnv: {}, input,
+        }),
+        resolveContinuity: input => resolveSessionConnectedServiceSwitchContinuity({ sessionId, agentId: input.agentId,
+          serviceId: input.serviceId, previousBinding: input.previous, nextBinding: input.next, tracked,
+          fromBindingsRaw: input.previousBindings, toBindings: input.normalizedBindings,
+          runtimeAuthSelection: input.runtimeAuthSelection, accountSettings: null }),
+        hotApply: createSessionConnectedServiceAuthHotApply({ runtimeRegistry }),
+        verifyProviderAccountAdoption: createSessionConnectedServiceAccountAdoptionVerifier(),
+        restartSession: async () => { throw new Error('Hot account switch must retain the runner'); },
+        persistSessionBindings: async () => {}, emitSessionEvent: () => {}, registerHotApplyTargets: () => {},
+        request: { sessionId, agentId: 'codex', bindings: bindings('healthy') },
+      });
+      if (outcome === 'accepted') {
+        expect(result).toMatchObject({ ok: true, action: 'hot_applied', verificationByServiceId: {
+          [CODEX_SERVICE_KEY]: { status: 'verified', proofStrength: 'exact', providerAccountId: 'provider-healthy' },
+        } });
+        expect(activeProviderAccount).toBe('provider-healthy');
+        expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('healthy'));
+      } else if (outcome === 'refused') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'credential_revision_superseded', diagnostics: {
+          serviceResultsByServiceId: { [CODEX_SERVICE_KEY]: { status: 'failed', errorCode: 'credential_revision_superseded' } },
+        } });
+        expect(activeProviderAccount).toBe('provider-exhausted');
+      } else {
+        expect(result).toMatchObject({ ok: false, errorCode: 'post_switch_verification_failed', diagnostics: {
+          verification: { reason: 'active_account_probe_client_unavailable' },
+          uxDiagnostic: { diagnostics: { reason: 'active_account_probe_client_unavailable' } },
+        } });
+      }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it.each([
+    ['revision', 'credential_revision_superseded'],
+    ['generation', 'shared_generation_application_superseded'],
+    ['member', 'shared_generation_application_superseded'],
+    ['missing', 'connected_account_group_unavailable'],
+    ['group-read', 'connected_account_group_read_unavailable'],
+    ['credential-read', 'connected_account_credential_read_unavailable'],
+    ['requester', 'requester_account_context_unavailable'],
+  ] as const)('retains the %s promotion refusal in the Run failure record without repeating the read', async (change, expectedCode) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-group-currentness-reason-'));
+    let app: ReturnType<typeof createDaemonControlApp> | undefined;
+    try {
+      materializationRecord = buildConnectedServiceCredentialRecord({ now: 1_000, serviceId: 'openai-codex',
+        profileId: 'backup', kind: 'oauth', oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh',
+          idToken: 'fixture-id', providerAccountId: 'provider-b', providerEmail: null, scope: null, tokenType: null } });
+      const api = qualifiedApiForRecord(materializationRecord);
+      const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId('openai-codex');
+      if (!service) throw new Error('Codex fixture service unavailable');
+      let promoting = false;
+      let refusedGroupReads = 0;
+      let refusedCredentialReads = 0;
+      // Observe the real filesystem publication phase at its file-log boundary.
+      vi.spyOn(logger, 'infoFile').mockImplementation((_message, fields) => {
+        if (fields && typeof fields === 'object' && 'phase' in fields && fields.phase === 'materialization_promotion'
+          && 'status' in fields && fields.status === 'started') promoting = true;
+      });
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v4/connect/qualified/group') {
+          if (promoting) refusedGroupReads += 1;
+          if (promoting && change === 'requester') throw Object.assign(new Error('requester_account_context_unavailable'), {
+            code: 'requester_account_context_unavailable' });
+          if (promoting && change === 'group-read') throw new Error('Home group read failed');
+          if (promoting && change === 'missing') return { status: 404, data: {} };
+          return { status: 200, data: { group: { v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-incarnation',
+            displayName: 'Pool', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+            activeConnectedAccountId: promoting && change === 'member' ? 'replacement' : 'backup',
+            generation: promoting && change === 'generation' ? 4 : 3, runtimeStateRevision: 1,
+            state: {}, members: [], createdAt: 1, updatedAt: 1 } } };
+        }
+        if (path === '/v4/connect/qualified/credential') {
+          if (promoting) refusedCredentialReads += 1;
+          if (promoting && change === 'credential-read') throw new Error('Home credential read failed');
+          return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+            ref: { service, accountId: promoting && change === 'member' ? 'replacement' : 'backup' },
+            authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+            credentialRevision: promoting && change === 'revision' ? 'csr_aaaaaaaaaaaaaaaaaaaaaa' : CREDENTIAL_REVISION,
+            configurationRevision: null, content: { t: 'plain', v: materializationRecord }, metadata: { scopes: [] },
+          }) };
+        }
+        throw new Error(`Unexpected HTTP path: ${path}`);
+      });
+      const credentials = { token: 'fixture-token', encryption: null } satisfies StoredCredentials;
+      const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+        [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'backup' },
+      } };
+      const requestAuthRegistry = createConnectedAccountRequestAuthSubjectRegistry();
+      const runnerIdentity = {};
+      const bridge = createExecutionRunConnectedServicesBridge({
+        captureRunnerIdentity: () => ({ identity: runnerIdentity, parentSessionId: 'session', isCurrent: () => true }),
+        acquireAgentPurposeContributions: async () => ({ contributions: runtimeFixture.registry.contributes,
+          isCurrent: () => pluginReloadController.isRuntimeRegistryCurrent(runtimeFixture.registry),
+          resolveAgentContributionIdentity: async () => {
+            const identity = runtimeFixture.registry.contributes.agentDefinitionsById.get('codex')?.identity;
+            const sourceCustody = identity && runtimeFixture.registry.readPluginSourceCustody?.(identity.pluginId);
+            return identity && sourceCustody ? { ...identity, sourceCustody } : null;
+          }, release: async () => {} }),
+        // Compose the real nested switch materializer used during Run preparation.
+        // No internal validator, codec, purpose lease, artifact fence or error projector is mocked.
+        resolveAuthForSpawn: async () => {
+          await materializeSessionConnectedServiceRuntimeAuthSelection({ credentials, api: api as unknown as ApiClient,
+            activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+            connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings,
+            validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input, credentials,
+              api: api as unknown as ApiClient, readGroup: () => readQualifiedConnectedAccountGroupV4({
+                token: credentials.token, group: { service, groupId: 'pool' } }) }), processEnv: {},
+            input: { mode: 'apply', sessionId: 'session', agentId: 'codex', serviceId: CODEX_SERVICE_KEY, previous: null,
+              tracked: { startedBy: 'daemon', happySessionId: 'session', pid: 123 },
+              next: { source: 'connected', selection: 'group', serviceId: CODEX_SERVICE_KEY, groupId: 'pool', profileId: 'backup' },
+              groupMetadata: { groupId: 'pool', activeProfileId: 'backup', fallbackProfileId: 'backup', generation: 3 },
+              previousBindings: bindings, normalizedBindings: bindings },
+          });
+          throw new Error('Superseded materialization unexpectedly published');
+        },
+        registerRunTargets: () => { throw new Error('Refused Run must not register'); }, unregisterRunTargets: () => {},
+        resolveRunMaterializedRoot: () => null, createAdoptedRootCleanup: () => null,
+        purposeBindingOwner: { activatePurposeBindings: input => ({ lease: purposeOwner.activatePurposeBindings(input) }) },
+        requestAuthRegistry, resolveRequestAuthHttpPort: () => 42427,
+        createRedactionLease: () => ({ add() {}, close() {} }), clearTerminalCleanupReceipt: async () => {},
+      });
+      app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
+        stopSession: async () => ({ status: 'not_found' }),
+        spawnSession: async () => { throw new Error('Refused Run must not spawn'); },
+        requestShutdown() {}, onHappySessionWebhook() {}, controlToken: 'fixture-control-token',
+        verifyRunMaterializeToken: provided => isValidConnectedServiceRunMaterializeToken(provided, 'fixture-control-token'),
+        materializeConnectedServicesForExecutionRun: (input, signal) => bridge.materialize(input, signal),
+        releaseConnectedServicesForExecutionRun: input => bridge.release(input),
+      } as Parameters<typeof createDaemonControlApp>[0]);
+      const controlApp = app;
+      vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: process.pid, httpPort: 43210,
+        controlToken: 'fixture-control-token', startedAt: 1, startedWithCliVersion: '0.3.0-dev' });
+      // Replace only the issued HTTP/OS discovery boundaries. Real routing,
+      // scoped authorization, refusal serialization and client parsing stay live.
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        const response = await controlApp.inject({ method: 'POST', url: new URL(String(url)).pathname,
+          headers: Object.fromEntries(new Headers(init?.headers).entries()), payload: String(init?.body) });
+        return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+      });
+      let failure: unknown;
+      try {
+        await resolveExecutionRunConnectedServicesEnv({ runId: 'refine-run', backendId: 'codex', backendSourceKind: 'built_in',
+          cwd: root, connectedServices: bindings, deps: {
+            runnerPid: process.pid, readCredentials: async () => credentials, resolveSessionSpawnDefaults: async () => null,
+            requestMaterialization: requestExecutionRunConnectedServicesMaterialization,
+            release: async input => await bridge.release(input),
+          } });
+      } catch (error) { failure = error; }
+      expect(promoting).toBe(true);
+      expect(projectExecutionRunError(failure)).toMatchObject({ code: expectedCode });
+      expect(refusedGroupReads).toBe(1);
+      expect(refusedCredentialReads).toBe(['missing', 'group-read', 'requester'].includes(change) ? 0 : 1);
+    } finally { try { await app?.close(); } finally { await rm(root, { recursive: true, force: true }); } }
+  });
   it.each([true, false])('keeps Claude resume state through two auth applications only with native-account authority (%s)', async (allowNativeAccountState) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-auth-apply-resume-'));
     const sessionId = 'auth-apply-resume';
@@ -287,16 +512,14 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       expect(await readFile(join(priorHome, 'sessions', 'unrelated-session.jsonl'), 'utf8')).toBe('unrelated-private-state');
     } finally { await rm(root, { recursive: true, force: true }); }
   });
-  it('withholds a requester credential when admission is lost during its authenticated read', async () => {
-    let current = true;
+  it('retains the admitted credential selection when permission changes during its authenticated read', async () => {
     const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
       [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'bob' },
     } };
     const record = buildConnectedServiceCredentialRecord({ now: 1_000, serviceId: 'openai-codex',
       profileId: 'bob', kind: 'oauth', oauth: { accessToken: 'bob-access', refreshToken: 'bob-refresh', idToken: null, scope: null, tokenType: null, providerAccountId: null, providerEmail: null } });
     const api = qualifiedApiForRecord(record);
-    vi.spyOn(axios, 'get').mockImplementation(async () => {
-      current = false;
+    const credentialRead = vi.spyOn(axios, 'get').mockImplementation(async () => {
       return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
         ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'bob' },
         authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision: CREDENTIAL_REVISION,
@@ -305,15 +528,19 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         } } }, metadata: { scopes: [] },
       }) };
     });
-    await expect(materializeSessionConnectedServiceRuntimeAuthSelection({
+    const params = {
       credentials: { token: 'bob-token', encryption: null }, api: api as unknown as ApiClient,
-      isCurrent: async () => current,
       input: { mode: 'apply', tracked: { startedBy: 'daemon', happySessionId: 'bob-session', pid: 123 },
         sessionId: 'bob-session', agentId: 'codex', serviceId: CODEX_SERVICE_KEY,
         previous: null, next: { source: 'connected', selection: 'profile', serviceId: CODEX_SERVICE_KEY, profileId: 'bob', groupId: null },
         previousBindings: bindings, normalizedBindings: bindings,
       },
-    })).rejects.toThrow('requester_session_not_current');
+    } satisfies Parameters<typeof materializeSessionConnectedServiceRuntimeAuthSelection>[0];
+    await expect(materializeSessionConnectedServiceRuntimeAuthSelection(params)).resolves.toMatchObject({ profileId: 'bob', credentialRevision: CREDENTIAL_REVISION,
+      credential: { oauth: { accessToken: 'bob-access' } } });
+    const refused = new Error('next credential acquisition refused');
+    credentialRead.mockRejectedValueOnce(refused);
+    await expect(materializeSessionConnectedServiceRuntimeAuthSelection(params)).rejects.toBe(refused);
   });
 
   it('prepares the exact qualified credential revision for restart without a legacy native record', async () => {

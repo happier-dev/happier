@@ -31,9 +31,6 @@ import { settleExecutionRunController } from '../settleExecutionRunController';
 import type { ExecutionRunTurnResultV1, JsonValue } from '@happier-dev/protocol';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
 
-const UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 50;
-const MAX_UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 250;
-
 export async function executeBoundedBackendRun(args: Readonly<{
   runId: string;
   callId: string;
@@ -376,28 +373,13 @@ export async function executeBoundedBackendRun(args: Readonly<{
         | { type: 'error'; error: unknown }
         | { type: 'pending' }
       > {
-        return readRunPromiseOutcomeAfterDelay(0);
-      }
-
-      async function readRunPromiseOutcomeAfterDelay(delayMs: number): Promise<
-        | { type: 'complete' }
-        | { type: 'error'; error: unknown }
-        | { type: 'pending' }
-      > {
         return Promise.race([
           runPromise.then(() => ({ type: 'complete' as const })).catch((error) => ({ type: 'error' as const, error })),
           new Promise<{ type: 'pending' }>((resolve) => {
-            const timer = setTimeout(() => resolve({ type: 'pending' }), delayMs);
+            const timer = setTimeout(() => resolve({ type: 'pending' }), 0);
             timer.unref?.();
           }),
         ]);
-      }
-
-      function resolveUnprobeableLivenessSettleGraceMs(): number {
-        return Math.min(
-          Math.max(boundedTimeoutMs, UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS),
-          MAX_UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS,
-        );
       }
 
       while (true) {
@@ -415,19 +397,6 @@ export async function executeBoundedBackendRun(args: Readonly<{
         if (outcome.type === 'error') throw outcome.error;
 
         const livenessProbe = await probeTurnLiveness();
-        if (!livenessProbe || typeof livenessProbe !== 'object') {
-          const graceMs = resolveUnprobeableLivenessSettleGraceMs();
-          logger.debug('[ExecutionRuns] bounded timeout interval elapsed without backend liveness proof; waiting for settlement grace', {
-            runId,
-            callId,
-            sidechainId,
-            timeoutMs: boundedTimeoutMs,
-            graceMs,
-          });
-          const graceOutcome = await readRunPromiseOutcomeAfterDelay(graceMs);
-          if (graceOutcome.type === 'complete') return;
-          if (graceOutcome.type === 'error') throw graceOutcome.error;
-        }
         if (
           livenessProbe
           && typeof livenessProbe === 'object'
@@ -539,6 +508,8 @@ export async function executeBoundedBackendRun(args: Readonly<{
     const completionErrorMessage = typeof completionOutputError?.message === 'string' && completionOutputError.message.trim()
       ? completionOutputError.message
       : completion.summary;
+    const completionError = completion.status === 'failed'
+      ? { code: completionErrorCode, message: completionErrorMessage } : undefined;
 
     if (params.localInputId && exactTurnId) {
       const output = completion.toolResultOutput;
@@ -556,6 +527,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
         turnId: exactTurnId,
         inputIds: [params.localInputId],
         state: completion.status === 'succeeded' ? 'completed' : 'failed',
+        ...(completionError ? { error: completionError } : {}),
         ...(result ? { result } : {}),
       };
       backendCtrl.currentInputTurn = undefined;
@@ -575,9 +547,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
         status: completion.status,
         summary: completion.summary,
         finishedAtMs,
-        ...(completion.status === 'failed'
-          ? { error: { code: completionErrorCode, message: completionErrorMessage } }
-          : {}),
+        ...(completionError ? { error: completionError } : {}),
       },
       {
         output: completion.toolResultOutput,
@@ -589,10 +559,12 @@ export async function executeBoundedBackendRun(args: Readonly<{
   } catch (e: any) {
     rejectInitialInputAdmission(e instanceof Error ? e : new Error('Execution failed'));
     if (backendCtrl.cancelled) return;
+    const error = projectExecutionRunError(e, { runId: args.runId });
     if (params.localInputId && backendCtrl.currentInputTurn) {
       backendCtrl.lastInputTurn = {
         ...backendCtrl.currentInputTurn,
         state: 'failed',
+        error,
       };
       backendCtrl.currentInputTurn = undefined;
       const run = args.runs?.get(runId);
@@ -604,7 +576,6 @@ export async function executeBoundedBackendRun(args: Readonly<{
       }
       args.onPublicStateUpdated?.(runId);
     }
-    const error = projectExecutionRunError(e, { runId: args.runId });
     const message = error.message;
     if (isExecutionRunTimeoutError(e)) {
       backendCtrl.cancelled = true;

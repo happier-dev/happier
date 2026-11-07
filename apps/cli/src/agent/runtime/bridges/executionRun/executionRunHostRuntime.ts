@@ -19,6 +19,10 @@ export type ExecutionRunNativeInputContext = ExecutionRunInputContext & Readonly
 
 export type ExecutionRunHostRuntimeMessageHandler = (message: AgentMessage) => void;
 
+/** Detached native termination has no Happier Session identity. */
+export type ExecutionRunHostRuntimeEvent = AgentSessionRuntimeEvent
+    | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'runtime-ended' }>, 'sessionId' | 'sequence'>;
+
 export type ExecutionRunRuntimeProvisionOptions = Readonly<{
     initialPrompt?: string;
     resumeRuntimeId?: string;
@@ -55,6 +59,10 @@ export type ExecutionRunHostRuntime = Readonly<{
      */
     interaction?: ExecutionRunInteractionV1;
     readResumeSupport: (opts?: Readonly<{ captureReplay?: boolean }>) => Promise<boolean>;
+    /** Prepare this Run's exact host input prefix before profile sizing, without sending input. */
+    prepareInputBudget?: () => Promise<number | undefined>;
+    /** Published window of this runtime's prepared Provider/Team model; no default. */
+    readModelContextWindowTokens?: () => number | undefined;
     /** Authoritative provider thread identity; never the host dispatch runtime id. */
     readProviderSessionId?: () => string | null;
     /** Retained Session owner joins cancellation before proving another turn is admissible. */
@@ -74,7 +82,7 @@ export type ExecutionRunHostRuntime = Readonly<{
     /** Exact native custody evidence, independent of the send command's admission acknowledgement. */
     subscribeProviderInputOutcomes?: (handler: (outcome: SessionProviderInputOutcome) => void) => () => void;
     /** Validated native turn evidence; generic Run status is not exact completion proof. */
-    subscribeRuntimeEvents?: (handler: (event: AgentSessionRuntimeEvent) => void) => () => void;
+    subscribeRuntimeEvents?: (handler: (event: ExecutionRunHostRuntimeEvent) => void) => () => void;
     readActiveTurnAdmissionWitness?: () => AgentInvocationTurnAdmissionWitness | null;
     cancel: (runtimeId: string) => Promise<void>;
     subscribeMessages: (handler: ExecutionRunHostRuntimeMessageHandler) => () => void;

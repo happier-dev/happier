@@ -17,7 +17,8 @@ import { ApiSessionClient } from './sessionClient';
 import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { EphemeralUpdateSchema, normalizeActionsSettingsV1, type ExecutionRunPublicState } from '@happier-dev/protocol';
+import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { SessionMetadataOwnerMigrationPatchV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { randomUUID } from 'node:crypto';
 import axios from 'axios';
@@ -371,6 +372,9 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     await expect(sessionSocketStubState.executionRunHandlerContext.sessionInteractionHost
       .composeRunToolBinding({
         runId: 'run-1',
+        agentId: 'pi',
+        agentCatalogEntry: undefined,
+        workDepth: 0,
         cwd: '/tmp/runner-project/run-1',
         signal: runSignal,
         isCurrent: () => true,
@@ -1187,6 +1191,41 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       expect(activeCounts).toEqual([0, 1, 0, 1, 2, 1, 0]);
     } finally {
       unsubscribe();
+      await client.close();
+    }
+  });
+
+  it('keeps a long-lived turn\'s text out of the E2EE Session\'s execution-run-updated frame', async () => {
+    const encryptionKey = new Uint8Array(32).fill(7);
+    const turnText = 'Agent output that only E2EE readers may see';
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', {
+      ...createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }),
+      encryptionMode: 'e2ee', encryptionKey, encryptionVariant: 'dataKey',
+    });
+    const publish = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
+      (run: ExecutionRunPublicState) => void;
+    const inputTurns = {
+      occurrenceId: 'occurrence-1',
+      last: { turnId: 'turn-1', inputIds: ['input-1'], state: 'completed' as const, result: { kind: 'text' as const, value: turnText } },
+    };
+    try {
+      publish(projectExecutionRunPublicState({
+        runId: 'run-1', callId: 'call-1', sidechainId: 'side-1', sessionId: 's1', intent: 'agent',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running',
+        startedAtMs: 1, inputTurns,
+      } as Parameters<typeof projectExecutionRunPublicState>[0]));
+
+      const socket: ReturnType<typeof createApiSessionSocketStub> = sessionSocketStubState.sessionSocketStub;
+      const frames = socket.emit.mock.calls
+        .filter(([event]) => event === 'execution-run-updated').map(([, frame]) => frame as { sid: string; run: unknown });
+      expect(frames).toHaveLength(1);
+      expect(JSON.stringify(frames[0])).not.toContain(turnText);
+      // The content-free turn witness is what Session followers settle on.
+      expect(EphemeralUpdateSchema.parse({ type: 'execution-run-updated', sessionId: frames[0]!.sid, run: frames[0]!.run }))
+        .toMatchObject({ run: { runId: 'run-1', inputTurns: { occurrenceId: 'occurrence-1',
+          last: { turnId: 'turn-1', inputIds: ['input-1'], state: 'completed' } } } });
+    } finally {
       await client.close();
     }
   });

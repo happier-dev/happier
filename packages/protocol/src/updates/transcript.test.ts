@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { ExecutionRunGetResponseSchema } from '../execution/runs/responseSchemas.js';
 import { EphemeralUpdateSchema, MessageAckResponseSchema, UpdateBodySchema } from './index.js';
 
 describe('machine presence reconnect evidence', () => {
@@ -257,6 +258,27 @@ describe('updates transcript vNext payloads', () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.type).toBe('execution-run-updated');
+  });
+
+  it('refuses turn text on an execution-run-updated ephemeral while the Run read keeps it', () => {
+    const turn = { turnId: 'turn_1', inputIds: ['input_1'], state: 'completed', result: { kind: 'text', value: 'agent output' } };
+    const run = {
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      status: 'running',
+      startedAtMs: 1,
+      inputTurns: { occurrenceId: 'occurrence_1', last: turn },
+    };
+
+    expect(EphemeralUpdateSchema.safeParse({ type: 'execution-run-updated', sessionId: 'sess_1', run }).success).toBe(false);
+    expect(ExecutionRunGetResponseSchema.parse({ run }).run.inputTurns?.last?.result).toEqual(turn.result);
   });
 
   it('accepts content-free exact Machine Run invalidation without projecting a Session', () => {

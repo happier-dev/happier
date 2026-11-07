@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { AgentSessionNativeHomeService } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentExecutionRunConversationRuntimeV1, AgentExecutionRunRuntimeContextV1, AgentSessionConfigurationSnapshot, AgentSessionOpenRequest, AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { buildCodexAppServerArgs, createCodexNativeAppServerClient } from './client.js';
@@ -13,6 +14,38 @@ import type { CodexProviderBindingEngineConfigV1 } from '../../providerBinding/r
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
 import { connectManagedJsonRpcTestClient, createManagedJsonRpcTestClient } from '../../../../../../../apps/cli/src/testkit/process/managedJsonRpc';
 import { admitTestExecSpawn, prepareTestNativeSocketDirectory, CODEX_RAW_PROXY_FIXTURE_SCRIPT } from './client.test-support';
+import { buildCodexCloudAuthFile } from '../../auth/services/openai/cloud/authFile.js';
+
+export function codexNativePreparationFailureCases() {
+  return [
+    { title: 'client start', phase: 'client_start', code: 'agent_startup_transport_failed', retryable: false,
+      options: { clientStartFailure: Object.assign(new Error('PRIVATE_CLIENT'), { code: 'agent_startup_transport_failed' }) } },
+    { title: 'broker materialization', phase: 'client_start', code: 'provider_endpoint_unavailable', retryable: true,
+      options: { clientStartFailure: Object.assign(new Error('PRIVATE_BROKER'), { code: 'provider_endpoint_unavailable' }) } },
+    { title: 'native initialize', phase: 'client_start', code: 'agent_startup_rpc_rejected', retryable: false,
+      options: { initializeFailure: { code: -32000, message: 'Initialization failed: api_key=PRIVATE_INITIALIZE' } } },
+    { title: 'thread open', phase: 'thread_open', code: 'provider_request_rejected', retryable: false,
+      options: { threadStartFailure: { code: -32000, message: 'Thread creation failed: api_key=PRIVATE_THREAD' } } },
+    { title: 'connected authentication', phase: 'authentication', code: 'codex_refresh_free_auth_unsupported', retryable: false,
+      options: { processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
+        { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
+      ]) } } },
+    { title: 'native authentication materialization', phase: 'authentication', code: 'codex_refresh_free_auth_unsupported', retryable: false,
+      options: { loginStartFailure: { code: -32000, message: 'PRIVATE_AUTH_RESPONSE' },
+        processEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
+          { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
+        ]) }, runtimeAuthHost: {
+          nativeHome: { root: '/fixture', readFiles: async () => ({ 'auth.json': new TextEncoder().encode(JSON.stringify(
+            buildCodexCloudAuthFile({ accessToken: 'PRIVATE_ACCESS', idToken: null, accountId: 'fixture-account',
+              lastRefreshIso: '2026-10-26T00:00:00.000Z' }),
+          )) }) },
+          refreshRuntimeAuth: async () => ({ status: 'refreshed' as const, result: {
+            accessToken: 'PRIVATE_ACCESS', providerAccountId: 'fixture-account',
+          } }),
+        } },
+    },
+  ] as const;
+}
 
 // The network fixture models pinned Codex 0.159.2's empty paginated rollout:
 // name/set supplies metadata; a full read persists it; native resume then works.
@@ -31,10 +64,10 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   emitNotification(method: string, params: Record<string, unknown>): void;
   failNextRevert(outcome: 'methodNotFound' | 'applied' | 'notApplied'): void;
   openConfiguredSession(providerSessionId?: string, mcpServers?: AgentSessionOpenRequest['mcpServers']): Promise<AgentSessionRuntime>;
-  openConfiguredRun(): Promise<AgentExecutionRunConversationRuntimeV1>;
+  openConfiguredRun(providerSessionId?: string): Promise<AgentExecutionRunConversationRuntimeV1>;
 }) => Promise<void>, options: {
   longTemporaryDirectory?: boolean;
-  threadStartModel?: string;
+  sessionExecutionRunId?: string;
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   mcpServers?: AgentSessionOpenRequest['mcpServers'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
@@ -52,11 +85,22 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   sessionFactory?: Pick<AgentSessionRuntimeFactory, 'open'>;
   skillListFailure?: Readonly<{ code: number; message: string }>;
   initializeFailure?: Readonly<{ code: number; message: string }>;
+  loginStartFailure?: Readonly<{ code: number; message: string }>;
+  threadStartFailure?: Readonly<{ code: number; message: string }>;
   threadInjectFailure?: Readonly<{ code: number; message: string }>;
+  threadStartModel?: string;
+  clientStartFailure?: Error;
   goalFailure?: Readonly<{ code: number; message: string }>;
+  goalRead?: () => Record<string, unknown> | null | undefined;
   goalThreadsVisibleOnlyWhenLoaded?: boolean;
   onTurnStart?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown>; turnId: string }>) => void | Promise<void>;
   beforeTurnStartResponse?: () => Promise<void>;
+  turnStartFailure?: Readonly<{ code: number; message: string; data?: unknown }>;
+  /** Codex rust-v0.163.0 counts Unicode scalars in UserInput::Text, not skill/image items. */
+  maxInputUnicodeCharacters?: number;
+  turnSteerFailure?: Readonly<{ code: number; message: string }>;
+  beforeTurnSteerResponse?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown> }>) => void | Promise<void>;
+  disconnectBeforeTurnStartResponse?: boolean;
   beforeThreadResumeResponse?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown> }>) => void | Promise<void>;
   ignoreThreadRead?: boolean;
   turnIdForStart?: (occurrence: number) => string;
@@ -156,7 +200,9 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         result = { userAgent: 'happier_cli/0.162.1 (fixture)' };
         error = options.initializeFailure;
       } else if (message.method === 'config/read') {
-        result = { config: { mcp_servers: options.nativeMcpServers ?? (options.mcpServers ? { happier__wilson: { enabled: true } } : {}), features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
+        result = { config: { cli_auth_credentials_store: 'file', mcp_servers: options.nativeMcpServers ?? (options.mcpServers ? { happier__wilson: { enabled: true } } : {}), features: { code_mode: { excluded_tool_namespaces: ['functions'] } } } };
+      } else if (message.method === 'account/login/start') {
+        error = options.loginStartFailure;
       } else if (message.method === 'account/read') {
         try { result = await options.accountRead?.() ?? {}; }
         catch { error = { code: -32000, message: 'Account read unavailable' }; }
@@ -165,6 +211,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         catch { error = { code: -32000, message: 'Quota read unavailable' }; }
       } else if (message.method === 'thread/start') {
         loadedGoalServers.add(webSockets);
+        error = options.threadStartFailure;
         result = { model: options.threadStartModel ?? 'fixture-model', thread: { id: 'fresh-thread', turns: [] }, sandbox: { type: 'readOnly' }, reasoningEffort: 'low' };
       } else if (message.method.startsWith('thread/goal/')) {
         // An independent native control process can find only a persisted rollout.
@@ -179,14 +226,32 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         } else if (message.method === 'thread/goal/clear') {
           goal = null;
           result = { cleared: true };
-        } else result = { goal };
+        } else {
+          const currentGoal = options.goalRead?.();
+          if (currentGoal !== undefined) goal = currentGoal;
+          result = { goal };
+        }
       } else if (message.method === 'thread/inject_items') {
         error = options.threadInjectFailure;
       } else if (message.method === 'turn/start') {
-        const turn = { id: turnId, status: 'inProgress' };
-        turns.push(turn);
-        materialized = true;
-        result = { turn: { ...turn, items: [] } };
+        if (options.maxInputUnicodeCharacters !== undefined) {
+          const actualChars = (Array.isArray(params.input) ? params.input : []).reduce<number>((total, item: unknown) => {
+            if (!item || typeof item !== 'object') return total;
+            const input = item as Readonly<{ type?: unknown; text?: unknown }>;
+            return total + (input.type === 'text' && typeof input.text === 'string' ? Array.from(input.text).length : 0);
+          }, 0);
+          if (actualChars > options.maxInputUnicodeCharacters) {
+            error = { code: -32602, message: 'Input exceeds the provider text limit', data: {
+              input_error_code: 'input_too_large', max_chars: options.maxInputUnicodeCharacters, actual_chars: actualChars,
+            } };
+          }
+        }
+        if (!options.turnStartFailure && !error) {
+          const turn = { id: turnId, status: 'inProgress' };
+          turns.push(turn);
+          materialized = true;
+          result = { turn: { ...turn, items: [] } };
+        }
       } else if (message.method === 'thread/name/set') {
         named = true;
       } else if (message.method === 'thread/read') {
@@ -234,8 +299,17 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       }
       if (message.method === 'thread/resume') await options.beforeThreadResumeResponse?.({ socket, params });
       if (message.method === 'turn/start') await options.beforeTurnStartResponse?.();
+      if (message.method === 'turn/start' && options.disconnectBeforeTurnStartResponse) {
+        socket.close();
+        return;
+      }
+      if (message.method === 'turn/start' && options.turnStartFailure) error = options.turnStartFailure;
+      if (message.method === 'turn/steer') {
+        await options.beforeTurnSteerResponse?.({ socket, params });
+        error = options.turnSteerFailure;
+      }
       socket.send(JSON.stringify({ id: message.id, ...(error ? { error } : { result }) }));
-      if (message.method === 'turn/start') await options.onTurnStart?.({ socket, params, turnId });
+      if (message.method === 'turn/start' && !error) await options.onTurnStart?.({ socket, params, turnId });
       if (message.method === 'turn/interrupt') {
         emitNotification('turn/completed', { threadId: params.threadId, turn: { id: params.turnId, status: 'interrupted' } });
       }
@@ -263,11 +337,12 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: '/fixture/codex' }) },
     run: async () => ({ stdout: new TextEncoder().encode(JSON.stringify({ models: [{ slug: 'fixture-model', tool_mode: options.nativeToolMode === 'direct' ? undefined : 'code_mode_only' }, { slug: 'direct-model' }] })), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false, termination: { requestedBy: { kind: 'none' }, observed: { kind: 'exit', exitCode: 0 } } }),
   } as unknown as ExecService;
-  const createClient = async (request?: { toolRestrictionRequired?: boolean; toolRestrictionAllowedMcpServerKeys?: readonly string[]; configOverrides?: readonly string[]; disableUserMcpServers?: boolean; processEnv?: Readonly<Record<string, string | undefined>> }) => {
+  const createClient = async (request?: { toolRestrictionRequired?: boolean; toolRestrictionAllowedMcpServerKeys?: readonly string[]; nativeHome?: AgentSessionNativeHomeService; configOverrides?: readonly string[]; disableUserMcpServers?: boolean; processEnv?: Readonly<Record<string, string | undefined>> }) => {
+    if (options.clientStartFailure) throw options.clientStartFailure;
     // Observe the real config/argv owner at the process boundary; this fixture substitutes Unix transport for the process.
     options.observer?.recordLaunch({ argv: buildCodexAppServerArgs({ ...request, env: request?.processEnv ?? {} }), env: request?.processEnv });
     return await createCodexNativeAppServerClient({
-      exec, processEnv: {}, toolRestrictionRequired: request?.toolRestrictionRequired, toolRestrictionAllowedMcpServerKeys: request?.toolRestrictionAllowedMcpServerKeys, transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: true },
+      exec, processEnv: request?.processEnv ?? {}, nativeHome: request?.nativeHome, toolRestrictionRequired: request?.toolRestrictionRequired, toolRestrictionAllowedMcpServerKeys: request?.toolRestrictionAllowedMcpServerKeys, transport: { kind: 'unixWebSocket', socketPath, realtimeConversationAdvertised: true },
     });
   };
   const runtime = createCodexAppServerRuntime({
@@ -284,7 +359,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     resolveCurrentPolicy: () => options.permissionMode
       ? resolveCodexTerminalPermissionPolicy(options.permissionMode)
       : ({ approvalPolicy: 'never', sandbox: 'read-only', sandboxPolicy: { type: 'readOnly' } }),
-    host: { baseProcessEnv: {}, logger: { debug() {}, warn() {} }, createClient, ui: options.interactions, ...options.runtimeAuthHost },
+    host: { baseProcessEnv: {}, logger: options.logger ?? { debug() {}, warn() {} }, createClient, ui: options.interactions, ...options.runtimeAuthHost },
   });
   const opened: { session: AgentSessionRuntime | null; run: AgentExecutionRunConversationRuntimeV1 | null } = {
     session: null, run: null,
@@ -346,6 +421,8 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
       const exited = new Promise((resolve) => { settleExit = resolve; });
       return {
         wait: () => exited,
+        // Mirror the native process boundary's termination-only observer.
+        waitForExit: async () => (await exited as PluginProcessResult).termination,
         dispose: async () => {
           for (const socket of nativeWebSockets.clients) socket.terminate();
           await new Promise<void>((resolve) => nativeWebSockets.close(() => resolve()));
@@ -366,7 +443,9 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         signal: new AbortController().signal,
         services: { exec: nativeExec, logger: options.logger ?? { debug() {}, warn() {} }, sessions: {},
           ...(options.connectedAccounts ? { connectedAccounts: options.connectedAccounts } : {}) },
-        session: { id: 'actual-happier-session', services: { models: options.models,
+        session: { id: 'actual-happier-session',
+          ...(options.sessionExecutionRunId ? { executionRunId: options.sessionExecutionRunId } : {}),
+          services: { models: options.models,
           ...(options.runtimeAuthHost?.nativeHome ? { nativeHome: options.runtimeAuthHost.nativeHome } : {}),
         } },
         workState: { publisher: () => ({ publish: async () => ({ status: 'applied', revision: 'fixture-goal' }) }) },
@@ -398,7 +477,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         }),
       }, context);
       return opened.session;
-    }, async openConfiguredRun() {
+    }, async openConfiguredRun(providerSessionId) {
       const context = {
         signal: new AbortController().signal,
         services: { exec: nativeExec, logger: options.logger ?? { debug() {}, warn() {} } },
@@ -409,7 +488,8 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         } },
       } as unknown as AgentExecutionRunRuntimeContextV1;
       opened.run = await openCodexNativeAppServerExecutionRunConversation({
-        kind: 'create', runId: 'skills-run-1', cwd: root,
+        ...(providerSessionId ? { kind: 'resume' as const, checkpointId: providerSessionId } : { kind: 'create' as const }),
+        runId: 'skills-run-1', cwd: root,
         profile: { pluginId: 'happier.agent.codex', localId: 'codex' },
         input: { text: 'Use the review skill.' },
         launchEnvironment: configuredLaunchEnvironment,
@@ -441,4 +521,39 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
     if (priorTmpdir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = priorTmpdir;
   }
+}
+
+export function codexNativeRetryProviderBinding() {
+  const modelProvider = "happier_0123456789abcdef0123456789abcdef";
+  return { connectionId: 'pc_closed',
+      model: { id: 'gpt-5', name: 'GPT-5' },
+      upstream: { protocol: 'openai-responses' as const, normalizedUrl: 'http://127.0.0.1:1/v1', credential: 'none' as const },
+      materialization: { v: 1 as const, kind: 'engineConfig' as const, engineConfig: {
+        v: 1 as const, modelProvider, config: { [`model_providers.${modelProvider}`]: {
+          name: 'Happier provider' as const, base_url: 'http://127.0.0.1:1/v1',
+          wire_api: 'responses' as const, requires_openai_auth: false as const, supports_websockets: false as const,
+        } },
+      } },
+    } satisfies NonNullable<AgentSessionOpenRequest["providerBinding"]>;
+}
+
+export function codexNativeStartupAuthFailureCases() {
+  const processEnv = { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([
+    { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
+  ]) };
+  const nativeHome = { root: '/fixture', readFiles: async () => ({ 'auth.json': new TextEncoder().encode(JSON.stringify(
+    buildCodexCloudAuthFile({ accessToken: 'PRIVATE_ACCESS', idToken: null, accountId: 'fixture-account',
+      lastRefreshIso: '2026-10-26T00:00:00.000Z' }),
+  )) }) };
+  return [
+    { reason: 'refresh_bridge_unavailable', target: 'run', options: { processEnv } },
+    { reason: 'provider_account_identity_unavailable', target: 'session', options: { processEnv } },
+    ...([
+      { reason: 'experimental_api_unavailable', code: -32601, message: 'Method not found' },
+      { reason: 'workspace_incompatible', code: -32000, message: 'forced_chatgpt_workspace_id mismatch' },
+      { reason: 'credential_family_mismatch', code: -32000, message: 'forced_login_method mismatch' },
+      { reason: 'live_hot_auth_failed', code: -32000, message: 'PRIVATE_AUTH_RESPONSE' },
+    ] as const).map(({ reason, code, message }) => ({ reason, target: 'session' as const,
+      options: { processEnv, runtimeAuthHost: { nativeHome }, loginStartFailure: { code, message } } })),
+  ] as const;
 }

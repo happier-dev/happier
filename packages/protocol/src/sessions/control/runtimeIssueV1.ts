@@ -12,6 +12,7 @@ import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { ProviderBrokerAdmissionFailureCodeV1Schema, type ProviderBrokerAdmissionFailureCodeV1 } from '../../providers/brokerRouteGrantV1.js';
 import { TeamCredentialUsageLimitDenialV1Schema } from '../../teams/credentials/usageV1.js';
+import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 
 export const TurnTerminalStatusV1Schema = lazyZodSchema(() => z.enum(['completed', 'cancelled', 'failed']));
 export type TurnTerminalStatusV1 = z.infer<typeof TurnTerminalStatusV1Schema>;
@@ -44,6 +45,7 @@ export const AGENT_STARTUP_FAILURE_PREVIEWS = {
   agent_startup_rpc_rejected: 'Agent startup was rejected by its native API',
   agent_startup_transport_failed: 'Agent startup transport failed',
   agent_startup_invalid_state: 'Agent startup encountered invalid local runtime state',
+  agent_startup_model_reconciliation_failed: 'The selected model could not be applied during startup. Review the model selection, then retry the session.',
   agent_startup_failed: 'Agent startup failed',
   AGENT_RESUME_PROVIDER_STATE_MISSING: 'The native agent state needed to resume is missing',
   codex_refresh_free_auth_unsupported: 'Agent startup authentication is unavailable',
@@ -85,15 +87,31 @@ export const TEAM_CREDENTIAL_FAILURE_PREVIEW = 'Shared Team credential refused t
 
 /** Code-only failures returned by daemon preparation and skill delivery.
  * PluginError accepts arbitrary plugin strings; only these host-owned codes
- * may cross startup diagnostic and launch-result boundaries. */
+ * may cross startup diagnostic and launch-result boundaries. Broker codes use
+ * their schema at lookup time so cyclic Protocol entry graphs can initialize. */
 export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
+  connected_account_purpose_catalog_unavailable: 'Default Connected Accounts are temporarily unavailable. Retry starting the session.',
+  connected_services_default_settings_invalid: 'Default Connected Account settings are invalid. Review Connected Accounts, then retry starting the session.',
   agent_cli_not_runnable: 'This Agent cannot run as this member. Install its Happier-managed runtime.',
-  ...Object.fromEntries(ProviderBrokerAdmissionFailureCodeV1Schema.options.map(code => [code, TEAM_CREDENTIAL_FAILURE_PREVIEW])) as Record<ProviderBrokerAdmissionFailureCodeV1, string>,
+  agent_isolation_unavailable: 'Agent isolation is unavailable. Ask the machine owner to review its setup, then retry the session.',
+  filesystem_identity_custody_unavailable: 'Agent isolation is unavailable. Ask the machine owner to review its setup, then retry the session.',
   plugin_disabled: 'This Agent plugin is disabled. Re-enable it in Plugins to resume this Session.',
   plugin_mcp_preparation_unavailable: 'Plugin MCP preparation is unavailable. Check the target machine, then retry the session.',
+  project_environment_binding_unavailable: 'Required Project environment bindings are unavailable. Review the Project variables and selected profile, then retry the session.',
   agent_runtime_daemon_service_generation_not_current: 'The runner agent generation is no longer current. Retry the session on the target machine.',
   native_agent_privileged_effect_authority_unavailable: 'Runner daemon authority is unavailable. Check the target machine, then retry the session.',
   native_agent_privileged_effect_outcome_unknown: 'Runner daemon preparation could not be confirmed. Check the session and target machine before retrying.',
+  permission_denied: 'This operation is not permitted. Review your access before retrying.',
+  admission_unavailable: 'This operation could not be authorized. Check the target machine before retrying.',
+  controller_unavailable: 'The control machine is unavailable. Check its connection before retrying.',
+  controller_retired: 'The control machine or its installation is no longer active. Review the selected machine before retrying.',
+  credential_unavailable: 'The selected credential is unavailable. Review its configuration and access before retrying.',
+  provider_unavailable: 'The selected provider is unavailable. Review its configuration before retrying.',
+  request_conflict: 'The request conflicts with the saved operation. Check its current status before retrying.',
+  intent_changed: 'The requested operation is no longer current. Review the machine state before retrying.',
+  managed_not_found: 'The managed machine could not be found. Review the selected machine before retrying.',
+  enrollment_retired: 'The machine enrollment is no longer active. Review the selected machine before retrying.',
+  resource_mismatch: 'The request no longer matches the selected resource. Review it before retrying.',
   action_outcome_unknown: 'The external operation could not be confirmed. Check its current status before retrying.',
   daemon_draining: 'The target machine is temporarily pausing new work. Retry the session when it is ready.',
   daemon_shutting_down: 'Happier is shutting down on the target machine. Restart it there, then retry the session.',
@@ -101,11 +119,13 @@ export const SESSION_PREPARATION_FAILURE_PREVIEWS = {
   team_credential_provider_selection_not_current: 'The selected Team provider is unavailable. Review the Team model selection, then retry the session.',
   team_credential_model_selection_required: 'Choose a Team model before starting this session.',
 } as const;
-export type SessionPreparationFailureCode = keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS;
+export type SessionPreparationFailureCode = keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS | ProviderBrokerAdmissionFailureCodeV1;
 
 export function readSessionPreparationFailureCode(value: unknown): SessionPreparationFailureCode | null {
-  return typeof value === 'string' && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, value)
-    ? value as SessionPreparationFailureCode : null;
+  if (typeof value !== 'string') return null;
+  if (Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, value)) return value as SessionPreparationFailureCode;
+  const brokerCode = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(value);
+  return brokerCode.success ? brokerCode.data : null;
 }
 
 /** The person-facing cause of a closed startup failure, or null when the code names no startup failure. */
@@ -115,7 +135,11 @@ export function readSessionStartupFailurePreview(value: unknown, agentTitle?: st
     return `Agent '${agentTitle}' cannot run as this member. Install its Happier-managed runtime.`;
   }
   const preparation = readSessionPreparationFailureCode(value);
-  if (preparation) return SESSION_PREPARATION_FAILURE_PREVIEWS[preparation];
+  if (preparation) {
+    return Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, preparation)
+      ? SESSION_PREPARATION_FAILURE_PREVIEWS[preparation as keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS]
+      : TEAM_CREDENTIAL_FAILURE_PREVIEW;
+  }
   const startup = readAgentStartupFailureCode(value);
   return startup ? AGENT_STARTUP_FAILURE_PREVIEWS[startup] : null;
 }
@@ -281,7 +305,9 @@ export function readSessionRuntimeIssueCode(value: unknown): string | null {
 
 /** Diagnostic identifiers shared by daemon preparation and public runtime issues. */
 export const RunnerDaemonPluginServicesPreparationCauseV1Schema = lazyZodSchema(() => z.strictObject({
-  code: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_]{0,127}$/u)),
+  code: z.string().check(z.regex(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u)),
+  /** Existing Runner request identity; diagnostic correlation only. */
+  requestId: z.optional(NonBlankOpaqueIdentifierSchema),
   stage: z.enum([
     'dispatch', 'runner_authority', 'invocation_context', 'registry_acquisition',
     'current_registration', 'turn_authority', 'managed_provider',
@@ -295,8 +321,11 @@ export type RunnerDaemonPluginServicesPreparationCauseV1 =
 /** Failure diagnostics, never an authority/retry decision. Provider messages are redacted by their producer. */
 export const SessionRuntimeFailureCauseV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.optional(SessionRuntimeFailureCauseCodeV1Schema),
+  retryable: z.optional(z.boolean()),
+  requestId: z.optional(NonBlankOpaqueIdentifierSchema),
   phase: z.enum(['authentication', 'client_start', 'thread_open', 'turn_start', 'turn']),
   preparationCause: z.optional(RunnerDaemonPluginServicesPreparationCauseV1Schema),
+  connectedServicesDefault: z.optional(ConnectedServicesDefaultUnavailableDetailsV1Schema),
   reason: z.optional(z.enum(CODEX_REFRESH_FREE_AUTH_FAILURE_REASONS)),
   failureReason: z.enum([
     'usage_limit', 'rate_limit', 'temporary_throttle', 'capacity', 'auth_expired',
@@ -332,6 +361,15 @@ export const SessionRuntimeIssueV1Schema = lazyZodSchema(() => (<I extends z.cor
     agentProcessExitAfterSwitch: z.optional(SessionRuntimeAgentProcessExitAfterSwitchDetailsV1Schema),
   }))));
 export type SessionRuntimeIssueV1 = z.infer<typeof SessionRuntimeIssueV1Schema>;
+
+/** The source distinguishes native Agent sign-in refusals from Provider endpoint credentials. */
+export function readSessionRuntimeIssueNativeAuthAgentId(
+  issue: Pick<SessionRuntimeIssueV1, 'code' | 'source' | 'agentId'> | null | undefined,
+): string | null {
+  return issue?.source === 'auth_error'
+    && (issue.code === 'provider_endpoint_auth_required' || issue.code === 'codex_refresh_free_auth_unsupported')
+    ? issue.agentId || null : null;
+}
 
 export type SessionRuntimeIssueSignInRecovery = Readonly<{
   kind: 'agent_sign_in'; machineId: string; agentId: string;

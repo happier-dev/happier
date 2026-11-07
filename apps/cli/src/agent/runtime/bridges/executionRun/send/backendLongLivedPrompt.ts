@@ -291,6 +291,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   const thisEpoch = ctrl2.turnEpoch + 1;
   const localInputId = args.params.localInputId?.trim() || null;
   const turnId = `${args.runId}-turn-${thisEpoch}`;
+  const previousTurnId = ctrl2.lastInputTurn?.turnId;
   const clearWorkflowObservation = (): void => {
     if (localInputId && ctrl2.workflowObservation?.localInputId === localInputId) {
       ctrl2.workflowObservation = undefined;
@@ -441,9 +442,17 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       const result = decoded.ok
         ? buildObservedTurnResult(args.params.resultContract, decoded.value)
         : null;
+      // A retained Session already observed this exact input under its native
+      // turn id. Keep that identity and its committed answer when adding the
+      // direct caller's result, rather than creating a second host turn.
+      const observedTurn = ctrl2.lastInputTurn?.turnId !== previousTurnId
+        && (!localInputId || ctrl2.lastInputTurn?.inputIds.includes(localInputId))
+        ? ctrl2.lastInputTurn : undefined;
+      const completedTurnId = observedTurn?.turnId ?? turnId;
       if (localInputId) {
         ctrl2.lastInputTurn = {
-          turnId,
+          ...observedTurn,
+          turnId: completedTurnId,
           inputIds: [localInputId],
           state: decoded.ok ? 'completed' : 'failed',
           ...(result ? { result } : {}),
@@ -455,7 +464,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         publishInputTurns();
       }
       const structuredPublished = await publishExecutionRunTurn({
-        runId: args.runId, turnId, rawText, finishedAtMs: args.getNowMs(), controller: ctrl2,
+        runId: args.runId, turnId: completedTurnId, rawText, finishedAtMs: args.getNowMs(), controller: ctrl2,
         controllers: args.controllers, runs: args.runs, profileCatalog: args.profileCatalog,
         sendAcp: args.sendAcp, parentProvider: args.parentProvider,
         reviewComments: args.reviewComments,
@@ -471,7 +480,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       if (failedTurn?.diagnostic.code === 'agent_context_window_exceeded' && ctrl2.turnEpoch === thisEpoch) {
         ctrl2.turnInFlight = false;
         if (localInputId && ctrl2.currentInputTurn) {
-          ctrl2.lastInputTurn = { ...ctrl2.currentInputTurn, state: 'failed' };
+          ctrl2.lastInputTurn = { ...ctrl2.currentInputTurn, state: 'failed', error: projectExecutionRunError(e, { runId: args.runId }) };
           ctrl2.currentInputPermissionRequestStore?.releaseResponseTarget();
           ctrl2.currentInputPermissionRequestStore = undefined;
           ctrl2.currentInputTurn = undefined;
@@ -544,7 +553,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       const message = error.message;
       if (ctrl2.turnEpoch === thisEpoch) ctrl2.turnInFlight = false;
       if (localInputId && ctrl2.currentInputTurn) {
-        ctrl2.lastInputTurn = { ...ctrl2.currentInputTurn, state: 'failed' };
+        ctrl2.lastInputTurn = { ...ctrl2.currentInputTurn, state: 'failed', error };
         ctrl2.currentInputPermissionRequestStore?.releaseResponseTarget();
         ctrl2.currentInputPermissionRequestStore = undefined;
         ctrl2.currentInputTurn = undefined;
@@ -632,14 +641,6 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       await initialHostBarrier;
     }
     throwIfExecutionRunControllerFailed(ctrl2);
-    if (localInputId) {
-      await publishExecutionRunTurn({
-        runId: args.runId, turnId, rawText: '', finishedAtMs: args.getNowMs(), admittedInputId: localInputId,
-        controller: ctrl2, controllers: args.controllers, runs: args.runs, profileCatalog: args.profileCatalog,
-        sendAcp: args.sendAcp, parentProvider: args.parentProvider, reviewComments: args.reviewComments,
-        onPublicStateUpdated: args.onPublicStateUpdated,
-      });
-    }
     // Attach completion handlers before any other awaited work to avoid unhandled rejections when
     // backends signal cancellation/completion on a near-zero timer.
     void runCompletionLoop();

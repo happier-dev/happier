@@ -22,6 +22,7 @@ import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestA
 import { materializeConnectedServicesForSpawn } from '../materialize/materializeConnectedServicesForSpawn';
 import { resolveConnectedServiceNativeHomeTarget } from '../materialize/resolveConnectedServiceNativeHomeTarget';
 import type { validateConnectedServiceGroupMutationCurrentness } from '../accountGroups/generation/validateGroupMutationCurrentness';
+import { ConnectedServiceGroupMutationCurrentnessError } from '../accountGroups/generation/groupMutationCurrentnessFailure';
 import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';
 import { readQualifiedConnectedAccountCredentialMaterial, readQualifiedConnectedAccountCredentialIdentity } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey, resolveQualifiedConnectedAccountServiceForIngressServiceId } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
@@ -29,6 +30,7 @@ import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey, resolv
 import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from './switchSessionConnectedServiceAuth';
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
 import { readConnectedServiceCredentialProviderAccountId } from '../shared/connectedServiceCredentialRecord';
+import { createConnectedServiceAuthGenerationApplyFailureError } from '../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
 
 function readNonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -47,13 +49,8 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   accountSettings?: AccountSettings | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
-  isCurrent?: () => Promise<boolean>;
 }>): Promise<unknown | null> {
   if (params.input.next.source !== 'connected') return null;
-  const assertCurrent = async () => {
-    if (params.isCurrent && !await params.isCurrent()) throw new Error('requester_session_not_current');
-  };
-  await assertCurrent();
   const legacyServiceId =
     resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey(
       params.input.serviceId,
@@ -97,7 +94,10 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
       bindings: [{ serviceId: legacyServiceId, profileId }],
     });
     const resolution = resolutions.get(legacyServiceId);
-    if (resolution?.revisionSemantics !== 'revisioned') return null;
+    if (resolution?.revisionSemantics !== 'revisioned') {
+      if (binding.selection === 'group') throw createConnectedServiceAuthGenerationApplyFailureError({ errorCode: 'credential_revision_missing' });
+      return null;
+    }
     record = resolution.record;
     credentialRevision = resolution.credentialRevision;
     providerAccountIdentity = {
@@ -110,13 +110,13 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     const material = await readQualifiedConnectedAccountCredentialMaterial({
       credentials: params.credentials,
       account: { service, accountId: profileId },
+      requestPurpose: 'connected-accounts:request-auth-replacement',
       getAccountEncryptionMode: async () => await params.api.getAccountEncryptionMode(),
     });
     if (!material) return null;
     credentialRevision = material.snapshot.credentialRevision;
     providerAccountIdentity = readQualifiedConnectedAccountCredentialIdentity(material);
   }
-  await assertCurrent();
   const fallbackProfileId = binding.selection === 'group'
     ? readNonEmptyString(groupMetadata?.fallbackProfileId)
       || readNonEmptyString(previousGroupSelection?.fallbackProfileId)
@@ -155,11 +155,12 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   };
 
   const isMaterializationCurrent = async () => {
-    await assertCurrent();
     if (binding.selection !== 'group') return true;
     if (!params.validateGroupMutationCurrentness) throw new Error('connected_account_group_currentness_unavailable');
-    return (await params.validateGroupMutationCurrentness({ serviceId: params.input.serviceId,
-      groupId: binding.groupId, profileId, generation: generation!, credentialRevision })).current;
+    const currentness = await params.validateGroupMutationCurrentness({ serviceId: params.input.serviceId,
+      groupId: binding.groupId, profileId, generation: generation!, credentialRevision });
+    if (!currentness.current) throw new ConnectedServiceGroupMutationCurrentnessError(currentness.reason);
+    return true;
   };
   let targetMaterializedRoot: string | null = null;
   let targetMaterializedEnv: Readonly<Record<string, string>> | null = null;
@@ -201,7 +202,6 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
               expectedAccountsByPurposeKey.set(qualifiedPurposeKey(scope.purpose), resolved.account);
             }
           }
-          await assertCurrent();
           if (nativeHomeDeclaration) {
             targetMaterializedRoot = resolveConnectedServiceNativeHomeTarget({
               agentId: params.input.agentId, activeServerDir: params.activeServerDir,
@@ -260,19 +260,19 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     ? await createConnectedServiceRuntimeAuthNativeHome({
         agentId: params.input.agentId,
         root: targetMaterializedRoot,
-        isCurrent: params.isCurrent,
       })
     : null;
 
-  await assertCurrent();
   return {
     ...baseSelection,
     ...(record ? { credential: record } : {}),
-    applyConnectedServiceAuthGeneration: async (...args: Parameters<typeof runtimeAuthTransport.applyConnectedServiceAuthGeneration>) => {
-      await assertCurrent();
-      const result = await runtimeAuthTransport.applyConnectedServiceAuthGeneration(...args);
-      await assertCurrent();
-      return result;
+    applyConnectedServiceAuthGeneration: async (
+      request: Parameters<typeof runtimeAuthTransport.applyConnectedServiceAuthGeneration>[0],
+    ) => {
+      const result = await runtimeAuthTransport.applyConnectedServiceAuthGeneration(request);
+      return result.ok
+        ? result.value
+        : { ok: false as const, error: result.error, errorCode: result.code };
     },
     ...(targetMaterializedRoot ? { targetMaterializedRoot } : {}),
     ...(targetMaterializedEnv ? { targetMaterializedEnv } : {}),

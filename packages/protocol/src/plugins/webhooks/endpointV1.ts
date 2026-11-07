@@ -1,12 +1,12 @@
-import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1 } from './endpointActionIdsV1.js';
 export { PLUGIN_WEBHOOK_ACTION_IDS_V1, PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1 } from './endpointActionIdsV1.js';
-import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 import { z } from 'zod/mini';
 
 import { encodeBase64 } from '../../crypto/base64.js';
 import { isLoopbackHostname } from '../../server/urls/loopbackHostname.js';
+import { SERVER_IDENTITY_ID_PATTERN } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
 import { PluginMachineMaterializationMachineIdV1Schema, PluginMachineMaterializationRefV1Schema } from '../availability/materializationRefV1.js';
 import type { PluginJsonSchemaV2 } from '../contributions/publicTypes.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
@@ -79,6 +79,10 @@ export const PluginWebhookEndpointReadinessV1Schema = lazyZodSchema(() => z.enum
 
 export const PluginWebhookEndpointSetupV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
+    kind: z.literal('capabilityUrlV1'),
+    checkId: DeploymentIdentifierV1Schema,
+  }),
+  z.strictObject({
     kind: z.literal('accountEndpointV1'),
     credential: z.literal('serverGenerated'),
   }),
@@ -109,6 +113,21 @@ export const PluginWebhookEndpointReadInputV1Schema = lazyZodSchema(() => z.stri
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
 }));
 
+/** Host-only finite read; deliberately carries neither endpoint content nor its secret URL. */
+export const PluginWebhookHeartbeatReadInputV1Schema = lazyZodSchema(() => z.strictObject({
+  webhookEndpointId: PluginWebhookEndpointIdV1Schema,
+  sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
+  checkId: DeploymentIdentifierV1Schema,
+}));
+export const PluginWebhookHeartbeatReadResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('ready'), lastAcceptedAt: z.nullable(PluginWebhookTimestampMsV1Schema) }),
+  z.strictObject({ kind: z.literal('unavailable'), code: z.literal('endpoint_unavailable') }),
+]));
+export type PluginWebhookHeartbeatReadInputV1 = z.infer<typeof PluginWebhookHeartbeatReadInputV1Schema>;
+export type PluginWebhookHeartbeatReadResultV1 = z.infer<typeof PluginWebhookHeartbeatReadResultV1Schema>;
+export const PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/read' as const;
+export const PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/ensure' as const;
+
 export const PluginWebhookHeartbeatReceiptHintV1Schema = lazyZodSchema(() => z.strictObject({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
   sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
@@ -116,6 +135,8 @@ export const PluginWebhookHeartbeatReceiptHintV1Schema = lazyZodSchema(() => z.s
   lastAcceptedAt: PluginWebhookTimestampMsV1Schema,
 }));
 export type PluginWebhookHeartbeatReceiptHintV1 = z.infer<typeof PluginWebhookHeartbeatReceiptHintV1Schema>;
+export const PluginWebhookHeartbeatReceiptEphemeralV1Schema = lazyZodSchema(() => z.extend(PluginWebhookHeartbeatReceiptHintV1Schema,
+  { type: z.literal('health-check-heartbeat-received') }));
 
 export const PluginWebhookEndpointReadResultV1Schema = lazyZodSchema(() => z.strictObject({
   webhookEndpointId: PluginWebhookEndpointIdV1Schema,
@@ -176,6 +197,13 @@ export const PluginWebhookEndpointCheckCorrespondenceResultV1Schema = lazyZodSch
     kind: z.literal('ready'),
     webhookEndpointId: PluginWebhookEndpointIdV1Schema,
     revision: PluginWebhookRevisionV1Schema,
+    /** Attachment is valid before provider setup; omission is unverified. */
+    readiness: z.optional(PluginWebhookEndpointReadinessV1Schema),
+    /** Nonsecret observations retain the caller's exact binding checks. */
+    contribution: z.optional(asProtocolZod(PluginContributionIdentityV1Schema)),
+    targetMaterialization: z.optional(PluginMachineMaterializationRefV1Schema),
+    sourceInstanceId: z.optional(PluginWebhookSourceInstanceIdV1Schema),
+    revokedAt: z.optional(PluginWebhookTimestampMsV1Schema),
   }),
   z.strictObject({
     kind: z.literal('unavailable'),
@@ -332,18 +360,8 @@ export const PluginWebhookDeliveryDiscardResultV1Schema = lazyZodSchema(() => z.
   z.strictObject({ kind: z.literal('discarded'), revision: z.number().check(z.int(), z.nonnegative(), z.int()) }),
   z.strictObject({ kind: z.enum(['revisionConflict', 'unavailable']) }),
 ]));
-
-
 export const PluginWebhookActionIdV1Schema = lazyZodSchema(() => z.enum(PLUGIN_WEBHOOK_ACTION_IDS_V1));
 export type PluginWebhookActionIdV1 = z.infer<typeof PluginWebhookActionIdV1Schema>;
-
-/**
- * The closed set of endpoint operations a host-stamped plugin caller may run.
- * Every other endpoint operation stays present-user, and this one list is what
- * the Action registry, the CLI caller-surface guard, and the server plugin
- * route family all derive from.
- */
-
 export type PluginWebhookPluginSurfaceActionIdV1 =
   (typeof PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1)[number];
 const PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_ID_SET_V1: ReadonlySet<string> = new Set(
@@ -430,20 +448,3 @@ export type PluginWebhookEndpointCredentialRotateInputV1 = z.infer<typeof Plugin
 export type PluginWebhookEndpointCredentialRotateResultV1 = z.infer<typeof PluginWebhookEndpointCredentialRotateResultV1Schema>;
 export type PluginWebhookEndpointCredentialFinishRotationInputV1 = z.infer<typeof PluginWebhookEndpointCredentialFinishRotationInputV1Schema>;
 export type PluginWebhookEndpointCredentialFinishRotationResultV1 = z.infer<typeof PluginWebhookEndpointCredentialFinishRotationResultV1Schema>;
-
-export const PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/ensure' as const;
-
-export const PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1 = '/v1/daemon/plugins/webhooks/heartbeat/read' as const;
-
-export const PluginWebhookHeartbeatReadInputV1Schema = lazyZodSchema(() => z.strictObject({
-  webhookEndpointId: PluginWebhookEndpointIdV1Schema,
-  sourceInstanceId: PluginWebhookSourceInstanceIdV1Schema,
-  checkId: DeploymentIdentifierV1Schema,
-}));
-
-export const PluginWebhookHeartbeatReadResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ kind: z.literal('ready'), lastAcceptedAt: z.nullable(PluginWebhookTimestampMsV1Schema) }),
-  z.strictObject({ kind: z.literal('unavailable'), code: z.literal('endpoint_unavailable') }),
-]));
-
-export type PluginWebhookHeartbeatReadResultV1 = z.infer<typeof PluginWebhookHeartbeatReadResultV1Schema>;

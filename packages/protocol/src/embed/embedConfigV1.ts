@@ -15,3 +15,8 @@ export const EmbedConfigV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type EmbedConfigV1 = z.infer<typeof EmbedConfigV1Schema>;
 export const StoredEmbedConfigV1Schema = createStoredReadSchema(EmbedConfigV1Schema);
+
+/** Content-free wake on the authenticated token's existing socket room. */
+export const ApiTokenEmbedConfigChangedV1Schema = lazyZodSchema(() => z.strictObject({
+  type: z.literal('api-token-embed-config-changed'),
+}));

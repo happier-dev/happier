@@ -8,6 +8,8 @@ import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/s
 import { SessionSkillSelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { resolveSessionProjectKey, type SessionProjectPromptStackInput } from '@/workspaces/resolveSessionProjectKey';
 import { createRealpathNormalizer, realpathReachRules } from './createRealpathNormalizer';
+import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
+import { areSessionMcpSelectionsEquivalent } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 type DirectoryCapabilityParams = Readonly<{
   settings: McpServersSettingsV1; machineId: string; directory: string | null;
@@ -21,6 +23,15 @@ type DirectoryCapabilityParams = Readonly<{
 type SessionProjectInput = Omit<SessionProjectPromptStackInput, 'machineId' | 'directory'>;
 export type DirectoryCapabilityResult = ResolveSessionCapabilitiesV1Result & ManagedMcpSelectionProjectionV1
   & Readonly<{ context: ReachContextV1; projectKey?: string | null; mcpServerIdentities: Readonly<Record<string, McpServerIdentity>> }>;
+
+/** Explicitly disabled defaults and no effective includes need no catalog,
+ * plugin projection, or native name discovery. Canonical policy equality owns
+ * exclude precedence for both catalog and plugin identities. */
+export function hasExplicitlyEmptyManagedMcpSelection(metadata: unknown): boolean {
+  const selection = readSessionCapabilitySelectionFromMetadataV1(metadata).mcp;
+  return areSessionMcpSelectionsEquivalent(selection, { ...selection, managedServersEnabled: false,
+    forceIncludeServerIds: [] });
+}
 
 /** Real filesystem comparison and Account Project association at the machine boundary. */
 export function resolveSessionCapabilitiesForDirectory(params: DirectoryCapabilityParams & Readonly<{ sessionProject: SessionProjectInput }>): Promise<DirectoryCapabilityResult>;

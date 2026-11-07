@@ -30,8 +30,18 @@ import { ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/sc
 import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { HappierMetaEnvelopeSchema } from '@happier-dev/protocol/messages/structured/HappierMetaEnvelope';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import type { AgentSessionRuntimeEvent, AgentExecutionRunConversationEventV1, AgentSessionExecutionRunRuntimeFactoryV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
+import { createNativeAgentExecutionRunHostRuntime, createNativeAgentSessionInteractionHostRuntime } from './nativeAgentExecutionRun';
+import { createVoiceSessionContextLease } from './testkit/nativeSessionContext';
+import { createLazyExecutionRunHostRuntime } from './hostRuntime/lazy';
+import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildAcpAgentMessageEnvelope } from '@/api/session/acpMessageEnvelope';
 import { readScmDiffSummaryPublicationReceipt } from '../../../../../../ui/sources/sync/domains/scm/diffSummary/publicationReceipt';
+import { withCodexNativeAttachFixture } from '../../../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
+import type { ExecutionRunPendingInputBinding } from '@/api/session/client/transport/sessionClientInteractionApi';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { projectExecutionRunSessionUpdateState } from './publicState';
 
 const TEST_BACKEND_ID = `${'test'}.${'agent'}` as never;
 
@@ -58,26 +68,33 @@ type RuntimeEvent = Parameters<NonNullable<ExecutionRunBackendController['backen
  * are boundaries.
  */
 function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', onPublicStateUpdated?: (run: ExecutionRunPublicState) => void,
-    replyTransportUnavailable = false, committedResultSidechainId = 'sidechain-1') {
+    replyTransportUnavailable = false, committedResultSidechainId = 'sidechain-1', nativeRuntime?: ExecutionRunHostRuntime, detached = false,
+    pendingTransport?: Readonly<{
+        bindExecutionRunPendingInput: (binding: ExecutionRunPendingInputBinding) => import('./pending/executionRunPendingInputConsumer').ExecutionRunPendingInputPortLike;
+        listExecutionRunPendingDeliveryStatuses?: NonNullable<ConstructorParameters<typeof ExecutionRunHostBridge>[0]['sessionInteractionHost']>['session']['listExecutionRunPendingDeliveryStatuses'];
+        blockExecutionRunPendingDelivery?: NonNullable<ConstructorParameters<typeof ExecutionRunHostBridge>[0]['sessionInteractionHost']>['session']['blockExecutionRunPendingDelivery'];
+    }>) {
     const admittedParts: { text: string; localId: string }[] = [];
     const replyMutations: unknown[] = [];
     const releasedSourceTurns: unknown[] = [];
     const committedResultLookups: string[] = [];
     const transcriptPublications: { body: ACPMessageData; meta?: Record<string, unknown>; localId?: string }[] = [];
     const runtimeLifetime = new AbortController();
-    let emit: ((event: RuntimeEvent) => void) | null = null;
+    const runtimeEventListeners = new Set<(event: RuntimeEvent) => void>();
+    let resolveTerminal!: () => void;
+    const terminalPromise = new Promise<void>(resolve => { resolveTerminal = resolve; });
     const controller = {
         kind: 'backend',
         controllerOccurrenceId: 'retained-occurrence-1',
-        backend: {
+        backend: nativeRuntime ?? {
             interaction: {
                 kind: 'retained_agent_session.v1',
                 capabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
             },
             deliverInput: async () => ({ status: 'admitted' as const }),
             subscribeRuntimeEvents: (handler: (event: RuntimeEvent) => void) => {
-                emit = handler;
-                return () => { emit = null; };
+                runtimeEventListeners.add(handler);
+                return () => { runtimeEventListeners.delete(handler); };
             },
             getRuntimeLifetimeSignal: () => runtimeLifetime.signal,
             subscribeMessages: () => () => undefined,
@@ -101,8 +118,8 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
         admittedLiveInterventions: [],
         admittedLiveInterventionsSignal: null,
         lastMarkerWriteAtMs: 0,
-        terminalPromise: Promise.resolve(),
-        resolveTerminal: () => undefined,
+        terminalPromise,
+        resolveTerminal,
     } as unknown as ExecutionRunBackendController;
     const manager = new ExecutionRunHostBridge({
         parentProvider: TEST_BACKEND_ID,
@@ -112,6 +129,9 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
         resolveVoicePromptPreparation: async (input) => await resolveCliVoicePromptPreparation({
             ...input,
             sessionMetadata: {},
+            // This synthetic parent has no Project attachments; use the
+            // producer's explicit-empty contract, not missing host custody.
+            projectEntries: [],
         }),
         sendAcp: async (_provider, body, options) => { transcriptPublications.push({ body, meta: options?.meta }); },
         onPublicStateUpdated,
@@ -153,6 +173,7 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
                     readDurableProviderInputAcceptanceV1: async () => 'unknown' as const,
                     dispose: () => undefined,
                 }),
+                ...pendingTransport,
             },
             machineId: 'machine-1',
             permissionHandler: { handleToolCall: vi.fn() },
@@ -171,21 +192,22 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
         }): { release(): Promise<void> } | null;
     };
     internals.runs.set('run-1', {
-        runId: 'run-1', callId: 'call-1', sidechainId: 'sidechain-1', sessionId: 'session-1', depth: 0,
+        runId: 'run-1', callId: 'call-1', sidechainId: 'sidechain-1', sessionId: detached ? null : 'session-1', depth: 0,
         intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
         backendId: TEST_BACKEND_ID, instructions: 'Continue.', permissionMode: 'read_only',
         retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 1,
     } as ExecutionRunState);
     internals.controllers.set('run-1', controller);
     const releaseOccurrence = internals.registerRunOccurrence({ runId: 'run-1', sidechainId: 'sidechain-1', controller });
-    const retainedAttachment = internals.attachRetainedRunSessionInput({ runId: 'run-1', sidechainId: 'sidechain-1', controller });
+    const retainedAttachment = detached ? { release: async () => undefined }
+        : internals.attachRetainedRunSessionInput({ runId: 'run-1', sidechainId: 'sidechain-1', controller });
     if (!retainedAttachment) { releaseOccurrence(); throw new Error('Missing retained Session input attachment'); }
     const attachment = { ...retainedAttachment, release: async () => {
         try { await retainedAttachment.release(); } finally { releaseOccurrence(); }
     } };
     const emitRuntimeEvent = (event: Record<string, unknown>) => {
-        if (!emit) throw new Error('retained delivery did not subscribe to runtime events');
-        emit(event as RuntimeEvent);
+        if (!runtimeEventListeners.size) throw new Error('retained delivery did not subscribe to runtime events');
+        for (const listener of runtimeEventListeners) listener(event as RuntimeEvent);
     };
     const prepareScmInput = async (localId: string) => {
         let run = internals.runs.get('run-1')!;
@@ -212,6 +234,257 @@ function composeRetainedRun(admissionFailure?: 'rejected' | 'outcomeUnknown', on
 }
 
 describe('ExecutionRunHostBridge retained exact input observation', () => {
+    it.skipIf(process.platform === 'win32')('keeps a Codex usage-limit cause on the failed native turn through the structured Run read', async () => {
+        await withCodexNativeAttachFixture(async ({ openConfiguredSession, emitNotification }) => {
+            const native = createNativeAgentSessionInteractionHostRuntime({
+                runtime: { sessions: { open: async () => await openConfiguredSession() } },
+                lease: { pluginId: 'happier.agent.codex', pluginVersion: '1.0.0', agentId: 'codex',
+                    localAgentId: 'codex', occurrenceId: 'quota-cause', isCurrent: () => true },
+                options: { cwd: '/repo', runId: 'run-1', scope: 'session_owned', backendId: 'codex', permissionMode: 'read_only' },
+                sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+                createSessionContext: ({ services, signal }) => {
+                    const lease = createVoiceSessionContextLease({ services, signal, async dispose() {} });
+                    return { ...lease, context: { ...lease.context, session: { ...lease.context.session, id: 'actual-happier-session' } } };
+                },
+            });
+            const backend = createLazyExecutionRunHostRuntime({ resolveRuntime: async () => native });
+            await backend.provisionRuntime();
+            const fixture = composeRetainedRun(undefined, undefined, false, 'sidechain-1', backend);
+            try {
+                await backend.deliverInput('run-1', { text: 'Hello' }, { localId: 'quota-input', turnId: 'quota-turn' });
+                const terminal = backend.waitForTurnCompletion?.().catch(() => undefined);
+                emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'failed',
+                    error: { message: "You've hit your usage limit. Try again at Nov 7, 2026 1:00 PM.",
+                        codexErrorInfo: 'UsageLimitExceeded', resetsAt: '2026-11-07T13:00:00Z', requestId: 'req-quota-fixture' } } });
+                await terminal;
+                await vi.waitFor(() => expect(fixture.manager.getPublic('run-1')?.inputTurns?.last).toMatchObject({ state: 'failed' }));
+                const rpc = createExecutionRunRpcActionDeps({ manager: fixture.manager,
+                    context: { sessionId: 'session-1', cwd: '/repo' }, isExecutionRunsEnabled: () => true,
+                    policy: { maxConcurrentRuns: null, boundedTimeoutMs: null, reviewBoundedTimeoutMs: null,
+                        maxTurns: null, allowIoModes: new Set(['streaming', 'request_response']) } });
+                const read = ExecutionRunGetResponseSchema.parse(await rpc.executionRunGet!('session-1', { runId: 'run-1', includeStructured: true }));
+                expect(read.run).toMatchObject({ status: 'running', turnInFlight: false, inputTurns: { last: {
+                    inputIds: ['quota-input'], state: 'failed', error: { code: 'usage_limit', runtimeIssueV1: {
+                        source: 'usage_limit', usageLimit: { resetAtMs: Date.parse('2026-11-07T13:00:00Z') },
+                        failureCause: { failureReason: 'usage_limit', retryable: false, requestId: 'req-quota-fixture' },
+                    } },
+                } } });
+                expect(projectExecutionRunSessionUpdateState(read.run).inputTurns?.last).not.toHaveProperty('error');
+            } finally { await fixture.attachment.release(); await backend.dispose(); }
+        });
+    });
+
+    it.skipIf(process.platform === 'win32').each([
+        { ioMode: 'request_response', retentionPolicy: 'resumable' },
+        { ioMode: 'streaming', retentionPolicy: 'resumable' },
+        { ioMode: 'request_response', retentionPolicy: 'ephemeral' },
+    ] as const)('keeps first and fresh targeted Pending input admissible through real Codex ($ioMode, $retentionPolicy)', async ({ ioMode, retentionPolicy }) => {
+        await withCodexNativeAttachFixture(async ({ openConfiguredSession, requests, emitNotification }) => {
+            const native = createNativeAgentSessionInteractionHostRuntime({
+                runtime: { sessions: { open: async () => await openConfiguredSession() } },
+                lease: { pluginId: 'happier.agent.codex', pluginVersion: '1.0.0', agentId: 'codex',
+                    localAgentId: 'codex', occurrenceId: 'retained-codex-input', isCurrent: () => true },
+                options: { cwd: '/repo', runId: 'run-1', scope: 'session_owned', backendId: 'codex', permissionMode: 'read_only' },
+                sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+                createSessionContext: ({ services, signal }) => {
+                    const lease = createVoiceSessionContextLease({ services, signal, async dispose() {} });
+                    return { ...lease, context: { ...lease.context, session: { ...lease.context.session, id: 'actual-happier-session' } } };
+                },
+            });
+            const backend = createLazyExecutionRunHostRuntime({ resolveRuntime: async () => native });
+            await backend.provisionRuntime();
+            const accepted = new Set<string>();
+            let releaseClaims!: () => void;
+            const claims = new Promise<void>(resolve => { releaseClaims = resolve; });
+            let pendingBinding: ExecutionRunPendingInputBinding | undefined;
+            const rows: ExecutionRunAdmittedPendingInputV1[] = [{ role: 'user', content: { type: 'text', text: 'First targeted input' },
+                localId: 'first-targeted', authorAccountId: 'account-1', inputAdmissionReceipt: null, pendingProviderAction: 'send' }];
+            const block = vi.fn(async (_runId: string, localId: string) => {
+                const index = rows.findIndex(row => row.localId === localId);
+                if (index >= 0) rows.splice(index, 1);
+                return true;
+            });
+            const fixture = composeRetainedRun(undefined, undefined, false, 'sidechain-1', backend, false, {
+                listExecutionRunPendingDeliveryStatuses: async () => rows.map(row => ({ localId: row.localId!, status: 'queued' as const,
+                    deliveryStatus: { status: 'queued' as const } })),
+                blockExecutionRunPendingDelivery: block,
+                bindExecutionRunPendingInput: binding => { pendingBinding = binding; return {
+                    getMetadataSnapshot: () => createTestMetadata(),
+                    waitForMetadataUpdate: async () => await new Promise<boolean>(() => undefined),
+                    shouldAttemptPendingMaterialization: () => rows.length > 0,
+                    reconcilePendingProviderInputCustodyBeforeMaterialization: async () => true,
+                    materializeNextPendingMessageSafely: async () => {
+                        await claims;
+                        if (binding.foregroundState() !== 'ready') return { type: 'no_pending' as const };
+                        const input = rows.shift();
+                        if (!input) return { type: 'no_pending' as const };
+                        binding.consume(input);
+                        return { type: 'materialized' as const, localId: input.localId!, seq: null, content: null };
+                    },
+                    observeProviderInputSettlement: async outcome => { if (outcome.kind === 'accepted') accepted.add(outcome.localId); return true; },
+                    readDurableProviderInputAcceptanceV1: async localId => accepted.has(localId) ? 'accepted' as const : 'unknown' as const,
+                    dispose() {},
+                }; },
+            });
+            fixture.internals.runs.set('run-1', { ...fixture.internals.runs.get('run-1')!, ioMode, retentionPolicy });
+            fixture.internals.controllers.get('run-1')!.runtimeId = 'run-1';
+            try {
+                // The real pending-change observer can run before any first input is claimed.
+                await fixture.manager.reconcilePendingExecutionRunTarget('run-1');
+                expect(block).not.toHaveBeenCalled();
+                releaseClaims();
+                await vi.waitFor(() => expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1));
+                expect(fixture.manager.getPublic('run-1')?.inputTurns?.current).toMatchObject({ inputIds: ['first-targeted'], state: 'active' });
+                rows.push({ role: 'user', content: { type: 'text', text: 'Fresh targeted input' }, localId: 'fresh-targeted',
+                    authorAccountId: 'account-1', inputAdmissionReceipt: null, pendingProviderAction: 'send' });
+                await fixture.manager.reconcilePendingExecutionRunTarget('run-1');
+                expect(block).not.toHaveBeenCalled();
+                emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-1', status: 'completed' } });
+                await backend.waitForTurnCompletion?.();
+                await vi.waitFor(() => expect(fixture.manager.getPublic('run-1')?.inputTurns?.last).toMatchObject({ inputIds: ['first-targeted'], state: 'completed' }));
+                pendingBinding!.wake?.();
+                await vi.waitFor(() => expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(2));
+                expect(fixture.manager.getPublic('run-1')?.inputTurns?.current).toMatchObject({ inputIds: ['fresh-targeted'], state: 'active' });
+                emitNotification('turn/completed', { threadId: 'fresh-thread', turn: { id: 'provider-turn-2', status: 'completed' } });
+                await backend.waitForTurnCompletion?.();
+                await vi.waitFor(() => expect(fixture.manager.getPublic('run-1')?.inputTurns?.last).toMatchObject({ inputIds: ['fresh-targeted'], state: 'completed' }));
+                expect(accepted.has('first-targeted')).toBe(true);
+                expect(accepted.has('fresh-targeted')).toBe(true);
+            } finally { releaseClaims(); await fixture.attachment.release(); await backend.dispose(); }
+        });
+    });
+
+    it('settles detached idle process death through the same Run owner without a Session identity', async () => {
+        let publish: ((event: AgentExecutionRunConversationEventV1) => void) | undefined;
+        const factory: AgentSessionExecutionRunRuntimeFactoryV1 = {
+            async open() { throw new Error('Finite open is not a retained conversation'); },
+            async openConversation() { return {
+                watch(listener) { publish = listener; listener({ kind: 'provider-session-id', providerSessionId: 'detached-native' }); return { dispose() {} }; },
+                async send(input) {
+                    publish!({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+                    publish!({ kind: 'turn-complete', turnId: input.delivery.turnId });
+                    return { status: 'admitted' as const };
+                },
+                async dispose() {},
+            }; },
+        };
+        const native = createNativeAgentExecutionRunHostRuntime({
+            runtime: { sessions: { async open() { throw new Error('Detached Run cannot open a Session'); }, executionRunContextV1: factory } },
+            executionRunContextV1: factory, retainedConversation: true, supportsResume: true,
+            lease: { pluginId: 'acme.exit', pluginVersion: '1.0.0', agentId: 'acme.exit/default',
+                localAgentId: 'default', occurrenceId: 'detached-exit', isCurrent: () => true },
+            options: { cwd: '/repo', runId: 'run-1', scope: 'detached', backendId: 'acme.exit/default', permissionMode: 'read_only',
+                start: { intent: 'delegate', runClass: 'long_lived', retentionPolicy: 'resumable' } },
+        });
+        const backend = createLazyExecutionRunHostRuntime({ resolveRuntime: async () => native });
+        // Registration precedes lazy creation, as it does in real Start and Resume.
+        const { manager, internals, attachment } = composeRetainedRun(undefined, undefined, false, 'sidechain-1', backend, true);
+        internals.runs.set('run-1', { ...internals.runs.get('run-1')!, resumeHandle: { kind: 'provider_session.v1',
+            backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: TEST_BACKEND_ID }), providerSessionId: 'detached-native' } });
+        try {
+            await backend.provisionRuntime({ initialPrompt: 'Complete the first detached input.' });
+            await backend.waitForTurnCompletion?.();
+            publish!({ kind: 'runtime-ended', emittedAtMs: 3, cause: 'processExited', retryable: true,
+                diagnostic: { code: 'native_process_exited', severity: 'error' } });
+            await manager.waitForTerminal('run-1');
+            expect(manager.getPublic('run-1')).toMatchObject({ status: 'failed',
+                error: { code: 'native_process_exited' }, lifecycle: { state: 'recoverable' },
+                resumeHandle: { providerSessionId: 'detached-native' } });
+            expect(internals.controllers.has('run-1')).toBe(false);
+        } finally { await attachment.release(); await backend.dispose(); }
+    });
+
+    it('fails an interrupted retained input and ignores repeated native termination', async () => {
+        const { manager, internals, attachment, acceptInput, emitRuntimeEvent, transcriptPublications } = composeRetainedRun();
+        try {
+            await acceptInput('interrupted-input', 'interrupted-turn');
+            emitRuntimeEvent({ kind: 'runtime-ended', sessionId: 'session-1', sequence: 2, emittedAtMs: 2,
+                cause: 'processExited', retryable: true, diagnostic: { code: 'native_process_exited', severity: 'error' } });
+            emitRuntimeEvent({ kind: 'runtime-ended', sessionId: 'session-1', sequence: 3, emittedAtMs: 3,
+                cause: 'processExited', retryable: true, diagnostic: { code: 'native_process_exited', severity: 'error' } });
+            await manager.waitForTerminal('run-1');
+            expect(manager.getPublic('run-1')).toMatchObject({ status: 'failed',
+                error: { code: 'native_process_exited' }, inputTurns: { last: { state: 'failed', inputIds: ['interrupted-input'] } } });
+            await vi.waitFor(() => expect(internals.controllers.has('run-1')).toBe(false));
+            expect(transcriptPublications.filter(item => item.body.type === 'tool-result')).toHaveLength(1);
+        } finally { await attachment.release(); }
+    });
+
+    it('does not let a departing native runtime settle a replacement while prior publication is pending', async () => {
+        const { manager, internals, attachment, emitRuntimeEvent } = composeRetainedRun();
+        const departed = internals.controllers.get('run-1')!;
+        let acknowledge!: () => void;
+        departed.pendingHostBarrier = new Promise<void>(resolve => { acknowledge = resolve; });
+        try {
+            emitRuntimeEvent({ kind: 'runtime-ended', sessionId: 'session-1', sequence: 1, emittedAtMs: 1,
+                cause: 'processExited', retryable: true });
+            expect(manager.getPublic('run-1')?.status).toBe('running');
+            const replacement = { ...departed, controllerOccurrenceId: 'replacement', executionRunOccurrence: undefined };
+            internals.controllers.set('run-1', replacement);
+            acknowledge();
+            await departed.pendingHostBarrier;
+            await Promise.resolve();
+            expect(manager.getPublic('run-1')).toMatchObject({ status: 'running', lifecycle: { state: 'current' } });
+            expect(internals.controllers.get('run-1')).toBe(replacement);
+        } finally { acknowledge(); await attachment.release(); }
+    });
+
+    it.each(['resumable', 'ephemeral'] as const)('settles an idle %s Run once when its native process exits, preserving its completed input', async retentionPolicy => {
+        let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+        let sequence = 0;
+        const disposeNative = vi.fn(async () => undefined);
+        // The installed Agent is the system boundary. Lazy resolution, native
+        // admission, occurrence registration and Run settlement remain real.
+        const native = createNativeAgentSessionInteractionHostRuntime({
+            runtime: { sessions: { async open(request) { return {
+                async send(input) {
+                    publish!({ kind: 'input-accepted', sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: 1,
+                        inputIds: input.inputIds, delivery: input.delivery });
+                    publish!({ kind: 'turn-start', sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: 1,
+                        turnId: input.delivery.turnId, startedBy: 'host' });
+                    publish!({ kind: 'turn-complete', sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: 2,
+                        turnId: input.delivery.turnId });
+                    return { status: 'admitted' as const };
+                },
+                watch(listener) { publish = listener; return { dispose() {} }; },
+                dispose: disposeNative,
+            }; } } },
+            lease: { pluginId: 'acme.exit', pluginVersion: '1.0.0', agentId: 'acme.exit/default',
+                localAgentId: 'default', occurrenceId: 'native-exit', isCurrent: () => true },
+            options: { cwd: '/repo', runId: 'run-1', scope: 'session_owned', backendId: 'acme.exit/default', permissionMode: 'read_only' },
+            sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
+            createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+        });
+        const backend = createLazyExecutionRunHostRuntime({ resolveRuntime: async () => native });
+        await backend.readResumeSupport();
+        const fixture = composeRetainedRun(undefined, undefined, false, 'sidechain-1', backend);
+        const { manager, internals, attachment, transcriptPublications } = fixture;
+        internals.runs.set('run-1', { ...internals.runs.get('run-1')!, retentionPolicy,
+            ...(retentionPolicy === 'resumable' ? { resumeHandle: { kind: 'provider_session.v1',
+                backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: TEST_BACKEND_ID }), providerSessionId: 'original-native-thread' } } : {}) });
+        try {
+            await backend.readResumeSupport();
+            await backend.provisionRuntime();
+            await backend.deliverInput('run-1', { text: 'Complete the first turn.' }, { localId: 'completed-input', turnId: 'completed-turn' });
+            await backend.waitForTurnCompletion?.();
+            await internals.controllers.get('run-1')!.pendingHostBarrier;
+            expect(manager.getPublic('run-1')).toMatchObject({ status: 'running', inputTurns: { last: { state: 'completed', inputIds: ['completed-input'] } } });
+            for (let index = 0; index < 2; index++) publish!({ kind: 'runtime-ended', sessionId: 'session-parent',
+                sequence: ++sequence, emittedAtMs: 3, cause: 'processExited', retryable: true,
+                diagnostic: { code: 'native_process_exited', severity: 'error' } });
+            await manager.waitForTerminal('run-1');
+            expect(manager.getPublic('run-1')).toMatchObject({ status: 'failed',
+                error: { code: 'native_process_exited' }, lifecycle: { state: retentionPolicy === 'resumable' ? 'recoverable' : 'unavailable' },
+                inputTurns: { last: { state: 'completed', inputIds: ['completed-input'] } } });
+            await vi.waitFor(() => expect(internals.controllers.has('run-1')).toBe(false));
+            await vi.waitFor(() => expect(disposeNative).toHaveBeenCalledOnce());
+            const terminalResults = transcriptPublications.filter(item => item.body.type === 'tool-result');
+            expect(terminalResults).toHaveLength(1);
+            await expect(manager.send('run-1', { message: 'Follow up.' })).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
+            if (retentionPolicy === 'resumable') expect(manager.get('run-1')?.resumeHandle).toMatchObject({ providerSessionId: 'original-native-thread' });
+        } finally { await attachment.release(); await backend.dispose(); }
+    });
+
     it('keeps the SCM baseline in public Run state without writing an empty transcript row', async () => {
         const { internals, attachment, transcriptPublications } = composeRetainedRun();
         const comparison = ScmComparisonSchema.parse({ id: 'baseline-comparison', source: { kind: 'workingTree' },
@@ -648,7 +921,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             initialInput: { kind: 'deferred_session_pending' },
             intentInput: { comparison, outputs: ['walkthrough'], metadata: { source: comparison.source, sourceKey: comparison.id },
                 scmAnalysis: { phase: 'evidence', current: ['change-1'], pending: [], parts: [], supplied: [], analysed: [],
-                    failures: [], failedRefs: [], admitted: 0, completed: 0, totalParts: 1 } },
+                    failures: [], failedRefs: [], completed: 0, totalParts: 1 } },
             permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
             parentProvider: 'claude', sendAcp: async () => undefined, streamedTranscriptSession: null, createRuntime: () => runtime,
             getNowMs: () => 1, budgetRegistry: null, runs: internals.runs, controllers: internals.controllers,
@@ -663,7 +936,7 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             await controller.provisioningPromise;
             expect(controller.runtimeId).toBe('provider-session-1');
             expect(admittedParts).toEqual([]);
-            expect(internals.runs.get(started.runId)?.structuredMeta?.payload).toMatchObject({ analysis: { parts: { admitted: 0, total: 1 } } });
+            expect(internals.runs.get(started.runId)?.structuredMeta?.payload).toMatchObject({ analysis: { parts: { completed: 0, total: 1 } } });
             expect(internals.runs.get(started.runId)).toMatchObject({ runClass: 'long_lived', status: 'running' });
         } finally { await manager.dispose(); await attachment?.release(); }
     });
@@ -765,65 +1038,6 @@ describe('ExecutionRunHostBridge retained exact input observation', () => {
             if (failure === 'outcomeUnknown') await manager.waitForOutput('run-1', { kind: 'review_walkthrough', comparisonId: comparison.id });
         } finally { await attachment?.release(); }
     });
-    it.each(['ready', 'cancelled-before-attachment'] as const)('publishes a validated cache result without an unnecessary initial input and preserves %s attachment lifecycle', async (outcome) => {
-        const { manager, internals, attachment, admittedParts } = composeRetainedRun();
-        const readyArtifacts: unknown[] = [];
-        const runtime = internals.controllers.get('run-1')!.backend;
-        const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => runtime });
-        const comparison = ScmComparisonSchema.parse({ id: 'cached-comparison', source: { kind: 'workingTree' },
-            repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
-        const cachedOutput = { success: true, sourceKey: comparison.id, comparison, summaryMarkdown: 'Saved explanation.',
-            requestedOutputs: ['summary'], outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Saved explanation.' } } },
-            analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
-            metadata: { source: comparison.source, sourceKey: comparison.id } };
-        let stopDuringPublication: Promise<unknown> | undefined;
-        const started = await startExecutionRun({ params: { sessionId: 'session-1', intent: 'scm_diff_summary',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: getAgentStaticModels('claude', { catalogOnly: true })[0]!.id, instructions: '',
-            intentInput: { cachedOutput, comparison, outputs: ['summary'], metadata: cachedOutput.metadata }, permissionMode: 'read_only', retentionPolicy: 'resumable',
-            runClass: 'long_lived', ioMode: 'streaming' }, parentProvider: 'claude', sendAcp: async () => {},
-            onPublicStateUpdated: runId => {
-                if (outcome === 'cancelled-before-attachment' && !stopDuringPublication
-                    && internals.runs.get(runId)?.structuredMeta?.kind === 'scm_diff_summary.v1') {
-                    // Cache publication is Run state, not an empty transcript message.
-                    // Exercise the reached cancellation owner, without coupling this
-                    // publication race to the manager's preceding history recovery.
-                    stopDuringPublication = stopExecutionRun({ runId, runs: internals.runs, controllers: internals.controllers,
-                        voiceAgentManager: internals.voiceAgentManager, getNowMs: () => 2, finishRun: internals.finishRun.bind(manager) });
-                }
-            },
-            streamedTranscriptSession: null, createRuntime: () => runtime, getNowMs: () => 2,
-            budgetRegistry: null, runs: internals.runs, controllers: internals.controllers,
-            enqueueMarkerWrite: async (_id, write) => { await write(); }, writeActivityMarker: async () => {},
-            finishRun: async (id, next) => { const run = internals.runs.get(id); if (run) internals.runs.set(id, { ...run, ...next }); },
-            executeBoundedRun: async () => { throw new Error('Unexpected bounded analysis'); },
-            send: async () => { throw new Error('Unexpected initial model input'); },
-            attachRetainedRunSessionInput: (params) => {
-                readyArtifacts.push(internals.runs.get(params.runId)?.structuredMeta);
-                const attached = internals.attachRetainedRunSessionInput(params);
-                return attached ? { ...attached, awaitInputAdmission: async () => 'accepted' as const } : null;
-            }, voiceAgentManager });
-        try {
-            await internals.controllers.get(started.runId)?.provisioningPromise;
-            await stopDuringPublication;
-            if (outcome === 'cancelled-before-attachment') {
-                expect(internals.runs.get(started.runId)?.status).toBe('cancelled');
-                await new Promise<void>((resolve) => setTimeout(resolve, 0));
-                expect(readyArtifacts).toEqual([]);
-                expect(admittedParts).toEqual([]);
-                return;
-            }
-            expect(internals.runs.get(started.runId)).toMatchObject({ status: 'running',
-                structuredMeta: { kind: 'scm_diff_summary.v1', payload: { summaryMarkdown: 'Saved explanation.' } } });
-            expect(internals.controllers.get(started.runId)).toMatchObject({ runtimeId: 'provider-session-1', turnCount: 0 });
-            expect(admittedParts).toEqual([]);
-            expect(readyArtifacts).toMatchObject([{ payload: { summaryMarkdown: 'Saved explanation.' } }]);
-        } finally {
-            for (const controller of internals.controllers.values()) await controller.releaseSessionInputAttachment?.();
-            await attachment?.release();
-            await voiceAgentManager.dispose();
-        }
-    });
-
     it('never invents a capacity retry from an unclassified failure or a cancelled controller', async () => {
         const { internals, attachment, emitRuntimeEvent, acceptInput, admittedParts } = composeRetainedRun();
         const controller = internals.controllers.get('run-1')!;
