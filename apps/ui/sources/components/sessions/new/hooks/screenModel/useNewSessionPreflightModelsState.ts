@@ -30,9 +30,12 @@ import { NEW_SESSION_MODEL_PROBE_TIMEOUT_MS } from '@/components/sessions/new/mo
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
 import type { ProbedResourceFailure } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import { presentCapabilityInvokeFailure } from '@/components/capabilities/status/presentCapabilityInvokeFailure';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV2 | null | undefined;
+    /** The catalog owns identity when the operational target is a compatibility carrier. */
+    backendTargetKey?: string;
     providerConnectionId?: string | null;
     runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
@@ -42,6 +45,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     selectedTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
     enabled?: boolean;
 }>): Readonly<{
+    /** Configuration discovery must use the same source as model discovery. */
+    usesNativeCatalog: boolean;
     preflightModels: PreflightModelList | null;
     preflightModelsTargetKey: string | null;
     modelOptions: ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
@@ -51,6 +56,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         refreshedAt: number | null;
         spawnFailure: SpawnFailureV1 | null;
         reason?: ProbedResourceFailure['reason'];
+        errorCode?: string;
+        retryable?: boolean;
+        refreshErrorMessage?: string;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
         onRefresh?: () => void;
         /** The catalog has not answered yet, so a model missing from it is not known to be unknown. */
@@ -81,8 +89,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const backendTarget = params.backendTarget ?? null;
     const backendTargetKey = React.useMemo(() => {
         if (!backendTarget) return null;
-        return resolveBackendTargetKeyV2(backendTarget);
-    }, [backendTarget]);
+        return params.backendTargetKey ?? resolveBackendTargetKeyV2(backendTarget);
+    }, [backendTarget, params.backendTargetKey]);
 
     // Team catalog rows are already provided by the recipient-safe catalog.
     // Native operation probes have no Session authority for either Team delivery
@@ -95,7 +103,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         if (!backendTarget) return null;
         // Stabilize by semantic identity (backendTargetKey) so effects don't thrash on object identity churn.
         return readBackendTargetRefV2(backendTarget);
-    }, [backendTargetKey]);
+    }, [backendTargetKey, backendTarget?.backendId, backendTarget?.configuredBackendId, backendTarget?.sourceKind]);
 
     const agentType = React.useMemo<string | null>(() => {
         if (!backendTarget || teamCatalogSelected) return null;
@@ -184,7 +192,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             }
             setModelDiscoveryFailed(entry?.kind === 'error' || (entry?.kind === 'success' && entry.errorUpdatedAt !== undefined));
             setSpawnFailure(entry?.spawnFailure ?? null);
-            setFailure({ reason: entry?.reason, errorCode: entry?.errorCode, requestDisposition: entry?.requestDisposition });
+            setFailure({ reason: entry?.reason, errorCode: entry?.errorCode, retryable: entry?.retryable, requestDisposition: entry?.requestDisposition });
         };
         if (cacheEntry?.kind === 'success') {
             applyEntry(cacheEntry);
@@ -228,7 +236,8 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         // interval still revalidates. Overlapping observers join the same probe;
         // unavailable/unknown outcomes keep their existing retry/Action policy.
         const revalidate = cacheEntry?.kind === 'success' && dynamicModelProbeRetryAt(cacheEntry) === null
-            && cacheEntry.reason !== 'outcomeUnknown' && (firstObserver || isDynamicModelProbePending(preflightModelsKey));
+            && cacheEntry.reason !== 'outcomeUnknown' && cacheEntry.retryable !== false
+            && (firstObserver || isDynamicModelProbePending(preflightModelsKey));
         if (!force && !revalidate && isDynamicModelProbeCacheFresh(cacheEntry)) {
             scheduleRetry(cacheEntry);
         } else {
@@ -304,7 +313,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         refreshedAt: hasCurrentIdentity ? refreshedAt : null,
         spawnFailure: hasCurrentIdentity ? spawnFailure : null,
         ...(hasCurrentIdentity ? failure : {}),
+        ...(hasCurrentIdentity && failure.errorCode ? { refreshErrorMessage: presentCapabilityInvokeFailure({
+            errorCode: failure.errorCode, retryable: failure.retryable,
+        }) } : {}),
         ...(dynamicProbeEnabled && preflightModelsKey && enabled ? { onRefresh } : {}),
     }), [namesPending, retainedModelName, hasCurrentIdentity, probePhase, modelDiscoveryFailed, refreshedAt, spawnFailure, failure, dynamicProbeEnabled, preflightModelsKey, enabled, onRefresh, teamCatalogSelected]);
-    return { preflightModels: currentModels, preflightModelsTargetKey: currentModels ? currentModelsTargetKey : null, modelOptions, probe };
+    return { usesNativeCatalog: !teamCatalogSelected, preflightModels: currentModels, preflightModelsTargetKey: currentModels ? currentModelsTargetKey : null, modelOptions, probe };
 }

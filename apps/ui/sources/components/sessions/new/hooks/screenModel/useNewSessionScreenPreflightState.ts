@@ -1,11 +1,13 @@
 import * as React from 'react';
-import type { ConnectedServiceBindingsV2, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 import {
     resolveNewSessionCapabilityProbeContext,
     resolveNewSessionModelCapabilityProbeContext,
     resolveNewSessionOperationalBackendTarget,
+    withNewSessionConfigOptionOverrides,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { useSettingsSelector } from '@/sync/store/hooks';
 import { getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
@@ -25,10 +27,7 @@ type AcpSessionModeProbeState = Readonly<{
     onRefresh?: () => void;
 }>;
 
-type AcpConfigOptionsProbeState = Readonly<{
-    phase: 'idle' | 'loading' | 'refreshing';
-    onRefresh: () => void;
-}>;
+type AcpConfigOptionsProbeState = ReturnType<typeof useNewSessionPreflightConfigOptionsState>['probe'];
 
 export function useNewSessionScreenPreflightState(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
@@ -50,6 +49,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
      * that start on intent land in the same entries.
      */
     machineProbesEnabled?: boolean;
+    configOptionOverrides?: Readonly<Record<string, string>> | null;
 }>): Readonly<{
     preflightModels: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModels'];
     preflightModelsTargetKey: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModelsTargetKey'];
@@ -59,6 +59,8 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     acpSessionModeOptions: ReturnType<typeof useNewSessionPreflightSessionModesState>['modeOptions'];
     acpSessionModeProbeState: AcpSessionModeProbeState;
     acpConfigOptions: ReturnType<typeof useNewSessionPreflightConfigOptionsState>['configOptions'];
+    acpConfigOptionsUnavailable: boolean;
+    acpModelConfigOptionId: ReturnType<typeof useNewSessionPreflightConfigOptionsState>['modelConfigOptionId'];
     acpConfigOptionsProbeState: AcpConfigOptionsProbeState;
 }> {
     const pluginSettingsReady = params.pluginSettingsReadiness === null
@@ -103,13 +105,13 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         });
     }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.selectedMachineId, params.selectedProfileId, probesEnabled]), runtimeSettingsKeys);
 
-    const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
+    const { usesNativeCatalog, preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId,
         selectedMachineId: params.selectedMachineId,
         capabilityServerId: params.capabilityServerId,
         cwd: params.cwd,
-        probeContext: modelCapabilityProbeContext,
+        probeContext: withNewSessionConfigOptionOverrides(modelCapabilityProbeContext, params.configOptionOverrides),
         selectedTeamCredentialModel: params.selectedTeamCredentialModel,
         enabled: machineProbesEnabled,
     });
@@ -120,17 +122,17 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             selectedMachineId: params.selectedMachineId,
             capabilityServerId: params.capabilityServerId,
             cwd: params.cwd,
-            probeContext: capabilityProbeContext,
+            probeContext: withNewSessionConfigOptionOverrides(capabilityProbeContext, params.configOptionOverrides),
             enabled: machineProbesEnabled,
         });
-    const { configOptions: acpConfigOptions, probe: acpConfigOptionsProbe } = useNewSessionPreflightConfigOptionsState({
+    const { configOptions: acpConfigOptions, unavailable: acpConfigOptionsUnavailable, modelConfigOptionId: acpModelConfigOptionId, probe: acpConfigOptionsProbe } = useNewSessionPreflightConfigOptionsState({
         backendTarget: operationalBackendTarget,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId,
         selectedMachineId: params.selectedMachineId,
         capabilityServerId: params.capabilityServerId,
         cwd: params.cwd,
-        probeContext: capabilityProbeContext,
-        enabled: machineProbesEnabled,
+        probeContext: withNewSessionConfigOptionOverrides(capabilityProbeContext, params.configOptionOverrides),
+        enabled: machineProbesEnabled && usesNativeCatalog,
     });
 
     return {
@@ -145,9 +147,8 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             onRefresh: acpSessionModeProbe.onRefresh,
         },
         acpConfigOptions,
-        acpConfigOptionsProbeState: {
-            phase: acpConfigOptionsProbe.phase,
-            onRefresh: acpConfigOptionsProbe.onRefresh,
-        },
+        acpConfigOptionsUnavailable,
+        acpModelConfigOptionId,
+        acpConfigOptionsProbeState: acpConfigOptionsProbe,
     };
 }

@@ -70,4 +70,24 @@ describe('MultiPaneHost docked sheet', () => {
             } finally { await screen.unmount(); }
         }
     });
+
+    it.each([false, true])('leaves the docked pane\'s seam unclipped so its resize target reaches over the page beside it (on canvas: %s)', async (onCanvas) => {
+        // The handle's web target reaches past the pane edge; a clipping column would cut that outer part off.
+        const screen = await renderScreen(<MultiPaneHost main={null} rightPane={<Panel />} detailsPane={null}
+            rightTail={onCanvas ? { host: null, hidden: false } : undefined}
+            layout={{ main: 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' }}
+            rightDockWidthPx={360} rightDockMinWidthPx={280} rightDockMaxWidthPx={640} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}} />);
+        try {
+            const pane = screen.findHostByTestId('multi-pane-right-docked')!;
+            const handle = pane.find(node => node.props.accessibilityRole === 'adjustable');
+            const host = screen.findHostByTestId('multi-pane-main-column') ?? null;
+            const clipping: string[] = [];
+            for (let node: ReactTestInstance | null = handle.parent; node && node !== host?.parent; node = node.parent) {
+                if (typeof node.type === 'string' && styleOf(node).overflow === 'hidden') clipping.push(String(node.props.testID ?? node.type));
+            }
+            expect(clipping).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
 });

@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
@@ -10,7 +9,6 @@ import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/c
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
 import { agentInputChipPickerRailActionsRender } from '@/components/sessions/agentInput/components/AgentInputChipPickerOptionSelector';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
@@ -18,7 +16,7 @@ import {
     useNewSessionPreflightModelsState,
 } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
-import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { resolveNewSessionOperationalBackendTarget, withNewSessionConfigOptionOverrides } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
@@ -83,7 +81,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      */
     providerProjection?: ReturnType<typeof useProviderModelProjection>;
     teamModels?: Readonly<Pick<SessionModelPickerProps,
-        'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId' | 'currentTeamCredentialResourceKeys'
+        'teamCredentialResources' | 'teamNameById' | 'homeNameByTeamId' | 'teamCredentialResourceStatusByKey'
         | 'selectedTeamCredentialModel' | 'onSelectTeamCredentialModel' | 'onRecoverTeamCredentialResource'> & {
         onSelectOtherModel: () => void;
     }>;
@@ -109,8 +107,7 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
 }>;
 
 function normalizeSelectedOptionId(value: string | null | undefined): string {
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    return trimmed.length > 0 ? trimmed : 'default';
+    return typeof value === 'string' && value.trim().length > 0 ? value : 'default';
 }
 
 function resolveEffectiveModelLabel(
@@ -140,7 +137,6 @@ function EngineFavoriteToggle(props: Readonly<{
             accessibilityLabel={actionLabel}
             tooltip={actionLabel}
             iconSize={20}
-            minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             interactiveTargetGapPx={4}
             tone={props.favorite ? 'primary' : 'default'}
             variant="plain"
@@ -151,27 +147,30 @@ function EngineFavoriteToggle(props: Readonly<{
 
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
     const providerSettings = useProviderSettingsForServer(props.capabilityServerId);
+    const [selectedConfigOverrides, setSelectedConfigOverrides] = React.useState<Readonly<Record<string, string>>>(() => props.selectedConfigOverrides ?? {});
+    const capabilityProbeContext = withNewSessionConfigOptionOverrides(props.capabilityProbeContext, selectedConfigOverrides);
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget: props.backendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId,
     }), [props.backendTarget, props.runtimeCarrierAgentId]);
-    const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
+    const { usesNativeCatalog, modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
         providerConnectionId: props.selectedModelSelection?.ref.providerConnectionId ?? null,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
-        probeContext: props.capabilityProbeContext ?? null,
+        probeContext: capabilityProbeContext,
         selectedTeamCredentialModel: props.teamModels?.selectedTeamCredentialModel,
     });
-    const { configOptions, unavailable: configOptionsUnavailable, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
+    const { configOptions, modelConfigOptionId, unavailable: configOptionsUnavailable, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
         backendTarget: operationalBackendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
-        probeContext: props.capabilityProbeContext ?? null,
+        probeContext: capabilityProbeContext,
+        enabled: usesNativeCatalog,
     });
 
     const [selectedModelId, setSelectedModelId] = React.useState(() => normalizeSelectedOptionId(props.selectedModelId));
@@ -179,7 +178,6 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         () => props.selectedModelSelection ?? null,
     );
     const [selectedSessionModeId, setSelectedSessionModeId] = React.useState(() => normalizeSelectedOptionId(props.selectedSessionModeId));
-    const [selectedConfigOverrides, setSelectedConfigOverrides] = React.useState<Readonly<Record<string, string>>>(() => props.selectedConfigOverrides ?? {});
     const selectionRef = React.useRef<Readonly<{
         modelId: string;
         modelSelection: SessionModelSelectionV1 | null;
@@ -268,12 +266,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     const canonicalSelectedModelId = React.useMemo(() => (
         sourceModelSelected
             ? selectedModelId
-            : resolveCanonicalModelOptionId(modelOptions, selectedModelId)
-    ), [modelOptions, selectedModelId, sourceModelSelected]);
-    const effectiveModelLabel = React.useMemo(
-        () => resolveEffectiveModelLabel(modelOptions, canonicalSelectedModelId),
-        [canonicalSelectedModelId, modelOptions],
-    );
+            : resolveCanonicalModelOptionId(modelOptions, selectedModelId, modelProbe.failed || modelProbe.phase !== 'idle' ? null : preflightModels)
+    ), [modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, selectedModelId, sourceModelSelected]);
     // The caller's one line leads, then anything the probe has to report. One
     // section label, one subtitle, then the models — never a paragraph.
     const modelNotes = React.useMemo(
@@ -286,22 +280,27 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         [modelProbe.failed, modelProbe.phase, preflightModels?.unavailable, props.modelSummary],
     );
     const configNotes = React.useMemo(
-        // The machine that could not list its models could not list these either: one cause, one line.
-        () => configOptionsUnavailable && !modelProbe.failed && preflightModels?.unavailable !== true
+        () => configProbe.failed && configProbe.refreshErrorMessage !== undefined
+            ? [configProbe.refreshErrorMessage]
+            // The machine that could not list its models could not list these either: one cause, one line.
+            : configOptionsUnavailable && !modelProbe.failed && preflightModels?.unavailable !== true
             ? [t('agentInput.acp.optionsUnavailable')]
             : [],
-        [configOptionsUnavailable, modelProbe.failed, preflightModels?.unavailable],
+        [configOptionsUnavailable, configProbe.failed, configProbe.refreshErrorMessage, modelProbe.failed, preflightModels?.unavailable],
     );
 
     const configControls = React.useMemo(
         () => computeAcpConfigOptionControlsForProvider({
             providerId,
             configOptions,
+            hideModelOption: modelOptions.length > 0,
+            modelConfigOptionId,
+            modelDescriptors: modelOptions,
             overrides: Object.fromEntries(
                 Object.entries(selectedConfigOverrides).map(([optionId, value]) => [optionId, { value }]),
             ),
         }) ?? [],
-        [configOptions, providerId, selectedConfigOverrides],
+        [configOptions, modelConfigOptionId, modelOptions, providerId, selectedConfigOverrides],
     );
 
     const selectedModelOptionControls = React.useMemo(() => {
@@ -328,6 +327,22 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         selectedConfigOverrides: configOverrides,
         selectedModelConfigOptions,
     }), [configOptions, modelOptions, providerId]);
+
+    React.useEffect(() => {
+        const acceptedSnapshot = preflightModels && preflightModels.unavailable !== true
+            && modelProbe.phase === 'idle' && !modelProbe.failed && !configProbe.failed && !configOptionsUnavailable
+            && !sourceModelSelected;
+        if (configProbe.phase !== 'idle' || !configOptions || (!configProbe.rejectedConfigOptionOverrides && !acceptedSnapshot)) return;
+        const current = selectionRef.current.configOverrides;
+        const reconciled = sanitizeNewSessionConfigOverridesForModelSelection({
+            providerId, configOptions, modelOptions, selectedModelId: selectionRef.current.modelId,
+            selectedConfigOverrides: current, rejectedConfigOptionOverrides: configProbe.rejectedConfigOptionOverrides,
+        });
+        if (Object.keys(current).length === Object.keys(reconciled).length
+            && Object.entries(current).every(([id, value]) => reconciled[id] === value)) return;
+        publishSelection({ ...selectionRef.current, configOverrides: reconciled });
+    }, [configOptions, configOptionsUnavailable, configProbe.failed, configProbe.phase, configProbe.rejectedConfigOptionOverrides,
+        modelOptions, modelProbe.failed, modelProbe.phase, preflightModels, providerId, publishSelection, sourceModelSelected]);
 
     const favoriteBackendIdentity = React.useMemo(() => buildFavoriteBackendIdentity({
         backendTargetKey: formatBackendTargetKeyV2(props.backendTarget),
@@ -442,6 +457,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             projectionError={providersFeatureEnabled ? providerProjection.error : null}
                 projectionFailures={providersFeatureEnabled ? providerProjection.refreshFailures : []}
             retryProjection={providersFeatureEnabled ? providerProjection.refresh : null}
+            projectionApproval={providersFeatureEnabled ? providerProjection.pendingApproval : null}
             currentSelectionRecovery={providersFeatureEnabled
                 ? providerProjection.data?.currentSelectionRecovery ?? null
                 : null}

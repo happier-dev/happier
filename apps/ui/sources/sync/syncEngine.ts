@@ -4181,8 +4181,10 @@ class Sync {
                 if (result.kind === 'available' && !options?.authority && options?.hydrateMessages !== false) {
                     this.replayDeferredMessagesFetch(normalized);
                     const messages = this.getOrCreateMessagesSync(normalized);
-                    if (options?.awaitMessageHydration === true) await messages.invalidateAndAwait();
-                    else messages.invalidateCoalesced();
+                    // Route hydration ensures the initial transcript; it is not
+                    // fresh message demand after visibility already loaded it.
+                    if (storage.getState().sessionMessages[normalized]?.isLoaded !== true) messages.invalidateCoalesced();
+                    if (options?.awaitMessageHydration === true) await messages.awaitQueue();
                 }
                 return result;
             };
@@ -13764,9 +13766,6 @@ class Sync {
                         hydrateMessages: false, includeTurnsProjection: true,
                         authority, scopeCurrentness: currentDemand });
                 } finally { await authority.release(); }
-                if (currentDemand() && areServerProfileIdentifiersEquivalent(storage.getState().sessions[sessionId]?.serverId, serverId)) {
-                    this.onSessionVisible(sessionId);
-                }
             })(), { tag: 'Sync.sessionConsumptionCatchUp' });
         }
     }

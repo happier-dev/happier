@@ -10,7 +10,8 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
-import { splitMachineAgents, type MachineAgentRowAction } from './machineAgentPresentation';
+import { resolveMachineAgentStatus, splitMachineAgents, type MachineAgentRowAction } from './machineAgentPresentation';
+import { formatMachineAgentStatus } from './machineAgentCopy';
 import { MachineAgentRow } from './MachineAgentRow';
 
 /** The "Add an agent" list shows this many before "Show all" (lab M1: five, then 14 more). */
@@ -20,6 +21,7 @@ export type MachineAgentsSectionViewProps = Readonly<{
     agents: readonly MachineAgent[];
     status: MachineAgentsSnapshot['status'];
     lastCheckedAt: number | null;
+    failure?: MachineAgentsSnapshot['failure'];
     machineName: string;
     renderMark: (agent: MachineAgent) => React.ReactNode;
     sessionFor: (agent: MachineAgent) => MachineAgentSignInSession | null;
@@ -41,7 +43,8 @@ export type MachineAgentsSectionViewProps = Readonly<{
  * one Check again: an inventory that could not be read is recoverable from where it is said.
  */
 export const MachineAgentsSectionView = React.memo(function MachineAgentsSectionView(props: MachineAgentsSectionViewProps) {
-    const { installed, available: listed } = splitMachineAgents(props.agents);
+    const { installed, available: listed, anyInstalled } = splitMachineAgents(
+        props.agents, (agent) => props.expandedAgentIds.has(buildMachineAgentInventoryKey(agent)));
     // Only a finished check makes an agent one "to add"; a row still checking (or unreadable) may turn out installed
     // and would jump groups when its answer lands.
     const available = listed.filter((agent) => agent.state !== 'checking' && agent.state !== 'unknown');
@@ -63,13 +66,13 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
     );
     // "No agent here" is a claim about a finished check. Descriptor-only rows (still checking, or the machine could not
     // answer) say nothing about installation, so they keep the section on its checking / unavailable lines.
-    const unresolved = installed.length === 0 && (
+    const unresolved = !anyInstalled && (
         (props.status === 'offline' && props.lastCheckedAt === null)
         || props.agents.some((agent) => agent.state === 'checking' || agent.state === 'unknown')
     );
     const checking = (props.status === 'loading' && props.agents.length === 0) || (unresolved && props.status === 'loading');
     // A check that is not running and has no answer (an error, or a machine that never answered) is said with its retry.
-    const unreadable = installed.length === 0 && (props.status === 'error' || (unresolved && (props.status === 'ready' || props.status === 'idle')));
+    const unreadable = !anyInstalled && (props.status === 'error' || (unresolved && (props.status === 'ready' || props.status === 'idle')));
     return (
         <View testID={props.testID}>
             <ItemGroup
@@ -100,10 +103,10 @@ export const MachineAgentsSectionView = React.memo(function MachineAgentsSection
                         testID={`${props.testID}.error`}
                         size="line"
                         kind={props.status === 'error' ? 'error' : 'unavailable'}
-                        title={t('machineAgents.unknown')}
+                        title={formatMachineAgentStatus(resolveMachineAgentStatus(null, undefined, props.status, props.failure))}
                         action={{ label: t('machineAgents.checkAgain'), onPress: props.onCheckAgain }}
                     />
-                ) : unresolved ? null : installed.length === 0 ? (
+                ) : unresolved ? null : !anyInstalled ? (
                     <SurfaceStateCard testID={`${props.testID}.empty`} size="line" kind="empty" title={t('machineAgents.emptyInstalled')} />
                 ) : installed.map(row)}
             </ItemGroup>

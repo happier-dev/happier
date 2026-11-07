@@ -189,4 +189,23 @@ describe('SelectionList controlled active step', () => {
         expect(onActiveStepChange.mock.calls.map((call) => (call[0] as SelectionListStep).id))
             .toEqual(['destination']);
     });
+
+    it('keeps the consumer\'s per-step pagination off the root while its step mirror still names the popped step (R88)', async () => {
+        const detailStep: SelectionListStep = {
+            id: 'detail',
+            title: 'Detail',
+            sections: [{ kind: 'static', id: 's', options: [{ id: 'x', label: 'X' }] }],
+        };
+        const pagination = { hasMore: true, loadingMore: false, requestKey: 'c1', onEndReached: vi.fn(),
+            loadingLabel: 'Loading', moreLabel: 'More', retryLabel: 'Retry', endReachedLabel: 'All loaded' };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList {...defaultProps({ syncActiveStep: detailStep, pagination })} />,
+        );
+        // An internal pop lands before the consumer's effect clears its mirror and the step's pagination.
+        await screen.pressByTestIdAsync('sl:header:leading:back-chip');
+        expect(screen.findByTestId('sl:header:leading:back-chip')).toBeNull();
+        // The root keeps its own (content-sized) body instead of latching the directory's virtualized viewport.
+        expect(screen.findByTestId('sl:bodyVirtualizedList')).toBeNull();
+    });
 });

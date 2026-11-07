@@ -294,9 +294,10 @@ describe('SelectionListAnimatedHeight', () => {
                 vi.advanceTimersByTime(400);
             });
 
-            // 'height' may be omitted entirely OR may be the string 'auto'.
-            const height = wrapperHeight(screen, 'anim');
-            expect(height === undefined || height === 'auto').toBe(true);
+            // Released means an explicit 'auto': on web Reanimated writes the pinned height
+            // straight to the element, so a style that merely omits it leaves the last
+            // pinned value in place and clips the step that follows (R88 Sharing card).
+            expect(wrapperHeight(screen, 'anim')).toBe('auto');
         } finally {
             vi.useRealTimers();
         }

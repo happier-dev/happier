@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
     ChangeEntrySchema,
     ChangeKindSchema,
+    buildAccountIdentitiesChangeV1,
     buildConnectedServicesAccountChangeV1,
     PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
@@ -19,10 +20,123 @@ import {
     plannedChangesAffectSessionListQuery,
     plannedChangesAffectProfileCatalog,
     plannedChangesAffectUsageQuery,
+    plannedChangesAffectUsageAccounting,
 } from './changesPlanner';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
+import type { HomeAccountChangeEvent } from './homeAccountChange';
 import { buildProfilePhysicalKey, PROFILE_REFERENCE_GUARD_ACCOUNT_KV_KEY, PROFILE_TRANSFER_ACCOUNT_KV_KEY } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { buildConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import * as changePlanner from './changesPlanner';
+import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+
+it('preserves exact managed rows across mixed pages and keeps access and unknown changes structural', () => {
+    const row: ApiChangeEntry = { kind: 'account', entityId: 'managed-one', cursor: 1, changedAt: 0,
+        hint: { managedMachinePolicy: true, machineId: 'controller' } };
+    const plan = planSyncActionsFromChanges([row, { ...row, cursor: 2 },
+        { kind: 'machine', entityId: 'controller', cursor: 3, changedAt: 0 }]);
+    expect(plan).toMatchObject({ managedMachineChangedIds: ['managed-one'], invalidate: { settings: false } });
+    expect(changePlanner.plannedChangesAffectManagedMachineInventory(plan)).toBe(true);
+    for (const change of [
+        { kind: 'machineRecipientAccess' as const, entityId: 'controller', cursor: 4, changedAt: 0 },
+        { kind: 'account' as const, entityId: 'self', cursor: 4, changedAt: 0 },
+        { ...row, hint: { managedMachinePolicy: 'true' } },
+    ]) expect(planSyncActionsFromChanges([row, change]).managedMachineChangedIds).toBeUndefined();
+});
+
+it('retains accounting for catalog, allowance and managed-policy inputs on mixed pages without suppressing unknown or Session changes', () => {
+    const row = (entityId: string, hint?: ApiChangeEntry['hint']): ApiChangeEntry => ({ kind: 'account', entityId, cursor: 12, changedAt: 1, ...(hint ? { hint } : {}) });
+    const machine: ApiChangeEntry = { kind: 'machine', entityId: 'fixture-controller', cursor: 11, changedAt: 1 };
+    const plan = (changes: ApiChangeEntry[]) => planSyncActionsFromChanges(changes, { isSessionListMember: () => true, afterCursor: 10 });
+    const catalogs = ['configurations', 'purposes'] as const;
+    const irrelevant = [
+        ...catalogs.map(key => row(buildConnectedAccountCatalogPhysicalKeyV1(key), { connectedAccountCatalog: true, key, revision: 5363 })),
+        row('fixture-managed-policy', { managedMachinePolicy: true, machineId: machine.entityId }),
+        row(PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        { ...buildConnectedServicesAccountChangeV1(), cursor: 12, changedAt: 1 },
+    ];
+    for (const change of irrelevant) {
+        const planned = plan([machine, change]);
+        expect(plannedChangesAffectUsageQuery(planned)).toBe(true);
+        expect(plannedChangesAffectUsageAccounting(planned)).toBe(false);
+        for (const relevant of [
+            row('self'), row('unknown'), row('self', { managedMachinePolicy: true }),
+            row('unknown', { managedMachinePolicy: 'true' }),
+            row('unknown', { managedMachinePolicy: true, machineId: 1 }),
+            row('unknown', { connectedAccountCatalog: true, key: 'configurations', revision: 1 }),
+            { kind: 'session' as const, entityId: 'fixture-session', cursor: 13, changedAt: 1 },
+        ]) expect(plannedChangesAffectUsageAccounting(plan([change, relevant]))).toBe(true);
+    }
+});
+
+it('refreshes private Session access evidence for roster changes without replacing Account-owned accounting', () => {
+    const share: ApiChangeEntry = { kind: 'share', entityId: 'session-one', cursor: 12, changedAt: 1 };
+    const plan = (changes: ApiChangeEntry[]) => planSyncActionsFromChanges(changes, { isSessionListMember: () => true, afterCursor: 10 });
+    const roster = plan([share]);
+    expect(plannedChangesAffectUsageQuery(roster)).toBe(true);
+    expect(plannedChangesAffectUsageAccounting(roster)).toBe(false);
+    // A share can accompany a real usage or unknown Account change. Preserve
+    // conservative accounting admission for those independent facts.
+    for (const change of [
+        { kind: 'session' as const, entityId: 'session-two', cursor: 13, changedAt: 1 },
+        { kind: 'account' as const, entityId: 'self', cursor: 13, changedAt: 1 },
+    ]) expect(plannedChangesAffectUsageAccounting(plan([share, change]))).toBe(true);
+});
+
+it.each([
+    { kind: 'machineRecipientAccess', entityId: 'machine-one' },
+    { kind: 'account', entityId: 'self', hint: { settingsVersion: 8758 } },
+    { kind: 'discussion', entityId: 'discussion-one', hint: { v: 1, changes: [], discussions: true } },
+    { kind: 'session', entityId: 'session-one', hint: { lastMessageSeq: 14, lastMessageId: 'message-14',
+        followReceiverAvailabilityChanged: true, followReceiverAvailabilityChangedAtCursor: 3, pendingExecutionRunIds: [] } },
+] satisfies Array<Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>>)(
+    'retains accounting for $kind projection wakes while real usage in the same page still refreshes', change => {
+        const plan = (changes: ApiChangeEntry[]) => planSyncActionsFromChanges(changes, { afterCursor: 10, isSessionListMember: () => true });
+        const projection = { ...change, cursor: 12, changedAt: 1 };
+        expect(plannedChangesAffectUsageQuery(plan([projection]))).toBe(true);
+        expect(plannedChangesAffectUsageAccounting(plan([projection]))).toBe(false);
+        for (const usage of [
+            { kind: 'session', entityId: 'session-one', hint: { lastMessageSeq: 15, usageAccountingChanged: true } },
+            { kind: 'session', entityId: 'session-one', hint: { usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 11 } },
+            { kind: 'account', entityId: 'usage-history' },
+        ] satisfies Array<Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>>) {
+            expect(plannedChangesAffectUsageAccounting(plan([projection, { ...usage, cursor: 13, changedAt: 2 }]))).toBe(true);
+        }
+        if (projection.kind === 'session') {
+            for (const extra of [{ usageAccountingChanged: true }, { futureUsageFact: true },
+                { usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 11 }]) {
+                expect(plannedChangesAffectUsageAccounting(plan([{ ...projection, hint: { ...projection.hint, ...extra } }]))).toBe(true);
+            }
+        }
+    },
+);
+
+it('keeps retained Session row hints conservative after a generic publication withdraws the accounting proof', () => {
+    const plan = (hint: ApiChangeEntry['hint']) => planSyncActionsFromChanges([
+        { kind: 'session', entityId: 'session-one', cursor: 12, changedAt: 1, hint },
+    ], { afterCursor: 10, isSessionListMember: () => true });
+    // retainSessionSourceChangeHint deliberately keeps these row facts while
+    // withdrawing usageAccountingChanged on an unknown source publication.
+    for (const hint of [
+        { archivedAt: 1793587018607 },
+        { pendingCount: 0, pendingVersion: 11, pendingBlockedCount: 0 },
+        { sharedMetadataVersion: 88 },
+        { followReceiverAvailabilityChanged: false },
+        { v: 1, lifecycle: 'deleted' },
+    ]) {
+        const enriched = { ...hint, pendingExecutionRunIds: [] };
+        expect(plannedChangesAffectUsageAccounting(plan(enriched))).toBe(true);
+        if ('lifecycle' in hint) continue;
+        expect(plannedChangesAffectUsageAccounting(plan({ ...enriched,
+            usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 9 }))).toBe(false);
+        expect(plannedChangesAffectUsageAccounting(plan({ ...enriched,
+            usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 11 }))).toBe(true);
+    }
+});
 
 const TEST_FILE_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(TEST_FILE_DIRECTORY, '..', '..', '..', '..', '..', '..');
@@ -176,7 +290,270 @@ function buildChange(params: {
     };
 }
 
+it('keeps private Session evidence live while accounting follows the coalesced cursor proof', () => {
+    const projection = buildChange({ cursor: 14, kind: 'session', entityId: 'session-a', hint: {
+        agentStateVersion: 4, usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 8,
+    } });
+    const plan = (changes: ApiChangeEntry[], afterCursor = 8) => planSyncActionsFromChanges(changes, {
+        isSessionListMember: () => true, afterCursor,
+    });
+    expect(plannedChangesAffectUsageQuery(plan([projection]))).toBe(true);
+    expect(plannedChangesAffectUsageAccounting(plan([projection]))).toBe(false);
+    expect(plannedChangesAffectUsageAccounting(plan([projection], 7))).toBe(true);
+    expect(plannedChangesAffectUsageAccounting(planSyncActionsFromChanges([projection]))).toBe(true);
+    for (const change of [
+        buildChange({ cursor: 15, kind: 'session', entityId: 'session-b', hint: { lastMessageSeq: 2, usageAccountingChanged: true } }),
+        buildChange({ cursor: 15, kind: 'session', entityId: 'session-b', hint: { v: 1, lifecycle: 'deleted' } }),
+        buildChange({ cursor: 15, kind: 'session', entityId: 'session-b', hint: { agentStateVersion: 2 } }),
+        buildChange({ cursor: 15, kind: 'account', entityId: 'self' }),
+    ]) expect(plannedChangesAffectUsageAccounting(plan([projection, change]))).toBe(true);
+});
+
 describe('planSyncActionsFromChanges', () => {
+    it('refreshes Coach evidence for its KV key while leaving unrelated KV and accounting alone', () => {
+        const plan = (keys: string[]) => planSyncActionsFromChanges([{ kind: 'kv', entityId: 'self', cursor: 1, changedAt: 1,
+            hint: { keys } }]);
+        const coach = plan([USAGE_COACH_SUPPRESSIONS_KV_KEY]);
+        expect(plannedChangesAffectUsageQuery(coach)).toBe(true);
+        expect(plannedChangesAffectUsageAccounting(coach)).toBe(false);
+        expect(plannedChangesAffectUsageQuery(plan(['todo.index']))).toBe(false);
+    });
+    it('routes public-profile publication changes to their reader without invalidating unrelated domains', async () => {
+        const change = buildChange({ cursor: 1, kind: 'account', entityId: 'public-profile' });
+        const planned = planSyncActionsFromChanges([change]);
+        const { publicProfile, ...unrelated } = planned.invalidate;
+        expect(publicProfile).toBe(true);
+        expect(Object.values(unrelated)).not.toContain(true);
+        expect(planned.workflowRunIdsToRefresh).toEqual([]);
+        expect(plannedChangesAffectSessionListQuery(planned)).toBe(false);
+        expect(plannedChangesAffectProfileCatalog(planned)).toBe(false);
+        expect(plannedChangesAffectUsageQuery(planned)).toBe(false);
+        expect(plannedChangesAffectUsageAccounting(planned)).toBe(false);
+        expect(changePlanner.plannedChangesAffectWorkflowTriggers(planned)).toBe(false);
+        expect(changePlanner.plannedChangesAffectWorkflowDefinitions(planned)).toBe(false);
+
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        for (const source of ['socket', 'catch-up-pending'] as const) {
+            const event = publishHomeAccountChangeForRouting('publication-home', ['public-profile'], { source, changeKinds: ['account'] });
+            expect(event).toMatchObject({ changeKinds: ['account'], entityIds: ['public-profile'],
+                accountSettingsAffects: false, profileCatalogAffects: false, sessionListQueryAffects: false,
+                usageQueryAffects: false, workflowTriggersAffect: false, workflowDefinitionsAffect: false });
+            expect(changePlanner.homeAccountChangeAffectsPublicProfile(event)).toBe(true);
+        }
+    });
+
+    it('routes public-profile publication, visible identity and recovery facts without private Account changes', async () => {
+        const { publishHomeAccountChangeForRouting, publishHomeAccountChangeWake } = await import('./homeAccountChange');
+        const affects = (event: Parameters<typeof publishHomeAccountChangeForRouting>[2] & { entityIds?: readonly string[] }) =>
+            changePlanner.homeAccountChangeAffectsPublicProfile(publishHomeAccountChangeForRouting('profile-home', event?.entityIds, event));
+        for (const source of ['connected', 'snapshot'] as const) {
+            expect(affects({ source, changeKinds: ['session'], entityIds: ['session-one'] })).toBe(true);
+        }
+        for (const event of [{}, { changeKinds: [] }, { changeKinds: ['future-kind'] as never },
+            { changeKinds: ['account'] }, { changeKinds: ['account'], entityIds: [] }] satisfies Parameters<typeof affects>[0][]) {
+            expect(affects(event)).toBe(true);
+        }
+        for (const entityId of ['public-profile', 'self', 'unknown-account-row']) {
+            expect(affects({ source: 'socket', changeKinds: ['account'], entityIds: [entityId] })).toBe(true);
+        }
+        for (const kind of ChangeKindSchema.options.filter(kind => kind !== 'account')) {
+            expect(affects({ source: 'socket', changeKinds: [kind], entityIds: ['public-profile'] })).toBe(false);
+        }
+        for (const entityId of ['workflow-run:one', TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+            PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1, CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1,
+            buildAccountIdentitiesChangeV1().entityId,
+            buildProfilePhysicalKey('profile-one')]) {
+            expect(affects({ source: 'socket', changeKinds: ['account'], entityIds: [entityId] })).toBe(false);
+        }
+        expect(changePlanner.homeAccountChangeAffectsPublicProfile(publishHomeAccountChangeWake('profile-home',
+            { t: 'account-settings-changed', settingsVersion: 1 }, 'socket'))).toBe(false);
+    });
+
+    it('keeps malformed settings-version hints conservative instead of claiming an unrelated settings-only change', () => {
+        for (const hint of [{}, { settingsVersion: '8' }, { settingsVersion: -1 }, { settingsVersion: 1.5 }]) {
+            const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId: 'self', hint })]);
+            expect(plannedChangesAffectSessionListQuery(planned)).toBe(true);
+            expect(planned.invalidate.savedSecretResources).toBe(true);
+        }
+        const settings = planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'account', entityId: 'self', hint: { settingsVersion: 8 } })]);
+        expect(plannedChangesAffectSessionListQuery(settings)).toBe(false);
+        expect(settings.invalidate.savedSecretResources).toBe(false);
+    });
+
+    it('publishes the canonical Workflow definition query relevance for unrelated changes and recovery', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        for (const kind of ['session', 'discussion', 'feed', 'friends', 'pet', 'kv'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ workflowDefinitionsAffect: false });
+        }
+        expect(publishHomeAccountChangeForRouting('home', ['workflow-run:one'], { source: 'socket', changeKinds: ['account'] }))
+            .toMatchObject({ workflowDefinitionsAffect: false });
+        for (const kind of ['artifact', 'automation', 'machineRecipientAccess', 'pluginDomain', 'share'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ workflowDefinitionsAffect: true, workflowPluginSourcesAffect: true });
+        }
+        // A Machine row can change only the Machine-contributed sources, never a saved definition.
+        expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: ['machine'] }))
+            .toMatchObject({ workflowDefinitionsAffect: false, workflowPluginSourcesAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: ['session'] }))
+            .toMatchObject({ workflowPluginSourcesAffect: false });
+        expect(publishHomeAccountChangeForRouting('home')).toMatchObject({ workflowDefinitionsAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', [], { changeKinds: [] }))
+            .toMatchObject({ workflowDefinitionsAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', undefined, { source: 'connected' }))
+            .toMatchObject({ workflowDefinitionsAffect: true });
+    });
+
+    it('publishes Machine resource relevance once while preserving authority, unknown and recovery reads', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        for (const kind of ['session', 'discussion', 'automation', 'artifact'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ machineResourcesAffect: false });
+        }
+        expect(publishHomeAccountChangeForRouting('home', ['workflow-run:one'], { source: 'socket', changeKinds: ['account'] }))
+            .toMatchObject({ machineResourcesAffect: false });
+        for (const kind of ['machine', 'machineRecipientAccess', 'machinePool', 'pluginDomain', 'savedSecretResource'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ machineResourcesAffect: true });
+        }
+        for (const entityId of ['self', 'teams', 'machine-preset:one']) {
+            expect(publishHomeAccountChangeForRouting('home', [entityId], { source: 'socket', changeKinds: ['account'] }))
+                .toMatchObject({ machineResourcesAffect: true });
+        }
+        expect(publishHomeAccountChangeForRouting('home')).toMatchObject({ machineResourcesAffect: true });
+        expect(publishHomeAccountChangeForRouting('home', [], { changeKinds: [] }))
+            .toMatchObject({ machineResourcesAffect: true });
+        for (const source of ['connected', 'snapshot'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', undefined, { source, machineResourcesAffect: false }))
+                .toMatchObject({ machineResourcesAffect: true });
+        }
+        const unrelatedPage = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'session', entityId: 'session-one' }),
+            buildChange({ cursor: 2, kind: 'account', entityId: 'workflow-run:one' }),
+        ]);
+        expect(changePlanner.plannedChangesAffectMachineResources(unrelatedPage)).toBe(false);
+        expect(changePlanner.accountChangeKindsAffectMachineResources(['future-kind'], ['row'])).toBe(true);
+    });
+    it('publishes typed readiness demand separately from generic Session, transcript and projection arrivals', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        const none = { sessionIds: [], machineIds: [] };
+        for (const kind of ['session', 'artifact', 'discussion', 'feed'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['session-one'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ sessionReadinessChanges: none });
+        }
+        expect(publishHomeAccountChangeForRouting('home', ['session-one'], { source: 'socket', changeKinds: ['share'] }))
+            .toMatchObject({ sessionReadinessChanges: { sessionIds: ['session-one'], machineIds: [] } });
+        for (const kind of ['machine', 'machineRecipientAccess'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', ['machine-one'], { source: 'socket', changeKinds: [kind] }))
+                .toMatchObject({ sessionReadinessChanges: { sessionIds: [], machineIds: ['machine-one'] } });
+        }
+        for (const entityId of ['teams', 'team-credential-material', 'self', buildConnectedServicesAccountChangeV1().entityId]) {
+            expect(publishHomeAccountChangeForRouting('home', [entityId], { source: 'socket', changeKinds: ['account'] }))
+                .toMatchObject({ sessionReadinessChanges: 'all' });
+        }
+        expect(publishHomeAccountChangeForRouting('home', ['workflow-run:one'], { source: 'socket', changeKinds: ['account'] }))
+            .toMatchObject({ sessionReadinessChanges: none });
+        for (const source of ['connected', 'snapshot'] as const) {
+            expect(publishHomeAccountChangeForRouting('home', undefined, { source }))
+                .toMatchObject({ sessionReadinessChanges: 'all' });
+        }
+        expect(publishHomeAccountChangeForRouting('home')).toMatchObject({ sessionReadinessChanges: 'all' });
+    });
+    it('keeps known Account row wakes local while legacy Account wakes remain conservative', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        let settingsRefreshes = 0;
+        let profileCatalogRefreshes = 0;
+        for (let index = 0; index < 40; index += 1) {
+            const wake = publishHomeAccountChangeForRouting('home', [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1], {
+                source: 'socket', changeKinds: ['account'],
+            });
+            settingsRefreshes += Number(wake.accountSettingsAffects);
+            profileCatalogRefreshes += Number(changePlanner.homeAccountChangeAffectsProfileCatalog(wake));
+        }
+        expect({ settingsRefreshes, profileCatalogRefreshes }).toEqual({ settingsRefreshes: 0, profileCatalogRefreshes: 0 });
+        expect(publishHomeAccountChangeForRouting('home', [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1], {
+            source: 'catch-up-pending', changeKinds: ['account'],
+        })).toMatchObject({ entityIds: [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1], sessionListQueryAffects: false });
+        const profileId = buildProfilePhysicalKey('changed-profile');
+        expect(publishHomeAccountChangeForRouting('home', [profileId], { source: 'socket', changeKinds: ['account'] }))
+            .toMatchObject({ entityIds: [profileId], accountSettingsAffects: false, profileCatalogAffects: true });
+        for (const entityId of ['self', 'future-account-key', TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+            buildConnectedServicesAccountChangeV1().entityId, 'home-governance']) {
+            const wake = publishHomeAccountChangeForRouting('home', [entityId], { source: 'socket', changeKinds: ['account'] });
+            expect(wake).toMatchObject({ accountSettingsAffects: true, workflowTriggersAffect: true });
+            expect(wake).not.toHaveProperty('changeKinds');
+        }
+        const mixed = publishHomeAccountChangeForRouting('home', [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, 'discussion-one'], {
+            source: 'socket', changeKinds: ['account', 'discussion'],
+        });
+        expect(mixed).toMatchObject({ accountSettingsAffects: true, workflowTriggersAffect: true });
+        expect(mixed).not.toHaveProperty('entityIds');
+        expect(mixed).not.toHaveProperty('feedPageConsumed');
+    });
+    it('routes Saved Secret material by its source and access changes, independently of Profile rows', () => {
+        const exactAccount = { changeKinds: ['account'] as const, sessionSystemRecords: [], accountSettingsAffects: false };
+        const affects = changePlanner.homeAccountChangeAffectsSavedSecretCatalog;
+        expect(affects({ ...exactAccount, entityIds: [buildProfilePhysicalKey('profile-one')] })).toBe(false);
+        expect(affects({ ...exactAccount, entityIds: [savedSecretDisclosureActivityEntityIdV1('secret-one')] })).toBe(false);
+        expect(affects({ changeKinds: ['machine'], accountSettingsAffects: false })).toBe(false);
+        expect(affects({ changeKinds: ['artifact'], accountSettingsAffects: false })).toBe(false);
+        expect(affects({ ...exactAccount, entityIds: ['self'], accountSettingsAffects: true })).toBe(true);
+        for (const entityId of [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, buildConnectedServicesAccountChangeV1().entityId, 'self']) {
+            expect(affects({ ...exactAccount, entityIds: [entityId] })).toBe(true);
+        }
+        expect(affects({ changeKinds: ['savedSecretResource'], accountSettingsAffects: false })).toBe(true);
+        expect(affects({ savedSecretCatalogAffects: false })).toBe(false);
+        expect(affects({})).toBe(true);
+        expect(affects({ changeKinds: ['account'] })).toBe(true);
+    });
+    it('preserves an exact producer Discussion exclusion on a coarse usage wake without narrowing unknown wakes', async () => {
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        const usageDetails = { source: 'socket' as const, discussionAffects: false, savedSecretCatalogAffects: false };
+        expect(publishHomeAccountChangeForRouting('home', undefined, usageDetails))
+            .toMatchObject({ source: 'socket', discussionAffects: false, savedSecretCatalogAffects: false });
+        expect(publishHomeAccountChangeForRouting('home', undefined, { source: 'socket' }))
+            .not.toHaveProperty('discussionAffects');
+        expect(publishHomeAccountChangeForRouting('home', undefined, { source: 'socket' }))
+            .not.toHaveProperty('savedSecretCatalogAffects');
+        const changedDetails = { source: 'snapshot' as const, discussionAffects: true };
+        expect(publishHomeAccountChangeForRouting('home', undefined, changedDetails))
+            .toMatchObject({ discussionAffects: true });
+    });
+    it.each([CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1])(
+        'routes %s to its catalog without generic Settings or Account-profile reads', entityId => {
+            const changes = Array.from({ length: 40 }, (_, index) => buildChange({
+                cursor: index + 1, kind: 'account', entityId,
+                hint: { connectedMetadata: true, revision: index + 1 },
+            }));
+            const planned = planSyncActionsFromChanges(changes);
+            expect(planned.invalidate.settings).toBe(false);
+            expect(planned.invalidate.profile).toBe(false);
+            expect(plannedChangesAffectProfileCatalog(planned)).toBe(false);
+            // Entered prices remain a live Usage input even though they are no longer Settings.
+            expect(plannedChangesAffectUsageQuery(planned)).toBe(true);
+            for (const changedId of ['self', 'future-account-row']) {
+                const mixed = planSyncActionsFromChanges([...changes, buildChange({
+                    cursor: 41, kind: 'account', entityId: changedId, hint: { settingsVersion: 9 },
+                })]);
+                expect(mixed.invalidate.settings).toBe(true);
+                expect(mixed.invalidate.profile).toBe(true);
+                expect(plannedChangesAffectProfileCatalog(mixed)).toBe(true);
+            }
+        },
+    );
+    it('routes disclosure history cursors without changing secret, Settings or binding currentness', async () => {
+        const entityId = savedSecretDisclosureActivityEntityIdV1('exact-login');
+        const changes = Array.from({ length: 20 }, (_, index) => buildChange({ cursor: index + 1, kind: 'account', entityId }));
+        const planned = planSyncActionsFromChanges(changes);
+        expect(Object.values(planned.invalidate).some(Boolean)).toBe(false);
+        expect(plannedChangesAffectProfileCatalog(planned)).toBe(false);
+        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
+        const wake = publishHomeAccountChangeForRouting('home', [entityId], { source: 'socket', changeKinds: ['account'] });
+        expect(wake).toMatchObject({ entityIds: [entityId], profileCatalogAffects: false, accountSettingsAffects: false });
+        expect(changePlanner.homeAccountChangeAffectsProfileCatalog(wake)).toBe(false);
+        const changed = planSyncActionsFromChanges([...changes, buildChange({ cursor: 21, kind: 'savedSecretResource', entityId: 'exact-login' })]);
+        expect(changed.invalidate.savedSecretResources).toBe(true);
+    });
     it('publishes private trigger demand only for definition, source or access changes', () => {
         const unrelated = [
             buildChange({ cursor: 1, kind: 'machine', entityId: 'machine-one' }),
@@ -203,6 +580,26 @@ describe('planSyncActionsFromChanges', () => {
         }
     });
 
+    it('routes addressed Session record changes without refreshing Account settings or Session inventories', () => {
+        const wake: HomeAccountChangeEvent = { serverId: 'home', changeKinds: ['account'],
+            sessionSystemRecords: [{ sessionId: 'session-one', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' } }] };
+        expect(changePlanner.homeAccountChangeAffectsProfileCatalog(wake)).toBe(false);
+        expect(changePlanner.homeAccountChangeAffectsProfileCatalog({ changeKinds: ['account'] })).toBe(true);
+        for (const kind of ['artifact', 'savedSecretResource']) {
+            expect(changePlanner.homeAccountChangeAffectsProfileCatalog({ ...wake, changeKinds: ['account', kind] })).toBe(true);
+        }
+        expect(changePlanner.homeAccountChangeAffectsProfileCatalog({ ...wake, profileCatalogAffects: true })).toBe(true);
+        const change: ApiChangeEntry = { kind: 'account', entityId: 'session-record:record-one', cursor: 1, changedAt: 1,
+            hint: { v: 1, sessionRecords: { sessionId: 'session-one',
+                address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' } } } };
+        const planned = planSyncActionsFromChanges([change]);
+        expect(Object.values(planned.invalidate).some(Boolean)).toBe(false);
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(plannedChangesAffectUsageQuery(planned)).toBe(false);
+        expect(classifyChangeForCheckpoint(change, { isSessionMessagesLoaded: () => false })).toMatchObject({
+            decision: 'critical', plannerOwner: 'session-system-records', materializationProof: 'session-system-records-invalidation',
+        });
+    });
     it('refreshes connected-service currentness without waking encrypted Settings and retains the next settings-only fast path', () => {
         const serviceChanges = [
             buildConnectedServicesAccountChangeV1({ pluginId: 'acme.accounts', localId: 'service-a' }),
@@ -224,6 +621,32 @@ describe('planSyncActionsFromChanges', () => {
         expect(settings.invalidate.settings).toBe(true);
         expect(settings.invalidate.savedSecretResources).toBe(false);
         expect(plannedChangesAffectSessionListQuery(settings)).toBe(false);
+    });
+
+    it('keeps private Account catalog rows off the Account profile read', () => {
+        for (const entityId of [NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, MCP_SERVER_CATALOG_ACCOUNT_KEY_V1, ACP_CATALOG_ACCOUNT_ROW_KEY_V1]) {
+            const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId })]);
+            expect(planned.invalidate.profile, entityId).toBe(false);
+            // Row readers still observe these through the Settings admission they already consume.
+            expect(planned.invalidate.settings, entityId).toBe(true);
+            expect(planned.invalidate.savedSecretResources, entityId).toBe(false);
+        }
+        // Unknown Account ids keep the conservative Settings + Profile recovery.
+        const unknown = planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'account', entityId: 'future-account-row' })]);
+        expect(unknown.invalidate.profile).toBe(true);
+    });
+
+    it('refreshes linked-identity currentness from its dedicated row without waking encrypted Settings', () => {
+        for (const [index, change] of [
+            buildAccountIdentitiesChangeV1(),
+            { kind: 'account' as const, entityId: 'self', hint: { linkedProviders: true } },
+        ].entries()) {
+            const planned = planSyncActionsFromChanges([buildChange({ cursor: index + 1, ...change })]);
+            expect(planned.invalidate.profile, change.entityId).toBe(true);
+            expect(planned.invalidate.savedSecretResources, change.entityId).toBe(true);
+            expect(planned.invalidate.settings, change.entityId).toBe(change.entityId === 'self');
+            expect(plannedChangesAffectSessionListQuery(planned), change.entityId).toBe(true);
+        }
     });
 
     it('routes private Profile rows and controls only to their demanded catalog wake', () => {
@@ -334,7 +757,7 @@ describe('planSyncActionsFromChanges', () => {
         ];
         const planned = planSyncActionsFromChanges(unrelated);
         expect(planned.workflowRunIdsToRefresh).toEqual(['run-42']);
-        expect(planned.sessionDraftAddresses).toHaveLength(1);
+        expect(planned.sessionDrafts).toHaveLength(1);
         expect(plannedChangesAffectUsageQuery(planned)).toBe(false);
         for (const change of [
             buildChange({ cursor: 3, kind: 'session', entityId: 'session-a' }),
@@ -358,6 +781,16 @@ describe('planSyncActionsFromChanges', () => {
             snapshotDomain: 'saved-secret-resource-catalog',
             materializationProof: 'saved-secret-resource-catalog',
         });
+    });
+
+    it('keeps credential material delivery out of Account settings and Saved Secret authorization', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 1, kind: 'account', entityId: 'team-credential-material' }),
+        ]);
+        expect(planned.invalidate.savedSecretResources).toBe(false);
+        expect(planned.invalidate.settings).toBe(false);
+        expect(planned.invalidate.profile).toBe(false);
+        expect(planned.unsupportedChanges).toEqual([]);
     });
 
     it('withdraws and refreshes Saved Secret material when Team or Group membership changes', () => {
@@ -473,10 +906,45 @@ describe('planSyncActionsFromChanges', () => {
         expect(plannedChangesAffectSessionListQuery(planned)).toBe('structural');
     });
 
+    it('keeps every protocol row-only hint (metadata, agent-state, runtime-activity, turn-status) row-level', () => {
+        const hints = [
+            { metadataVersion: 3 }, { metadataVersion: 3, agentStateVersion: 2 }, { agentStateVersion: 2 },
+            { runtimeActivityRevision: 9 }, { latestTurnStatusObservedAt: 100 },
+        ];
+        const planned = planSyncActionsFromChanges(
+            hints.map((hint, index) => buildChange({ cursor: index + 1, kind: 'session', entityId: 'listed', hint })),
+            { isSessionListMember: () => true },
+        );
+        expect(planned.invalidate.sessions).toBe(false);
+        expect(planned.sessionRowRefreshIds).toEqual(['listed']);
+    });
+
+    it('keeps a listed Session row-level when the server enriches its write with follow projection facts', () => {
+        const planned = planSyncActionsFromChanges([
+            buildChange({ cursor: 3976038, kind: 'session', entityId: 'listed-shared', hint: {
+                sharedMetadataVersion: 70, followReceiverAvailabilityChanged: true,
+                followReceiverAvailabilityChangedAtCursor: 3976036, pendingExecutionRunIds: [],
+            } }),
+            buildChange({ cursor: 3976040, kind: 'session', entityId: 'listed-shared', hint: {
+                sharedMetadataVersion: 71, followSourceChanged: false, followSourceUnchangedSinceCursor: 3976038,
+                followReceiverAvailabilityChanged: true, followReceiverAvailabilityChangedAtCursor: 3976036,
+            } }),
+        ], { isSessionListMember: (sessionId) => sessionId === 'listed-shared' });
+
+        expect(planned.invalidate.sessions).toBe(false);
+        expect(planned.sessionRowRefreshIds).toEqual(['listed-shared']);
+    });
+
     it('keeps one list refresh for changes that can alter which Sessions are listed', () => {
         const listed = new Set(['listed-archived', 'listed-deleted', 'listed-shared', 'listed-responsible']);
+        // An unloaded row's transcript write is batch-read and placed in place by the
+        // Home-published membership facts; it no longer refreshes every list.
+        const unlisted = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'session', entityId: 'unlisted',
+            hint: { lastMessageSeq: 1, lastMessageId: 'm1' } })], { isSessionListMember: (sessionId) => listed.has(sessionId) });
+        expect(unlisted.invalidate.sessions).toBe(false);
+        expect(unlisted.sessionRowRefreshIds).toEqual(['unlisted']);
+        expect(plannedChangesAffectSessionListQuery(unlisted)).toBe('structural');
         const cases = [
-            buildChange({ cursor: 1, kind: 'session', entityId: 'unlisted', hint: { lastMessageSeq: 1, lastMessageId: 'm1' } }),
             buildChange({ cursor: 2, kind: 'session', entityId: 'listed-archived', hint: { archivedAt: 10 } }),
             buildChange({ cursor: 3, kind: 'session', entityId: 'listed-deleted', hint: { v: 1, lifecycle: 'deleted' } }),
             buildChange({ cursor: 4, kind: 'share', entityId: 'listed-shared' }),
@@ -573,15 +1041,13 @@ describe('planSyncActionsFromChanges', () => {
     });
     it.each([1, 2] as const)('plans exact SessionDraft materialization without broad Account invalidation (epoch %s)', (epoch) => {
         const address = { kind: 'newSession', draftId: '00000000-0000-4000-8000-000000000001' } as const;
-        const planned = planSyncActionsFromChanges([
-            buildChange({
-                cursor: 1,
-                kind: 'account',
-                hint: { ...(epoch === 1 ? { v: 1, sessionDraft: true } : { v: 2, sessionDraftV2: true }), address, revision: 2, status: 'present' },
-            }),
-        ]);
+        const planned = planSyncActionsFromChanges([2, 4, 3].map((revision, index) => buildChange({
+            cursor: index + 1,
+            kind: 'account',
+            hint: { ...(epoch === 1 ? { v: 1, sessionDraft: true } : { v: 2, sessionDraftV2: true }), address, revision, status: 'present' },
+        })));
 
-        expect(planned.sessionDraftAddresses).toEqual([address]);
+        expect(planned.sessionDrafts).toEqual([{ address, revision: 4 }]);
         expect(planned.invalidate.settings).toBe(false);
         expect(planned.invalidate.profile).toBe(false);
         expect(classifyChangeForCheckpoint(planned.changes[0]!, {
@@ -609,6 +1075,7 @@ describe('planSyncActionsFromChanges', () => {
             artifacts: true,
             settings: true,
             profile: true,
+            publicProfile: true,
             friends: true,
             feed: true,
             automations: false,
@@ -771,6 +1238,14 @@ describe('planSyncActionsFromChanges', () => {
         });
     });
 
+    it('refreshes appearance facts without re-reading Sessions or transcripts', () => {
+        const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account',
+            entityId: 'session-organization', hint: { sessionOrganization: true, scope: 'sessionAppearances', sessionIds: ['s-color'] } })]);
+        expect(planned.invalidate.sessions).toBe(false);
+        expect(planned.sessionIdsToCatchUp).toEqual([]);
+        expect(planned.sessionOrganization).toMatchObject({ mode: 'snapshot', assignmentSessionIds: ['s-color'] });
+    });
+
     it('records unknown kinds as unsupported without treating them as safe invalidations', () => {
         const planned = planSyncActionsFromChanges([
             buildChange({ cursor: 4, kind: 'unknown-change-kind' as ApiChangeEntry['kind'] }),
@@ -807,6 +1282,7 @@ describe('planSyncActionsFromChanges', () => {
             artifacts: false,
             settings: false,
             profile: false,
+            publicProfile: false,
             friends: false,
             feed: false,
             automations: false,
@@ -895,26 +1371,4 @@ describe('planSyncActionsFromChanges', () => {
 
         expect(planned.kv).toEqual({ type: 'refresh-feature', feature: 'todos' });
     });
-});
-
-describe('Workflow definition query relevance', () => {
-    it('publishes the canonical Workflow definition query relevance for unrelated changes and recovery', async () => {
-        const { publishHomeAccountChangeForRouting } = await import('./homeAccountChange');
-        for (const kind of ['session', 'discussion', 'feed', 'friends', 'pet', 'kv'] as const) {
-            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
-                .toMatchObject({ workflowDefinitionsAffect: false });
-        }
-        expect(publishHomeAccountChangeForRouting('home', ['workflow-run:one'], { source: 'socket', changeKinds: ['account'] }))
-            .toMatchObject({ workflowDefinitionsAffect: false });
-        for (const kind of ['artifact', 'automation', 'machine', 'machineRecipientAccess', 'pluginDomain', 'share'] as const) {
-            expect(publishHomeAccountChangeForRouting('home', ['row'], { source: 'socket', changeKinds: [kind] }))
-                .toMatchObject({ workflowDefinitionsAffect: true });
-        }
-        expect(publishHomeAccountChangeForRouting('home')).toMatchObject({ workflowDefinitionsAffect: true });
-        expect(publishHomeAccountChangeForRouting('home', [], { changeKinds: [] }))
-            .toMatchObject({ workflowDefinitionsAffect: true });
-        expect(publishHomeAccountChangeForRouting('home', undefined, { source: 'connected' }))
-            .toMatchObject({ workflowDefinitionsAffect: true });
-    });
-
 });

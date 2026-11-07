@@ -134,4 +134,16 @@ describe('machine agent inventory recovery', () => {
         expect(screen.findByTestId('machine-agents.checkAgain')).not.toBeNull();
         expect(screen.findAllByType(MachineAgentRow).map(row => row.props.agent)).toEqual([held]);
     });
+
+    it('never says no agent is installed while an agent just installed here stays in the add list (R88)', async () => {
+        const justInstalled = { ...definitions[0]!, installed: true, state: 'needsSignIn' as const, version: '0.162.1',
+            job: { jobId: 'j', intent: 'install' as const, startedAtMs: 0, logLine: null, steps: [], outcome: { kind: 'succeeded' as const, version: '0.162.1' } } };
+        const screen = await renderSettingsView(<ListPresentationProvider value="page"><MachineAgentsSectionView testID="machine-agents"
+            agents={[justInstalled, definitions[1]!]} status="ready" lastCheckedAt={1} machineName="Workstation"
+            renderMark={() => null} sessionFor={() => null} renderForm={() => null}
+            expandedAgentIds={new Set([buildMachineAgentInventoryKey(justInstalled)])} onExpandedChange={() => {}} onAction={() => {}} onCheckAgain={() => {}} /></ListPresentationProvider>);
+        expect(screen.findByTestId('machine-agents.empty')).toBeNull();
+        // The row keeps the place its setup form opened in.
+        expect(screen.findAllByType(MachineAgentRow).map(row => row.props.agent)).toEqual([justInstalled, definitions[1]]);
+    });
 });

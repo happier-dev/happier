@@ -392,6 +392,12 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     );
 
     const currentStep = stack.currentStep;
+    // A consumer that mirrors its active step passes pagination for that step. Its mirror (and the
+    // pagination with it) follows an internal pop one commit later, through `onActiveStepChange`, so
+    // until then the list must not hand that step's cursor to the root: the body latches the
+    // virtualized renderer for its step's whole lifetime and would keep a fixed viewport (R88).
+    const paginationStepId = props.syncActiveStep === undefined ? undefined : (props.syncActiveStep ?? props.rootStep).id;
+    const pagination = paginationStepId === undefined || paginationStepId === currentStep.id ? props.pagination : undefined;
     // Consumer awareness of which step is active. Fired when the mounted step
     // ID changes (mount, push, pop, drain, root adoption to a new id) — never
     // for same-id content refreshes, which are not navigation. The step object
@@ -607,7 +613,11 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const scrollFollowOptionIdRef = React.useRef<string | null>(null);
     const pointerMovedRef = React.useRef(false);
     const pointerHoveredOptionIdRef = React.useRef<string | null>(null);
+    // Pointer events consume the current list; they do not publish a new context value per key/focus.
+    const pointerFocusInputsRef = React.useRef({ focus, flatVisibleOptionIds, virtualizedOptionSource });
+    pointerFocusInputsRef.current = { focus, flatVisibleOptionIds, virtualizedOptionSource };
     const applyPointerFocus = React.useCallback((optionId: string) => {
+        const { focus, flatVisibleOptionIds, virtualizedOptionSource } = pointerFocusInputsRef.current;
         if (optionId === focus.focusedOptionId) return;
         const index = virtualizedOptionSource
             ? virtualizedOptionSource.findOptionIndexById(optionId)
@@ -615,7 +625,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         if (index < 0) return;
         pointerFocusedOptionIdRef.current = optionId;
         focus.setFocusedIndex(index);
-    }, [focus, flatVisibleOptionIds, virtualizedOptionSource]);
+    }, []);
     const focusOptionFromPointer = React.useCallback((optionId: string | null) => {
         pointerHoveredOptionIdRef.current = optionId;
         if (optionId !== null && pointerMovedRef.current) applyPointerFocus(optionId);
@@ -883,12 +893,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         };
     }, [keyboard, isComposing, focusedOptionId, handleActivate, stack.canPop, inputValue, props.onRequestClose]);
 
-    const handlePushStep = React.useCallback(
-        (step: SelectionListStep) => {
-            stack.pushStep(step);
-        },
-        [stack],
-    );
+    const handlePushStep = stack.pushStep;
 
     // RUX-13: synthesize the "⇧⇥ back" footer hint when there's a real back
     // action available. The hint is shown when EITHER:
@@ -1209,7 +1214,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-            pagination={props.pagination}
+            pagination={pagination}
             virtualizedViewportHeight={virtualizedViewportHeight}
             columnCount={columnCount}
             columnGapPx={columns?.columnGapPx}
@@ -1333,7 +1338,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
             showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-            pagination={props.pagination}
+            pagination={pagination}
             virtualizedViewportHeight={virtualizedViewportHeight}
             columnCount={columnCount}
             columnGapPx={columns?.columnGapPx}

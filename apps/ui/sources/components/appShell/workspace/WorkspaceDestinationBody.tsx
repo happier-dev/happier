@@ -5,8 +5,9 @@ import type { DestinationRef } from '@/components/appShell/destinations/compactA
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { loadWorkspaceRouteLayout, workspaceRouteBodies } from './workspaceRouteBodies';
-import { matchWorkspaceDestinationRoute, workspaceMachinePageRouteKey, workspaceRouteFiles } from './workspaceRoutes';
-import { MachinesDoorProvider } from '@/components/machines/page/machinesDoor';
+import { matchWorkspaceDestinationRoute, workspaceMachinePageRouteKey, workspacePluginAppPageRouteKey, workspaceRouteFiles } from './workspaceRoutes';
+import { MachinesDoorProvider, resolveMachinesDoor } from '@/components/machines/page/machinesDoor';
+import { useAppShellLocation } from '@/components/navigation/shell/appRail/useAppShellLocation';
 import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { DestinationBodyLoading } from './DestinationBodyLoading';
@@ -37,7 +38,7 @@ const PluginAppPageScreen = retryableLazy(async () => ({
 }));
 
 /** Renders the catalog-admitted identity; the Expo entrypoint is only its URL sink. */
-export function WorkspaceDestinationBody(props: Readonly<{
+export const WorkspaceDestinationBody = React.memo(function WorkspaceDestinationBody(props: Readonly<{
     target: DestinationRef;
     pathname: string;
     renderSession: (target: DestinationRef) => React.ReactNode;
@@ -47,7 +48,7 @@ export function WorkspaceDestinationBody(props: Readonly<{
     if (props.target.kind === 'sessionDetails') return props.renderSessionDetails(props.target);
     const match = matchWorkspaceDestinationRoute(props.pathname);
     const Body = match ? bodies[match.routeKey] : undefined;
-    if (props.target.params.pluginId && props.target.params.localId && props.pathname.startsWith('/plugins/')) {
+    if (match && workspacePluginAppPageRouteKey(match.routeKey) && props.target.params.pluginId && props.target.params.localId) {
         return <React.Suspense fallback={<DestinationBodyLoading />}>
             <PluginAppPageScreen pluginId={props.target.params.pluginId}
                 localId={props.target.params.localId} subPath={props.target.params.subPath ?? ''} />
@@ -64,8 +65,13 @@ export function WorkspaceDestinationBody(props: Readonly<{
         content = <WorkspaceRouteOutlet.Provider key={key} value={content}><Layout /></WorkspaceRouteOutlet.Provider>;
     }
     return <React.Suspense fallback={<DestinationBodyLoading />}>
-        {machineKey ? <MachinesDoorProvider door={props.pathname.startsWith('/settings/') ? 'settings' : 'rail'}>
-            {content}
-        </MachinesDoorProvider> : content}
+        {machineKey ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}
     </React.Suspense>;
+});
+
+/** A Machines page's door follows the shell column beside it; only machine pages subscribe to it. */
+function MachinesDoorFromShell(props: Readonly<{ pathname: string; children: React.ReactNode }>) {
+    const { column } = useAppShellLocation().location;
+    const door = resolveMachinesDoor({ pathname: props.pathname, shellColumnId: column.kind === 'builtin' ? column.id : null });
+    return <MachinesDoorProvider door={door}>{props.children}</MachinesDoorProvider>;
 }

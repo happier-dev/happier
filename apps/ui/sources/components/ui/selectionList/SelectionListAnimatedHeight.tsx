@@ -322,7 +322,9 @@ export function SelectionListAnimatedHeight(
     ]);
 
     const animatedStyle = useAnimatedStyle(() => {
-        if (!enabled || !pinned) return {};
+        // Unpinned says 'auto' outright: on web Reanimated writes the pinned height straight to the
+        // element, so a style that only omits it would keep the last pinned value and clip the step.
+        if (!enabled || !pinned) return { height: 'auto' as const };
         return { height: animatedHeight.value };
     }, [enabled, pinned]);
 

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
@@ -76,7 +77,7 @@ describe('new Session model source authority', () => {
                 const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' }, agentTargetKey,
                     nativeModels: state.modelOptions, providerGroups: [], hiddenNativeModelKeys: new Set(),
                     providerProjectionAuthoritative: true, teamCredentialResources: emptyCatalog ? [] : [resource],
-                    currentTeamCredentialResourceKeys: new Set(['team-1:resource-1']),
+                    teamCredentialResourceStatusByKey: new Map([['team-1:resource-1', { kind: 'current' as const }]]),
                 });
                 return { state, options: sections.flatMap(section => section.options) };
             }, { initialProps: { selectedSource: 'team' } });
@@ -84,6 +85,7 @@ describe('new Session model source authority', () => {
             try {
                 await flushHookEffects();
                 expect(nativeCalls()).toHaveLength(0);
+                expect(capabilityRpc.mock.calls.filter(([, request]) => request.method === 'probeConfigOptions')).toHaveLength(0);
                 expect(hook.getCurrent().options.map(option => option.value?.modelId)).toEqual(['team-model']);
                 expect(hook.getCurrent().options[0]?.disabled).toBe(false);
                 expect(hook.getCurrent().state.modelOptionsProbeState).toMatchObject({ phase: 'idle', failed: false });
@@ -115,9 +117,18 @@ describe('new Session model source authority', () => {
                     expect(nativeCalls()).toHaveLength(3);
                     expect(hook.getCurrent().state.modelOptionsProbeState.failed).toBe(true);
                 });
+                capabilityRpc.mockResolvedValue({ ok: true, result: {
+                    configOptions: [], refreshError: true, refreshErrorMessage: 'Native configuration rejected',
+                } });
+                await act(async () => { hook.getCurrent().state.acpConfigOptionsProbeState.onRefresh(); });
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(hook.getCurrent().state.acpConfigOptionsProbeState.failed).toBe(true);
+                });
                 await hook.rerender({ selectedSource: 'team' });
                 expect(hook.getCurrent().options.map(option => option.value?.modelId)).toEqual(['team-model']);
                 expect(hook.getCurrent().state.modelOptionsProbeState).toMatchObject({ phase: 'idle', failed: false });
+                expect(hook.getCurrent().state.acpConfigOptionsProbeState).toMatchObject({ phase: 'idle', failed: false });
                 await hook.rerender({ selectedSource: 'team', emptyCatalog: true });
                 expect(hook.getCurrent().options).toEqual([]);
                 expect(hook.getCurrent().state.modelOptionsProbeState).toMatchObject({ phase: 'idle', failed: false });

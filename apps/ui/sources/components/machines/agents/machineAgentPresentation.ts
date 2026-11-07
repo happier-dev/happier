@@ -52,6 +52,7 @@ export type MachineAgentStatus =
     | Readonly<{ kind: 'failed'; tone: 'bad'; failure: MachineAgentJobFailure }>
     | Readonly<{ kind: 'checking'; tone: 'quiet' }>
     | Readonly<{ kind: 'offline'; tone: 'quiet'; lastKnown: 'signedIn' | 'signedOut' | 'notInstalled' | 'unknown' }>
+    | Readonly<{ kind: 'unavailable'; tone: 'quiet'; reason: NonNullable<MachineAgent['unavailableReason']> }>
     | Readonly<{ kind: 'unknown'; tone: 'quiet' }>;
 
 function isJobRunning(agent: MachineAgent): boolean {
@@ -135,12 +136,15 @@ export function resolveMachineAgentStatus(
     agent: MachineAgent | null,
     session?: MachineAgentSignInSession | null,
     inventoryStatus?: MachineAgentsSnapshot['status'],
+    inventoryFailure?: MachineAgentsSnapshot['failure'],
 ): MachineAgentStatus {
     // A missing or unanswered row is not a failed check while its inventory is loading.
     // Retained installation/authentication facts still speak during a refresh.
     if (inventoryStatus === 'loading' && (!agent || agent.state === 'unknown' || agent.state === 'checking')) {
         return { kind: 'checking', tone: 'quiet' };
     }
+    const failure = agent?.unavailableReason ?? inventoryFailure;
+    if (failure && inventoryStatus !== 'offline' && agent?.staleReason !== 'offline') return { kind: 'unavailable', tone: 'quiet', reason: failure };
     if (!agent) return { kind: 'unknown', tone: 'quiet' };
     if (agent.stale) {
         if (agent.staleReason === 'error') return { kind: 'unknown', tone: 'quiet' };
@@ -223,15 +227,25 @@ export function resolveMachineAgentPickerPlacement(
  * agent installed from "Add an agent" during this run keeps its place while its form finishes the setup
  * (its install job is still held), so the open form never jumps between groups.
  */
-export function splitMachineAgents(agents: readonly MachineAgent[]): Readonly<{ installed: MachineAgent[]; available: MachineAgent[] }> {
+/**
+ * The machine's agents in the section's two groups. An agent installed here keeps the place its setup form opened
+ * in (Add an agent) while that form stays open, so it does not jump groups mid-setup; closed, it is listed as
+ * installed. `anyInstalled` is the one "is anything on this machine" fact, whichever group shows the agent.
+ */
+export function splitMachineAgents(
+    agents: readonly MachineAgent[],
+    isFormOpen: (agent: MachineAgent) => boolean,
+): Readonly<{ installed: MachineAgent[]; available: MachineAgent[]; anyInstalled: boolean }> {
     const installed: MachineAgent[] = [];
     const available: MachineAgent[] = [];
+    let anyInstalled = false;
     for (const agent of agents) {
-        const installedHere = agent.job?.intent === 'install';
-        if (agent.installed && !installedHere) installed.push(agent);
+        const keepsSetupPlace = agent.job?.intent === 'install' && isFormOpen(agent);
+        if (agent.installed) anyInstalled = true;
+        if (agent.installed && !keepsSetupPlace) installed.push(agent);
         else if (agent.platform.supported) available.push(agent);
     }
-    return { installed, available };
+    return { installed, available, anyInstalled };
 }
 
 /**

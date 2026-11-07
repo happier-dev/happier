@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
+import { formatMachineAgentStatus } from './machineAgentCopy';
+import { t } from '@/text';
 
 import {
     isMachineAgentUnchecked,
@@ -36,6 +38,17 @@ function agent(overrides: Partial<MachineAgent> = {}): MachineAgent {
 }
 
 describe('machine agent presentation', () => {
+    it('keeps transport diagnostics out of the shared status copy used by the composer and Machine rows', () => {
+        expect(formatMachineAgentStatus({ kind: 'unavailable', tone: 'quiet',
+            reason: { reason: 'projection_unavailable', errorCode: 'transport-error' } })).toBe(t('machineAgents.unknown'));
+    });
+    it('preserves the inventory-owned classified failure in its status instead of presenting unknown', () => {
+        const row = agent({ installed: true, state: 'unknown', stale: true, staleReason: 'error',
+            unavailableReason: { reason: 'probe_failed', errorCode: 'RPC_FORBIDDEN' } });
+        expect(resolveMachineAgentStatus(row)).toEqual({ kind: 'unavailable', tone: 'quiet',
+            reason: { reason: 'probe_failed', errorCode: 'RPC_FORBIDDEN' } });
+    });
+
     it('tells an agent nobody asked about yet from a check in progress or a failed one', () => {
         expect(isMachineAgentUnchecked(null, 'idle')).toBe(true);
         expect(isMachineAgentUnchecked(null, 'loading')).toBe(false);
@@ -161,7 +174,7 @@ describe('machine agent presentation', () => {
         expect(resolveMachineAgentPickerPlacement(null, idleSession)).toEqual({ group: 'onMachine', marker: 'none', opensSetup: false });
     });
 
-    it('lists installed agents first and never offers what cannot run here, keeping a just-installed agent where its form opened', () => {
+    it('lists installed agents first and never offers what cannot run here, keeping a just-installed agent where its open form is', () => {
         const installed = agent({ agentId: 'claude', state: 'ready', installed: true, version: '2', signIn: { status: 'signedIn', via: { kind: 'native', accountLabel: null }, nativeLogin: 'terminal', connectedServices: [] } });
         const missing = agent({ agentId: 'gemini' });
         const unsupported = agent({ agentId: 'kimi', state: 'unsupported', platform: { supported: false, reason: 'os' } });
@@ -169,9 +182,14 @@ describe('machine agent presentation', () => {
             agentId: 'antigravity', state: 'needsSignIn', installed: true, version: '1.1.1',
             job: { jobId: 'j', intent: 'install', startedAtMs: 0, logLine: null, steps: [], outcome: { kind: 'succeeded', version: '1.1.1' } },
         });
-        const split = splitMachineAgents([installed, missing, unsupported, justInstalled]);
+        const split = splitMachineAgents([installed, missing, unsupported, justInstalled], (entry) => entry === justInstalled);
         expect(split.installed.map((entry) => entry.agentId)).toEqual(['claude']);
         expect(split.available.map((entry) => entry.agentId)).toEqual(['gemini', 'antigravity']);
+        expect(split.anyInstalled).toBe(true);
+        // Once its form closes, the agent is listed with what is installed (R88).
+        const closed = splitMachineAgents([missing, justInstalled], () => false);
+        expect(closed.installed.map((entry) => entry.agentId)).toEqual(['antigravity']);
+        expect(closed.available.map((entry) => entry.agentId)).toEqual(['gemini']);
     });
 
     it('blocks starting a session with an agent that is not on the machine or signed out, never on missing facts', () => {

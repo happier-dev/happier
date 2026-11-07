@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { RightPaneSurface } from '@/components/appShell/panes/rightPanePlacement';
+import { MULTI_PANE_MAIN_COLUMN_TEST_ID } from './multiPaneTestIds';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ResolvedPaneLayout } from './paneBreakpoints';
@@ -29,6 +29,7 @@ import { APP_SHELL_SHEET_INSET_PX, APP_SHELL_SHEET_RADIUS_PX, AppShellMaterialPl
 import type { AppShellPanelDivider } from '@/components/navigation/shell/appShellTail';
 import { LinearGradient } from 'expo-linear-gradient';
 import { parseThemeColor } from '@/theme/parseThemeColor';
+import type { RightPaneSurface } from '@/components/appShell/panes/rightPanePlacement';
 
 // A pane floating over the main content (overlay presentation) rounds the one edge that shows.
 const PANE_OVERLAY_CORNER_RADIUS_PX = 16;
@@ -41,9 +42,24 @@ const SOFT_SCRIM_SHARE = 0.6;
 const DOCKED_DETAILS_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.pane + 1;
 const NOOP = () => {};
 
+/**
+ * Web: moves a pane column on the compositor (transform, opacity, clip), never through its layout, so the
+ * page beside it is laid out once per open or close instead of on every frame. A new motion replaces the
+ * running one; callers pass where it is now as the first keyframe to retarget from there.
+ */
+function animateWebPaneColumn(element: HTMLElement, keyframes: Keyframe[], durationMs: number): Animation {
+    for (const running of element.getAnimations()) running.cancel();
+    return element.animate(keyframes, { duration: durationMs, easing: motionTokens.easingCss.standard, fill: 'forwards' });
+}
+
 export type MultiPaneHostProps = Readonly<{
     main: React.ReactNode;
     hideMain?: boolean;
+    /**
+     * The main column's page owns what Details shows (a list whose entry is open beside it). While Details is
+     * docked, that page stays presented even when its list column is hidden: its detail is on screen.
+     */
+    mainOwnsDetails?: boolean;
     mirrored?: boolean;
     detailsClosable?: boolean;
     mainDrawerOpen?: boolean;
@@ -61,7 +77,6 @@ export type MultiPaneHostProps = Readonly<{
     /** Each retained body keeps its key and parent as its column changes. */
     rightSurfaces?: readonly RightPaneSurface[];
     onCloseMainSurface?: () => void;
-
     /** The right pane presents inside the main column, above its composer (lab AR1 EFv). */
     rightInMain?: boolean;
     detailsPane: React.ReactNode | null;
@@ -212,6 +227,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const rightOnCanvas = props.rightTail !== undefined && rightDocked && !rightInMain && !mirrored;
     const rightUnderDetailsOverlay = detailsModalActive && !rightBesideDetailsOverlay;
     const shouldHideDockedMainRegion = hideMain === true;
+    const mainOwnedDetailShown = props.mainOwnsDetails === true && detailsDocked;
+    const mainPagePresented = mainPresented || mainOwnedDetailShown;
     const mainWidthPx = props.mainDockWidthPx ?? DEFAULT_SESSION_WIDTH_PX;
     // Hide/show (lab H1): the column slides toward its own edge and back (`overlay.panel`, a fade alone
     // under reduced motion) while its neighbours take or give back its width on the same frame. It
@@ -243,9 +260,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             const away = { transform: reducedMotion ? 'none' : `translateX(${mirrored ? slideWidthPx : -slideWidthPx}px)`, opacity: 0 };
             const settled = { transform: 'none', opacity: 1 };
             const from = { transform: current.transform === 'none' ? 'none' : current.transform, opacity: Number(current.opacity) };
-            for (const running of element.getAnimations()) running.cancel();
-            const animation = element.animate([hidden ? from : (from.opacity < 1 ? from : away), hidden ? away : settled],
-                { duration, easing: motionTokens.easingCss.standard, fill: 'forwards' });
+            const animation = animateWebPaneColumn(element, [hidden ? from : (from.opacity < 1 ? from : away), hidden ? away : settled], duration);
             animation.onfinish = () => { park(); if (!hidden) animation.cancel(); };
             return;
         }
@@ -320,23 +335,26 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             ref={sharedMainModal ? mainModalBoundary.setOverlayFocusRef : undefined}
             {...(sharedMainModal ? mainModalBoundary.overlayProps : {})}
             style={{ flex: 1, flexDirection: mirrored ? 'row-reverse' : 'row', position: 'relative' }}>
-                <View key="main" ref={mainFocusRef} testID="multi-pane-main-column"
+                <View key="main" ref={mainFocusRef} testID={MULTI_PANE_MAIN_COLUMN_TEST_ID}
                     onFocus={mainRegionFocus.onFocus} onLayout={measureMainInsets} role={Platform.OS === 'web' ? 'region' : undefined}
                     tabIndex={Platform.OS === 'web' && mainRegionVisible ? -1 : undefined}
                     focusable={mainRegionVisible}
                     accessibilityLabel={mainLabel}
                     pointerEvents={shouldHideDockedMainRegion ? 'none' : undefined}
                     {...(Platform.OS === 'web' && shouldHideDockedMainRegion ? { inert: true, 'aria-hidden': true } : {})}
-                    style={mainLeaving ? { position: 'absolute', top: 0, bottom: 0, ...(mirrored ? { right: 0 } : { left: 0 }), width: slideWidthPx, overflow: 'hidden', zIndex: 1, backgroundColor: theme.colors.surface.base }
+                    style={mainLeaving ? { position: 'absolute', top: 0, bottom: 0, ...(mirrored ? { right: 0 } : { left: 0 }), width: slideWidthPx, overflow: 'hidden', zIndex: 1 }
                         : shouldHideDockedMainRegion ? { position: 'absolute', width: 0, height: '100%', overflow: 'hidden', opacity: 0, zIndex: -1 }
                         // The main column as a drawer is a layer like the other pane overlays: its leading corners
                         // round and it carries their elevation, so it reads as lifted over the editor (lab F10).
-                        : layout.main === 'overlay' ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: mainWidthPx, zIndex: overlayZIndexBase + 5, backgroundColor: theme.colors.surface.base,
+                        : layout.main === 'overlay' ? { position: 'absolute', top: 0, right: 0, bottom: 0, width: mainWidthPx, zIndex: overlayZIndexBase + 5,
                             borderTopLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX, borderBottomLeftRadius: PANE_OVERLAY_CORNER_RADIUS_PX,
                             overflow: 'hidden', ...shadowLevelStyle(theme.colors.shadowLevels[6]) }
                             : { flex: mirrored ? undefined : 1, width: mirrored ? mainWidthPx : undefined, minWidth: 0, minHeight: 0, position: 'relative' }}>
                     <Animated.View ref={mainSlideNodeRef} style={mainSlideStyle}>
-                    <RetainedPanelSurface isActive={!shouldHideDockedMainRegion || mainLeaving} mode="flow" testID="multi-pane-main-retained">
+                    <GlassSurface surfaceGroup="content" noCoat={layout.main !== 'overlay' && !mainLeaving}
+                        solidColor={theme.colors.edge.floatingFill} finishRole={layout.main === 'overlay' || mainLeaving ? 'floating' : null}
+                        style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                    <RetainedPanelSurface isActive={!shouldHideDockedMainRegion || mainLeaving} presentationActive={!shouldHideDockedMainRegion || mainLeaving || mainOwnedDetailShown} mode="flow" testID="multi-pane-main-retained">
                     <ResizableDockedPane widthPx={mainLeaving ? slideWidthPx : mainWidthPx}
                         // Beside the side panes the Session column takes the room they leave (flex), so it
                         // follows its host on the frame a window resizes; only a mirrored, overlaid or
@@ -352,7 +370,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                         style={{ flex: 1, minWidth: 0, minHeight: 0 }}
                         {...(mainModalActive && !sharedMainModal ? mainModalBoundary.overlayProps : activeMainBoundary?.underlayProps ?? {})}
                     >
-                        <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible} presentationActive={mainPresented} currentUiContextActive={mainPresented}>
+                        <PluginSurfaceFocusEligibilityProvider active={mainFocusEligible} presentationActive={mainPagePresented} currentUiContextActive={mainPagePresented}>
                             <PaneMainComposerReporterContext.Provider value={reportMainComposer}>
                             <PaneMainTopReporterContext.Provider value={reportMainTop}>
                                 <PaneMainBodyPresentationContext.Provider value={mainPresented && !(rightInMain && rightPresence.present) && !hasMainSurface}>
@@ -392,6 +410,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     ) : null}
                     </ResizableDockedPane>
                     </RetainedPanelSurface>
+                    </GlassSurface>
                     </Animated.View>
                 </View>
             {detailsPresence.present ? (
@@ -403,6 +422,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     presentation={layout.details}
                     modalActive={detailsModalActive}
                     progress={detailsPresence.progress}
+                    open={Boolean(detailsPane)}
+                    motionDurationMs={detailsPresence.durationMs}
                     widthPx={detailsDockWidthPx}
                     minWidthPx={props.detailsDockMinWidthPx ?? DEFAULT_DETAILS_MIN_PX}
                     maxWidthPx={props.detailsDockMaxWidthPx ?? Number.POSITIVE_INFINITY}
@@ -455,6 +476,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     presentation={inMain ? (mainVisible ? 'main' : 'hidden') : side ? layout.right : 'hidden'}
                     modalActive={side && rightModalActive}
                     progress={inMain && props.rightSurfaces !== undefined ? settledMainProgress : rightPresence.progress}
+                    open={Boolean(rightPane)}
+                    motionDurationMs={rightPresence.durationMs}
                     // Over the session column the pane takes the column's width, and its edge resizes the column.
                     {...(inMain ? {
                         widthPx: mainWidthPx,
@@ -572,6 +595,10 @@ function PaneColumn(props: Readonly<{
     mainZIndex?: number;
     modalActive: boolean;
     progress: Animated.Value;
+    /** The pane's open/close intent (its presence target); a docked web column moves on its change. */
+    open: boolean;
+    /** The presence motion's duration (instant under reduced motion). */
+    motionDurationMs: number;
     widthPx: number;
     minWidthPx: number;
     maxWidthPx: number;
@@ -603,8 +630,38 @@ function PaneColumn(props: Readonly<{
         if (props.modalActive) props.overlayFocusRef(node as HTMLElement | null);
     }, [props.modalActive, props.overlayFocusRef, props.underlayFocusRef, regionFocus.ref]);
     const boundaryProps = props.modalActive ? props.overlayProps : (props.underlayProps ?? {});
+    // Docked on the web the column holds its width from the first frame to the last and moves on the
+    // compositor: the same fade and slide (and, on the canvas, its growth out of the rail tab as a
+    // reveal) over the presence motion. Native keeps the Animated width.
+    const webDocked = Platform.OS === 'web' && docked;
+    const onCanvas = props.onCanvas === true;
+    const columnNodeRef = React.useRef<View | null>(null);
+    const movedOpenRef = React.useRef<boolean | null>(null);
+    React.useLayoutEffect(() => {
+        const element = columnNodeRef.current as unknown as HTMLElement | null;
+        const previous = movedOpenRef.current;
+        movedOpenRef.current = props.open;
+        if (!webDocked) {
+            if (element && typeof element.getAnimations === 'function') for (const running of element.getAnimations()) running.cancel();
+            return;
+        }
+        if (previous === props.open || props.motionDurationMs <= 0) return;
+        if (!element || typeof element.animate !== 'function') return;
+        const away = { opacity: 0, transform: onCanvas ? 'none' : 'translateX(12px)', clipPath: onCanvas ? 'inset(0 0 0 100%)' : 'inset(0)' };
+        const shown = { opacity: 1, transform: 'none', clipPath: 'inset(0)' };
+        // A second press retargets from where the column is now.
+        const moving = element.getAnimations().length > 0 && typeof getComputedStyle === 'function';
+        const current = moving ? getComputedStyle(element) : null;
+        const from = current
+            ? { opacity: Number(current.opacity), transform: current.transform, clipPath: current.clipPath === 'none' ? 'inset(0)' : current.clipPath }
+            : props.open ? away : shown;
+        const animation = animateWebPaneColumn(element, [from, props.open ? shown : away], props.motionDurationMs);
+        // Open, it settles on its plain style; closing, it stays away until presence unmounts it.
+        if (props.open) animation.onfinish = () => animation.cancel();
+    }, [onCanvas, props.motionDurationMs, props.open, webDocked]);
     return (
         <Animated.View
+            ref={columnNodeRef}
             role={Platform.OS === 'web' ? 'region' : undefined}
             accessibilityLabel={props.name === 'right' ? t('ui.modalPane.right') : t('ui.modalPane.details')}
             aria-hidden={Platform.OS === 'web' && hidden ? true : undefined}
@@ -619,9 +676,8 @@ function PaneColumn(props: Readonly<{
                 width: props.widthPx,
                 zIndex: props.mainZIndex,
                 overflow: 'hidden',
-                ...(props.onCanvas ? { zIndex: 3 } : null),
                 opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
-                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [props.onCanvas ? 0 : 12, 0] }) }],
+                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
             } : docked ? {
                 position: 'relative',
                 // Longhands only: the flexible column (Editor first) grows from a zero basis, others keep
@@ -629,14 +685,23 @@ function PaneColumn(props: Readonly<{
                 flexGrow: props.flexible ? 1 : 0,
                 flexBasis: props.flexible ? 0 : 'auto',
                 minWidth: 0,
-                width: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, props.widthPx + (props.onCanvas ? APP_SHELL_SHEET_INSET_PX : 0)] }),
-                overflow: 'hidden',
+                // On the canvas the column also holds the gap to the page, so the panel sheet keeps its width.
+                width: webDocked ? props.widthPx + (onCanvas ? APP_SHELL_SHEET_INSET_PX : 0)
+                    : props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, props.widthPx + (props.onCanvas ? APP_SHELL_SHEET_INSET_PX : 0)] }),
+                // Natively the column grows from zero width and clips while it does. On the web its width is
+                // fixed (it enters by a clip-path) and the sheet clips its own content, so the column leaves
+                // the seam open: the resize handle's target reaches past the pane edge, over the page beside it.
+                overflow: webDocked ? 'visible' : 'hidden',
                 flexShrink: 0,
                 alignSelf: 'stretch',
                 height: '100%',
+                // On the canvas the panel's sheet stands above the page's seam, which casts only onto the canvas.
                 ...(props.onCanvas ? { zIndex: 3 } : null),
-                opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
-                transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [props.onCanvas ? 0 : 12, 0] }) }],
+                ...(webDocked ? null : {
+                    opacity: props.progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+                    // On the canvas it grows out of its rail tab instead: a slide would carry it over the rail.
+                    transform: [{ translateX: props.progress.interpolate({ inputRange: [0, 1], outputRange: [props.onCanvas ? 0 : 12, 0] }) }],
+                }),
             } : {
                 position: 'absolute',
                 top: 0,
