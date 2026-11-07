@@ -106,7 +106,10 @@ export function projectProviderCatalogForPicker(input: Readonly<{
         hiddenSources.push({ connectionId: catalog.connectionId, providerName: catalog.providerName,
           connectionName: catalog.connectionName, modelCount: withheld });
       }
-      if (rows.length === 0) return [];
+      // Explicit source browsing must retain the owner's typed refusal even
+      // when authorization removes every model from the selectable list.
+      if (rows.length === 0 && !(input.sourceConnectionId === catalog.connectionId
+          && input.observationScope !== 'account' && !catalog.authorization.authorized)) return [];
       return [{
         connectionId: catalog.connectionId,
         providerName: catalog.providerName,

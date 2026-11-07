@@ -3,6 +3,16 @@ import { projectProviderCatalogForPicker } from './projection';
 import type { ProviderConnectionCatalog } from './types';
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { DEFAULT_PROVIDER_SETTINGS_V1, createEmptyProviderRuntimeStateFileV1 } from '@happier-dev/protocol';
+import { normalizeCustomProviderTemplateV1 } from '@happier-dev/protocol/providers/connections/normalizeCustomTemplateV1';
+import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
+import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { resolveProviderBindingDeclarationCompatibilityV1 } from '@happier-dev/protocol/providers/compatibility/resolve';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/compatibility/v1';
+import { resolveProviderConnectionForMachine } from '../registry/resolve';
+import { assembleProviderConnectionCatalog } from './assemble';
+import { setProviderConnectionGrant } from '../connections/service/grants';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_a');
 const ref = (modelId: string) => ({ agentTargetKey: 'agent:codex', providerConnectionId: connectionId, modelId });
@@ -19,6 +29,62 @@ const catalog: ProviderConnectionCatalog = {
 };
 
 describe('Provider source discovery', () => {
+  it('preserves the Machine refusal for a no-auth Responses Provider created after the picker loaded, then offers its saved model after the exact Machine grant', async () => {
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
+    const machineId = '6a37defb-c9fd-46bd-8b59-5a341cf630a9';
+    const connectionId = 'pc_ca67d5e0-7dda-481e-a394-a5351ae770b9';
+    const template = normalizeCustomProviderTemplateV1({ name: 'Custom Responses', protocol: 'openai-responses',
+      baseUrl: 'http://100.64.35.88:35951/v1', catalog: 'probe', modelsPath: '/models' });
+    // Codex's published requirements: Responses, no-auth supported, unknown capabilities need confirmation.
+    const agent: AgentProviderRequirementsV1 = { acceptsProtocols: ['openai-responses'],
+      required: { streaming: true, toolRoundTrips: true }, credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+      authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] }, materialization: 'engineConfig',
+      applyPolicy: 'restart_session', supportsFreeformModelIds: true };
+    expect(projectProviderCatalogForPicker({ catalogs: [catalog], modelVisibilityByRef: {},
+      modelPickerVisibilityByConnectionId: { pc_a: true } }).groups.map(group => group.connectionId)).toEqual(['pc_a']);
+    // The persistence boundary keeps the real Account action used by UI Save/Approve.
+    let savedCatalog = splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog;
+    const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 1,
+      readCatalog: async () => ({ status: 'ready', revision: 1, catalog: savedCatalog }), readDefinitions: async () => [],
+      writeCatalog: async value => { savedCatalog = value.catalog; return { status: 'updated' }; },
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.connections.create_custom', {
+      action: 'createCustom', connectionId, machineId, template, savedSecretId: null,
+      manualModels: [{ id: 'qa-f-ui-tool' }], enable: true,
+    }), { surface: 'ui' })).toMatchObject({ ok: true });
+    const accountEnabled = composeProviderSettingsV1(savedCatalog, {});
+    expect(accountEnabled.accountGrants).toHaveLength(1);
+    expect(accountEnabled.machineGrants).toEqual([]);
+    const resolve = (providerSettings: typeof accountEnabled) => {
+      const result = resolveProviderConnectionForMachine({ connectionId, machineId, providerSettings,
+        registry: { providersByContributionKey: new Map() },
+        dnsEvidenceByEndpointUrl: new Map([['http://100.64.35.88:35951/v1', ['100.64.35.88']]]) });
+      if (result.status !== 'resolved') throw new Error(`Expected resolved custom Provider: ${result.status}`);
+      return result.record;
+    };
+    const initial = resolve(accountEnabled);
+    const project = (settings: typeof accountEnabled, scoped = true) => {
+      const record = resolve(settings);
+      const compatibility = resolveProviderBindingDeclarationCompatibilityV1({ agentTargetKey, agent,
+        endpoints: template.endpointTemplates, model: { id: 'qa-f-ui-tool', name: 'qa-f-ui-tool' } });
+      expect(compatibility.result.status).toBe('experimental');
+      const assembled = assembleProviderConnectionCatalog({ agentTargetKey, connection: record,
+        providerSettings: settings, runtimeState: createEmptyProviderRuntimeStateFileV1(machineId), catalogRuntimeKey: null,
+        compatibilityByModelId: new Map([['qa-f-ui-tool', compatibility]]) });
+      expect(assembled.rows.map(row => row.ref.modelId)).toEqual(['qa-f-ui-tool']);
+      return projectProviderCatalogForPicker({ catalogs: [catalog, assembled], modelVisibilityByRef: {},
+        modelPickerVisibilityByConnectionId: { pc_a: true, [connectionId]: true },
+        ...(scoped ? { sourceConnectionId: connectionId } : {}) });
+    };
+    // A fresh projection contains the new saved catalog, yet ordinary browse still shows only the older source.
+    expect(project(accountEnabled, false).groups.map(group => group.connectionId)).toEqual(['pc_a']);
+    expect(project(accountEnabled).groups).toMatchObject([{ connectionId,
+      authorization: { authorized: false, errorCode: 'provider_not_enabled_on_machine' }, rows: [] }]);
+    const machineEnabled = setProviderConnectionGrant({ settings: accountEnabled, connectionId, machineId,
+      scope: 'machine', enabled: true, connectionSecurityFingerprint: initial.connectionSecurityFingerprint,
+      endpointSetFingerprint: initial.endpointSetFingerprint, now: 3 });
+    expect(project(machineEnabled).groups[0]?.rows.map(row => row.ref.modelId)).toEqual(['qa-f-ui-tool']);
+  });
   it('exposes compatible declared models for Account management without asserting runtime authorization', () => {
     const unavailable = { ...catalog, authorization: { authorized: false as const,
       errorCode: 'provider_machine_unavailable' as const } };
