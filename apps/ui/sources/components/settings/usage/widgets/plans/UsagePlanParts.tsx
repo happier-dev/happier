@@ -35,7 +35,9 @@ import {
   UsageBodyReading,
 } from '../usageBodyKit';
 import { useUsageWidgetPageHasCoverageDetail } from '../usageWidgetBatch';
-import { useUsageDisclosureCommand } from '../usageMountedControls';
+import { useUsageDisclosureCommand, useUsageRetryCommand } from '../usageMountedControls';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { UsagePlanAccount, UsagePlanWindow } from './usagePlansModel';
 import type { UsagePlanAccountName } from './useUsagePlans';
 
@@ -129,7 +131,7 @@ export function UsagePlanAccountStates(props: Readonly<{
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
   slice: UsageQueryResultSlice;
   testID: string;
-  onRetry(): void | Promise<unknown>;
+  onRetry(callerContext?: ActionExecutorContext): void | Promise<unknown>;
   /** True when nothing else is drawn in the body: a pending read then holds the body's room. */
   replacesContent?: boolean;
   /** The shape the body's skeleton holds while it reads (a list of meters), when it is known. */
@@ -139,6 +141,8 @@ export function UsagePlanAccountStates(props: Readonly<{
 }>) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const statement = readPlanAccountsStatement(props.accounts, props.nameOf);
+  const mode = statement ? planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true) : 'hidden';
+  const retry = useUsageRetryCommand(props.onRetry, !!statement && statement.kind !== 'pending' && mode !== 'hidden' && mode !== 'reading');
   if (statement?.kind === 'pending' && props.pendingInHeadline) {
     // Holds the room the settled coverage line takes. The Usage page names coverage once in its header and
     // draws no such line when settled, so it holds none (else the body would shrink by the line at settle).
@@ -147,13 +151,12 @@ export function UsagePlanAccountStates(props: Readonly<{
   if (!statement) {
     return <UsageCoverageLine slice={props.slice} sources={['quota']} onRetry={props.onRetry} testID={`${props.testID}.coverage`} />;
   }
-  const mode = planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true);
   if (mode === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} {...(props.readingShape ? { shape: props.readingShape } : {})} />;
   if (mode === 'hidden') return null;
   const pending = statement.kind === 'pending';
   return <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={statement.reason} busy={pending}
     tone={statement.kind === 'failed' ? 'warning' : 'neutral'}
-    {...(!pending ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {})} />;
+    {...(!pending ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
 }
 
 export function formatPlanPercent(fraction: number): string {
@@ -319,12 +322,16 @@ export function UsagePlansNothingRead(
      */
     promise: string;
     ownsCause?: boolean;
-    onRetry?: () => void | Promise<unknown>;
+    onRetry?: (callerContext?: ActionExecutorContext) => void | Promise<unknown>;
   }>,
 ) {
   const router = useRouter();
   const text = usePlanText();
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
+  const signInVisible = !props.missing && !!props.slice && props.replacesContent !== false && !!props.ownsCause
+    && readUsageCoverageGaps(props.slice, ['quota']).every(gap => gap.status !== 'error' && gap.status !== 'pending' && gap.status !== 'not_loaded');
+  const commands = useCurrentUiContextLocalCommands(signInVisible ? [{ key: 'signIn', title: t('usage.board.plans.capacitySignIn'),
+    invoke: () => router.push(SETTINGS_ROUTES.connectedServicesAgentSignIn as Parameters<typeof router.push>[0]) }] : []);
   if (props.missing) return props.missing.length ? (
     <Text testID={props.testID} style={[styles.legend, text.detail]}>
       {t('usage.board.plans.insufficientSummary', { items: [...new Set(props.missing)].join(', ') })}
@@ -366,7 +373,7 @@ export function UsagePlansNothingRead(
           action: {
             label: t('usage.board.plans.capacitySignIn'),
             testID: `${props.testID}.signIn`,
-            onPress: () => router.push(SETTINGS_ROUTES.connectedServicesAgentSignIn as Parameters<typeof router.push>[0]),
+            onPress: () => { void commands.invoke('signIn'); },
           },
         } : {})}
       />
@@ -530,13 +537,12 @@ export function UsagePlanDisclosure(
   const text = usePlanText();
   const reducedMotion = useReducedMotionPreference();
   const [expanded, setExpanded] = React.useState(false);
-  const toggle = () => setExpanded(value => !value);
-  useUsageDisclosureCommand(props.title, expanded, toggle);
+  const toggle = useUsageDisclosureCommand(props.title, expanded, () => setExpanded(value => !value));
   return (
     <ExpandableItem
       testID={props.testID}
       expanded={expanded}
-      onExpandedChange={setExpanded}
+      onExpandedChange={toggle}
       showDivider={false}
       bodyStyle={styles.disclosureBody}
       header={({ headerProps }) => (

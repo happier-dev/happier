@@ -105,6 +105,19 @@ async function renderCustomModal(config: Omit<CustomModalConfig<any>, 'id'>, onC
 }
 
 describe('CustomModal', () => {
+    it('keeps a page shown in a dialog in charge of its own title and actions, not the route behind it', async () => {
+        const { NavigationTitleChromeProvider, useNavigationTitleChromeShowsTitle, useNavigationTitleChromePublisher } = await import('@/components/ui/layout/navigationTitleChrome');
+        const seen: Array<readonly [boolean, boolean]> = [];
+        function PageInDialog(props: CustomModalInjectedProps) {
+            seen.push([useNavigationTitleChromeShowsTitle(), useNavigationTitleChromePublisher() !== null]);
+            return React.createElement('PageInDialog', props);
+        }
+        const { CustomModal } = await import('./CustomModal');
+        await renderScreen(React.createElement(NavigationTitleChromeProvider, { showsTitle: true, publisher: { setTitle: vi.fn() } },
+            React.createElement(CustomModal, { config: { id: 'page-dialog', component: PageInDialog, props: {} }, onClose: vi.fn(), visible: true })));
+        expect(seen.at(-1)).toEqual([false, false]);
+    });
+
     it('gives a stage fullscreen custody without card chrome or competing modal motion', async () => {
         const onClose = vi.fn();
         const focusReturnRef = { current: { focus: vi.fn() } };
@@ -147,6 +160,19 @@ describe('CustomModal', () => {
         expect(screen.findAllByType(ModalCardHeader)).toHaveLength(0);
         expect(screen.findByType('RawModal' as any).props.label).toBe('raw');
         expect(typeof screen.findByType('RawModal' as any).props.onClose).toBe('function');
+    });
+
+    it('keeps content and shared close available through an ordinary wrapping bridge', async () => {
+        const onClose = vi.fn();
+        const Bridge = ({ children }: Readonly<{ children: React.ReactNode }>) => children;
+        const screen = await renderCustomModal({
+            type: 'custom', component: RawModal, props: { label: 'wrapped' }, commandBridge: Bridge,
+            chrome: { kind: 'card', title: 'Wrapped modal' },
+        }, onClose);
+
+        expect(screen.findByType(RawModal).props.label).toBe('wrapped');
+        act(() => screen.findByType(BaseModal).props.onClose());
+        expect(onClose).toHaveBeenCalledOnce();
     });
 
     it('wraps chrome-backed modals in ModalCardFrame and closes through the shared handler', async () => {

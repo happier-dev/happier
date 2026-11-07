@@ -13,6 +13,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ProviderAccountSubscriptionMonthlyPriceV1Schema } from '@happier-dev/protocol/connect/accountSubscription';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { UsagePlanDisclosure } from './UsagePlanParts';
 import { t } from '@/text';
 import { exportUsageTextDocument } from '../../usageExportFile';
@@ -154,6 +155,16 @@ function SubscriptionPriceFields(props: React.ComponentProps<typeof UsageSubscri
   const entered = props.account.subscription?.enteredMonthlyPrice;
   const [amount, setAmount] = React.useState(entered ? String(entered.amount) : '');
   const [currency, setCurrency] = React.useState(entered?.currency ?? '');
+  const draft = useCurrentUiContextLocalCommands([
+    { key: 'amount', title: t('usage.board.plans.monthlyPriceAmount'), invoke: value => {
+      if (typeof value !== 'string') return false;
+      setAmount(value);
+    } },
+    { key: 'currency', title: t('usage.board.plans.monthlyPriceCurrency'), invoke: value => {
+      if (typeof value !== 'string') return false;
+      setCurrency(value);
+    } },
+  ]);
   const { state, failureMessage, run } = useUsagePlanAction(props.serverId);
   const viewer = useActiveServerAccountScope();
   const price = ProviderAccountSubscriptionMonthlyPriceV1Schema.safeParse({
@@ -164,11 +175,11 @@ function SubscriptionPriceFields(props: React.ComponentProps<typeof UsageSubscri
   return <View style={priceStyles.root}>
     <View style={priceStyles.line}>
       <FieldItem label={t('usage.board.plans.monthlyPriceAmount')} style={priceStyles.amount}>
-        <FieldTextInput testID={`${props.testID}.amount`} value={amount} onChangeText={setAmount}
+        <FieldTextInput testID={`${props.testID}.amount`} value={amount} onChangeText={value => { void draft.invoke('amount', value); }}
           accessibilityLabel={t('usage.board.plans.monthlyPriceAmount')} keyboardType="decimal-pad" inputMode="decimal" />
       </FieldItem>
       <FieldItem label={t('usage.board.plans.monthlyPriceCurrency')} style={priceStyles.currency}>
-        <FieldTextInput testID={`${props.testID}.currency`} value={currency} onChangeText={setCurrency}
+        <FieldTextInput testID={`${props.testID}.currency`} value={currency} onChangeText={value => { void draft.invoke('currency', value); }}
           accessibilityLabel={t('usage.board.plans.monthlyPriceCurrency')} autoCapitalize="characters" />
       </FieldItem>
       <View style={priceStyles.actions}>

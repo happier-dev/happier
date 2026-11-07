@@ -38,8 +38,10 @@ import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountR
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
-import { useUsageDisclosureCommand } from './usageMountedControls';
+import { useUsageDisclosureCommand, useUsageRetryCommand } from './usageMountedControls';
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 /** What every Usage body receives from the one dispatcher: admitted facts, never a fetch handle. */
 export type UsageBodyProps = Readonly<{
@@ -55,6 +57,11 @@ export type UsageBodyProps = Readonly<{
 }>;
 
 export type UsageWidgetPresentationInputs = Readonly<{ style?: string; colourBy?: string; day?: string }>;
+
+/** Names come from the existing privacy-aware account projection, without another read. */
+export function usageUnreadAccountsLabel(names: readonly string[]): string {
+  return `${t('usage.board.plans.capacityNotRead', { count: names.length })} · ${names.join(', ')}`;
+}
 
 export function useUsagePluginTheme(): PluginUiThemeV1 {
   const { theme } = useUnistyles();
@@ -482,7 +489,7 @@ const USAGE_ACCOUNTING_SOURCES = ['accounting'] as const;
 export function UsageBodyNoUsage(props: Readonly<{
   slice: UsageQueryResultSlice;
   testID: string;
-  onRetry: () => void;
+  onRetry: (callerContext?: ActionExecutorContext) => void;
   /** The shape the body will take, so its first read holds that room. */
   readingShape?: React.ComponentProps<typeof UsageBodyReading>['shape'];
 }>) {
@@ -519,12 +526,14 @@ export function UsageBodyReadFailed(props: Readonly<{
   slice: UsageQueryResultSlice;
   sources: readonly string[];
   testID: string;
-  onRetry: () => void;
+  onRetry: (callerContext?: ActionExecutorContext) => void;
 }>) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const failed = gaps.some(gap => gap.status === 'error');
-  if (pageHasDetail && failed && usageCoverageLineMode(gaps, true) === 'hidden')
+  const hidden = pageHasDetail && failed && usageCoverageLineMode(gaps, true) === 'hidden';
+  const retry = useUsageRetryCommand(props.onRetry, !hidden);
+  if (hidden)
     return (
       <SurfaceStateCard
         testID={`${props.testID}.notRead`}
@@ -544,7 +553,7 @@ export function UsageBodyReadFailed(props: Readonly<{
       replacesContent={false}
       title={t('usage.board.page.readFailedTitle')}
       reason={t('usage.board.page.readFailedReason')}
-      action={{ label: t('common.retry'), onPress: props.onRetry }}
+      action={{ label: t('common.retry'), onPress: retry }}
     />
   );
 }
@@ -556,12 +565,15 @@ export function UsageBodyInsufficient(
     testID: string;
     /** False for an insufficient sub-section beside admitted facts. */
     replacesContent?: boolean;
-    action?: Readonly<{ label: string; onPress: () => void }>;
+    action?: Readonly<{ label: string; onPress: (callerContext?: ActionExecutorContext) => void }>;
   }>,
 ) {
   // A state that replaces the body is the widget's empty state: the frame sizes it (centred in a card with
   // room, one line in a compact footprint or a column). A sub-section beside admitted facts stays one line.
   const replacesContent = props.replacesContent !== false;
+  const action = props.action;
+  const commands = useCurrentUiContextLocalCommands(action ? [{ key: 'action', title: action.label,
+    invoke: (_input, callerContext) => action.onPress(callerContext) }] : []);
   return (
     <SurfaceStateCard
       testID={props.testID}
@@ -574,7 +586,7 @@ export function UsageBodyInsufficient(
         ? {
             action: {
               label: props.action.label,
-              onPress: props.action.onPress,
+              onPress: () => { void commands.invoke('action'); },
             },
           }
         : {})}
@@ -672,15 +684,14 @@ export function describeUsageHistoryRead(state: UsageHistoryReadState | null): R
   text: string;
   label: string;
   operation: 'read' | 'cancel';
-  /** The read settled with Sessions it couldn't read and nothing else left: said as a failure. */
+  /** A settled read failed and can be retried, independently of the unread count. */
   failed: boolean;
 }> | null {
   if (!state) return null;
   const { notRead, completed, failed } = state.progress;
   if (state.status === 'reading')
     return { text: t('usage.board.page.historyReading', { done: formatExactCount(completed), total: formatExactCount(completed + notRead) }), label: t('common.cancel'), operation: 'cancel', failed: false };
-  // Sessions that failed stay unread; a few failures among many unread Sessions still read as not read yet.
-  if (state.status === 'partial' && failed > 0 && failed >= notRead)
+  if (failed > 0)
     return { text: t('usage.board.page.historyFailed', { count: formatExactCount(failed) }), label: t('common.retry'), operation: 'read', failed: true };
   if (notRead > 0)
     return { text: t('usage.board.page.historyNotRead', { count: formatExactCount(notRead) }), label: t('usage.board.page.historyReadNow'), operation: 'read', failed: false };
@@ -830,15 +841,16 @@ export function UsageCoverageLine(
   props: Readonly<{
     slice: UsageQueryResultSlice;
     sources: readonly string[];
-    onRetry?: () => void | Promise<unknown>;
+    onRetry?: (callerContext?: ActionExecutorContext) => void | Promise<unknown>;
     testID: string;
   }>,
 ) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(gaps, pageHasDetail);
-  if (mode === 'hidden') return null;
   const failed = mode === 'failed' || gaps.some((gap) => gap.status === 'error' && !needsNewerServer(gap));
+  const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && failed && !!props.onRetry);
+  if (mode === 'hidden') return null;
   if (mode === 'failed') {
     // One short line: what failed, with its Retry; the detail is in Sources.
     const names = [...new Set(gaps.filter(gap => gap.status === 'error').map(gap => usageSourceTitle(gap.source)))].join(', ');
@@ -847,7 +859,7 @@ export function UsageCoverageLine(
         testID={props.testID}
         tone="warning"
         reason={t('usage.board.page.coverageFailed', { sources: names })}
-        {...(props.onRetry ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {})}
+        {...(props.onRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})}
       />
     );
   }
@@ -870,7 +882,7 @@ export function UsageCoverageLine(
       tone={failed ? 'warning' : 'neutral'}
       reason={[...(asOf === null ? [] : [t('usage.board.page.oldestSourceUpdate', { time: formatUsageObservedAt(asOf) })]), usageCoverageSummary(props.slice, props.sources)].join(' · ')}
       {...(failed && props.onRetry
-        ? { action: { label: t('common.retry'), onPress: props.onRetry } }
+        ? { action: { label: t('common.retry'), onPress: retry } }
         : {})}
     />
   );
@@ -975,10 +987,10 @@ export function UsageShowAllRows(props: Readonly<{
   unlisted?: string | null; testID: string;
 }>) {
   const theme = useUsagePluginTheme();
-  useUsageDisclosureCommand(props.label, props.expanded, props.onToggle, props.hidden > 0 || props.expanded);
+  const toggle = useUsageDisclosureCommand(props.label, props.expanded, props.onToggle, props.hidden > 0 || props.expanded);
   return (
     <HappierListOverflowFooter theme={theme} label={props.label} total={props.total} hidden={props.hidden}
-      expanded={props.expanded} onToggle={props.onToggle} complete={props.complete} unlisted={props.unlisted ?? null}
+      expanded={props.expanded} onToggle={toggle} complete={props.complete} unlisted={props.unlisted ?? null}
       labels={{ showAll: t('usage.showAll'), showAvailable: t('usage.showAvailable'), showLess: t('usage.showLess') }}
       testID={props.testID} />
   );

@@ -7,8 +7,8 @@ import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThem
 import { lightTheme } from '@/theme';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSeriesFrame, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens, type UsageSeriesChoice } from './usageSeriesPresentation';
-import type { UsageAnalyticsCoverage } from '@happier-dev/protocol';
+import { fillUsageMixCalendar, fillUsageTrendCalendar, usageAxisTicks, usageSeriesFrame, usageSourceTimelineSeries, usageVolumeSeries, useUsageSeriesLens } from './usageSeriesPresentation';
+import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { ScrubLens, type ScrubLensContent } from './UsageScrubLens';
 
 const coverage = (startMs: number, endMs: number, complete: boolean): UsageAnalyticsCoverage => ({
@@ -20,18 +20,12 @@ const lensSeries = [
     { id: 'claude', label: 'Claude Code', color: '#111', points: [{ id: 'mon', x: 1, label: 'Mon', y: 1200 }, { id: 'tue', x: 2, label: 'Tue', y: 300 }] },
     { id: 'codex', label: 'Codex', color: '#222', points: [{ id: 'mon', x: 1, label: 'Mon', y: 800 }, { id: 'tue', x: 2, label: 'Tue', y: null }] },
 ];
-function LensChart(props: Readonly<{ series?: readonly HappierSeries[]; choice?: (seriesId: string) => UsageSeriesChoice | null }>) {
+function LensChart(props: Readonly<{ series?: readonly HappierSeries[] }>) {
     const series = props.series ?? lensSeries;
     const lens = useUsageSeriesLens({ series, format: (value) => `${value} tok`, accentColor: lightTheme.colors.text.primary,
-        footer: 'API-equivalent', testID: 'lens', ...(props.choice ? { choice: props.choice } : {}) });
+        footer: 'API-equivalent', testID: 'lens' });
     return <StackedSeriesChart theme={projectPluginUiTheme(lightTheme)} label="Tokens" series={series} variant="bar" size="full"
         width={320} showReadout={false} testID="chart" {...lens} />;
-}
-type StubGesture = Readonly<{ __handlers: Record<string, (event: { x: number }) => void>; __config: Record<string, unknown> }>;
-function lensTap(screen: Awaited<ReturnType<typeof renderScreen>>): StubGesture {
-    const detector = screen.findByType('GestureDetector' as never);
-    const [, exclusive] = (detector.props.gesture as { gestures: readonly [StubGesture, { gestures: readonly StubGesture[] }] }).gestures;
-    return exclusive.gestures[1]!;
 }
 
 describe('the all-series lens', () => {
@@ -57,22 +51,6 @@ describe('the all-series lens', () => {
         const lensText = lens.findAllByType(Text).map(node => node.props.children);
         expect(lensText).toContain(t('common.unavailable'));
         expect(lensText.filter(value => typeof value === 'string' && value.endsWith(' tok'))).toEqual(['300 tok']);
-    });
-    it('lets a held lens narrow to one series, and only while it is held', async () => {
-        const chosen: string[] = [];
-        const choice = (seriesId: string): UsageSeriesChoice => ({ onPress: () => chosen.push(seriesId), pressLabel: `Show only ${seriesId}`, selected: false });
-        const screen = await renderScreen(<LensChart choice={choice} />);
-        act(() => pressTestInstance(screen.findByTestId('chart-bucket-mon'), 'bucket'));
-        // Following the reader is passive: nothing in the lens takes a press.
-        expect(screen.findAllHostsByTestId('lens-lens-row-codex')).toHaveLength(0);
-        act(() => lensTap(screen).__handlers.onEnd!({ x: 10 }));
-        const row = screen.findByTestId('lens-lens-row-codex')!;
-        expect(row.props.accessibilityLabel).toBe('Show only codex');
-        act(() => pressTestInstance(row, 'row'));
-        expect(chosen).toEqual(['codex']);
-        // Tapping the held bucket again lets it go.
-        act(() => lensTap(screen).__handlers.onEnd!({ x: 10 }));
-        expect(screen.findAllHostsByTestId('lens-lens-row-codex')).toHaveLength(0);
     });
 });
 

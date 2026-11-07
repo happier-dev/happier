@@ -9,6 +9,7 @@ import { ConnectedServicePoolSelectionGetResponseV1Schema, type ConnectedService
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { useAuth } from '@/auth/context/AuthContext';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -266,20 +267,25 @@ function PoolMachineChooser(props: Readonly<{ query: UsageQuery; testID: string 
   const drill = useUsageDrill(props.query);
   const choices = useUsagePoolMachineChoices(props.query.machines);
   const [open, setOpen] = React.useState(false);
-  if (!drill.available('machines') || choices.length === 0) return null;
+  const available = drill.available('machines') && choices.length > 0;
+  const menu = useCurrentUiContextLocalCommands(available ? [{ key: 'open',
+    title: t('usage.board.plans.usedFirstChooseMachine'), invoke: value => {
+      setOpen(typeof value === 'boolean' ? value : !open);
+    } }] : []);
+  if (!available) return null;
   return (
     <DropdownMenu
       testID={props.testID}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={value => { void menu.invoke('open', value); }}
       items={choices.map((choice) => ({ id: choice.id, title: choice.name }))}
       // A list of Machine names, not a field: it takes the names' width so each one reads whole.
       matchTriggerWidth={false}
       onSelect={(id) => { void drill.toggle('machines', id); }}
-      trigger={({ open: shown, toggle }) => (
+      trigger={({ open: shown }) => (
         <HappierPressable
           testID={`${props.testID}.trigger`}
-          onPress={toggle}
+          onPress={() => { void menu.invoke('open'); }}
           accessibilityRole="button"
           expanded={shown}
           style={(state) => [
@@ -591,12 +597,17 @@ function PoolWhy(props: WhyProps) {
   const text = usePlanText();
   const anchorRef = React.useRef<View>(null);
   const [open, setOpen] = React.useState(false);
-  const close = React.useCallback(() => setOpen(false), []);
+  const detail = useCurrentUiContextLocalCommands([
+    { key: 'toggle', title: t('usage.board.plans.whyTitle'), invoke: () => setOpen(value => !value) },
+    ...(open ? [{ key: 'close', title: `${t('usage.board.plans.whyTitle')}: ${t('common.close')}`,
+      invoke: () => setOpen(false) }] : []),
+  ]);
+  const close = React.useCallback(() => { void detail.invoke('close'); }, [detail.invoke]);
   return (
     <View ref={anchorRef} collapsable={false}>
       <HappierPressable
         testID={props.testID}
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => { void detail.invoke('toggle'); }}
         accessibilityRole="button"
         accessibilityLabel={t('usage.board.plans.whyTitle')}
         expanded={open}
@@ -741,21 +752,37 @@ function PoolComparison(props: WhyProps) {
     ...props.selection.excluded.map(excluded => excluded.retryAtMs),
   ].filter((time): time is number => time != null && time > props.nowMs))].sort((left, right) => left - right);
   const id = `${props.testID}.comparison`;
+  const controls = useCurrentUiContextLocalCommands([
+    { key: 'strategyMenu', title: t('usage.board.plans.whyRule'), invoke: value => {
+      setStrategyOpen(typeof value === 'boolean' ? value : !strategyOpen);
+    } },
+    ...COMPARISON_STRATEGIES.map(value => ({ key: `strategy:${value}`, title: getPoolStrategyPresentation(value).label,
+      invoke: () => { setStrategy(value); setAsked(true); setStrategyOpen(false); } })),
+    { key: 'momentMenu', title: t('usage.board.plans.comparisonMoment'), invoke: value => {
+      setMomentOpen(typeof value === 'boolean' ? value : !momentOpen);
+    } },
+    { key: 'moment:now', title: t('usage.board.plans.stepNow'), invoke: () => {
+      setAtMs(null); setAsked(true); setMomentOpen(false);
+    } },
+    ...moments.map(time => ({ key: `moment:${time}`, title: formatPlanMoment(time, props.nowMs),
+      invoke: () => { setAtMs(time); setAsked(true); setMomentOpen(false); } })),
+    ...(asked && snapshot.error ? [{ key: 'retry', title: t('common.retry'), invoke: async () => { await entry?.refresh(); } }] : []),
+  ]);
   return <View style={styles.pool} testID={id}>
     <Text accessibilityRole="header" style={[styles.strong, text.title]}>{t('usage.board.plans.comparisonTitle')}</Text>
-    <DropdownMenu testID={`${id}.strategy`} open={strategyOpen} onOpenChange={setStrategyOpen}
+    <DropdownMenu testID={`${id}.strategy`} open={strategyOpen} onOpenChange={value => { void controls.invoke('strategyMenu', value); }}
       selectedId={strategy} items={COMPARISON_STRATEGIES.map(value => ({ id: value, title: getPoolStrategyPresentation(value).label }))}
       itemTrigger={{ title: t('usage.board.plans.whyRule') }}
-      onSelect={value => { const next = COMPARISON_STRATEGIES.find(option => option === value); if (next) { setStrategy(next); setAsked(true); } }} />
-    <DropdownMenu testID={`${id}.moment`} open={momentOpen} onOpenChange={setMomentOpen}
+      onSelect={value => { void controls.invoke(`strategy:${value}`); }} />
+    <DropdownMenu testID={`${id}.moment`} open={momentOpen} onOpenChange={value => { void controls.invoke('momentMenu', value); }}
       selectedId={atMs === null ? 'now' : String(atMs)}
       items={[{ id: 'now', title: t('usage.board.plans.stepNow') }, ...moments.map(time => ({ id: String(time), title: formatPlanMoment(time, props.nowMs) }))]}
       itemTrigger={{ title: t('usage.board.plans.comparisonMoment') }}
-      onSelect={value => { if (value === 'now' || moments.includes(Number(value))) { setAtMs(value === 'now' ? null : Number(value)); setAsked(true); } }} />
+      onSelect={value => { void controls.invoke(`moment:${value}`); }} />
     <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.comparisonNote')}</Text>
     {asked && snapshot.error ? <SurfaceFreshnessLine testID={`${id}.failed`} tone="warning"
       reason={t('usage.board.plans.usedFirstReadFailed')}
-      action={{ label: t('common.retry'), onPress: async () => { await entry?.refresh(); } }} /> : null}
+      action={{ label: t('common.retry'), onPress: async () => { await controls.invoke('retry'); } }} /> : null}
     {asked ? !entry ? <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.usedFirstNoMachine')}</Text>
       : response && 'status' in response ? <Text style={[styles.quiet, text.detail]}>{t('usage.board.plans.usedFirstReadFailed')}</Text>
       : response && 'group' in response ? <View accessibilityRole="list">{readUsagePoolMembers(props.pool, props.accounts, response.selection).map((member, index) =>

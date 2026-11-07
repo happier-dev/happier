@@ -4,6 +4,7 @@ import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { CurrentUiContextBridge, useOptionalCurrentUiContextReader } from './CurrentUiContextProvider';
 import { useModalContentId } from '@/modal/ModalProvider';
+import type { ModalCommandBridgeProps } from '@/modal/types';
 import { executeMountedCurrentUiContextCommand } from './currentUiContextActionRuntime';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
@@ -34,11 +35,18 @@ const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
 export function useCurrentUiContextCommandBridge() {
     const composition = React.useContext(CompositionContext);
     const reader = useOptionalCurrentUiContextReader();
-    return React.useMemo(() => function CommandBridge(props: Readonly<{ children: React.ReactNode }>) {
+    return React.useMemo(() => function CommandBridge(props: ModalCommandBridgeProps) {
         return <CompositionContext.Provider value={composition}>
-            <CurrentUiContextBridge publisher={null} reader={reader}>{props.children}</CurrentUiContextBridge>
+            <CurrentUiContextBridge publisher={null} reader={reader}>
+                {props.modalCommands ? <MountedModalCommands {...props.modalCommands} /> : props.children}
+            </CurrentUiContextBridge>
         </CompositionContext.Provider>;
     }, [composition, reader]);
+}
+
+function MountedModalCommands(props: NonNullable<ModalCommandBridgeProps['modalCommands']>): React.ReactNode {
+    const commands = useCurrentUiContextLocalCommands(props.commands, { foregroundOverlay: true });
+    return props.render(commands.invoke);
 }
 
 /** React composition only: the existing current-context publisher retains the sole command record. */

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsV2UpdateRequestSchema, ApprovalRequestSchema, BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
+import { AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -11,6 +14,7 @@ import { renderHook } from '@/dev/testkit';
 import { t, setPreferredLanguageFromSettings, preloadTranslations } from '@/text';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
@@ -26,6 +30,72 @@ describe('present-user UI approval origin at the Action host', () => {
         vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
     });
     afterEach(() => { setPreferredLanguageFromSettings('en'); standardCleanup(); });
+
+    it.each(['actions.policy.set', 'actions.policy.reset'] as const)(
+        'restores an Ask-first Usage policy through %s on its captured Account', async actionId => {
+            const serverId = await harness.addHome({ name: 'Usage policy', serverUrl: 'https://usage-policy.test', accountId: 'alice' });
+            let raw: Record<string, unknown> = {};
+            let version = 0;
+            harness.answer(serverId, '/v2/account/settings', { select: input => {
+                if (input === null || input === undefined) return { body: { content: { t: 'plain', v: raw }, version } };
+                const request = AccountSettingsV2UpdateRequestSchema.parse(input);
+                if (request.expectedVersion !== version) return { body: { success: false, error: 'version-mismatch', currentVersion: version,
+                    currentContent: { t: 'plain', v: raw } } };
+                if (request.content?.t !== 'plain') throw new Error('Expected Plain Account settings');
+                raw = request.content.v;
+                return { body: { success: true, version: ++version } };
+            } });
+            vi.mocked(Modal.confirm).mockResolvedValue(true);
+            const executor = createDefaultActionExecutor();
+            const context = { surface: 'ui', authority: 'present_user', serverId, actionCaller: { kind: 'host' } } as const;
+            const target = { actionId: 'usage.prices.refresh', audience: 'ui' } as const;
+            const setup = await executor.execute('actions.policy.set', { ...target, mode: 'ask_first' }, context);
+            expect(setup, JSON.stringify(setup))
+                .toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+            const restored = await executor.execute(actionId, actionId === 'actions.policy.set' ? { ...target, mode: 'default' } : target, context);
+            expect(restored, JSON.stringify(restored))
+                .toMatchObject({ ok: true, result: { mode: 'default' } });
+            expect(await executor.execute('actions.policy.get', target, context))
+                .toMatchObject({ ok: true, result: { mode: 'default' } });
+        },
+    );
+
+    it('keeps a private Post open until the exact daemon accepts its decision', async () => {
+        const serverIdentityId = 'srv_private_post';
+        const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://private-post.test',
+            accountId: 'alice', serverIdentityId, currentAccount: true });
+        await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId: 'reviewer-machine' });
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'reviewer-session' }, requestedSurface: 'agent', discussionDraftReview: true,
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: { kind: 'host' },
+                serverId: 'daemon-local-profile', serverIdentityId, accountId: 'alice', sessionId: 'reviewer-session',
+                machineId: 'reviewer-machine', actionId: 'discussion.reply', requestId: 'private-answer',
+                discussionReplyReturn: { serverId: serverIdentityId, requestLocalId: 'original-input', acceptedTurnId: 'turn' } },
+            actionId: 'discussion.reply', actionArgs: { discussionId: 'private-discussion', localId: 'private-answer',
+                content: { v: 1, parts: [{ t: 'text', text: 'Private answer' }] },
+                replyTarget: { kind: 'message', messageId: 'question' } }, summary: 'Post the answer' });
+        const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        let artifactId: string;
+        try { artifactId = await account.createArtifact(buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request)); }
+        finally { account.dispose(); }
+        let statusAtDaemonIngress: string | undefined;
+        harness.answer(serverId, '/v1/actions/approval.request.decide', { select: input => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+            expect(envelope.input).toMatchObject({ artifactId, decision: 'approve' });
+            statusAtDaemonIngress = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).status;
+            // Refusal at the genuine daemon ingress boundary must not leave
+            // browser-owned consent stranded without a publication executor.
+            return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+                requestId: envelope.requestId, execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }) };
+        } });
+        const result = await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'approve' },
+            { surface: 'ui', authority: 'present_user', serverId });
+        expect(statusAtDaemonIngress).toBe('open');
+        expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null')).status).toBe('open');
+        expect(harness.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+    });
 
     it.each(['portable', 'foreign'] as const)(
         'settles a rejected private Discussion original through its immutable Home (%s)', async binding => {
@@ -159,18 +229,18 @@ describe('present-user UI approval origin at the Action host', () => {
         } });
         const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
         const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifact.id, header: null }, request, '', serverId));
-        if (failure === 'recoverable') {
-            await expect(hook.getCurrent()('approve')).resolves.toBe(true);
-            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'executed', execution: { ok: true } });
-            const role = store.read('recovered-role');
-            expect(JSON.parse(store.readPlainBody('recovered-role') ?? 'null')).toMatchObject({ name: BUILT_IN_ROLES_V1.builder.name });
-            await hook.getCurrent()('approve');
-            expect(store.read('recovered-role')).toEqual(role);
+        if (failure !== 'claimed') {
+            await expect(hook.getCurrent()('approve')).rejects.toMatchObject({ code: 'approval_context_unavailable' });
+            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'failed',
+                execution: { ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable' } });
+            await expect(hook.getCurrent()('approve')).rejects.toMatchObject({ code: 'approval_context_unavailable' });
+            expect(store.read('recovered-role')).toBeNull();
         } else {
             await expect(hook.getCurrent()('approve')).rejects.toMatchObject({
-                code: failure === 'claimed' ? 'approval_execution_outcome_unknown' : 'approval_context_unavailable',
+                code: 'approval_execution_outcome_unknown',
             });
-            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: failure === 'claimed' ? 'executing' : 'approved' });
+            expect(JSON.parse(store.readPlainBody(artifact.id) ?? 'null')).toMatchObject({ status: 'outcome_unknown',
+                execution: { ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown' } });
             expect(store.read('recovered-role')).toBeNull();
         }
         expect(failedClaims).toBeGreaterThan(0);

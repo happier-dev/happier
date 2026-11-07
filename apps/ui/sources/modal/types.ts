@@ -5,6 +5,8 @@ import type { ModalPortalTarget } from './portal/ModalPortalTarget';
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import type { CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export type ModalType = 'alert' | 'confirm' | 'prompt' | 'custom';
 
@@ -14,6 +16,14 @@ export interface AlertButton {
     style?: 'default' | 'cancel' | 'destructive';
 }
 
+export type ModalCommandBridgeProps = Readonly<{
+    children: ReactNode;
+    modalCommands?: Readonly<{
+        commands: readonly CurrentUiContextLocalCommand[];
+        render: (invoke: (key: string, input?: PluginUiJsonValueV1) => unknown) => ReactNode;
+    }>;
+}>;
+
 export interface BaseModalConfig {
     id: string;
     type: ModalType;
@@ -21,7 +31,7 @@ export interface BaseModalConfig {
     webPortalTarget?: ModalPortalTarget;
     focusReturnRef?: FocusReturnRef;
     /** Captures the opener's current-context composition for opted-in modal controls and chrome. */
-    commandBridge?: ComponentType<Readonly<{ children: ReactNode }>>;
+    commandBridge?: ComponentType<ModalCommandBridgeProps>;
     /** Web-only placement within the full-screen modal shell. */
     webPlacement?: 'auto' | 'top';
 }
