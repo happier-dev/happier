@@ -67,15 +67,15 @@ describe('one Artifact per Board', () => {
             update: async input => { writes.push(input); return boundary.transport.update(input); },
         });
         const executor = createActionExecutor({ workBoardArtifacts: port } as unknown as ActionExecutorDeps);
-        expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'one', name: 'One' } } },
+        expect(await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222230', name: 'One' } } },
             { surface: 'mcp', bypassApprovals: true, runtimeAccountId: 'account', defaultSessionId: 'other-session',
                 actionCaller: { kind: 'session', sessionId: 'admitted-session' } })).toMatchObject({ ok: true });
         expect(writes[0]).toMatchObject({ savedBy: { kind: 'agent', accountId: 'account', sessionId: 'admitted-session' } });
-        expect(await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'one', patch: { name: 'Edited' } } },
-            { surface: 'ui', bypassApprovals: true, runtimeAccountId: 'account', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+        expect(await executor.execute('boards.apply', { intent: { kind: 'update', boardId: '22222222-2222-4222-8222-222222222230', patch: { name: 'Edited' } } },
+            { surface: 'ui', authority: 'present_user', bypassApprovals: true, runtimeAccountId: 'account', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
         expect(writes[1]).toMatchObject({ savedBy: { kind: 'person', accountId: 'account' } });
-        expect(boundary.rows.get('one')?.header).not.toHaveProperty('savedBy');
-        expect(JSON.parse(String(boundary.rows.get('one')?.body))).not.toHaveProperty('savedBy');
+        expect(boundary.rows.get('22222222-2222-4222-8222-222222222230')?.header).not.toHaveProperty('savedBy');
+        expect(JSON.parse(String(boundary.rows.get('22222222-2222-4222-8222-222222222230')?.body))).not.toHaveProperty('savedBy');
     });
     it('replays widget inputs/width/order with concurrent work positions and reloads only its own Board', async () => {
         const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'one' } } as const;
@@ -177,33 +177,33 @@ describe('one Artifact per Board', () => {
     it('isolates content-unavailable exact reads through boards.list and direct Board reads without rewriting the record', async () => {
         const valid = createWorkBoardV1({ id: 'valid', name: 'Valid' });
         const malformed = { id: 'malformed', name: 'Missing required source', futureField: true };
-        const b = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: 'unavailable', name: 'Unavailable' }), malformed, valid]);
-        const original = b.rows.get('unavailable');
+        const b = createWorkBoardArtifactBoundary([createWorkBoardV1({ id: '22222222-2222-4222-8222-222222222231', name: 'Unavailable' }), malformed, valid]);
+        const original = b.rows.get('22222222-2222-4222-8222-222222222231');
         const published = new Map<string, unknown>();
         const port = createWorkBoardArtifactPortV1({ ...b.transport, read: async (id, options) => {
-            if (id === 'unavailable') throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
+            if (id === '22222222-2222-4222-8222-222222222231') throw Object.assign(new Error('Artifact content is unavailable'), { code: 'content_unavailable' });
             return b.transport.read(id, options);
         } }, { onBoard: (id, board) => { published.set(id, board); } });
         const executor = createActionExecutor({ workBoardArtifacts: port } as unknown as ActionExecutorDeps);
         const context = { surface: 'ui', bypassApprovals: true } as const;
 
         expect(await executor.execute('boards.list', {}, context)).toEqual({ ok: true, result: { boards: [valid] } });
-        expect(await port.read()).toEqual({ v: 1, boards: [valid], unreadable: [{ id: 'unavailable' }, malformed] });
-        expect(published.get('unavailable')).toBeNull();
+        expect(await port.read()).toEqual({ v: 1, boards: [valid], unreadable: [{ id: '22222222-2222-4222-8222-222222222231' }, malformed] });
+        expect(published.get('22222222-2222-4222-8222-222222222231')).toBeNull();
         expect(published.get('malformed')).toBeNull();
-        expect(await port.readBoard('unavailable')).toBeNull();
+        expect(await port.readBoard('22222222-2222-4222-8222-222222222231')).toBeNull();
         expect(await port.readBoard('valid')).toEqual(valid);
         for (const intent of [
-            { kind: 'update', boardId: 'unavailable', patch: { name: 'Overwrite' } },
-            { kind: 'delete', boardId: 'unavailable' },
-            { kind: 'create', board: { id: 'unavailable', name: 'Overwrite' } },
+            { kind: 'update', boardId: '22222222-2222-4222-8222-222222222231', patch: { name: 'Overwrite' } },
+            { kind: 'delete', boardId: '22222222-2222-4222-8222-222222222231' },
+            { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222231', name: 'Overwrite' } },
         ] as const) {
             expect(await executor.execute('boards.apply', { intent }, context))
                 .toMatchObject({ ok: false, errorCode: 'invalid_board_record' });
         }
         expect(await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'valid', patch: { name: 'Renamed' } } }, context))
             .toMatchObject({ ok: true, result: { board: { id: 'valid', name: 'Renamed' } } });
-        expect(b.rows.get('unavailable')).toBe(original);
+        expect(b.rows.get('22222222-2222-4222-8222-222222222231')).toBe(original);
         expect(b.updates).toEqual(['valid']);
     });
 

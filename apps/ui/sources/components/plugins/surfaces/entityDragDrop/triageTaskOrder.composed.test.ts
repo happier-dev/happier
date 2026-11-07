@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropRuntime';
-import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol';
+import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/entityDragDrop';
 import { executeInternalTaskAction, executeInternalTaskReorder, type AccountJsonKvCollectionPort } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 import { createPluginUiClientExecutableRegistrationIndex, resolvePluginUiClientDragSourceRegistration, resolvePluginUiClientDropTargetRegistration } from '../../reactNative/clientExecutableContributions';
 import { createPluginEntityDragDropBinding, settlePluginEntityDropActionResult } from './pluginEntityDragDropBinding';

@@ -27,6 +27,27 @@ function applied(result: ReturnType<typeof applyWorkBoardIntentV1>): WorkBoardsV
 }
 
 describe('WorkBoardV1', () => {
+    it('requires an Artifact creation id for new Boards while retaining stored ids and item references', () => {
+        for (const id of ['board', '', '22222222-2222-4222-7222-222222222222']) {
+            expect(WorkBoardIntentV1Schema.safeParse({ kind: 'create', board: { id, name: 'Board' } }).success).toBe(false);
+        }
+        const id = '22222222-2222-4222-8222-222222222222';
+        expect(WorkBoardIntentV1Schema.parse({ kind: 'create', board: { id, name: 'Board' } }))
+            .toEqual({ kind: 'create', board: { id, name: 'Board' } });
+        const stored = WorkBoardsV1Schema.parse({ v: 1, boards: [{ id: 'retained', name: 'Old Board',
+            source: { picked: [session('home', 'non-uuid-session')] } }] });
+        expect(stored.boards[0]).toMatchObject({ id: 'retained', source: { picked: [session('home', 'non-uuid-session')] } });
+        expect(applied(applyWorkBoardIntentV1(stored, WorkBoardIntentV1Schema.parse({
+            kind: 'update', boardId: 'retained', patch: { name: 'Renamed' },
+        }))).boards[0]).toMatchObject({ id: 'retained', name: 'Renamed' });
+    });
+    it.each([{ futureCore: { value: 'narrow' } }, { extensions: { 'acme.future': { kind: 'future', value: true } } }])('preserves unknown stored filter narrowing without accepting a current mutation (%j)', narrowing => {
+        const filter = { ...normalizeSessionListFilterV1({ homeServerIds: ['home'] }), ...narrowing };
+        const board = { ...createWorkBoardV1({ id: 'future', name: 'Future' }), source: { picked: [], filter } };
+        const stored = WorkBoardsV1Schema.parse({ v: 1, boards: [board] });
+        expect(stored.boards[0]?.source.filter).toEqual(filter);
+        expect(WorkBoardV1StrictSchema.safeParse(board).success).toBe(false);
+    });
     it('normalizes external plugin task references without mixing their identities or losing positions', () => {
         const ref = { kind: 'task', qualifiedId: { serverId: ' home-a ', id: ' issue-7 ' }, pluginId: ' com.acme.tasks ' };
         const other = { ...ref, pluginId: 'com.other.tasks' };
@@ -65,7 +86,7 @@ describe('WorkBoardV1', () => {
         expect(stored.boards[0]?.source.unknown?.picked).toEqual([ref]);
     });
 
-    it('reads known persisted fields and drops extras throughout the Board collection', () => {
+    it('drops presentation extras but preserves unknown filter narrowing in the Board collection', () => {
         const ref = session('home-a', 's1');
         const key = buildWorkBoardItemKeyV1(ref);
         const filter = normalizeSessionListFilterV1({ audiences: [{ kind: 'team', serverId: 'home-a', teamId: 'team' }],
@@ -77,7 +98,8 @@ describe('WorkBoardV1', () => {
                 tagIds: filter.tagIds.map(value => ({ ...value, extra: true })) },
             picked: [{ ...ref, extra: true, qualifiedId: { ...ref.qualifiedId, extra: true } }] },
             positionsByItemRef: { [key]: { x: 24, y: 48, extra: true } } };
-        expect(WorkBoardsV1Schema.parse({ v: 1, boards: [stored], extra: true })).toEqual({ v: 1, boards: [board] });
+        expect(WorkBoardsV1Schema.parse({ v: 1, boards: [stored], extra: true })).toEqual({ v: 1,
+            boards: [{ ...board, source: { ...board.source, filter: { ...filter, extra: true } } }] });
         for (const value of [stored, { ...board, source: stored.source }, { ...board, positionsByItemRef: stored.positionsByItemRef }]) {
             expect(WorkBoardV1StrictSchema.safeParse(value).success).toBe(false);
         }

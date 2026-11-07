@@ -128,6 +128,29 @@ describe('resource-aware task operations', () => {
     expect(requests).toEqual(['/v1/tasks/owner/task']);
     expect(state.todo).not.toHaveProperty('ownerDisplayName');
   });
+  it.each([undefined, 'backlog', 'unstarted', 'started', 'completed', 'canceled'] as const)('preserves initial state, creation attribution and owner-relative parents in one create (%s)', async state => {
+    const scope = { serverId: 'home', accountId: 'viewer' };
+    const source = { pluginId: 'happier.triage', localId: 'internal' };
+    const parent = { source, kindId: 'task', collisionScope: 'account:viewer', entryId: 'parent' };
+    const rows = new Map<string, { value: unknown; version: number }>();
+    const port = { read: async (key: string) => rows.get(key) ?? { value: null, version: -1 },
+      list: async () => { throw new Error('A write cannot open unrelated Task bodies'); },
+      mutate: async (mutations: readonly { key: string; value: unknown; version: number }[]) => {
+        for (const row of mutations) rows.set(row.key, { value: row.value, version: row.version + 1 });
+        return { success: true as const, results: mutations.map(row => ({ key: row.key, version: row.version + 1 })) };
+      } };
+    const host = { scope, port, requireCurrent: () => {}, createId: () => 'created' };
+    const done = state === 'completed' || state === 'canceled';
+    expect(await executeInternalTaskAction({ ...host, actionId: 'tasks.internal.create', input: {
+      fields: { title: 'Explicit author', createdBy: 'original-author', parentId: parent, ...(state === undefined ? {} : { state }) },
+    } })).toMatchObject({ status: 'applied', scope, todo: { createdBy: 'original-author', parentId: 'parent', state: state ?? 'unstarted', done,
+      ...(done ? { completedAt: expect.any(Number) } : {}) } });
+    expect(rows.get('todo.index')?.value).toEqual({ undoneOrder: done ? [] : ['created'], completedOrder: done ? ['created'] : [] });
+    expect(await executeInternalTaskAction({ ...host, actionId: 'tasks.internal.edit', input: {
+      ownerAccountId: scope.accountId, taskId: 'created', fields: { parentId: { ...parent, collisionScope: 'personal' }, blockedBy: [parent] },
+    } })).toMatchObject({ status: 'applied', scope, todo: { createdBy: 'original-author', parentId: 'parent', blockedBy: ['parent'] } });
+    expect(rows.get('todo.created')?.value).toMatchObject({ parentId: 'parent', blockedBy: ['parent'], createdBy: 'original-author' });
+  });
   it('uses authenticated write scope and normalizes owner-relative relations without opening an inventory', async () => {
     const state = fixture('plain'), scope = { serverId: 'home', accountId: 'peer' };
     const source = { pluginId: 'happier.triage', localId: 'internal' };

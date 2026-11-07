@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
+import { ArtifactCreateIdV1Schema } from '../artifacts/artifactIdV1.js';
 
 import { SessionListFilterV1Schema, type SessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { WidgetInstanceRefV1Schema as InstanceRefSchema, WidgetInstanceV1Schema as InstanceSchema, WidgetInputBindingsV1Schema as BindingsSchema, resetWidgetInputBindingsV1, setWidgetInputBindingsV1, type WidgetInstanceRefV1 } from '../widgets/widgetInstanceV1.js';
@@ -444,7 +445,7 @@ export type WorkBoardWidgetIntentV1 = z.infer<typeof WorkBoardWidgetIntentV1Sche
 export const WorkBoardIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
     ...WorkBoardWidgetIntentV1Schema._zod.def.options,
     z.strictObject({ kind: z.literal('create'), board: z.strictObject({
-        id: IdentifierSchema, name: z.string().check(z.trim(), z.minLength(1)),
+        id: ArtifactCreateIdV1Schema, name: z.string().check(z.trim(), z.minLength(1)),
     }) }),
     z.strictObject({ kind: z.literal('delete'), boardId: IdentifierSchema }),
     z.strictObject({ kind: z.literal('update'), boardId: IdentifierSchema, patch: z.strictObject({
