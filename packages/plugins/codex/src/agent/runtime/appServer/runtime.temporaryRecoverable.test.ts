@@ -1474,6 +1474,9 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         agentTurnId: 'turn-1',
         sanitizedPreview: 'Codex usage limit reached. Try another connected account or try again after your limit resets.',
         failureCause: { phase: 'turn', failureReason: 'usage_limit' },
+        // The provider's typed reset travels with the issue so the Session can say when the limit resets.
+        usageLimit: { v: 1, resetAtMs: 1779019200000, retryAfterMs: 1_250, quotaScope: 'account', recoverability: 'wait',
+          limitCategory: 'usage_limit' },
       },
     });
     expect(logger.debug).toHaveBeenCalledWith(

@@ -64,6 +64,7 @@ import {
 } from '../../auth/services/runtime/auth/accountId.js';
 import { readCodexAuthTokensFromNativeHome } from '../../cli/auth/environment.js';
 import { readAgentStartupFailureDetails } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { ConnectedServiceLimitCategoryV1Schema } from '@happier-dev/protocol/connect/connectedServiceLimitCategory';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../auth/services/quota/runtimeRateLimits.js';
 import { readCodexSessionCatalog, type CodexSessionCatalogReader } from './catalog/index.js';
 import { createCodexGoalControl, createCodexUsageLimitRecoveryControl, setCodexGoal } from '../controls.js';
@@ -719,6 +720,10 @@ function buildCodexAppServerTurnFailureIssue(
   const authenticationRequired = failureDiagnostic.failureReason === 'authentication_required';
   const usageLimit = failureDiagnostic.failureReason === 'usage_limit';
   const causeCode = readRecord(error)?.code;
+  // The provider's typed limit facts (reset, retry, category) travel with the issue; no prose.
+  const limitClassification = usageLimit
+    ? sanitizeCodexAppServerRuntimeAuthClassification((error as { runtimeAuthClassification?: unknown }).runtimeAuthClassification) : null;
+  const limitCategory = ConnectedServiceLimitCategoryV1Schema.safeParse(limitClassification?.limitCategory);
   return {
     v: 1,
     scope: 'primary_session',
@@ -733,6 +738,14 @@ function buildCodexAppServerTurnFailureIssue(
     occurredAt: Date.now(),
     agentId: 'codex',
     failureCause: readCodexAppServerFailureCause(error),
+    ...(limitClassification ? { usageLimit: {
+      v: 1,
+      resetAtMs: typeof limitClassification.resetsAtMs === 'number' ? limitClassification.resetsAtMs : null,
+      retryAfterMs: typeof limitClassification.retryAfterMs === 'number' ? limitClassification.retryAfterMs : null,
+      quotaScope: 'account',
+      recoverability: 'wait',
+      ...(limitCategory.success ? { limitCategory: limitCategory.data } : {}),
+    } } : {}),
     ...(activeTurn?.agentTurnId ? { agentTurnId: activeTurn.agentTurnId } : {}),
     sanitizedPreview: authenticationRequired ? error.message
       : usageLimit ? 'Codex usage limit reached. Try another connected account or try again after your limit resets.'
