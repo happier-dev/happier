@@ -17923,6 +17923,7 @@ settingsSession: {
             unavailable: "Diese Seite ist für diesen Checkout noch nicht verfügbar.",
         },
         deployments: {
+            title: "Deployments",
             overview: "Übersicht",
             history: "Verlauf",
             tabVariables: "Variablen",

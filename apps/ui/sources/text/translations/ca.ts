@@ -16649,6 +16649,7 @@ La meva pregunta: `,
             unavailable: "Aquesta pàgina encara no està disponible per a aquest checkout.",
         },
         deployments: {
+            title: "Desplegaments",
             overview: "Resum",
             history: "Historial",
             tabVariables: "Variables",

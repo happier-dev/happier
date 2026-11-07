@@ -21392,6 +21392,7 @@ const enProjects = {
       unavailable: "This page isn’t available for this checkout yet.",
   },
   deployments: {
+      title: "Deployments",
       overview: "Overview",
       history: "History",
       tabVariables: "Variables",

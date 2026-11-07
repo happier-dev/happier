@@ -17759,6 +17759,7 @@ settingsSession: {
         unavailable: "このチェックアウトではこのページはまだ利用できません。",
     },
     deployments: {
+        title: "デプロイ",
         overview: "概要",
         history: "履歴",
         tabVariables: "変数",

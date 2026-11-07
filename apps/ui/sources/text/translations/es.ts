@@ -17845,6 +17845,7 @@ settingsSession: {
         unavailable: "Esta página aún no está disponible para este checkout.",
     },
     deployments: {
+        title: "Despliegues",
         overview: "Resumen",
         history: "Historial",
         tabVariables: "Variables",

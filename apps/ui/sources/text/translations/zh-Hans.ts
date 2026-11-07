@@ -17461,6 +17461,7 @@ settingsSession: {
         unavailable: "此检出暂时无法使用此页面。",
     },
     deployments: {
+        title: "部署",
         overview: "概览",
         history: "历史",
         tabVariables: "变量",

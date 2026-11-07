@@ -17798,6 +17798,7 @@ settingsSession: {
         unavailable: "Эта страница пока недоступна для этого checkout’а.",
     },
     deployments: {
+        title: "Развёртывания",
         overview: "Обзор",
         history: "История",
         tabVariables: "Переменные",

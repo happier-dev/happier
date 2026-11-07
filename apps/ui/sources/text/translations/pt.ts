@@ -17952,6 +17952,7 @@ settingsSession: {
         unavailable: "Esta página ainda não está disponível para este checkout.",
     },
     deployments: {
+        title: "Implantações",
         overview: "Visão geral",
         history: "Histórico",
         tabVariables: "Variáveis",

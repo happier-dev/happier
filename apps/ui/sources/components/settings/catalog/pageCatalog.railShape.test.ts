@@ -8,6 +8,8 @@ const { SETTINGS_PAGE_CATALOG, readSettingsPageGate } = await import('./pageCata
 
 type CatalogNode = Readonly<{
     id: string;
+    titleKey?: string;
+    subtitleKey?: string;
     route?: string;
     gate?: Readonly<{ featureId?: string }>;
     children?: readonly CatalogNode[];
@@ -34,6 +36,22 @@ function walk(
  * here instead of being left as an implicit assumption inside the renderer.
  */
 describe('settings catalog rail shape', () => {
+    it('names every page with a real translation, so the rail and headers never show a raw key', async () => {
+        const { en } = await import('@/text/translations/en');
+        const { SETTINGS_ROUTE_CHROME_DEFINITIONS } = await import('@/components/settings/navigation/settingsRouteDefinitions');
+        const resolves = (key: string) => {
+            let value: unknown = en;
+            for (const part of key.split('.')) value = value && typeof value === 'object' ? (value as Record<string, unknown>)[part] : undefined;
+            return typeof value === 'string' || typeof value === 'function';
+        };
+        const keys = [
+            ...walk(catalog).flatMap(({ node }) => [node.titleKey, node.subtitleKey]),
+            ...SETTINGS_ROUTE_CHROME_DEFINITIONS.flatMap((definition) => [definition.titleKey, definition.headerBackTitleKey]),
+        ].filter((key): key is string => typeof key === 'string');
+        expect(keys.length).toBeGreaterThan(100);
+        expect([...new Set(keys.filter((key) => !resolves(key)))]).toEqual([]);
+    });
+
     it('passes every page gate to the canonical FeatureId consumer before boot', () => {
         const unknownGates = (nodes: readonly CatalogNode[]) => walk(nodes)
             .filter(({ node }) => node.gate?.featureId && !isFeatureId(node.gate.featureId))

@@ -17670,6 +17670,7 @@ settingsSession: {
         unavailable: "Ta strona nie jest jeszcze dostępna dla tego checkoutu.",
     },
     deployments: {
+        title: "Wdrożenia",
         overview: "Przegląd",
         history: "Historia",
         tabVariables: "Zmienne",
