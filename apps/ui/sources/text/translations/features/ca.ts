@@ -2247,7 +2247,6 @@ const ca: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Sembla un codi d’inici de sessió',
     deviceEnterAt: ({ where }) => `Introdueix aquest codi a ${where}`,
     deviceExpired: 'El codi ha caducat. No s’ha desat res.',
-    deviceExpiresIn: ({ time }) => `El codi caduca d’aquí a ${time}`,
     deviceNewCode: 'Obtén un codi nou',
     detailSignedOutTitle: ({ service }) => `${service} ha tancat la sessió d’aquest compte`,
     detailSignedOutBody: 'L’inici de sessió s’ha revocat o ha canviat, per exemple després d’un canvi de contrasenya. Les sessions no poden fer servir aquest compte fins que hi tornis a iniciar la sessió.',
@@ -2284,6 +2283,8 @@ const ca: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Enganxa una clau',
     deviceOpenService: ({ service }) => `Obre ${service}`,
     deviceWaitingFor: ({ service }) => `Esperant que ho aprovis a ${service}…`,
+    deviceWaitingApproval: 'Esperant l’aprovació',
+    deviceWaitingApprovalExpires: ({ time }) => `Esperant l’aprovació · caduca en ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { ca };

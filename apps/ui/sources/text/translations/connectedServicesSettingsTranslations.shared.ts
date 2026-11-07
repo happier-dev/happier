@@ -148,7 +148,6 @@ export const en = {
     oauthShapeOk: 'Looks like a sign-in code',
     deviceEnterAt: ({ where }: { where: string }) => `Enter this code at ${where}`,
     deviceExpired: 'The code expired. Nothing was saved.',
-    deviceExpiresIn: ({ time }: { time: string }) => `Code expires in ${time}`,
     deviceNewCode: 'Get a new code',
     detailSignedOutTitle: ({ service }: { service: string }) => `${service} signed this account out`,
     detailSignedOutBody: 'The sign-in was revoked or changed, for example after a password change. Sessions can’t use this account until you sign in again.',
@@ -185,6 +184,8 @@ export const en = {
     catalogPasteKey: 'Paste a key',
     deviceOpenService: ({ service }: { service: string }) => `Open ${service}`,
     deviceWaitingFor: ({ service }: { service: string }) => `Waiting for you to approve in ${service}…`,
+    deviceWaitingApproval: 'Waiting for approval',
+    deviceWaitingApprovalExpires: ({ time }: { time: string }) => `Waiting for approval · expires in ${time}`,
 };
 
 

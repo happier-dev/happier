@@ -2247,7 +2247,6 @@ const it: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Sembra un codice di accesso',
     deviceEnterAt: ({ where }) => `Inserisci questo codice su ${where}`,
     deviceExpired: 'Il codice è scaduto. Non è stato salvato nulla.',
-    deviceExpiresIn: ({ time }) => `Il codice scade tra ${time}`,
     deviceNewCode: 'Ottieni un nuovo codice',
     detailSignedOutTitle: ({ service }) => `${service} ha disconnesso questo account`,
     detailSignedOutBody: 'L’accesso è stato revocato o modificato, ad esempio dopo un cambio password. Le sessioni non possono usare l’account finché non accedi di nuovo.',
@@ -2284,6 +2283,8 @@ const it: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Incolla una chiave',
     deviceOpenService: ({ service }) => `Apri ${service}`,
     deviceWaitingFor: ({ service }) => `In attesa della tua approvazione in ${service}…`,
+    deviceWaitingApproval: 'In attesa di approvazione',
+    deviceWaitingApprovalExpires: ({ time }) => `In attesa di approvazione · scade tra ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { it };

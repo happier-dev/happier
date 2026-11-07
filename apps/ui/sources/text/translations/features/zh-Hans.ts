@@ -2242,7 +2242,6 @@ const zhHans: ConnectedServicesSettingsCopy = {
     oauthShapeOk: '看起来是登录代码',
     deviceEnterAt: ({ where }) => `在 ${where} 输入此代码`,
     deviceExpired: '代码已过期，未保存任何内容。',
-    deviceExpiresIn: ({ time }) => `代码将在 ${time} 后过期`,
     deviceNewCode: '获取新代码',
     detailSignedOutTitle: ({ service }) => `${service} 已将此账户退出登录`,
     detailSignedOutBody: '登录已被撤销或更改（例如修改了密码）。在你重新登录之前，会话无法使用此账户。',
@@ -2279,6 +2278,8 @@ const zhHans: ConnectedServicesSettingsCopy = {
     catalogPasteKey: '粘贴密钥',
     deviceOpenService: ({ service }) => `打开 ${service}`,
     deviceWaitingFor: ({ service }) => `等待你在 ${service} 中批准…`,
+    deviceWaitingApproval: '等待批准',
+    deviceWaitingApprovalExpires: ({ time }) => `等待批准 · ${time} 后过期`,
 };
 
 const connectedServicesSettingsTranslations = { zhHans };

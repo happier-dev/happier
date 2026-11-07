@@ -401,7 +401,6 @@ export function useMachineAdministrationTargetFilter(
         ))
         : undefined;
     const hasTarget = props.selection.selectedTarget !== null && !current.gone;
-    const selectedHidden = selectedRow && props.resolveCandidateAvailability?.(selectedRow.candidate)?.hidden === true;
     const presence = props.selection.state.kind === 'online' || props.selection.state.kind === 'offline'
         ? props.selection.state.kind
         : undefined;
@@ -428,7 +427,8 @@ export function useMachineAdministrationTargetFilter(
     return {
         id: props.filterId ?? 'machine',
         label: groupTitle,
-        valueLabel: selectedHidden ? [current.title, current.detail].filter(Boolean).join(' · ') : current.title,
+        // A chip names the Machine only; the step it scopes says why a Machine can't be used and what to do.
+        valueLabel: current.title,
         icon: <Icon name="desktop" size={14} color={theme.colors.text.secondary} />,
         ...(hasTarget && presence ? { presence } : {}),
         muted: !hasTarget,

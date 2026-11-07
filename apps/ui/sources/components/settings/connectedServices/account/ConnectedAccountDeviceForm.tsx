@@ -118,15 +118,12 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                 ) : (
                     <>
                         <View style={styles.waitDot} />
-                        <Text style={styles.waitingText}>{service
-                            ? t('connectedServicesSettings.deviceWaitingFor', { service })
-                            : t('connectedServices.deviceAuth.waiting')}</Text>
+                        {/* One status line, never wrapped: the wait and its deadline, the time in tabular figures. */}
+                        <Text style={styles.waitingText} numberOfLines={1}>{msLeft !== null
+                            ? t('connectedServicesSettings.deviceWaitingApprovalExpires', { time: formatExpiry(msLeft) })
+                            : t('connectedServicesSettings.deviceWaitingApproval')}</Text>
                     </>
                 )}
-                <View style={styles.grow} />
-                {msLeft !== null && !expired ? (
-                    <Text style={styles.expiry}>{t('connectedServicesSettings.deviceExpiresIn', { time: formatExpiry(msLeft) })}</Text>
-                ) : null}
             </View>
             {!expired && props.automaticPolling === false ? <RoundButton testID="connected-account-device:poll" size="small" display="secondary"
                 title={t('connectedServicesSetup.deviceCheckNow')} disabled={props.busy} onPress={props.onPoll} /> : null}
@@ -225,6 +222,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     waitingText: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+        fontVariant: ['tabular-nums'],
+        flexShrink: 1,
+        minWidth: 0,
     },
     expiredText: {
         ...Typography.variant('meta'),
@@ -232,11 +232,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     grow: {
         flex: 1,
-    },
-    expiry: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.tertiary,
-        fontVariant: ['tabular-nums'],
     },
     recovery: {
         flexDirection: 'row',

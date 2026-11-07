@@ -2269,7 +2269,6 @@ const ru: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Похоже на код входа',
     deviceEnterAt: ({ where }) => `Введите этот код на ${where}`,
     deviceExpired: 'Срок действия кода истёк. Ничего не сохранено.',
-    deviceExpiresIn: ({ time }) => `Код истечёт через ${time}`,
     deviceNewCode: 'Получить новый код',
     detailSignedOutTitle: ({ service }) => `${service} завершил сеанс этого аккаунта`,
     detailSignedOutBody: 'Вход был отозван или изменён, например после смены пароля. Сеансы не смогут использовать аккаунт, пока вы не войдёте снова.',
@@ -2306,6 +2305,8 @@ const ru: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Вставьте ключ',
     deviceOpenService: ({ service }) => `Открыть ${service}`,
     deviceWaitingFor: ({ service }) => `Ждём подтверждения в ${service}…`,
+    deviceWaitingApproval: 'Ожидание подтверждения',
+    deviceWaitingApprovalExpires: ({ time }) => `Ожидание подтверждения · истекает через ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { ru };

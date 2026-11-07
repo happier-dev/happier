@@ -2247,7 +2247,6 @@ const es: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Parece un código de inicio de sesión',
     deviceEnterAt: ({ where }) => `Introduce este código en ${where}`,
     deviceExpired: 'El código caducó. No se guardó nada.',
-    deviceExpiresIn: ({ time }) => `El código caduca en ${time}`,
     deviceNewCode: 'Obtener un código nuevo',
     detailSignedOutTitle: ({ service }) => `${service} cerró la sesión de esta cuenta`,
     detailSignedOutBody: 'El inicio de sesión se revocó o cambió, por ejemplo tras un cambio de contraseña. Las sesiones no pueden usar esta cuenta hasta que vuelvas a iniciar sesión.',
@@ -2284,6 +2283,8 @@ const es: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Pega una clave',
     deviceOpenService: ({ service }) => `Abrir ${service}`,
     deviceWaitingFor: ({ service }) => `Esperando a que lo apruebes en ${service}…`,
+    deviceWaitingApproval: 'Esperando aprobación',
+    deviceWaitingApprovalExpires: ({ time }) => `Esperando aprobación · caduca en ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { es };

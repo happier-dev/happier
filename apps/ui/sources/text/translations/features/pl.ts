@@ -2258,7 +2258,6 @@ const pl: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Wygląda na kod logowania',
     deviceEnterAt: ({ where }) => `Wpisz ten kod na ${where}`,
     deviceExpired: 'Kod wygasł. Nic nie zapisano.',
-    deviceExpiresIn: ({ time }) => `Kod wygaśnie za ${time}`,
     deviceNewCode: 'Pobierz nowy kod',
     detailSignedOutTitle: ({ service }) => `${service} wylogował to konto`,
     detailSignedOutBody: 'Logowanie zostało cofnięte lub zmienione, np. po zmianie hasła. Sesje nie mogą używać tego konta, dopóki nie zalogujesz się ponownie.',
@@ -2295,6 +2294,8 @@ const pl: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Wklej klucz',
     deviceOpenService: ({ service }) => `Otwórz ${service}`,
     deviceWaitingFor: ({ service }) => `Czekam na zatwierdzenie w ${service}…`,
+    deviceWaitingApproval: 'Oczekiwanie na zatwierdzenie',
+    deviceWaitingApprovalExpires: ({ time }) => `Oczekiwanie na zatwierdzenie · wygasa za ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { pl };

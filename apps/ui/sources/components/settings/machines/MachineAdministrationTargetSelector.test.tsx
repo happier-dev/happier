@@ -72,7 +72,7 @@ describe('MachineAdministrationTargetSelector', () => {
         } finally { await screen.unmount(); }
     }));
 
-    it.each(['section', 'chip'] as const)('omits a domain-hidden Machine from the %s picker while retaining its selected reason', (presentation) => withPopoverWebGlobals(async () => {
+    it.each(['section', 'chip'] as const)('omits a domain-hidden Machine from the %s picker; only a section repeats its reason', (presentation) => withPopoverWebGlobals(async () => {
         const { selection } = createSelection();
         const ownCandidate: MachineAdministrationCandidateV1 = { ...selection.candidates[0]!,
             target: { serverIdentityId: 'portable-server-b', machineId: 'machine-own' }, displayName: 'Own Machine' };
@@ -87,7 +87,10 @@ describe('MachineAdministrationTargetSelector', () => {
                 ? { hidden: true, selectable: false, detail: 'domain-owned selected reason' } : undefined} />);
         try {
             const trigger = `hidden.target.${presentation === 'chip' ? 'chip' : 'current'}`;
-            expect(screen.findHostByTestId(trigger)?.props.accessibilityLabel).toContain('domain-owned selected reason');
+            // A section keeps the reason beside the Machine. A chip names only the Machine (owner 11-06 review):
+            // the step it scopes says why that Machine can't be used and what to do instead.
+            if (presentation === 'chip') expect(screen.findHostByTestId(trigger)?.props.accessibilityLabel).not.toContain('domain-owned selected reason');
+            else expect(screen.findHostByTestId(trigger)?.props.accessibilityLabel).toContain('domain-owned selected reason');
             await screen.pressByTestIdAsync(trigger);
             if (presentation === 'chip') await act(async () => { reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }); });
             expect(screen.findHostByTestId('hidden.target.picker-option:machine-b')).toBeNull();

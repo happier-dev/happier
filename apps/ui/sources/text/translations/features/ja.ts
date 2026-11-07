@@ -2247,7 +2247,6 @@ const ja: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'サインインコードのようです',
     deviceEnterAt: ({ where }) => `${where} でこのコードを入力`,
     deviceExpired: 'コードの有効期限が切れました。何も保存されていません。',
-    deviceExpiresIn: ({ time }) => `コードの有効期限まで ${time}`,
     deviceNewCode: '新しいコードを取得',
     detailSignedOutTitle: ({ service }) => `${service} がこのアカウントをサインアウトしました`,
     detailSignedOutBody: 'パスワード変更などでサインインが取り消されたか変更されました。再度サインインするまで、セッションはこのアカウントを使えません。',
@@ -2284,6 +2283,8 @@ const ja: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'キーを貼り付け',
     deviceOpenService: ({ service }) => `${service} を開く`,
     deviceWaitingFor: ({ service }) => `${service} での承認を待っています…`,
+    deviceWaitingApproval: '承認を待っています',
+    deviceWaitingApprovalExpires: ({ time }) => `承認を待っています · 残り ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { ja };

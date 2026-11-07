@@ -2241,7 +2241,6 @@ const de: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Sieht nach einem Anmeldecode aus',
     deviceEnterAt: ({ where }) => `Gib diesen Code auf ${where} ein`,
     deviceExpired: 'Der Code ist abgelaufen. Nichts wurde gespeichert.',
-    deviceExpiresIn: ({ time }) => `Code läuft in ${time} ab`,
     deviceNewCode: 'Neuen Code holen',
     detailSignedOutTitle: ({ service }) => `${service} hat dieses Konto abgemeldet`,
     detailSignedOutBody: 'Die Anmeldung wurde widerrufen oder geändert, etwa nach einer Passwortänderung. Sitzungen können das Konto erst wieder nutzen, wenn du dich erneut anmeldest.',
@@ -2278,6 +2277,8 @@ const de: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Schlüssel einfügen',
     deviceOpenService: ({ service }) => `${service} öffnen`,
     deviceWaitingFor: ({ service }) => `Warte auf deine Bestätigung in ${service}…`,
+    deviceWaitingApproval: 'Warte auf Bestätigung',
+    deviceWaitingApprovalExpires: ({ time }) => `Warte auf Bestätigung · läuft in ${time} ab`,
 };
 
 const connectedServicesSettingsTranslations = { de };

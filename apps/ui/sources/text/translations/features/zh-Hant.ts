@@ -2242,7 +2242,6 @@ const zhHant: ConnectedServicesSettingsCopy = {
     oauthShapeOk: '看起來是登入代碼',
     deviceEnterAt: ({ where }) => `在 ${where} 輸入此代碼`,
     deviceExpired: '代碼已過期，未儲存任何內容。',
-    deviceExpiresIn: ({ time }) => `代碼將在 ${time} 後過期`,
     deviceNewCode: '取得新代碼',
     detailSignedOutTitle: ({ service }) => `${service} 已將此帳號登出`,
     detailSignedOutBody: '登入已被撤銷或變更（例如變更了密碼）。在你重新登入之前，工作階段無法使用此帳號。',
@@ -2279,6 +2278,8 @@ const zhHant: ConnectedServicesSettingsCopy = {
     catalogPasteKey: '貼上金鑰',
     deviceOpenService: ({ service }) => `開啟 ${service}`,
     deviceWaitingFor: ({ service }) => `等待你在 ${service} 中核准…`,
+    deviceWaitingApproval: '等待核准',
+    deviceWaitingApprovalExpires: ({ time }) => `等待核准 · ${time} 後過期`,
 };
 
 const connectedServicesSettingsTranslations = { zhHant };

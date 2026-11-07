@@ -2247,7 +2247,6 @@ const fr: ConnectedServicesSettingsCopy = {
     oauthShapeOk: 'Ressemble à un code de connexion',
     deviceEnterAt: ({ where }) => `Saisis ce code sur ${where}`,
     deviceExpired: 'Le code a expiré. Rien n’a été enregistré.',
-    deviceExpiresIn: ({ time }) => `Le code expire dans ${time}`,
     deviceNewCode: 'Obtenir un nouveau code',
     detailSignedOutTitle: ({ service }) => `${service} a déconnecté ce compte`,
     detailSignedOutBody: 'La connexion a été révoquée ou modifiée, par exemple après un changement de mot de passe. Les sessions ne peuvent plus utiliser ce compte avant une nouvelle connexion.',
@@ -2284,6 +2283,8 @@ const fr: ConnectedServicesSettingsCopy = {
     catalogPasteKey: 'Colle une clé',
     deviceOpenService: ({ service }) => `Ouvrir ${service}`,
     deviceWaitingFor: ({ service }) => `En attente de ton approbation dans ${service}…`,
+    deviceWaitingApproval: 'En attente d’approbation',
+    deviceWaitingApprovalExpires: ({ time }) => `En attente d’approbation · expire dans ${time}`,
 };
 
 const connectedServicesSettingsTranslations = { fr };
