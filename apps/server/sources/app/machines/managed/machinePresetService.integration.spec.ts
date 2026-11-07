@@ -18,6 +18,8 @@ import { archiveTeamInTx, restoreTeamInTx } from '@/app/teams/lifecycle';
 import { createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { CRABBOX_PLUGIN } from '@happier-dev/plugins-machine-crabbox/manifest';
 import { mutateQualifiedConnectedServiceCredential, deleteQualifiedConnectedServiceCredential, listQualifiedConnectedAccounts } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { defineProtocolObject, defineProtocolString } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
@@ -595,7 +597,8 @@ describe("Machine preset relational owner", () => {
         expect(results.filter(result => result.status === "rejected").map(result => result.reason)).toEqual([expect.objectContaining({ code: "preset_limit_reached" })]);
         expect(await db.managedMachine.count({ where: { presetId: "preset-admission" } })).toBe(1);
         const captured = await db.managedMachine.findUniqueOrThrow({ where: { id: admitted[0].machine.id } });
-        expect(captured.reviewedFacts).toEqual(reviewed.reviewedFacts);
+        expect(captured.reviewedFacts).toEqual({ ...reviewed.reviewedFacts,
+            provisioner: expect.objectContaining({ id: launch.provider.localId, schemaVersion: launch.schemaVersion }) });
         expect((await requestPreset(accountId, "archive", { homeId, id: "preset-admission", expectedRevision: 0 })).statusCode).toBe(200);
         const replayed = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId, requestEnvelopeDigest: `verified-${admitted[0].requestId}`, input: { input: reviewed, requestId: admitted[0].requestId, continuationPresent: false } });
         expect(replayed.replayed).toBe(true);
@@ -783,12 +786,22 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 0,
             patch: { teamAcquireDelegated: true } })).json()).toMatchObject({ kind: 'saved', preset: { revision: 1, teamAcquireDelegated: true } });
         expect(await select(0)).toEqual({ kind: 'conflict', currentRevision: 1 });
-        expect(await select(1)).toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
+        const selected = await select(1);
+        expect(selected).toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner });
+        if (selected.kind !== 'ready') throw new Error('Expected delegated preset admission');
+        const provisioner = selected.declaration.provisioner;
+        const reviewedFacts = buildManagedConfigurationFactsV1({
+            choicesSchema: createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema),
+            launch, controller, optionStatus: 'current', prerequisites: [],
+            provisioner: { ...provisioner, schemaVersion: provisioner.schemaVersion + 1 },
+            billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+            preset: { ...definition, revision: 1 },
+        });
         const request = { custodianAccountId: owner, requesterAccountId: member, requestEnvelopeDigest: 'delegated-admission', input: {
             requestId: 'preset-delegation-create', continuationPresent: false,
             input: { enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const },
                 selection: { kind: 'preset' as const, homeId, id: definition.id, revision: 1 }, controller,
-                retention: definition.retention, wakeOnAcceptedMessage: false },
+                retention: definition.retention, wakeOnAcceptedMessage: false, reviewedFacts },
         } };
         await expect(admitManagedAcquire({ ...request, input: { ...request.input, input: { ...request.input.input,
             retention: { kind: 'until-delete' as const } } } })).rejects.toMatchObject({ code: 'permission_denied' });
@@ -809,6 +822,11 @@ describe("Machine preset relational owner", () => {
         } } })).rejects.toMatchObject({ code: 'permission_denied' });
         const acquired = await admitManagedAcquire(request);
         expect(acquired.machine).toMatchObject({ launch, retention: definition.retention, enrollmentAccountId: member });
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: acquired.machine.id } })).reviewedFacts)
+            .toEqual({ ...reviewedFacts, provisioner });
+        expect(acquired.machine.reviewedFacts?.provisioner).toEqual(provisioner);
+        expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true,
+            machine: { id: acquired.machine.id, reviewedFacts: { provisioner } } });
         await expect(admitManagedAcquire({ ...request, requesterAccountId: admin })).rejects.toMatchObject({ code: 'request_conflict' });
         expect(await select(1)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
         expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 1,

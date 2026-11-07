@@ -117,7 +117,8 @@ export async function admitManagedAcquire(params: Readonly<{
             const parsedFacts = request.input.reviewedFacts === undefined ? undefined
                 : createManagedConfigurationFactsV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse(request.input.reviewedFacts);
             if (parsedFacts && !parsedFacts.success) throw new ManagedMachineError("invalid_request");
-            const reviewedFacts = parsedFacts?.success ? parsedFacts.data : undefined;
+            // Retained native authority comes from admission's declaration, not requester presentation facts.
+            const reviewedFacts = parsedFacts?.success ? { ...parsedFacts.data, provisioner: declaration.provisioner } : undefined;
             const policy = delegatedPolicy ?? qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
             const scopeChoice = request.input.creationScopeRetention;
             if (scopeChoice && !resolveMachineRetentionNativeIntentV1(scopeChoice.effect, declaration.retention.supportedIntents)) {
