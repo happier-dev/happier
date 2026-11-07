@@ -125,7 +125,7 @@ export function useMachinePathBrowserCommands(props: Readonly<{
     const latestApply = React.useRef(apply);
     React.useLayoutEffect(() => { latestApply.current = apply; });
     return React.useCallback((key: BrowserCommandKey, input?: PluginUiJsonValueV1) => {
-        if (props.scope === undefined) latestApply.current(key, input);
-        else void commands.invoke(key, input);
+        if (props.scope === undefined) return latestApply.current(key, input);
+        return commands.invoke(key, input);
     }, [commands.invoke, props.scope]);
 }

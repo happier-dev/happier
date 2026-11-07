@@ -10,13 +10,16 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError, isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 
-import { callGuardedMachineRpcWithPolicy } from '@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { invokeWorkspaceFileSystemAction, projectWorkspaceFileSystemActionFailure } from './workspaceFileSystem/actionInvocation';
 
 type MachineFileBrowserOpts = Readonly<{
     serverId?: string | null;
     accountId?: string | null;
     timeoutMs?: number | null;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
 }>;
 
 function throwUnsupportedResponse(method: string): never {
@@ -61,15 +64,14 @@ export async function machineFilesystemListRoots(
     opts?: MachineFileBrowserOpts,
 ): Promise<DaemonFilesystemListRootsResponse> {
     try {
-        const response = await callGuardedMachineRpcWithPolicy<unknown, undefined>({
-            machineId,
-            serverId: opts?.serverId,
-            accountId: opts?.accountId,
-            timeoutMs: opts?.timeoutMs ?? undefined,
-            method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS,
-            payload: undefined,
-            ...(opts?.signal ? { signal: opts.signal } : {}),
-        });
+        const result = await invokeWorkspaceFileSystemAction({ machineId, serverId: opts?.serverId, rootPath: '' },
+            FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots, {}, { ...opts, accountId: opts?.accountId ?? undefined });
+        if (!result.ok) {
+            const failure = projectWorkspaceFileSystemActionFailure(result);
+            return { ok: false, error: failure.errorCode ?? failure.error, errorCode: failure.errorCode,
+                ...(failure.details ? { details: failure.details } : {}) };
+        }
+        const response = result.result;
         const parsed = DaemonFilesystemListRootsResponseSchema.safeParse(response);
         if (!parsed.success) {
             throwUnsupportedResponse(RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS);
@@ -88,15 +90,14 @@ export async function machineFilesystemListDirectory(
 ): Promise<DaemonFilesystemListDirectoryResponse> {
     const payload = DaemonFilesystemListDirectoryRequestSchema.parse(input);
     try {
-        const response = await callGuardedMachineRpcWithPolicy<unknown, DaemonFilesystemListDirectoryRequest>({
-            machineId,
-            serverId: opts?.serverId,
-            accountId: opts?.accountId,
-            timeoutMs: opts?.timeoutMs ?? undefined,
-            method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
-            payload,
-            ...(opts?.signal ? { signal: opts.signal } : {}),
-        });
+        const result = await invokeWorkspaceFileSystemAction({ machineId, serverId: opts?.serverId, rootPath: payload.path },
+            FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, payload, { ...opts, accountId: opts?.accountId ?? undefined });
+        if (!result.ok) {
+            const failure = projectWorkspaceFileSystemActionFailure(result);
+            return { ok: false, error: failure.errorCode ?? failure.error, errorCode: failure.errorCode,
+                ...(failure.details ? { details: failure.details } : {}) };
+        }
+        const response = result.result;
         const parsed = DaemonFilesystemListDirectoryResponseSchema.safeParse(response);
         if (!parsed.success) {
             throwUnsupportedResponse(RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY);

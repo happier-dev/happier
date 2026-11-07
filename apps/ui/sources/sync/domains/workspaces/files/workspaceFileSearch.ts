@@ -7,6 +7,7 @@ import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/home
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
 import { machineWorkspaceFileList, type MachineWorkspaceFileListErrorCode } from '@/sync/ops/machineWorkspaceFileList';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createWorkspaceFileSearchIndex, rankFileSearchResults, type WorkspaceFileSearchIndex } from './workspaceFileSearchMatcher';
 import { subscribeWorkspaceRepositoryDirectoryRevision } from './workspaceRepositoryDirectoryRevision';
 
@@ -285,6 +286,7 @@ async function buildFileItemsFromRipgrep(
     address: WorkspaceScopeBase,
     accountId: string | null,
     signal: AbortSignal | undefined,
+    callerContext?: ActionExecutorContext,
 ): Promise<Readonly<{ files: FileSearchItem[]; truncated: boolean }> | null> {
     throwIfWorkspaceFileSearchAborted(signal);
     const res = await machineWorkspaceFileList(
@@ -292,14 +294,16 @@ async function buildFileItemsFromRipgrep(
         { rootPath: address.rootPath, includeHidden: true },
         {
             serverId: address.serverId,
+            callerContext,
             ...(accountId ? { accountId } : {}),
             ...(signal ? { signal } : {}),
         },
     );
     throwIfWorkspaceFileSearchAborted(signal);
     if (!res.ok) {
-        // Neither a missing root nor a settled custody refusal can be repaired by another route.
-        if (res.errorCode === 'root_not_found' || res.errorCode === 'filesystem_identity_custody_unavailable') {
+        // The Action owner has refused this read. A different listing route
+        // cannot replace that admission; native capability failures may fall back.
+        if ('error' in res || res.errorCode === 'root_not_found' || res.errorCode === 'filesystem_identity_custody_unavailable') {
             throw new WorkspaceFileSearchUnavailableError(res.errorCode, res.details);
         }
         return null;
@@ -312,6 +316,7 @@ async function buildFileItemsFromRipgrepGlob(
     accountId: string | null,
     query: string,
     signal: AbortSignal | undefined,
+    callerContext?: ActionExecutorContext,
 ): Promise<Readonly<{ files: FileSearchItem[]; truncated: boolean }> | null> {
     throwIfWorkspaceFileSearchAborted(signal);
     const trimmed = query.trim();
@@ -322,6 +327,7 @@ async function buildFileItemsFromRipgrepGlob(
         { rootPath: address.rootPath, query: trimmed, includeHidden: true },
         {
             serverId: address.serverId,
+            callerContext,
             ...(accountId ? { accountId } : {}),
             ...(signal ? { signal } : {}),
         },
@@ -343,6 +349,7 @@ async function buildFileItemsFromDirectoryFallback(
     input: WorkspaceScopeBase,
     accountId: string | null,
     signal: AbortSignal | undefined,
+    callerContext?: ActionExecutorContext,
 ): Promise<Readonly<{ files: FileSearchItem[]; truncated: boolean }> | null> {
     const files: FileSearchItem[] = [];
     const queue: string[] = [''];
@@ -361,6 +368,7 @@ async function buildFileItemsFromDirectoryFallback(
                 { path: absPath, includeFiles: true },
                 {
                     serverId: input.serverId,
+                    callerContext,
                     ...(accountId ? { accountId } : {}),
                     ...(signal ? { signal } : {}),
                 },
@@ -425,6 +433,7 @@ async function ensureCacheValid(input: Readonly<{
     workspaceCacheKey: string;
     accountLifetime: WorkspaceFileSearchAccountLifetime | null;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
 }>): Promise<WorkspaceCache> {
     const cache = getOrCreateWorkspaceCache(input.partition, input.workspaceCacheKey);
     throwIfWorkspaceFileSearchAborted(input.signal);
@@ -446,11 +455,11 @@ async function ensureCacheValid(input: Readonly<{
                     address,
                     readWorkspaceFileSearchAccountId(input.accountLifetime),
                     signal,
+                    input.callerContext,
                 );
             } catch (error) {
                 if (signal.aborted) throw error;
-                if (error instanceof WorkspaceFileSearchUnavailableError
-                    && (error.errorCode === 'root_not_found' || error.errorCode === 'filesystem_identity_custody_unavailable')) throw error;
+                if (error instanceof WorkspaceFileSearchUnavailableError) throw error;
             }
 
             throwIfWorkspaceFileSearchAborted(signal);
@@ -459,6 +468,7 @@ async function ensureCacheValid(input: Readonly<{
                     address,
                     readWorkspaceFileSearchAccountId(input.accountLifetime),
                     signal,
+                    input.callerContext,
                 );
             }
             throwIfWorkspaceFileSearchAccountRetired(input.accountLifetime);
@@ -581,6 +591,7 @@ export type WorkspaceFileSearchInput = Readonly<{
     /** Explicit captured lifetime; otherwise the addressed Home's credentials own the search. */
     accountLifetime?: WorkspaceFileSearchAccountLifetime;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
     includeCoverage?: boolean;
     /** Arbitrary directory browsers query the daemon glob directly, without a workspace index. */
     mode?: 'fuzzy' | 'glob';
@@ -617,6 +628,7 @@ export async function searchWorkspaceFiles(
             ...(input.limit === undefined ? {} : { limit: Math.max(1, Math.floor(input.limit)) }),
         }, {
             serverId: input.scope.serverId,
+            callerContext: input.callerContext,
             ...(readWorkspaceFileSearchAccountId(accountLifetime) ? { accountId: readWorkspaceFileSearchAccountId(accountLifetime) } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
         });
@@ -637,6 +649,7 @@ export async function searchWorkspaceFiles(
         partition,
         workspaceCacheKey,
         accountLifetime,
+        callerContext: input.callerContext,
         ...(input.signal ? { signal: input.signal } : {}),
     });
     throwIfWorkspaceFileSearchAborted(input.signal);
@@ -672,6 +685,7 @@ export async function searchWorkspaceFiles(
         readWorkspaceFileSearchAccountId(accountLifetime),
         query,
         input.signal,
+        input.callerContext,
     );
     throwIfWorkspaceFileSearchAborted(input.signal);
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);

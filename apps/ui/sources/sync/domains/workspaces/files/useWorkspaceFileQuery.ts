@@ -73,6 +73,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
                         scope, query, limit: requestedLimit, resultType: input.resultType,
                         mode: input.mode, includeHidden: input.includeHidden, accountLifetime,
                         signal: controller.signal, includeCoverage: true,
+                        callerContext: input.callerContext,
                     });
                     if (!controller.signal.aborted) setState({ scope, lifetime: accountLifetime, query, page, isSearching: false, error: null });
                 } catch (error) {
@@ -87,7 +88,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
         }, input.mode === 'glob' ? 200 : 120);
         return () => { controller.abort(); clearTimeout(handle); retirement?.dispose(); };
     }, [scope, query, enabled, accountLifetime, credentialsResolving, requestedLimit, input.resultType, input.mode,
-        input.includeHidden, input.reloadToken, retryToken]);
+        input.includeHidden, input.reloadToken, input.callerContext, retryToken]);
 
     const current = enabled && state?.scope === scope && state.lifetime === accountLifetime ? state : null;
     const items = React.useMemo(() => current?.page ? [...current.page.items] : EMPTY_ITEMS, [current?.page]);

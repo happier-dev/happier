@@ -8,10 +8,12 @@ import { t } from '@/text';
 import { FileBrowserToolbar, FileBrowserToolbarIconButton } from './FileBrowserToolbar';
 import { resolveFilesystemBrowserToolbarState, type FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export type { FilesystemBrowserToolbarAction } from './filesystemBrowserToolbarState';
 
 export type FilesystemBrowserToolbarChromeProps = Readonly<{
+    currentUiContextCommandScope?: string;
     testID?: string;
     searchTestID?: string;
     searchPlaceholder?: string;
@@ -44,6 +46,7 @@ function defaultRenderActionNode(action: FilesystemBrowserToolbarAction): React.
 export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarChromeProps) {
     const { theme } = useUnistyles();
     const [toolbarWidth, setToolbarWidth] = React.useState<number | null>(null);
+    const [overflowOpen, setOverflowOpen] = React.useState(false);
     const {
         actions,
         buildOverflowItems,
@@ -65,6 +68,19 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
         () => buildOverflowItems(hiddenActions),
         [buildOverflowItems, hiddenActions],
     );
+    const scope = props.currentUiContextCommandScope;
+    const commands = useCurrentUiContextLocalCommands(scope === undefined || overflowItems.length === 0 ? [] : [{
+        key: 'overflow', title: overflowTitle ?? t('common.moreActions'),
+        description: JSON.stringify({ control: `${scope}.overflow`, input: { open: 'boolean' } }),
+        invoke: input => {
+            if (input === undefined) return { ok: true, result: { open: overflowOpen } };
+            if (input === null || typeof input !== 'object' || Array.isArray(input) || typeof input.open !== 'boolean') return false;
+            setOverflowOpen(input.open); return true;
+        },
+    }], { foregroundOverlay: true, contextKey: scope });
+    const changeOverflowOpen = React.useCallback((open: boolean) => {
+        void commands.invoke('overflow', { open });
+    }, [commands.invoke]);
     const renderOverflowTriggerButton = React.useCallback((props: Readonly<{
         testID?: string;
         accessibilityLabel?: string;
@@ -76,8 +92,8 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
             testID={props.testID ?? overflowTriggerTestID}
             accessibilityLabel={props.accessibilityLabel ?? t('common.moreActions')}
             accessibilityHint={props.accessibilityHint}
-            accessibilityState={props.accessibilityState}
-            onPress={props.onPress}
+            expanded={props.accessibilityState?.expanded}
+            onPress={() => props.onPress?.()}
         >
             <Icon name="dots-three" size={16} color={theme.colors.text.secondary} />
         </FileBrowserToolbarIconButton>
@@ -98,6 +114,8 @@ export function FilesystemBrowserToolbarChrome(props: FilesystemBrowserToolbarCh
             {visibleActions.map(renderActionNode ?? defaultRenderActionNode)}
             {overflowItems.length > 0 ? (
                 <ItemRowActions
+                    overflowOpen={scope === undefined ? undefined : overflowOpen}
+                    onOverflowOpenChange={scope === undefined ? undefined : changeOverflowOpen}
                     title={overflowTitle ?? t('common.moreActions')}
                     actions={overflowItems}
                     overflowTriggerTestID={overflowTriggerTestID}

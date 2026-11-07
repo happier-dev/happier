@@ -511,12 +511,22 @@ describe('MachinePathBrowserModal', () => {
         expect(screen.findByTestId(getPathBrowserRowTestId('/Users'))).toBeNull();
         expect(screen.findAll(node => node.props.diagnosticCode === 'action_disabled').length).toBeGreaterThan(0);
         expect(listMachineFileBrowserDirectoryEntriesMock.mock.calls.length).toBe(readsBeforeRetry);
-        await screen.pressByTestIdAsync('path-browser-refresh');
-        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/Users')),
-            JSON.stringify({ reads: readActionRequests, nativeRequests: machineRequests,
-                diagnostics: screen.findAll(node => Boolean(node.props.diagnosticCode)).map(node => node.props.diagnosticCode) }),
-        ).toBeTruthy()); });
-        expect(readActionRequests).toEqual(expect.arrayContaining([expect.objectContaining({
+        const { FileBrowserToolbarIconButton } = await import('@/components/ui/filesystemBrowser/FileBrowserToolbar');
+        const readsBeforeRefresh = readActionRequests.length;
+        await act(async () => {
+            const refresh = screen.findAllByTestId('path-browser-refresh')
+                .find(node => node.type === FileBrowserToolbarIconButton);
+            expect(refresh).toBeDefined();
+            expect(await refresh!.props.onPress()).toBe(true);
+        });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId(getPathBrowserRowTestId('/Users')),
+                JSON.stringify({ reads: readActionRequests, nativeRequests: machineRequests,
+                    diagnostics: screen.findAll(node => Boolean(node.props.diagnosticCode)).map(node => node.props.diagnosticCode) }),
+            ).toBeTruthy();
+        });
+        expect(readActionRequests.slice(readsBeforeRefresh)).toEqual(expect.arrayContaining([expect.objectContaining({
             actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory,
             invocation: expect.objectContaining({ surface: 'ui', authority: 'present_user' }),
         })]));

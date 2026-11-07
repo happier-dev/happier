@@ -2,6 +2,9 @@ import {
     machineFilesystemListDirectory,
     machineFilesystemListRoots,
 } from '@/sync/ops/machineFileBrowser';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+
+import { readHomeAccountDepartures, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import { sortDirectoryEntries } from './sortDirectoryEntries';
 import { warmInFlight, type WarmInFlightRequest } from './warmInFlight';
@@ -37,6 +40,22 @@ const rootsCache = new Map<string, MachineFileBrowserRoot[]>();
 const directoryEntriesCache = new Map<string, CachedDirectoryEntries>();
 const rootsWarmInFlight = new Map<string, WarmInFlightRequest<ListMachineFileBrowserRootsResult>>();
 const directoryWarmInFlight = new Map<string, WarmInFlightRequest<ListMachineFileBrowserDirectoryEntriesResult>>();
+
+/** These keys name no Account: what a listing read belongs to the Account that read it. */
+let accountRetirementSubscribed = false;
+function captureListingDepartures(serverId: string | null | undefined): number {
+    if (!accountRetirementSubscribed) {
+        accountRetirementSubscribed = true;
+        subscribeHomeCredentialChange((_event, { accountLeft }) => {
+            if (!accountLeft) return;
+            rootsCache.clear();
+            directoryEntriesCache.clear();
+            rootsWarmInFlight.clear();
+            directoryWarmInFlight.clear();
+        });
+    }
+    return readHomeAccountDepartures(serverId);
+}
 
 function getRootsCacheKey(machineId: string, serverId?: string | null): string {
     return `${serverId ?? ''}:${machineId}`;
@@ -161,9 +180,12 @@ export async function listMachineFileBrowserRoots(input: {
     machineId: string;
     serverId?: string | null;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
 }): Promise<ListMachineFileBrowserRootsResult> {
-    const response = await machineFilesystemListRoots(input.machineId, { serverId: input.serverId, signal: input.signal });
+    const departures = captureListingDepartures(input.serverId);
+    const response = await machineFilesystemListRoots(input.machineId, { serverId: input.serverId, signal: input.signal, callerContext: input.callerContext });
     input.signal?.throwIfAborted();
+    if (departures !== readHomeAccountDepartures(input.serverId)) return { ok: false, error: 'unknown_error' };
     if (!response.ok) {
         const error = typeof response.error === 'string' ? response.error.trim() : '';
         return { ok: false, error: error || 'unknown_error' };
@@ -193,6 +215,7 @@ export async function warmMachineFileBrowserRoots(input: {
     machineId: string;
     serverId?: string | null;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
 }): Promise<ListMachineFileBrowserRootsResult> {
     const cached = getCachedMachineFileBrowserRoots(input);
     if (cached) return { ok: true, roots: cached };
@@ -207,12 +230,15 @@ export async function listMachineFileBrowserDirectoryEntries(input: {
         includeFiles: boolean;
         serverId?: string | null;
         signal?: AbortSignal;
+        callerContext?: ActionExecutorContext;
 }): Promise<ListMachineFileBrowserDirectoryEntriesResult> {
+    const departures = captureListingDepartures(input.serverId);
     const response = await machineFilesystemListDirectory(input.machineId, {
         path: input.directoryPath,
         includeFiles: input.includeFiles,
-    }, { serverId: input.serverId, signal: input.signal });
+    }, { serverId: input.serverId, signal: input.signal, callerContext: input.callerContext });
     input.signal?.throwIfAborted();
+    if (departures !== readHomeAccountDepartures(input.serverId)) return { ok: false, error: 'unknown_error' };
 
     if (!response.ok) {
         const error = typeof response.error === 'string' ? response.error.trim() : '';
@@ -251,6 +277,7 @@ export async function warmMachineFileBrowserDirectoryCache(input: {
     includeFiles: boolean;
     serverId?: string | null;
     signal?: AbortSignal;
+    callerContext?: ActionExecutorContext;
 }): Promise<ListMachineFileBrowserDirectoryEntriesResult> {
     const cachedEntries = getCachedMachineFileBrowserEntries(input);
     const cachedMetadata = getCachedMachineFileBrowserDirectoryMetadata(input);

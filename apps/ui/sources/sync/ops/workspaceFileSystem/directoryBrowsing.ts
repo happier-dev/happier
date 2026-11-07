@@ -1,9 +1,10 @@
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { readRpcErrorCode } from '@/sync/runtime/rpcErrors';
 import { FilesystemGetDirectoryTreeOutputSchema, FilesystemListDirectoryOutputSchema, type FilesystemTreeNode } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { invokeWorkspaceFileSystemAction, invokeWorkspaceFileSystemMutation, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
+import { invokeWorkspaceFileSystemAction, invokeWorkspaceFileSystemMutation, projectWorkspaceFileSystemActionFailure, type WorkspaceFileSystemFailure, type WorkspaceFileSystemMutationResponse } from './actionInvocation';
 
 export type WorkspaceFileSystemTarget = Readonly<{
     machineId: string;
@@ -30,7 +31,7 @@ export type WorkspaceCreateDirectoryResponse = WorkspaceFileSystemMutationRespon
 export async function workspaceCreateDirectory(
     target: WorkspaceFileSystemTarget,
     path: string,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
 ): Promise<WorkspaceCreateDirectoryResponse> {
     try {
         return await invokeWorkspaceFileSystemMutation(target, 'daemon.filesystem.createDirectory', {
@@ -55,18 +56,19 @@ export type WorkspaceDirectoryEntry = Readonly<{
 
 export type WorkspaceListDirectoryResponse =
     | Readonly<{ success: true; entries: WorkspaceDirectoryEntry[] }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+    | WorkspaceFileSystemFailure;
 
 export async function workspaceListDirectory(
     target: WorkspaceFileSystemTarget,
     path: string,
+    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
 ): Promise<WorkspaceListDirectoryResponse> {
     try {
         const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.listDirectory', {
             rootPath: target.rootPath,
             path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
-        });
-        if (!result.ok) return { success: false, error: result.error, errorCode: result.errorCode };
+        }, options);
+        if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
         const response = FilesystemListDirectoryOutputSchema.safeParse(result.result);
         return response.success ? response.data : { success: false, error: 'The filesystem Action response could not be validated.', errorCode: 'invalid_action_output' };
     } catch (error) {
@@ -82,20 +84,21 @@ export type WorkspaceTreeNode = FilesystemTreeNode;
 
 export type WorkspaceGetDirectoryTreeResponse =
     | Readonly<{ success: true; tree: WorkspaceTreeNode }>
-    | Readonly<{ success: false; error: string; errorCode?: string }>;
+    | WorkspaceFileSystemFailure;
 
 export async function workspaceGetDirectoryTree(
     target: WorkspaceFileSystemTarget,
     path: string,
     maxDepth: number,
+    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
 ): Promise<WorkspaceGetDirectoryTreeResponse> {
     try {
         const result = await invokeWorkspaceFileSystemAction(target, 'daemon.filesystem.getDirectoryTree', {
             rootPath: target.rootPath,
             path: resolveAbsoluteWorkspacePath({ rootPath: target.rootPath, agentRootPath: target.agentRootPath, requestPath: path }),
             maxDepth,
-        });
-        if (!result.ok) return { success: false, error: result.error, errorCode: result.errorCode };
+        }, options);
+        if (!result.ok) return projectWorkspaceFileSystemActionFailure(result);
         const response = FilesystemGetDirectoryTreeOutputSchema.safeParse(result.result);
         return response.success ? response.data : { success: false, error: 'The filesystem Action response could not be validated.', errorCode: 'invalid_action_output' };
     } catch (error) {
