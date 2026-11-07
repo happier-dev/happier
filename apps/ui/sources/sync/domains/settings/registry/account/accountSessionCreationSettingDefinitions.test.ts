@@ -17,9 +17,9 @@ describe('account session creation setting definitions', () => {
         expect(ACCOUNT_SETTING_DEFINITIONS.newSessionWizardColumnsEnabled.default).toBe(false);
     });
 
-    it('defaults the new-session route presentation mode to auto', () => {
-        expect(NEW_SESSION_PRESENTATION_MODES).toEqual(['auto', 'screen', 'modal']);
-        expect(ACCOUNT_SETTING_DEFINITIONS.newSessionPresentationModeV1.default).toBe('auto');
+    it('defaults the new-session route presentation mode to Docked, keeping every explicit choice', () => {
+        expect(NEW_SESSION_PRESENTATION_MODES).toEqual(['auto', 'screen', 'modal', 'docked']);
+        expect(ACCOUNT_SETTING_DEFINITIONS.newSessionPresentationModeV1.default).toBe('docked');
         expect(ACCOUNT_SETTING_DEFINITIONS.newSessionPresentationModeV1.storageScope).toBe('account');
     });
 
@@ -28,7 +28,9 @@ describe('account session creation setting definitions', () => {
 
         expect(schema.parse('screen')).toBe('screen');
         expect(schema.parse('modal')).toBe('modal');
-        expect(schema.parse('invalid')).toBe('auto');
+        expect(schema.parse('docked')).toBe('docked');
+        expect(schema.parse('auto')).toBe('auto');
+        expect(schema.parse('invalid')).toBe('docked');
     });
 
     it('stores remembered engine selections as account-scoped session creation settings', () => {

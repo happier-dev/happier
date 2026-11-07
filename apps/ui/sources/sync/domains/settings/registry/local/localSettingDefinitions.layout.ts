@@ -138,6 +138,22 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
             serializeCurrent: serializePaneSizePxBucket(225, 360),
         },
     },
+    newSessionDockedWidthPx: {
+        schema: z.nullable(z.number()),
+        // Unset, Docked New takes the Session composer's width in the column it sits in; its side edges
+        // narrow or widen it (up to the column) on this device.
+        default: null,
+        description: 'Preferred Docked New session card width in px',
+        storageScope: 'local',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'device_user',
+            serializeCurrent: (widthPx: number | null) => widthPx === null ? 'large' : serializePaneSizePxBucket(464, 720)(widthPx),
+        },
+    },
     terminalRendererPreference: {
         schema: z.catch((<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform((value) => value === 'native-experimental' ? 'native' : value), z.enum(['auto', 'xterm-webview', 'native'])), 'auto'),
         default: 'auto',

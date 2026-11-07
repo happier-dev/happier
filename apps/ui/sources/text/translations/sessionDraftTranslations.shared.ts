@@ -13,6 +13,7 @@ export const en = {
     untitled: 'Untitled draft',
     continueEditing: 'Continue editing',
     startAnother: 'Start another',
+    startingInBackground: "Starting session…",
     // Run-start outcome states for the interactive Agent-conversation draft. An unknown outcome
     // is never presented as a failure: it may already have started, so a second Start is a
     // deliberate, informed choice.

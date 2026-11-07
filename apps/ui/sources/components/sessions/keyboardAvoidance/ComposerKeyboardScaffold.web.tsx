@@ -11,6 +11,7 @@ import { ComposerKeyboardProvider } from './ComposerKeyboardContext';
 import type { ComposerKeyboardScaffoldProps } from './ComposerKeyboardScaffoldTypes';
 import { useComposerKeyboardLayout } from './useComposerKeyboardLayout.web';
 import { PaneMainBody } from '@/components/ui/panels/paneMainComposerAnchor';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 
 function normalizeScaffoldHeight(height: number): number | undefined {
     if (!Number.isFinite(height) || height <= 0) return undefined;
@@ -42,6 +43,8 @@ function flattenStyleItems(style: StyleProp<ViewStyle>): Array<StyleProp<ViewSty
 }
 
 export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): React.ReactElement {
+    const rootPointer = resolveOverlayPointerEvents(props.pointerEvents ?? 'auto');
+    const composerPointer = resolveOverlayPointerEvents(props.composerPointerEvents ?? 'auto');
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
     const [availablePanelMaxHeight, setAvailablePanelMaxHeight] = React.useState<number | undefined>(undefined);
@@ -132,10 +135,12 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
             <Animated.View
                 accessibilityLabel={props.accessibilityLabel}
                 accessibilityRole={props.accessibilityRole}
+                pointerEvents={rootPointer.nativePointerEvents}
                 testID={props.testID}
                 onLayout={handleScaffoldLayout}
                 style={[
                     { flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, backgroundColor: surfaceBackgroundColor },
+                    rootPointer.webStyle,
                     liftPaddingStyle,
                     ...flattenStyleItems(props.style),
                 ]}
@@ -152,7 +157,8 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                     ref={composerRef}
                     testID={props.composerTestID}
                     onLayout={handleComposerLayout}
-                    style={{ backgroundColor: surfaceBackgroundColor }}
+                    pointerEvents={composerPointer.nativePointerEvents}
+                    style={[{ backgroundColor: surfaceBackgroundColor }, composerPointer.webStyle]}
                 >
                     {props.composer}
                 </View>

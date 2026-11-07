@@ -11,8 +11,11 @@ import { ComposerKeyboardProvider } from './ComposerKeyboardContext';
 import type { ComposerKeyboardScaffoldProps } from './ComposerKeyboardScaffoldTypes';
 import { useComposerKeyboardLayout } from './useComposerKeyboardLayout.native';
 import { PaneMainBody } from '@/components/ui/panels/paneMainComposerAnchor';
+import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 
 export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): React.ReactElement {
+    const rootPointer = resolveOverlayPointerEvents(props.pointerEvents ?? 'auto');
+    const composerPointer = resolveOverlayPointerEvents(props.composerPointerEvents ?? 'auto');
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
     const modal = useOptionalModal();
@@ -48,8 +51,9 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
             <View
                 accessibilityLabel={props.accessibilityLabel}
                 accessibilityRole={props.accessibilityRole}
+                pointerEvents={rootPointer.nativePointerEvents}
                 testID={props.testID}
-                style={[{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: surfaceBackgroundColor }, props.style]}
+                style={[{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: surfaceBackgroundColor }, props.style, rootPointer.webStyle]}
             >
                 <PaneMainBody
                     {...contentProps}
@@ -59,6 +63,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                     {props.children}
                 </PaneMainBody>
                 <Animated.View
+                    pointerEvents={composerPointer.nativePointerEvents}
                     testID={props.composerTestID}
                     onLayout={handleComposerLayout}
                     style={[
@@ -70,6 +75,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                             backgroundColor: surfaceBackgroundColor,
                         },
                         composerAnimatedStyle,
+                        composerPointer.webStyle,
                     ]}
                 >
                     {props.composer}

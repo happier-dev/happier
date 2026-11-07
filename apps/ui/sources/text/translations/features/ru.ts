@@ -3632,6 +3632,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { ru: {
         ...starterPrompts,
         suggestionsLabel: 'Подсказки',
+        draftOpenBelow: 'Черновик открыт внизу',
         summarizeProjectSince: ({ project, day }) => `Кратко опиши, что изменилось в ${project} с момента: ${day}`,
         summarizeProjectToday: ({ project }) => `Кратко опиши, что изменилось в ${project} сегодня`,
         sessionsSince: ({ count, day }) => `Сессий с момента «${day}»: ${count}`,
@@ -10711,6 +10712,7 @@ const ru: typeof en = {
     untitled: 'Черновик без названия',
     continueEditing: 'Продолжить редактирование',
     startAnother: 'Начать ещё один',
+    startingInBackground: "Запуск сессии…",
     executionRunStart: {
         starting: 'Запуск разговора с агентом…',
         reconciling: 'Проверяем, начался ли этот разговор с агентом…',

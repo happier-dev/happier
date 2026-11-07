@@ -12945,6 +12945,8 @@ settingsSession: {
         presentationScreenSubtitle: "Abre Nova sessão na área principal com o compositor ancorado embaixo.",
         presentationModalTitle: "Janela modal",
         presentationModalSubtitle: "Abre Nova sessão sobre o workspace atual como um modal descartável.",
+        presentationDockedTitle: 'Acoplado',
+        presentationDockedSubtitle: 'Mantém Nova sessão na parte inferior da janela enquanto usa a página atrás.',
         startWithTitle: "Começar com",
         startWithDescription: "O assistente passa por cada escolha; o compositor parte da sua última configuração.",
         startWithComposer: "Compositor",

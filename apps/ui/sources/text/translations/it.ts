@@ -13042,6 +13042,8 @@ settingsSession: {
         presentationScreenSubtitle: "Apre Nuova sessione nell'area principale con il compositore ancorato in basso.",
         presentationModalTitle: "Modale",
         presentationModalSubtitle: "Apre Nuova sessione sopra l'area di lavoro corrente come modale richiudibile.",
+        presentationDockedTitle: 'Ancorata',
+        presentationDockedSubtitle: 'Mantiene Nuova sessione in fondo alla finestra mentre usi la pagina dietro.',
         startWithTitle: "Inizia con",
         startWithDescription: "La procedura guidata passa da ogni scelta; il compositore riparte dalla tua ultima configurazione.",
         startWithComposer: "Compositore",

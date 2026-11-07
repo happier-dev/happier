@@ -3605,6 +3605,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { 'zh-Hant': {
         ...starterPrompts,
         suggestionsLabel: '建議',
+        draftOpenBelow: '你的草稿已在下方開啟',
         summarizeProjectSince: ({ project, day }) => `總結 ${project} 自${day}以來的變更`,
         summarizeProjectToday: ({ project }) => `總結 ${project} 今天的變更`,
         sessionsSince: ({ count, day }) => `自${day}以來 ${count} 個工作階段`,
@@ -10670,6 +10671,7 @@ const zhHant: typeof en = {
     untitled: '未命名草稿',
     continueEditing: '繼續編輯',
     startAnother: '再開一個',
+    startingInBackground: "正在啟動工作階段…",
     executionRunStart: {
         starting: '正在啟動與代理的對話…',
         reconciling: '正在檢查這次代理對話是否已啟動…',

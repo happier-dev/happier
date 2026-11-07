@@ -13116,6 +13116,8 @@ settingsSession: {
         presentationScreenSubtitle: "新規セッションをメイン領域で開き、コンポーザーを下部に固定します。",
         presentationModalTitle: "モーダル",
         presentationModalSubtitle: "現在のワークスペースの上に閉じられるモーダルとして新規セッションを開きます。",
+        presentationDockedTitle: 'ドッキング',
+        presentationDockedSubtitle: '背後のページを使いながら、新規セッションをウィンドウの下部に表示します。',
         startWithTitle: "開始方法",
         startWithDescription: "ウィザードは各項目を順に選びます。入力欄は前回の設定から始まります。",
         startWithComposer: "入力欄",

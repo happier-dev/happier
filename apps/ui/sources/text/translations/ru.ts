@@ -12676,6 +12676,8 @@ settingsSession: {
         presentationScreenSubtitle: "Открывает Новую сессию в основной области с композитором, закрепленным снизу.",
         presentationModalTitle: "Модальное окно",
         presentationModalSubtitle: "Открывает Новую сессию поверх текущей рабочей области как закрываемое модальное окно.",
+        presentationDockedTitle: 'Закреплённый',
+        presentationDockedSubtitle: 'Держит Новую сессию внизу окна, пока вы пользуетесь страницей за ней.',
         startWithTitle: "Начало сессии",
         startWithDescription: "Мастер проводит по каждому выбору; поле ввода начинает с последней настройки.",
         startWithComposer: "Поле ввода",

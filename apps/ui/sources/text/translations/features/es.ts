@@ -3612,6 +3612,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { es: {
         ...starterPrompts,
         suggestionsLabel: 'Sugerencias',
+        draftOpenBelow: 'Tu borrador está abierto abajo',
         summarizeProjectSince: ({ project, day }) => `Resume qué cambió en ${project} desde ${day}`,
         summarizeProjectToday: ({ project }) => `Resume qué cambió hoy en ${project}`,
         sessionsSince: ({ count, day }) => (count === 1 ? `1 sesión desde ${day}` : `${count} sesiones desde ${day}`),
@@ -10690,6 +10691,7 @@ const es: typeof en = {
     untitled: 'Borrador sin título',
     continueEditing: 'Seguir editando',
     startAnother: 'Empezar otro',
+    startingInBackground: "Iniciando sesión…",
     executionRunStart: {
         starting: 'Iniciando la conversación con el agente…',
         reconciling: 'Comprobando si esta conversación con el agente se inició…',

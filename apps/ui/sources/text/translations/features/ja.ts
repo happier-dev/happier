@@ -3610,6 +3610,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { ja: {
         ...starterPrompts,
         suggestionsLabel: '提案',
+        draftOpenBelow: '下書きは下に開いています',
         summarizeProjectSince: ({ project, day }) => `${day}以降の ${project} の変更をまとめて`,
         summarizeProjectToday: ({ project }) => `今日の ${project} の変更をまとめて`,
         sessionsSince: ({ count, day }) => `${day}以降 ${count} 件のセッション`,
@@ -10675,6 +10676,7 @@ const ja: typeof en = {
     untitled: '無題の下書き',
     continueEditing: '編集を続ける',
     startAnother: '別の下書きを開始',
+    startingInBackground: "セッションを開始しています…",
     executionRunStart: {
         starting: 'エージェントとの会話を開始しています…',
         reconciling: 'このエージェントとの会話が開始されたか確認しています…',

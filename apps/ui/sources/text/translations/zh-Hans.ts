@@ -12416,6 +12416,8 @@ settingsSession: {
       presentationScreenSubtitle: "在主内容区打开“新会话”，并将输入框固定在底部。",
       presentationModalTitle: "弹窗",
       presentationModalSubtitle: "在当前工作区上方以可关闭弹窗打开“新会话”。",
+      presentationDockedTitle: '停靠',
+      presentationDockedSubtitle: '将“新会话”保持在窗口底部，同时继续使用其后的页面。',
       startWithTitle: "开始方式",
       startWithDescription: "向导会逐项引导选择；输入框会沿用你上次的设置。",
       startWithComposer: "输入框",

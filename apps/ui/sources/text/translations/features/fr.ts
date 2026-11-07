@@ -3610,6 +3610,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { fr: {
         ...starterPrompts,
         suggestionsLabel: 'Suggestions',
+        draftOpenBelow: 'Ton brouillon est ouvert en bas',
         summarizeProjectSince: ({ project, day }) => `Résume ce qui a changé dans ${project} depuis ${day}`,
         summarizeProjectToday: ({ project }) => `Résume ce qui a changé aujourd’hui dans ${project}`,
         sessionsSince: ({ count, day }) => (count === 1 ? `1 session depuis ${day}` : `${count} sessions depuis ${day}`),
@@ -10687,6 +10688,7 @@ const fr: typeof en = {
     untitled: 'Brouillon sans titre',
     continueEditing: 'Continuer la modification',
     startAnother: 'En démarrer un autre',
+    startingInBackground: "Démarrage de la session…",
     executionRunStart: {
         starting: 'Démarrage de la conversation avec l’agent…',
         reconciling: 'Vérification du démarrage de cette conversation avec l’agent…',

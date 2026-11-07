@@ -12738,6 +12738,8 @@ settingsSession: {
               presentationScreenSubtitle: '„Neue Session“ im Hauptbereich öffnen, mit dem Composer unten verankert.',
               presentationModalTitle: 'Dialog',
               presentationModalSubtitle: '„Neue Session“ über dem aktuellen Workspace als schließbaren Dialog öffnen.',
+              presentationDockedTitle: 'Angedockt',
+              presentationDockedSubtitle: '„Neue Session“ am unteren Fensterrand halten, während du die Seite dahinter weiter nutzt.',
               startWithTitle: 'Starten mit',
               startWithDescription: 'Der Assistent führt durch jede Auswahl; der Composer startet mit deiner letzten Einrichtung.',
               startWithComposer: 'Composer',

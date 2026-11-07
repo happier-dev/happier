@@ -75,10 +75,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
         : t('settingsFeatures.enterToSendDisabled');
 
     const normalizedHistoryScope: AgentInputHistoryScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
-    const normalizedNewSessionPresentationMode: NewSessionPresentationModeV1 =
-        newSessionPresentationMode === 'screen' || newSessionPresentationMode === 'modal'
-            ? newSessionPresentationMode
-            : 'auto';
     const normalizedSendMode: MessageSendMode =
         messageSendMode === 'interrupt' || messageSendMode === 'server_pending' ? messageSendMode : 'agent_queue';
     const inactiveResumePolicyOptions = SESSION_INACTIVE_RESUME_POLICY_VALUES.map((policy) => {
@@ -139,8 +135,9 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                             { id: 'auto', label: t('settingsSession.sessionCreation.presentationAutoTitle'), description: t('settingsSession.sessionCreation.presentationAutoSubtitle') },
                             { id: 'screen', label: t('settingsSession.sessionCreation.presentationScreenTitle'), description: t('settingsSession.sessionCreation.presentationScreenSubtitle') },
                             { id: 'modal', label: t('settingsSession.sessionCreation.presentationModalTitle'), description: t('settingsSession.sessionCreation.presentationModalSubtitle') },
+                            { id: 'docked', label: t('settingsSession.sessionCreation.presentationDockedTitle'), description: t('settingsSession.sessionCreation.presentationDockedSubtitle') },
                         ]}
-                        value={normalizedNewSessionPresentationMode}
+                        value={newSessionPresentationMode}
                         onChange={setNewSessionPresentationMode}
                     />
                 </SettingAnchor>

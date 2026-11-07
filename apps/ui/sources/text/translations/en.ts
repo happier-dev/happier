@@ -15217,6 +15217,8 @@ const enSettingsSession = {
     presentationModalTitle: 'Modal',
     presentationModalSubtitle:
       'Open New Session above the current workspace as a dismissible modal.',
+    presentationDockedTitle: 'Docked',
+    presentationDockedSubtitle: 'Keep New Session at the bottom of the window while you use the page behind it.',
     startWithTitle: 'Start with',
     startWithDescription:
       'The wizard walks through each choice; the composer starts from your last setup.',

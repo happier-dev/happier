@@ -12737,6 +12737,8 @@ settingsSession: {
         presentationScreenSubtitle: "Ouvre Nouvelle session dans la zone de contenu principale, avec le composer ancré en bas.",
         presentationModalTitle: "Modale",
         presentationModalSubtitle: "Ouvre Nouvelle session au-dessus du workspace actuel, dans une modale que tu peux fermer.",
+        presentationDockedTitle: 'Ancrée',
+        presentationDockedSubtitle: 'Garde Nouvelle session en bas de la fenêtre pendant que tu utilises la page derrière.',
         startWithTitle: "Commencer avec",
         startWithDescription: "L’assistant te guide à chaque choix ; le composer reprend ta dernière configuration.",
         startWithComposer: "Composer",

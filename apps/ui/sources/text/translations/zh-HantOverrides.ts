@@ -10547,6 +10547,8 @@ settingsSession: {
               presentationScreenSubtitle: '在主要內容區開啟「新工作階段」，並將輸入框固定在底部。',
               presentationModalTitle: '彈窗',
               presentationModalSubtitle: '在目前工作區上方以可關閉彈窗開啟「新工作階段」。',
+              presentationDockedTitle: '停靠',
+              presentationDockedSubtitle: '將「新工作階段」保持在視窗底部，同時繼續使用其後的頁面。',
               startWithTitle: '開始方式',
               startWithDescription: '精靈會逐項引導選擇；輸入框會沿用你上次的設定。',
               startWithComposer: '輸入框',

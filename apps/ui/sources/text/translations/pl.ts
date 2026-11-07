@@ -12656,6 +12656,8 @@ settingsSession: {
         presentationScreenSubtitle: "Otwiera Nową sesję w głównym obszarze z kompozytorem przypiętym na dole.",
         presentationModalTitle: "Okno modalne",
         presentationModalSubtitle: "Otwiera Nową sesję nad bieżącą przestrzenią roboczą jako zamykalny modal.",
+        presentationDockedTitle: 'Zadokowany',
+        presentationDockedSubtitle: 'Trzyma Nową sesję na dole okna, gdy korzystasz ze strony za nią.',
         startWithTitle: "Zacznij od",
         startWithDescription: "Kreator prowadzi przez każdy wybór; kompozytor startuje z ostatniej konfiguracji.",
         startWithComposer: "Kompozytor",

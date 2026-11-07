@@ -26,6 +26,10 @@ export type ComposerKeyboardScaffoldProps = Readonly<{
     children: React.ReactNode;
     composer: React.ReactNode;
     composerTestID?: string;
+    /** A non-modal shell host receives input only on its composer children. */
+    composerPointerEvents?: ViewProps['pointerEvents'];
+    /** A shell overlay can let the page receive touches outside its children. */
+    pointerEvents?: ViewProps['pointerEvents'];
     contentProps?: ViewProps;
     contentStyle?: StyleProp<ViewStyle>;
     contentTestID?: string;

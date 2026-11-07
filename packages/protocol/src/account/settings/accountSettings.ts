@@ -1184,6 +1184,7 @@ export const NEW_SESSION_PRESENTATION_MODES = [
   'auto',
   'screen',
   'modal',
+  'docked',
 ] as const;
 
 export const NEW_SESSION_DRAFT_ENTRY_MODES = [
@@ -1226,7 +1227,7 @@ const ACCOUNT_SESSION_AUTHORING_CATALOG_DEFINITIONS = {
     newSessionDraftEntryMode: accountPreference(z.enum(NEW_SESSION_DRAFT_ENTRY_MODES), 'resumePrevious', 'session authoring'),
     rememberLastProjectSessionSelections: accountPreference(z.boolean(), true, 'session authoring'),
     rememberLastEngineSelectionsV1: accountPreference(z.boolean(), true, 'session authoring'),
-    newSessionPresentationModeV1: accountPreference(z.enum(NEW_SESSION_PRESENTATION_MODES), 'auto', 'session authoring'),
+    newSessionPresentationModeV1: accountPreference(z.enum(NEW_SESSION_PRESENTATION_MODES), 'docked', 'session authoring'),
     newSessionWizardSectionPresentationV1: accountPreference(NewSessionWizardSectionPresentationByIdSchema, {}, 'session authoring'),
     newSessionWizardColumnsEnabled: accountPreference(z.boolean(), false, 'session authoring'),
     commandPaletteEnabled: accountPreference(z.boolean(), false, 'keyboard shortcuts'),

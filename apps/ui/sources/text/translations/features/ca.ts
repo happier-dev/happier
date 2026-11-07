@@ -3612,6 +3612,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { ca: {
         ...starterPrompts,
         suggestionsLabel: 'Suggeriments',
+        draftOpenBelow: 'El teu esborrany és obert a sota',
         summarizeProjectSince: ({ project, day }) => `Resumeix què ha canviat a ${project} des de ${day}`,
         summarizeProjectToday: ({ project }) => `Resumeix què ha canviat avui a ${project}`,
         sessionsSince: ({ count, day }) => (count === 1 ? `1 sessió des de ${day}` : `${count} sessions des de ${day}`),
@@ -10686,6 +10687,7 @@ const ca: typeof en = {
     untitled: 'Esborrany sense títol',
     continueEditing: 'Continua editant',
     startAnother: 'Comença’n un altre',
+    startingInBackground: "S’està iniciant la sessió…",
     executionRunStart: {
         starting: 'S’està iniciant la conversa amb l’agent…',
         reconciling: 'S’està comprovant si aquesta conversa amb l’agent s’ha iniciat…',

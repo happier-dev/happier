@@ -3605,6 +3605,7 @@ const starterPrompts = Shared_homeComposerTranslations.starterPrompts;
 const homeComposerTranslations = { 'zh-Hans': {
         ...starterPrompts,
         suggestionsLabel: '建议',
+        draftOpenBelow: '你的草稿已在下方打开',
         summarizeProjectSince: ({ project, day }) => `总结 ${project} 自${day}以来的变更`,
         summarizeProjectToday: ({ project }) => `总结 ${project} 今天的变更`,
         sessionsSince: ({ count, day }) => `自${day}以来 ${count} 个会话`,
@@ -10670,6 +10671,7 @@ const zhHans: typeof en = {
     untitled: '未命名草稿',
     continueEditing: '继续编辑',
     startAnother: '再开一个',
+    startingInBackground: "正在启动会话…",
     executionRunStart: {
         starting: '正在启动与代理的对话…',
         reconciling: '正在检查这次代理对话是否已启动…',

@@ -12036,6 +12036,8 @@ settingsSession: {
               presentationScreenSubtitle: 'Obre Nova sessió a l’àrea principal amb el compositor ancorat a baix.',
               presentationModalTitle: 'Finestra modal',
               presentationModalSubtitle: 'Obre Nova sessió sobre l’espai de treball actual com un modal descartable.',
+              presentationDockedTitle: 'Acoblat',
+              presentationDockedSubtitle: 'Mantén Nova sessió a la part inferior de la finestra mentre fas servir la pàgina del darrere.',
               startWithTitle: 'Començar amb',
               startWithDescription: 'L’assistent recorre cada opció; el compositor parteix de la teva darrera configuració.',
               startWithComposer: 'Compositor',
