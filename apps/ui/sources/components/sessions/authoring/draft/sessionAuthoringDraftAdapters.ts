@@ -398,7 +398,9 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
         ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
         prompt: params.prompt.trim(),
-        displayText: params.displayText.trim(),
+        // The composer's text as written: a seeded lead ends where the person types ("…a workflow
+        // that "), so its trailing space must survive hydration. Sending trims at the send owner.
+        displayText: params.displayText,
         agentTarget: params.agentTarget ? AgentExecutionTargetV1Schema.parse(params.agentTarget) : null,
         transcriptStorage: params.transcriptStorage ?? null,
         profileId: params.profileId === '' ? '' : normalizeOptionalString(params.profileId),

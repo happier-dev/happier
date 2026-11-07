@@ -154,7 +154,9 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
     updatedAt: number;
 }>): NewSessionDraft {
     const base = input.existingDraft ?? emptyNewSessionDraft(input.updatedAt);
-    const promptText = normalizedNonEmpty(input.seed.prompt?.text);
+    // A seed's prompt keeps its trailing space: it ends where the person continues typing.
+    const seededPrompt = input.seed.prompt?.text ?? '';
+    const promptText = seededPrompt.trim().length > 0 ? seededPrompt.trimStart() : null;
     const profileId = normalizedNonEmpty(input.seed.profileId);
     const placement = input.seed.placement;
     const exactTarget = placement?.kind === 'exactTarget'

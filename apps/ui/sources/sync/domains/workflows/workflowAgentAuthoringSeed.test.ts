@@ -1,35 +1,58 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 
 import { buildWorkflowAgentAuthoringSeed } from './workflowAgentAuthoringSeed';
 
+afterEach(() => resetSessionDraftRepositoryForTests());
+
 /**
  * The visible composer text each agent-authoring entry prefills (04 §4.7, 07 S22). The person
- * reads and edits it as their own turn, so it says the task in plain words, ends where they
- * type, and names only the facts and Actions 04's seed builder lists.
+ * reads and edits it as their own turn, so it is the plain lead they continue; the workflow's id,
+ * revision and the Actions to use travel beside it as the current-screen context the agent reads.
  */
 describe('buildWorkflowAgentAuthoringSeed', () => {
-    it('Create ends with "Help me create a workflow that " and names only workflow.validate', () => {
-        const { prompt } = buildWorkflowAgentAuthoringSeed({ kind: 'create' });
-        expect(prompt.endsWith('Help me create a workflow that ')).toBe(true);
-        expect(prompt).toContain('workflow.validate');
-        expect(prompt).not.toContain('workflow.definition');
+    it('Create shows only the lead the person continues, and carries the authoring guidance as context', () => {
+        const seed = buildWorkflowAgentAuthoringSeed({ kind: 'create' });
+        expect(seed.prompt).toBe('Help me create a workflow that ');
+        expect(seed.currentUiContext?.entity?.summary).toContain('workflow.validate');
     });
 
-    it('Edit names the workflow, its id and revision in plain words and ends with "Help me change {workflow}: "', () => {
-        const { prompt } = buildWorkflowAgentAuthoringSeed({
+    it('Edit shows no raw id, revision or tool name to the person; the agent context names them', () => {
+        const seed = buildWorkflowAgentAuthoringSeed({
             kind: 'edit',
             name: 'Morning digest',
             definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54',
             revision: { headerVersion: 4, bodyVersion: 7 },
         });
-        expect(prompt.endsWith('Help me change Morning digest: ')).toBe(true);
-        expect(prompt).toContain('2e17b7b7-1977-4b5b-9957-781ec43c5b54');
-        expect(prompt).toContain('workflow.definition.edit');
-        expect(prompt).toContain('workflow.definition.update');
-        expect(prompt).toMatch(/4\D+7/u);
-        // No serialized revision object.
-        expect(prompt).not.toContain('{');
-        expect(prompt).not.toContain('headerVersion');
+        expect(seed.prompt).toBe('Help me change Morning digest: ');
+        expect(seed.prompt).not.toMatch(/2e17b7b7|workflow\.|revision/u);
+        expect(seed.currentUiContext?.entity).toMatchObject({
+            kind: 'workflow', label: 'Morning digest',
+            reference: { definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54', revision: { headerVersion: 4, bodyVersion: 7 } },
+        });
+        expect(seed.currentUiContext?.entity?.summary).toContain('workflow.definition.edit');
+    });
+
+    it('the composer opens with the lead and its trailing space, so typing continues the sentence', () => {
+        const scope = Object.freeze({ serverId: 'server-a', accountId: 'account-a' });
+        const draftId = '00000000-0000-4000-8000-000000000042';
+        const outcome = seedAndOpenNewSession({
+            seed: buildWorkflowAgentAuthoringSeed({ kind: 'edit', name: 'Morning digest',
+                definitionId: '2e17b7b7-1977-4b5b-9957-781ec43c5b54', revision: { headerVersion: 4, bodyVersion: 7 } }),
+            scope, isCurrent: () => true, navigateToNewSession: () => undefined, createDraftId: () => draftId,
+        });
+        expect(outcome.kind).toBe('opened');
+        const draft = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(draft).toMatchObject({
+            input: 'Help me change Morning digest: ',
+            composerAttachmentSeeds: [{ pluginId: 'happier.app-context', attachmentLocalId: 'current-screen' }],
+        });
+        // The New Session composer opens from this hydrated authoring draft's text.
+        expect(draft && buildNewSessionAuthoringDraftFromPersistedDraft(draft).displayText).toBe('Help me change Morning digest: ');
     });
 
     it('Make this repeatable refers to this conversation without raw session or Home ids', () => {

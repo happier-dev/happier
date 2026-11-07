@@ -776,7 +776,11 @@ export const PluginUiNewSessionSeedV1Schema = lazyZodSchema(() => z.strictObject
   sessionName: z.optional(z.string()),
   initialSessionFacts: zMini.optional(SessionIdentityAdditionsV1Schema),
   promptStack: zMini.optional(SessionPromptStackV1Schema),
-  prompt: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /**
+   * Kept as written: a seed that ends where the person types ("…a workflow that ") keeps its
+   * trailing space. Whitespace-only text is still refused.
+   */
+  prompt: z.optional(z.string().check(z.refine(text => text.trim().length > 0, { message: 'Prompt must not be blank.' }))),
   /** Captured screen data becomes the declared current-screen attachment at the seed owner. */
   currentUiContext: z.optional(CurrentUiContextSnapshotV1Schema.check(z.refine(
     value => ComposerAttachmentValueV1Schema.safeParse(value).success,
