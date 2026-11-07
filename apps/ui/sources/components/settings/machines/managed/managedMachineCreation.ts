@@ -8,20 +8,23 @@ import {
 import type { MachineReferenceCensusV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedAcquireAgentStartV1 } from '@happier-dev/protocol/machines/managed/agentStartV1';
+import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
-import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
 import { managedCreationSetup } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview } from '@/components/settings/machines/managed/managedMachineDeleteReview';
 import { supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
+import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
+import { answerManagedCreationEstablish, answerManagedCreationPrompt } from './managedCreationPrompt';
 
 export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'idle' }>
@@ -29,11 +32,11 @@ export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'acquiring'; managedId?: string; operation?: ActionOperationSnapshotV1; operationObservation?: ActionOperationObservation }>
     | Readonly<{ kind: 'enrollment_pending'; managedId: string }>
     | Readonly<{ kind: 'setup_pending'; managedId: string; machineId: string; state: 'pending' | 'running';
-        environmentSetup: NonNullable<ManagedMachineV1['environmentSetup']>; operation?: ActionOperationSnapshotV1 }>
+        machineSetup: NonNullable<ManagedMachineV1['machineSetup']>; operation?: ActionOperationSnapshotV1 }>
     | Readonly<{ kind: 'ready'; managedId: string; machineId: string }>
     | Readonly<{ kind: 'failed'; code: string; managedId?: string; operation?: ActionOperationSnapshotV1;
         operationObservation?: ActionOperationObservation; retryInstallationAvailable?: boolean;
-        environmentSetup?: NonNullable<ManagedMachineV1['environmentSetup']>; retrySetupAvailable?: boolean }>;
+        machineSetup?: NonNullable<ManagedMachineV1['machineSetup']>; retrySetupAvailable?: boolean }>;
 
 export type ManagedMachineCreationResult =
     | Readonly<{ kind: 'enrolled'; machine: ManagedMachineV1 & { enrolledMachineId: string } }>
@@ -43,7 +46,7 @@ export type ManagedMachineCreationResult =
 
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
 export function buildManagedMachineAcquireInput(
-    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt'>,
+    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'>,
     agentStart?: ManagedAcquireAgentStartV1,
 ): ManagedAcquireInputV1 {
     const reviewed = draft.selection.kind === 'one-off'
@@ -51,12 +54,12 @@ export function buildManagedMachineAcquireInput(
         : { selection: draft.selection, controller: draft.receipt.controller,
             retention: draft.receipt.retention, wakeOnAcceptedMessage: draft.receipt.wakeOnAcceptedMessage,
             reviewedFacts: draft.receipt };
-    return ManagedAcquireInputV1Schema.parse({ ...reviewed, ...(agentStart ? { agentStart } : {}) });
+    return ManagedAcquireInputV1Schema.parse({ ...reviewed, enrollmentIdentity: draft.enrollmentIdentity, ...(agentStart ? { agentStart } : {}) });
 }
 
-/** Explicit Run/Send joins the admitted controller operation, then reads the actual enrolled target. */
+/** Explicit Run/Send joins managed creation, then reads the actual enrolled target. */
 export async function runManagedMachineCreation(input: Readonly<{
-    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>;
+    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>;
     acquisition: ManagedMachineAcquisitionDraft;
     agentStart?: ManagedAcquireAgentStartV1;
     scope: ServerAccountScope;
@@ -68,7 +71,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     onAcquisitionChange: (value: ManagedMachineAcquisitionDraft) => void;
     onProgress: (value: ManagedMachineCreationProgress) => void;
     onApprovalPending: (value: ActionApprovalRegistration) => void;
-    executeAction?: ReturnType<typeof createDefaultActionExecutor>['execute'];
+    executeAction?: FrontDoorActionExecute;
 }>): Promise<ManagedMachineCreationResult> {
     const execute = input.executeAction ?? createFrontDoorActionExecute();
     let acquisition = input.acquisition;
@@ -80,7 +83,7 @@ export async function runManagedMachineCreation(input: Readonly<{
             ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}),
             ...(observedOperation ? { operation: observedOperation } : {}),
             ...(retryInstallationAvailable !== undefined ? { retryInstallationAvailable } : {}),
-            ...(setup ? { environmentSetup: setupMachine!.environmentSetup,
+            ...(setup ? { machineSetup: setupMachine!.machineSetup,
                 retrySetupAvailable: setup.recoveryActions.includes('retrySetup') } : {}),
         });
         return { kind: 'failed', code };
@@ -96,11 +99,11 @@ export async function runManagedMachineCreation(input: Readonly<{
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId, signal: input.signal };
     const controller = input.draft.receipt.controller;
-    const executeApproved = async (actionId: ManagedMachineActionIdV1, actionInput: unknown, nativeTarget?: string) =>
+    const withActionDispatch = (dispatch: FrontDoorActionExecute['confirmed']) => async (actionId: ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond', actionInput: unknown, nativeTarget?: string) =>
         awaitActionApprovalResult<unknown, { kind: 'completed'; value: unknown } | { kind: 'failed'; code: string }>({
             signal: input.signal,
             execute: async callbacks => {
-                const outcome = classifyHomeActionOutcome(await execute(actionId, actionInput, {
+                const outcome = classifyHomeActionOutcome(await dispatch(actionId, actionInput, {
                     ...context, ...(nativeTarget ? { executionRunTargetMachineId: nativeTarget } : {}),
                 }));
                 if (outcome.kind === 'failed') return { kind: 'failed' as const, code: homeDomainFailureCode(outcome.failure) };
@@ -116,6 +119,8 @@ export async function runManagedMachineCreation(input: Readonly<{
             succeeded: value => ({ kind: 'completed', value }), failed: code => ({ kind: 'failed', code }),
             aborted: () => ({ kind: 'failed', code: 'continuation_retired' }),
         });
+    const executeApproved = withActionDispatch(execute);
+    const executeConfirmed = withActionDispatch(execute.confirmed);
     const read = async (): Promise<ManagedMachineV1 | null> => {
         if (!acquisition.managedId || !current()) return null;
         const result = await execute('machines.managed.get', { homeId: acquisition.selection.homeId, managedId: acquisition.managedId }, context);
@@ -135,6 +140,17 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (acquisition.managedId && !alreadyAdmitted) return { kind: 'failed', code: 'managed_read_failed' };
     if (alreadyAdmitted?.creationState !== undefined && alreadyAdmitted.creationState !== 'active') return fail('enrollment_retired');
     if (!alreadyAdmitted?.enrolledMachineId && (!acquisition.managedId || input.retryInstallation)) {
+        if (!acquisition.managedId && acquisition.selection.kind === 'preset') {
+            const selection = acquisition.selection;
+            const outcome = classifyHomeActionOutcome(await execute('machines.presets.get', { homeId: selection.homeId, id: selection.id }, context));
+            if (!current()) return fail('continuation_retired');
+            if (outcome.kind !== 'completed') return fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required');
+            const found = MachinePresetActionOutputSchemasV1['machines.presets.get'].parse(outcome.result);
+            if (found.kind === 'refused') return fail(found.code);
+            if (found.preset.homeId !== selection.homeId || found.preset.id !== selection.id
+                || controller && !sameStrictJsonValue(found.preset.controller, controller)) return fail('managed_response_invalid');
+            if (found.preset.delegatedAcquire?.kind === 'unavailable') return fail(found.preset.delegatedAcquire.code);
+        }
         if (input.retryInstallation && (!alreadyAdmitted?.resource || alreadyAdmitted.allocation !== 'bound')) return fail('installation_retry_unavailable');
         const actionId = input.retryInstallation ? 'machines.managed.bootstrap.retry' as const : 'machines.managed.acquire' as const;
         const actionInput = input.retryInstallation && alreadyAdmitted
@@ -144,7 +160,10 @@ export async function runManagedMachineCreation(input: Readonly<{
             signal: input.signal,
             execute: async callbacks => {
                 input.onProgress({ kind: 'acquiring', ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}) });
-                const outcome = classifyHomeActionOutcome(await execute(actionId, actionInput, {
+                // New's Send/Run confirms this reviewed creation. Retain that
+                // confirmation rather than dropping it before Account dispatch.
+                const dispatch = input.retryInstallation ? execute : execute.confirmed;
+                const outcome = classifyHomeActionOutcome(await dispatch(actionId, actionInput, {
                     ...context, actionRequestId: input.retryInstallation ? `${acquisition.requestId}:bootstrap:${alreadyAdmitted?.intentRevision}` : acquisition.requestId,
                     ...(controller ? { executionRunTargetMachineId: controller.machineId } : {}),
                 }));
@@ -171,34 +190,73 @@ export async function runManagedMachineCreation(input: Readonly<{
     }
     if (!current()) return fail('continuation_retired');
     let operationFailure: string | null = null;
-    const awaitingSetupWithoutGuestOperation = alreadyAdmitted?.environmentSetup
-        && (alreadyAdmitted.environmentSetup.state === 'pending' || alreadyAdmitted.environmentSetup.state === 'running')
-        && !alreadyAdmitted.environmentSetup.operation;
+    const awaitingSetupWithoutGuestOperation = alreadyAdmitted?.machineSetup
+        && (alreadyAdmitted.machineSetup.state === 'pending' || alreadyAdmitted.machineSetup.state === 'running')
+        && !alreadyAdmitted.machineSetup.operation;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
-        input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
-        const result = await execute('action.operations.get', { serverId: input.scope.serverId, machineId: controller.machineId,
-            ...acquisition.operation, waitForTerminal: true }, context);
+        // A fresh preset admission may belong to the requester without any controller grant.
+        // Resolve that fact from the admitted row, never from the selected preset or caller hints.
+        const scopedMachine = alreadyAdmitted ?? (acquisition.selection.kind === 'preset' ? await read() : null);
         if (!current()) return fail('continuation_retired');
-        const outcome = classifyHomeActionOutcome(result);
-        if (outcome.kind !== 'completed') return fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required');
-        const found = ActionOperationGetV1ResponseSchema.parse(outcome.result);
-        if (found.kind === 'not_found') return fail('operation_not_found');
-        if (found.operation.operationId !== acquisition.operation.operationId || found.operation.scope.machineId !== controller.machineId
-            || found.operation.scope.accountId !== input.scope.accountId) return fail('operation_scope_mismatch');
-        observedOperation = found.operation;
-        input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId, operation: found.operation });
-        if (found.operation.state === 'accepted' || found.operation.state === 'running') {
-            return acquisition.managedId ? { kind: 'pending', managedId: acquisition.managedId } : fail('managed_response_invalid');
+        if (acquisition.selection.kind === 'preset' && !scopedMachine) return { kind: 'failed', code: 'managed_read_failed' };
+        const requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
+            && scopedMachine.custodianAccountId !== input.scope.accountId ? scopedMachine : null;
+        input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
+        while (current()) {
+            const result = await execute('action.operations.get', { serverId: input.scope.serverId, machineId: controller.machineId,
+                ...(requesterMachine ? { managed: { homeId: requesterMachine.homeId, managedId: requesterMachine.id }, includeManagedPrompt: true } : {}),
+                ...acquisition.operation, waitForTerminal: true }, context);
+            if (!current()) return fail('continuation_retired');
+            const outcome = classifyHomeActionOutcome(result);
+            if (outcome.kind !== 'completed') return fail(outcome.kind === 'failed' ? homeDomainFailureCode(outcome.failure) : 'approval_required');
+            const found = ActionOperationGetV1ResponseSchema.parse(outcome.result);
+            if (found.kind === 'not_found') return fail('operation_not_found');
+            if (found.operation.operationId !== acquisition.operation.operationId || found.operation.scope.machineId !== controller.machineId
+                || found.operation.scope.accountId !== input.scope.accountId
+                || requesterMachine && !managedMachineOperationMatchesResource(requesterMachine, found.operation)) return fail('operation_scope_mismatch');
+            observedOperation = found.operation;
+            input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId, operation: found.operation });
+            const question = requesterMachine ? readManagedInstallationPromptSnapshot(found.operation) : null;
+            if (requesterMachine && question) {
+                const { taskId, ...prompt } = question;
+                const resource = { homeId: requesterMachine.homeId, managedId: requesterMachine.id };
+                const correlation = { ...resource, serverId: input.scope.serverId, operationId: found.operation.operationId, taskId };
+                const answered = prompt.kind === 'administrator.establish'
+                    ? await answerManagedCreationEstablish({ prompt, isCurrent: current,
+                        respond: password => executeApproved('machines.managed.bootstrap.respond', {
+                            ...correlation, purpose: 'establish', promptId: prompt.promptId, password }),
+                        // No answer means no administrator, so the paid creation is cancelled through its own Action.
+                        decline: () => executeConfirmed('machines.managed.cancel', { ...resource,
+                            expectedIntentRevision: requesterMachine.intentRevision }),
+                    })
+                    : prompt.kind === 'auth.approveRemoteProvisioning'
+                    // The response owner consumes one private pairing delivery and
+                    // presents the fallback question only without an admitted Create.
+                    ? await executeApproved('machines.managed.bootstrap.respond', {
+                        ...correlation, purpose: 'approve', prompt, approved: true })
+                    : await answerManagedCreationPrompt({ prompt, isCurrent: current,
+                        respond: approved => executeApproved('machines.managed.bootstrap.respond', {
+                            ...correlation, purpose: 'approve', prompt, approved }),
+                    });
+                if (!current()) return fail('continuation_retired');
+                if (answered.kind === 'failed') return fail(answered.code);
+                // Only a delivered human answer advances the existing event-backed wait.
+                continue;
+            }
+            if (found.operation.state === 'accepted' || found.operation.state === 'running') {
+                return acquisition.managedId ? { kind: 'pending', managedId: acquisition.managedId } : fail('managed_response_invalid');
+            }
+            operationFailure = found.operation.state === 'failed' ? found.operation.error?.errorCode ?? 'installation_failed'
+                : found.operation.state === 'cancelled' ? 'creation_canceled' : null;
+            break;
         }
-        operationFailure = found.operation.state === 'failed' ? found.operation.error?.errorCode ?? 'installation_failed'
-            : found.operation.state === 'cancelled' ? 'creation_canceled' : null;
     }
     let machine = await read();
     if (!current()) return fail('continuation_retired');
     if (!machine) return { kind: 'failed', code: 'managed_read_failed' };
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return fail('enrollment_retired');
     setupMachine = machine;
-    if (operationFailure) return fail(machine.environmentSetup?.state === 'failed' ? machine.environmentSetup.errorCode ?? operationFailure : operationFailure,
+    if (operationFailure) return fail(machine.machineSetup?.state === 'failed' ? machine.machineSetup.errorCode ?? operationFailure : operationFailure,
         Boolean(!machine.enrolledMachineId && machine.resource && machine.allocation === 'bound'));
     if (!machine.enrolledMachineId) {
         input.onProgress({ kind: 'enrollment_pending', managedId: machine.id });
@@ -223,7 +281,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (!currentMachine) return { kind: 'failed', code: 'managed_read_failed' };
         const deleteInput = buildReviewedManagedMachineDeleteInput(currentMachine, review);
         if (!deleteInput) return fail('intent_changed');
-        const deleted = await executeApproved('machines.managed.delete', deleteInput, currentMachine.controller?.machineId);
+        const deleted = await executeConfirmed('machines.managed.delete', deleteInput, currentMachine.controller?.machineId);
         if (!current()) return fail('continuation_retired');
         if (deleted.kind === 'failed') return fail(deleted.code);
         const result = ManagedMachineActionOutputSchemasV1['machines.managed.delete'].parse(deleted.value);
@@ -237,10 +295,17 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (!setup?.recoveryActions.includes(input.setupRecovery === 'retry' ? 'retrySetup' : 'continueWithoutSetup')) {
             return fail('setup_recovery_unavailable');
         }
-        const actionId = input.setupRecovery === 'retry' ? 'machines.environment.apply' as const : 'machines.managed.setup.skip' as const;
-        const actionInput = input.setupRecovery === 'retry'
-            ? { homeId: machine.homeId, machineId: enrolledMachineId, presetId: machine.preset!.id, presetRevision: machine.preset!.revision }
-            : { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision };
+        const actionId = input.setupRecovery === 'retry' ? 'machines.setup.apply' as const : 'machines.managed.setup.skip' as const;
+        let actionInput: unknown = { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision };
+        if (input.setupRecovery === 'retry') {
+            if (!machine.preset || !machine.machineSetup) return fail('setup_recovery_unavailable');
+            const prepared = await prepareMachineSetupPresetApplyInput({ executeAction: execute, context,
+                homeId: machine.homeId, machineId: enrolledMachineId,
+                preset: { ...machine.preset, setup: machine.machineSetup.setup }, isCurrent: current });
+            if (!current()) return fail('continuation_retired');
+            if (!prepared.ok) return fail(homeDomainFailureCode(homeDomainFailureFromActionFailure(prepared)));
+            actionInput = prepared.input;
+        }
         const result = await executeApproved(actionId, actionInput);
         if (!current()) return fail('continuation_retired');
         if (result.kind === 'failed') return fail(result.code);
@@ -264,7 +329,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         && (setup.state !== 'failed' || input.setupRecovery === 'retry')) {
         if (setup.state === 'pending' || setup.state === 'running') {
             input.onProgress({ kind: 'setup_pending', managedId: machine.id, machineId: enrolledMachineId,
-                state: setup.state, environmentSetup: machine.environmentSetup! });
+                state: setup.state, machineSetup: machine.machineSetup! });
         }
         const outcome = classifyHomeActionOutcome(await execute('action.operations.get', {
             serverId: input.scope.serverId, machineId: enrolledMachineId, ...setup.operation, waitForTerminal: true,
@@ -289,7 +354,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (setup?.state === 'failed') return fail(setup.errorCode ?? 'setup_failed');
     if (setup?.state === 'pending' || setup?.state === 'running') {
         input.onProgress({ kind: 'setup_pending', managedId: machine.id, machineId: enrolledMachineId,
-            state: setup.state, environmentSetup: machine.environmentSetup!, ...(observedOperation ? { operation: observedOperation } : {}) });
+            state: setup.state, machineSetup: machine.machineSetup!, ...(observedOperation ? { operation: observedOperation } : {}) });
         return { kind: 'pending', managedId: machine.id };
     }
     input.onProgress({ kind: 'ready', managedId: machine.id, machineId: enrolledMachineId });

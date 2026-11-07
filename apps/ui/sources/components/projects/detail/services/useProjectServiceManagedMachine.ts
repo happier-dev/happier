@@ -1,11 +1,10 @@
 import * as React from 'react';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import { createFrontDoorActionExecute, type FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, type FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { managedMachineCreationIntent, type ManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -26,7 +25,7 @@ export function useProjectServiceManagedMachine(input: Readonly<{
   scopeKey: string;
   serverId: string;
   binding: ServerCredentialAccountScopeBinding | null;
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
 }>) {
   const session = React.useMemo<Continuation>(() => ({ draft: null, acquisition: null, cancellation: null,
     resolve: null, inFlight: false, consumed: false }), [input.scopeKey, input.binding]);
@@ -38,11 +37,7 @@ export function useProjectServiceManagedMachine(input: Readonly<{
   const progress = state?.session === session ? state.progress : null;
   const current = () => active.current === session && input.binding?.isCurrent() === true && !session.cancellation?.signal.aborted;
   const execute = React.useMemo(() => input.runtimeActionExecute
-    ? createFrontDoorActionExecute({ execute: async (actionId, value, context) => {
-      const result = await input.runtimeActionExecute!({ actionId, input: value, context: context ?? {} });
-      const failure = ActionExecuteFailureSchema.safeParse(result);
-      return failure.success ? failure.data : { ok: true, result };
-    } }) : createFrontDoorActionExecute(), [input.runtimeActionExecute]);
+    ? input.runtimeActionExecute.actionExecute : createFrontDoorActionExecute(), [input.runtimeActionExecute]);
   const approval = useActionApprovalContinuation({ scopeKey: input.scopeKey, serverId: input.serverId,
     onExecuted: () => {} });
   const approvalRef = React.useRef(approval.requestApproval);
@@ -125,7 +120,7 @@ export function useProjectServiceManagedMachine(input: Readonly<{
       || enrollment?.status !== 'ready') return;
     if (!session.inFlight && !(resumedEnrollment.current?.session === session && resumedEnrollment.current.entry === enrollment)
       && enrollment.machines.some(machine => machine.id === session.acquisition?.managedId && machine.enrolledMachineId
-      && machine.creationState === 'active' && machine.environmentSetup?.state !== 'pending' && machine.environmentSetup?.state !== 'running')) {
+      && machine.creationState === 'active' && machine.machineSetup?.state !== 'pending' && machine.machineSetup?.state !== 'running')) {
       resumedEnrollment.current = { session, entry: enrollment };
       void resumeRef.current();
     }

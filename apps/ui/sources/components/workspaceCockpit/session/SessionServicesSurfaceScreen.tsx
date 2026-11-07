@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { LocalServicesSurfaceHost, type LocalServicesSurfaceHostProps } from '@/components/sessions/localServices';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
     LocalServiceLauncherState,
@@ -21,7 +21,7 @@ export type SessionServicesSurfaceScreenProps = Readonly<{
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
-    runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+    runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
     onOpenServiceInBrowser?: LocalServicesSurfaceHostProps['onOpenServiceInBrowser'];
 }>;
 

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { LocalServicesSurfaceHost } from '@/components/sessions/localServices';
 import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
     LocalServiceLauncherState,
@@ -28,7 +28,7 @@ export type SessionRightPanelServicesViewProps = Readonly<{
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
-    runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+    runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
 }>;
 

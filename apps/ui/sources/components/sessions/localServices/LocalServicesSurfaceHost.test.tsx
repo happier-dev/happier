@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ActionOperationSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/operations/v1';
 import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -49,6 +52,15 @@ const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } =
   await import('@/sync/domains/local/services/launch');
 const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 const { LocalServicesSurfaceHost } = await import('./LocalServicesSurfaceHost');
+
+/** The Home Project and daemon runtime transports share this fixture; admission stays real. */
+function createRuntimeBoundary(transport: RuntimeActionExecute) {
+  return createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
+    isActionApprovalRequired: () => false,
+    projectAction: ({ actionId, input, context }) => transport({ actionId, input, context }),
+    runtimeActionExecute: transport,
+  })));
+}
 
 const pluginProjectionState = vi.hoisted(() => ({
   appShell: {
@@ -123,6 +135,31 @@ function buildLauncherState() {
 }
 
 describe('LocalServicesSurfaceHost', () => {
+  it('requests This workspace from the canonical Session root', async () => {
+    const serverId = await home.addHome({ name: 'Workspace services', serverUrl: 'https://workspace-services.test', accountId: 'account', currentAccount: true });
+    const { createSessionFixture, createMachineFixture } = await import('@/dev/testkit');
+    const previous = storage.getState();
+    const machine = createMachineFixture({ id: 'machine-a' });
+    storage.setState({ sessions: { 'session-a': createSessionFixture({ id: 'session-a', serverId,
+      metadata: { machineId: 'machine-a', path: '/repo/session-checkout', host: 'devbox', homeDir: '/home/person' } }) },
+      machines: { 'machine-a': machine }, machineListByServerId: { [serverId]: [machine] } });
+    const roots: unknown[] = [];
+    const launcherSnapshotClient: import('@/sync/domains/local/services/launch').LocalServiceLauncherSnapshotClient = async input => {
+      roots.push(input.workspaceRoot);
+      return { ok: true, snapshot: { v: 1, machineId: 'machine-a', updatedAt: 3000, targets: input.workspaceRoot === '/repo/session-checkout'
+        ? [{ ...openableTarget, title: 'Session workspace service' }] : [{ ...openableTarget, title: 'Foreign workspace service' }] } };
+    };
+    const inventorySnapshotClient: import('@/sync/domains/local/services/inventory/useLocalServiceInventoryState').LocalServiceInventorySnapshotClient = async () => ({ ok: true,
+      snapshot: { protocolVersion: 1, machineId: 'machine-a', generatedAt: 1000, refreshState: 'idle', entries: [], diagnostics: [] } });
+    const screen = await renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId} sessionId="session-a"
+      scope="workspace" launcherSnapshotClient={launcherSnapshotClient} inventorySnapshotClient={inventorySnapshotClient} testID="workspace-scope" />);
+    try {
+      await waitForHomeGovernance(() => expect(roots.length).toBeGreaterThan(0));
+      expect(roots[0]).toBe('/repo/session-checkout');
+      expect(screen.getTextContent()).toContain('Session workspace service');
+      expect(screen.getTextContent()).not.toContain('Foreign workspace service');
+    } finally { await screen.unmount(); storage.setState(previous, true); }
+  });
   beforeEach(async () => {
     await home.reset();
     pluginProjectionState.appShell = {
@@ -150,6 +187,66 @@ describe('LocalServicesSurfaceHost', () => {
     await home.reset();
   });
 
+  it('finishes Start after closing its issuing pane before Action admission completes and pushes Running to the reopened pane', async () => {
+    const serverId = await home.addHome({ name: 'Start custody', serverUrl: 'https://start-custody.test',
+      accountId: 'initiating-account', currentAccount: true });
+    const { createDeferred } = await import('@/dev/testkit');
+    const admission = createDeferred<void>();
+    const native = createDeferred<void>();
+    let running = false;
+    let starts = 0;
+    let push: (() => void) | undefined;
+    const target: LocalServiceLaunchTarget = { id: 'managed:web', source: 'managed_service',
+      sourceClass: { kind: 'managed_service', managedServiceId: 'web' }, machineId: 'machine-a',
+      sessionId: 'session-a', title: 'Web', confidence: 'high', state: 'available',
+      serviceState: 'stopped', actions: ['start'] };
+    const snapshot = () => ({ v: 1, machineId: 'machine-a', sessionId: 'session-a', updatedAt: running ? 2_000 : 1_000,
+      targets: [{ ...target, serviceState: running ? 'running' : 'stopped' }] });
+    const inventory = () => ({ v: 1, machineId: 'machine-a', generatedAt: running ? 2_000 : 1_000,
+      refreshState: 'idle', entries: [], diagnostics: [] });
+    const rpc = vi.spyOn(operationMachineRpc, 'machineRpcWithServerScope').mockImplementation(async <Response,>(request: Parameters<typeof operationMachineRpc.machineRpcWithServerScope>[0]) => {
+      let response: unknown;
+      if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START) {
+        starts++;
+        await native.promise;
+        running = true;
+        push?.();
+        response = { protocolVersion: 1, machineId: 'machine-a', targetId: target.id, status: 'succeeded', snapshot: snapshot() };
+      } else if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+        return await new Promise<Response>((resolve, reject) => {
+          push = () => resolve({ protocolVersion: 1, changed: true, snapshot: inventory() } as Response);
+          request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
+      } else if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
+        response = { protocolVersion: 1, snapshot: inventory() };
+      } else if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
+        response = { protocolVersion: 1, snapshot: snapshot() };
+      } else throw new Error(`Unexpected RPC ${request.method}`);
+      return response as Response;
+    });
+    const render = () => renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId}
+      sessionId="session-a" testID="start-custody" />);
+    try {
+      const first = await render();
+      await waitForHomeGovernance(() => expect(first.findByTestId('start-custody-row:managed:web-start')).toBeTruthy());
+      home.answer(serverId, '/v2/account/settings', { respondAfter: admission.promise, body: { version: 1, content: { t: 'plain', v: {
+        actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'localServices.launcher.start': ['ui'] } },
+      } } } });
+      const before = home.requests.filter(request => request.path === '/v2/account/settings').length;
+      act(() => first.pressByTestId('start-custody-row:managed:web-start'));
+      await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v2/account/settings').length).toBeGreaterThan(before));
+      expect(first.getTextContent()).toContain('Starting');
+      expect(starts).toBe(0);
+      act(() => first.tree.unmount());
+      const reopened = await render();
+      admission.resolve();
+      await waitForHomeGovernance(() => expect(starts).toBe(1));
+      native.resolve();
+      await waitForHomeGovernance(() => expect(reopened.getTextContent()).toContain('Running'));
+      expect(starts).toBe(1);
+    } finally { admission.resolve(); native.resolve(); rpc.mockRestore(); }
+  });
+
   it('recovers a failed inventory read and retired watch through the mounted Services Retry action', async () => {
     const serverId = await home.addHome({ name: 'Services Recovery Home', serverUrl: 'https://services-recovery.test',
       accountId: 'initiating-account', currentAccount: true });
@@ -175,7 +272,8 @@ describe('LocalServicesSurfaceHost', () => {
           request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
         });
       }
-      if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
+      if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH
+        || request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT) {
         scans++;
         if (!boundaryAvailable) throw new Error('inventory transport unavailable');
         response = { protocolVersion: 1, snapshot };
@@ -272,7 +370,7 @@ describe('LocalServicesSurfaceHost', () => {
       const screen = await renderScreen(<LocalServicesSurfaceHost machineId="machine-a" serverId={serverId} workspaceRoot="/repo"
         inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(),
           { v: 1, machineId: 'machine-a', updatedAt: 1, targets: [target] })}
-        runtimeActionExecute={runtimeActionExecute} testID="service-setup" />);
+        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)} testID="service-setup" />);
       await flushHookEffects();
       act(() => { screen.pressByTestId('service-setup-row:project-service:web-start'); });
       await waitForHomeGovernance(() => expect(requests[0]?.actionId).toBe('localServices.launcher.start'));
@@ -493,7 +591,7 @@ describe('LocalServicesSurfaceHost', () => {
             targets: [managed],
           },
         )}
-        runtimeActionExecute={runtimeActionExecute}
+        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)}
         testID="surface-host-services"
       />,
     );
@@ -605,7 +703,7 @@ describe('LocalServicesSurfaceHost', () => {
             targets: [target],
           },
         )}
-        runtimeActionExecute={runtimeActionExecute}
+        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)}
         testID="service-retirement"
       />,
     );
@@ -722,7 +820,7 @@ describe('LocalServicesSurfaceHost', () => {
               targets: [target],
             },
           )}
-          runtimeActionExecute={runtimeActionExecute}
+          runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)}
           testID="service-review"
         />,
       );
@@ -830,7 +928,7 @@ describe('LocalServicesSurfaceHost', () => {
             targets: [target],
           },
         )}
-        runtimeActionExecute={runtimeActionExecute}
+        runtimeActionExecute={createRuntimeBoundary(runtimeActionExecute)}
         testID="service-stop-approval"
       />,
     );

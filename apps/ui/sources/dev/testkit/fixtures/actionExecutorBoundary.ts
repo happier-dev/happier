@@ -1,38 +1,20 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+export { createActionExecutorBoundaryFixture } from '../../../../../../packages/tests/src/testkit/actionExecutorBoundary.js';
 
-/** Supply only the host ports exercised by a fixture; every other required boundary fails loudly. */
-export function createActionExecutorBoundaryFixture(overrides: Partial<ActionExecutorDeps>): ActionExecutorDeps {
-    const unexpected = async (): Promise<never> => {
-        throw new Error('Unexpected Action executor host boundary outside this fixture');
-    };
-    return {
-        executionRunStart: unexpected,
-        executionRunList: unexpected,
-        executionRunGet: unexpected,
-        detachedExecutionRunSend: unexpected,
-        executionRunStop: unexpected,
-        executionRunAction: unexpected,
-        executionRunWait: unexpected,
-        sessionOpen: unexpected,
-        sessionFork: unexpected,
-        sessionRollback: unexpected,
-        sessionSpawnNew: unexpected,
-        pathsListRecent: unexpected,
-        machinesList: unexpected,
-        serversList: unexpected,
-        reviewEnginesList: unexpected,
-        agentsBackendsList: unexpected,
-        agentsModelsList: unexpected,
-        sessionSendMessage: unexpected,
-        sessionModeSet: unexpected,
-        sessionModesList: unexpected,
-        sessionList: unexpected,
-        sessionActivityGet: unexpected,
-        sessionRecentMessagesGet: unexpected,
-        resetGlobalVoiceAgent: unexpected,
-        daemonMemorySearch: unexpected,
-        daemonMemoryGetWindow: unexpected,
-        daemonMemoryEnsureUpToDate: unexpected,
-        ...overrides,
-    };
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+
+/** A fixture host's Account and designed Confirm; protocol admission and transport ports stay real. */
+export function createUiActionExecutorBoundary(deps: ActionExecutorDeps, accountId: string,
+  actionsSettings?: ActionExecutorContext['actionsSettings']) {
+  const executor = createActionExecutor(deps);
+  return {
+    ...executor,
+    executeConfirmed: async (...[actionId, input, context]: Parameters<typeof executor.execute>) => {
+      const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
+      return executor.execute(actionId, input, bindPresentUserActionConfirmation(actionId, input, {
+        ...context, runtimeAccountId: accountId, actionCaller: { kind: 'host' },
+        ...(actionsSettings ? { actionsSettings } : {}),
+      }));
+    },
+  };
 }

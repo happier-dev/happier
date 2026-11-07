@@ -2,8 +2,9 @@ import * as React from 'react';
 
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 import { PluginSurfacePlacementStack } from '@/components/plugins/surfaces';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
     LocalServiceLauncherState,
@@ -37,7 +38,7 @@ export type LocalServicesSurfaceHostProps = Readonly<{
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
-    runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+    runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     /** Exact AppPane-admitted projection when a driver-owned surface supplies it. */
     pluginUiProjection?: PluginUiProjectionModel | null;
@@ -58,7 +59,8 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
     const machineId = props.machineId ?? null;
     const serverId = props.serverId ?? null;
     const sessionId = props.sessionId;
-    const workspaceRoot = props.workspaceRoot ?? null;
+    const sessionWorkspace = useSessionWorkspaceTarget(sessionId, serverId);
+    const workspaceRoot = props.workspaceRoot ?? sessionWorkspace?.rootPath ?? null;
     const [scope, setScope] = React.useState<'workspace' | 'machine'>(props.scope ?? 'workspace');
     // The header line and the offline state name the machine and read its presence: one summary,
     // primitives only, so presence heartbeats that change nothing re-render nothing.

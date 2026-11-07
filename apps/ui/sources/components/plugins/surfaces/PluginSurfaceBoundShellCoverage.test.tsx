@@ -12,6 +12,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 // Install network boundaries before importing the real mounted surface graph.
 installDisconnectedServerSocketBoundary();
 const { buildLocalServiceInventoryState, createRootLayoutFeaturesResponse, renderScreen, standardCleanup } = await import('@/dev/testkit');
+// The context fixture reaches the real plugin surface graph, so it also loads after the boundary.
+const { createPluginProjectContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
 const { createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
 const { createPluginDeclarativeModelFixture } = await import('@/dev/testkit/fixtures/pluginDeclarativeModelFixture');
@@ -156,7 +158,6 @@ function BoundShellCoverage(props: Readonly<{
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })}
                 launcherState={createLocalServiceLauncherState()}
                 publicPreviewState={null}
-                runtimeActionExecute={async () => null}
                 pluginUiProjection={props.projection}
                 projectionInteractionEnabled
                 platform="web"
@@ -170,6 +171,7 @@ function BoundShellCoverage(props: Readonly<{
                     machineId: 'machine-bound',
                     serverId: home!.homes.bound!.id,
                     projectId: 'project-bound',
+                    projectContext: createPluginProjectContextFixture({ id: 'project-bound', serverId: home!.homes.bound!.id, machineId: 'machine-bound' }),
                     platform: 'web',
                     formFactor: 'tablet',
                     projectionPhase: 'current',

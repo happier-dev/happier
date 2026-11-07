@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ProjectServicePlacementGetResultV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { useProjectServiceManagedMachine } from './useProjectServiceManagedMachine';
@@ -28,9 +28,12 @@ import { resolveMachinePool } from '@/sync/ops/machinePools';
 import { randomUUID } from '@/platform/randomUUID';
 import { LocalServiceManagedServiceActionTargetV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
-import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { approvalArtifactBodyMatchesHeaderV1, APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useApprovalArtifact } from '@/components/approvals/useApprovalArtifact';
+import { sync } from '@/sync/sync';
+
+const pendingStartApprovals = { kinds: [APPROVAL_ARTIFACT_KINDS_V1.builtIn], approvalStates: ['approved', 'executing'] } as const;
 
 export type ProjectServicePlacementOperationAttachment = Readonly<{
   operationId: string;
@@ -59,7 +62,7 @@ type ObservationContext = Readonly<{
   observePlacement: (name: string, placement: ReadyPlacement | null) => void;
   executeMove: (serviceName: string, destination: ProjectExecutionChoiceV1,
     execute: (signal: AbortSignal, onApprovalPending: (registration: ActionApprovalRegistration) => void) => Promise<ServiceRelocationOutcome>) => Promise<ServiceRelocationOutcome | null>;
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
   managedSelections: ReadonlyMap<string, ManagedSelection>;
   managedContinuations: ReadonlyMap<string, ManagedContinuation>;
   selectManaged: (name: string, scopeKey: string, draft: ManagedMachineSelectionDraft | null, purpose: 'start' | 'move') => void;
@@ -75,7 +78,7 @@ const StartContext = React.createContext<ObservationContext['executeStart'] | un
 function ServiceManagedMachineObserver(props: Readonly<{
   source: ProjectServiceSource;
   binding: ServerCredentialAccountScopeBinding | null;
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
   name: string;
   selection: ManagedSelection;
   publish: (name: string, value: ManagedContinuation) => void;
@@ -175,11 +178,16 @@ function ServiceStartApprovalObserver(props: Readonly<{
 function ScopedObservationProvider(props: Readonly<{
   source: ProjectServiceSource;
   binding: ServerCredentialAccountScopeBinding | null;
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
   children: React.ReactNode;
 }>) {
   const [retainedEntries, setEntries] = React.useState<ReadonlyMap<string, Entry>>(() => new Map());
   const activeScope = useActiveServerAccountScope();
+  React.useEffect(() => {
+    if (!props.binding?.isCurrent() || !activeScope || activeScope.accountId !== props.binding.accountId
+      || !areServerProfileIdentifiersEquivalent(activeScope.serverId, props.source.serverId)) return;
+    return sync.observeArtifactInventory(activeScope, pendingStartApprovals, { refreshOnAdmission: true });
+  }, [props.binding, activeScope?.serverId, activeScope?.accountId, props.source.serverId]);
   const [approvalObservations, setApprovalObservations] = React.useState<ReadonlyMap<string, ApprovedStart>>(() => new Map());
   const publishApproval = React.useCallback((artifactId: string, start: ApprovedStart | null) => setApprovalObservations(current => {
     const previous = current.get(artifactId);
@@ -424,7 +432,7 @@ function ScopedObservationProvider(props: Readonly<{
 /** The retained Services host owns attachment lifetime; phone Back only replaces its presentation. */
 export function ProjectServicePlacementObservationProvider(props: Readonly<{
   source: ProjectServiceSource;
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
   children: React.ReactNode;
 }>) {
   const { binding } = useServerCredentialAccountScopeBinding(props.source.serverId);

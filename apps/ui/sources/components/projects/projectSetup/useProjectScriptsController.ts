@@ -19,7 +19,7 @@ import {
 } from './projectManifestActionClient';
 import {
   editProjectManifestDocument,
-  type ProjectManifestFileSnapshot,
+  ProjectManifestFileSnapshotSchema,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -35,6 +35,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { managedMachineCreationIntent, type ManagedMachineSelectionDraft, type ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { runManagedMachineCreation, type ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
+import { useProjectEnvironmentBindings } from './useProjectEnvironmentBindings';
 
 /** The setup review a preparation or run asked for: its digest, the safe resolved effect and any requested scope. */
 export type ProjectSetupConsent = Pick<ProjectSetupConsentRequiredV1, 'code' | 'reviewedEffectDigest'>
@@ -82,9 +83,10 @@ export function useProjectScriptsController(
   onChanged: () => void,
   binding: ServerCredentialAccountScopeBinding | null,
   options?: Readonly<{
-    execute?: (...args: Parameters<ReturnType<typeof createFrontDoorActionExecute>>) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
+    execute?: ReturnType<typeof createFrontDoorActionExecute>;
     /** Current portable Script rows; absent while their inspection is unavailable. */
     runChoiceKeys?: readonly string[];
+    environmentBindingsEnabled?: boolean;
   }>,
 ) {
   const accountId = binding?.isCurrent() ? binding.accountId : null;
@@ -156,7 +158,7 @@ export function useProjectScriptsController(
   const openSetupReview = React.useCallback(() => setReviewOpenScope(scopeKey), [scopeKey]);
   const dismissConsent = React.useCallback(() => { setConsent(null); setReviewOpenScope(null); setReviewScope(null); }, []);
   const lifetime = React.useMemo(() => new AbortController(), [binding, scopeKey]);
-  const execute = React.useMemo(() => createFrontDoorActionExecute(options?.execute ? { execute: options.execute } : undefined), [options?.execute]);
+  const execute = React.useMemo(() => options?.execute ?? createFrontDoorActionExecute(), [options?.execute]);
   // Local continuation identity, never a worker preference or a second resource store.
   const managedRuns = React.useMemo(() => new Map<string, { draft: ManagedMachineSelectionDraft;
     selection: ProjectScriptSelection; acquisition: ManagedMachineAcquisitionDraft }>(), [lifetime]);
@@ -216,6 +218,8 @@ export function useProjectScriptsController(
         : null,
     [accountId, lifetime, options?.execute, workspace],
   );
+
+  const environmentBindings = useProjectEnvironmentBindings(workspace, binding, client, lifetime.signal, options?.environmentBindingsEnabled);
 
   const dispatch = React.useCallback(
     async <T>(key: string, call: () => Promise<T>, runSelection?: ProjectScriptSelection, signal = lifetime.signal): Promise<T | null> => {
@@ -318,7 +322,7 @@ export function useProjectScriptsController(
         && creation.progress.kind !== 'setup_pending') continue;
       if (enrollment.machines.some(machine => machine.id === creation.acquisition.managedId
         && machine.enrolledMachineId && machine.creationState === 'active'
-        && machine.environmentSetup?.state !== 'pending' && machine.environmentSetup?.state !== 'running')) void resumeManagedRun(creation.key);
+        && machine.machineSetup?.state !== 'pending' && machine.machineSetup?.state !== 'running')) void resumeManagedRun(creation.key);
     }
   }, [binding, managedCreations, enrollment, lifetime, pendingKeys, resumeManagedRun]);
 
@@ -381,16 +385,22 @@ export function useProjectScriptsController(
 
   // Add to project file: one structured edit of the canonical document, one guarded write.
   const add = React.useCallback(
-    async (key: string, definition: ProjectManifestFileSnapshot, source: ProjectNativeRefV1) => {
-      const document = definition.document;
-      if (!client || document?.status !== 'valid' || Object.hasOwn(document.manifest.scripts ?? {}, source.target)) return;
-      const next = editProjectManifestDocument(document, [{ kind: 'set', path: ['scripts', source.target], value: { source } }]);
-      const result = await dispatch(key, () => client.update({ expectedBasis: definition.basis, bytes: next.bytes }));
+    async (key: string, source: ProjectNativeRefV1) => {
+      if (!client) return;
+      const result = await dispatch(key, async () => {
+        const inspection = await client.inspect({ kind: 'editor' });
+        if (!binding?.isCurrent() || lifetime.signal.aborted) return null;
+        const definition = ProjectManifestFileSnapshotSchema.parse(inspection.definition);
+        const document = definition.document;
+        if (document?.status !== 'valid' || Object.hasOwn(document.manifest.scripts ?? {}, source.target)) return null;
+        const next = editProjectManifestDocument(document, [{ kind: 'set', path: ['scripts', source.target], value: { source } }]);
+        return client.update({ expectedBasis: definition.basis, bytes: next.bytes });
+      });
       if (!result) return;
       if (result.status === 'refused') setFailure({ key, code: result.code });
       onChanged();
     },
-    [client, dispatch, onChanged],
+    [binding, client, dispatch, lifetime, onChanged],
   );
 
   return {
@@ -404,6 +414,7 @@ export function useProjectScriptsController(
     setReviewScope,
     ready: client !== null,
     client,
+    environmentBindings,
     add,
     run,
     managedCreations,

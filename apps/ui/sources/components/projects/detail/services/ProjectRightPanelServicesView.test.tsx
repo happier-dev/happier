@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LocalServiceLauncherSnapshotV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { LocalServiceLauncherSnapshotV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
@@ -359,7 +360,8 @@ describe('ProjectRightPanelServicesView', () => {
             if (method === ACTION_OPERATION_RPC_METHODS_V2.list) return { items: [held], nextCursor: null };
             throw new Error(`unexpected_rpc:${method}`);
         });
-        const execute = vi.fn(createFrontDoorRuntimeActionExecutor());
+        const frontDoor = createFrontDoorRuntimeActionExecutor();
+        const execute = Object.assign(vi.fn(frontDoor), { actionExecute: frontDoor.actionExecute });
         const screen = await renderScreen(<ProjectRightPanelServicesView machineId={workspace.machineId} serverId={serverId} runtimeActionExecute={execute}
             inventoryState={buildLocalServiceInventoryState({ rows: [] })}
             launcherState={applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
@@ -449,7 +451,8 @@ describe('ProjectRightPanelServicesView', () => {
                 targets: [],
             },
         }));
-        const runtimeActionExecute = vi.fn(createFrontDoorRuntimeActionExecutor());
+        const frontDoor = createFrontDoorRuntimeActionExecutor();
+        const runtimeActionExecute = Object.assign(vi.fn(frontDoor), { actionExecute: frontDoor.actionExecute });
         const screen = await renderScreen(
             <ProjectRightPanelServicesView
                 machineId="machine-a"
@@ -525,7 +528,8 @@ describe('ProjectRightPanelServicesView', () => {
                 diagnostics: [],
             },
         }));
-        const runtimeActionExecute = vi.fn(createFrontDoorRuntimeActionExecutor());
+        const frontDoor = createFrontDoorRuntimeActionExecutor();
+        const runtimeActionExecute = Object.assign(vi.fn(frontDoor), { actionExecute: frontDoor.actionExecute });
         const screen = await renderScreen(
             <ProjectRightPanelServicesView
                 machineId="machine-a"

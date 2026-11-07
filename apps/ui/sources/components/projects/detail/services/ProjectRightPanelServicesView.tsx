@@ -10,7 +10,7 @@ import type { DescribeServiceDeclaration } from '@/sync/domains/local/services/s
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type {
     LocalServiceLauncherSnapshotClient,
     LocalServiceLauncherState,
@@ -30,7 +30,7 @@ export type ProjectRightPanelServicesViewProps = Readonly<{
     launcherSnapshotClient?: LocalServiceLauncherSnapshotClient;
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
-    runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+    runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     /** The Services page leads with its purpose; the rail keeps the pane chrome. Same body. */
     presentation?: 'pane' | 'page';
@@ -44,7 +44,7 @@ export function ProjectRightPanelServicesView(props: ProjectRightPanelServicesVi
     const workspace = React.useMemo<WorkspaceAddressV1 | null>(() => props.serverId && props.machineId && props.workspaceRefId && props.workspaceRoot
         ? { serverId: props.serverId, machineId: props.machineId, workspaceId: props.workspaceRefId, rootPath: props.workspaceRoot } : null,
     [props.machineId, props.serverId, props.workspaceRefId, props.workspaceRoot]);
-    const inspection = useProjectDefinitionInspection(workspace, binding);
+    const inspection = useProjectDefinitionInspection(workspace, binding, { kind: 'services' });
     const declarations = React.useMemo(() => {
         const document = inspection.read && 'value' in inspection.read ? inspection.read.value.definition.document : null;
         const currentnessKey = document?.status === 'valid' ? JSON.stringify(document.manifest) : undefined;

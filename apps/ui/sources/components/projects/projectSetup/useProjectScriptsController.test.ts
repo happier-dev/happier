@@ -2,16 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance as waitForRequests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance as waitForRequests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createActionExecutor } from '@happier-dev/protocol';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionOperationActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -20,8 +19,11 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createDeferred } from '@/dev/testkit';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createDelegatedManagedPresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 
 const rpc = vi.hoisted(() => ({ machine: vi.fn() }));
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // Authenticated remote daemon RPC is a genuine system boundary.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc.machine }));
 const harness = createHomeGovernanceHarness();
@@ -108,10 +110,13 @@ describe('Project Scripts Setup controls', () => {
                 reviewedEffectDigest: 'reviewed', reviewedEffect: { commands: ['echo setup'] } },
         };
         const requests: unknown[] = [];
-        const execute = async (id: string, input: unknown) => {
-            requests.push({ id, input });
-            return { ok: true as const, result: { operation: requests.length === 1 ? held : { ...held, revision: 2, setupReview: undefined } } };
-        };
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            isActionApprovalRequired: () => false,
+            projectAction: async ({ actionId: id, input }) => {
+                requests.push({ id, input });
+                return { operation: requests.length === 1 ? held : { ...held, revision: 2, setupReview: undefined } };
+            },
+        }), 'alice'));
         const homes = [serverId];
         const hook = await renderHook(() => useProjectScriptsController(workspace, () => {},
             useServerCredentialAccountScopeBindings(homes).get(serverId) ?? null, { execute }));
@@ -167,7 +172,7 @@ describe('Project Scripts Setup controls', () => {
         const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/repo' };
         const admissions: string[] = [];
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.script.run': ['ui'] } });
-        const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
             projectAction: async request => {
                 const input = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse(request.input);
@@ -177,7 +182,7 @@ describe('Project Scripts Setup controls', () => {
                 return { operation: { version: 1, operationId: `finite-${name}`, revision: 1, actionId: 'projects.script.run', state: 'accepted',
                     scope: { accountId: 'alice', machineId: 'source' }, title: name, createdAt: 2, cancellation: 'supported' } };
             },
-        })));
+        }), 'alice', settings));
         const homes = [serverId];
         const changed = () => {};
         const hook = await renderHook(() => useProjectScriptsController(workspace, changed,
@@ -210,6 +215,7 @@ describe('Project Scripts Setup controls', () => {
         const retention = { kind: 'until-delete' } as const;
         const launch = (name: string) => ({ provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name, choices: {} });
         const draft = (name: string) => createManagedMachineSelectionDraft({
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
             selection: { kind: 'one-off', homeId, launch: launch(name), controller, retention, wakeOnAcceptedMessage: false },
             receipt: { launch: launch(name), controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
                 retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention, wakeOnAcceptedMessage: false },
@@ -220,7 +226,7 @@ describe('Project Scripts Setup controls', () => {
         const purchases: string[] = [];
         const admissions: unknown[] = [];
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['ui'], 'projects.script.run': ['ui'] } });
-        const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
             managedMachineAction: async request => {
                 if (request.actionId === 'machines.managed.list') return { machines };
@@ -247,7 +253,7 @@ describe('Project Scripts Setup controls', () => {
                 return { operation: { version: 1, operationId: `finite-${name}`, revision: 1, actionId: 'projects.script.run', state: 'accepted',
                     scope: { accountId: 'alice', machineId: `guest-${name}` }, title: name, createdAt: 2, cancellation: 'supported' } };
             },
-        })));
+        }), 'alice', settings));
         const homes = [serverId];
         const changed = () => {};
         const hook = await renderHook(() => useProjectScriptsController(workspace, changed,
@@ -273,34 +279,73 @@ describe('Project Scripts Setup controls', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['one-off', 'preset', 'cancel', 'enrollment-pending', 'acquiring-pending', 'pending-cancel', 'pending-retire'] as const)('keeps %s creation sessionless and continues only the current finite Run after actual enrollment', async mode => {
-        const kind = mode === 'preset' ? 'preset' : 'one-off';
+    it.each(['one-off', 'preset', 'cancel', 'enrollment-pending', 'acquiring-pending', 'pending-cancel', 'pending-retire',
+        'delegated-approve', 'delegated-decline', 'delegated-cancel', 'delegated-decline-failure', 'delegated-establish'] as const)('keeps %s creation sessionless and continues only the current finite Run after actual enrollment', async mode => {
+        const delegated = mode.startsWith('delegated-');
+        const kind = mode === 'preset' || delegated ? 'preset' : 'one-off';
         const enrollmentGate = createDeferred<void>();
         const { useProjectScriptsController } = await import('./useProjectScriptsController');
         const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
-        const home = await harness.addHome({ name: 'Finite Home', serverUrl: 'https://finite-create.test', serverIdentityId: 'srv_finite_home', accountId: 'alice' });
+        const requesterToken = createAccountTokenForTests('alice');
+        const home = await harness.addHome({ name: 'Finite Home', serverUrl: 'https://finite-create.test', serverIdentityId: 'srv_finite_home', accountId: 'alice', credentials: { token: requesterToken } });
         const homeId = getServerProfileById(home)!.serverIdentityId!;
         const serverId = resolveServerProfileScopeIdForIdentifier(home);
         const workspace = { serverId, workspaceId: 'checkout', machineId: 'source', rootPath: '/repo' };
         const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, name: 'Worker', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const retention = { kind: 'until-delete' } as const;
-        const draft = createManagedMachineSelectionDraft({ selection: kind === 'preset'
+        const secret = 'correct-horse-battery-staple';
+        const draft = createManagedMachineSelectionDraft({ enrollmentIdentity: mode === 'delegated-establish'
+            ? { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'operator' } }
+            : { kind: 'guestProcess', role: 'sandbox' }, selection: kind === 'preset'
             ? { kind: 'preset', homeId, id: 'preset', revision: 1 }
             : { kind: 'one-off', homeId, launch, controller, retention, wakeOnAcceptedMessage: false },
             receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
                 retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention, wakeOnAcceptedMessage: false } });
-        let machine: ManagedMachineV1 = { id: 'paid', homeId, custodianAccountId: 'alice', launch, controller,
+        let machine: ManagedMachineV1 = { id: 'paid', homeId, custodianAccountId: delegated ? 'company' : 'alice',
+            ...(delegated ? { enrollmentAccountId: 'alice' } : {}), launch, controller,
             allocation: 'bound', resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } },
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1, retention, wakeOnAcceptedMessage: false };
         const admissions: unknown[] = [];
         const acquisitions: unknown[] = [];
+        let approved: boolean | undefined;
+        let questionRead = false;
+        const { Modal } = await import('@/modal');
+        const confirmation = delegated ? vi.spyOn(Modal, 'confirm').mockImplementation(async () => {
+            if (mode === 'delegated-cancel') await enrollmentGate.promise;
+            return mode === 'delegated-approve' || mode === 'delegated-cancel';
+        }) : null;
+        const secretPrompt = mode === 'delegated-establish' ? vi.spyOn(Modal, 'prompt').mockResolvedValue(secret) : null;
+        const preset = delegated ? createDelegatedManagedPresetFixture({ preset: {
+            id: 'preset', homeId, revision: 1, name: 'Team worker', owner: { kind: 'team', teamId: 'team' },
+            launch, controller, retention, wakeOnAcceptedMessage: false,
+        }, custodianAccountId: 'company', installationPublicKey: 'BgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgY', descriptor: {
+            id: 'native', title: 'Compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+            launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+            resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+            billing: draft.receipt.billing, retention: draft.receipt.retentionCapabilities,
+            actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+        } }) : { id: 'preset', homeId, revision: 1, name: 'Worker', owner: { kind: 'account' as const, accountId: 'alice' }, launch, controller };
+        const { installManagedInstallationResponseBoundary } = await import('@/dev/testkit/harness/managedInstallationResponseBoundary');
+        const installation = delegated ? installManagedInstallationResponseBoundary({ homes: harness, serverId,
+            serverUrl: 'https://finite-create.test', homeId, token: requesterToken, enrollmentAccountId: 'alice', readMachine: () => machine,
+            ...(mode === 'delegated-decline-failure' ? { refuseAnswer: 'no_prompt' } : {}),
+            onAnswer: response => {
+                const answer = response.answer;
+                approved = typeof answer === 'object' && answer !== null && 'approved' in answer && typeof answer.approved === 'boolean'
+                    ? answer.approved : typeof answer === 'object' && answer !== null && 'password' in answer ? true : undefined;
+            },
+        }) : null;
+        const answers = installation?.answers ?? [];
+        const { createManagedMachineInstallationRespond } = await import('@/sync/ops/actions/managedMachineInstallationAction');
         const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
-            'machines.managed.acquire': ['ui'], 'projects.script.run': ['ui'],
+            'projects.script.run': ['ui'], 'machines.managed.bootstrap.respond': ['ui'],
         } });
-        const execute = createFrontDoorActionExecute(createActionExecutor(createActionExecutorBoundaryFixture({
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
             isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context, getActionSpec(id).safety),
             // Actual controller/Account and guest Action transports; all admission and continuation logic stays real.
+            machinePresetAction: async () => ({ kind: 'found', preset }),
+            machineManagedInstallationRespond: createManagedMachineInstallationRespond(),
             managedMachineAction: async request => {
                 if (request.actionId === 'machines.managed.acquire') { acquisitions.push(request.input); return { managedId: 'paid', operation: { operationId: 'install' } }; }
                 if (request.actionId === 'machines.managed.get') return machine;
@@ -309,11 +354,32 @@ describe('Project Scripts Setup controls', () => {
             },
             actionOperationAction: async () => {
                 if (mode === 'cancel') await enrollmentGate.promise;
+                if (delegated && approved === undefined) {
+                    expect(questionRead, 'A new operation wait must follow a delivered answer to the displayed question').toBe(false);
+                    questionRead = true;
+                    return { kind: 'found', operation: {
+                    version: 1, operationId: 'install', revision: 1, actionId: 'machines.managed.acquire', state: 'running',
+                    scope: { accountId: 'alice', machineId: 'controller' }, title: 'Install', createdAt: 1, startedAt: 1,
+                    cancellation: 'supported', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
+                        bootstrapTask: { id: 'requester-pairing', taskKind: 'remote.ssh.bootstrapMachine.v1',
+                            prompt: mode === 'delegated-establish'
+                                ? { kind: 'administrator.establish', promptId: 'administrator-prompt', administratorUsername: 'operator',
+                                    message: 'Your new administrator password passes through setup.' }
+                                : { kind: 'auth.approveRemoteProvisioning', message: 'Sign this worker into your Account?' } } },
+                    } };
+                }
+                if (delegated && approved === false) return { kind: 'found', operation: {
+                    version: 1, operationId: 'install', revision: 2, actionId: 'machines.managed.acquire', state: 'failed',
+                    scope: { accountId: 'alice', machineId: 'controller' }, title: 'Install', createdAt: 1, startedAt: 1, settledAt: 2,
+                    cancellation: 'supported', error: { errorCode: 'auth_declined', error: 'Enrollment declined' },
+                    domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller },
+                } };
                 const pending = mode === 'acquiring-pending' || mode === 'pending-cancel' || mode === 'pending-retire';
                 if (mode !== 'enrollment-pending' && !pending) machine = { ...machine, enrolledMachineId: 'actual-guest' };
                 return { kind: 'found', operation: { version: 1, operationId: 'install', revision: 2, actionId: 'machines.managed.acquire', state: 'succeeded',
                     scope: { accountId: 'alice', machineId: 'controller' }, title: 'Install', createdAt: 1, startedAt: 1,
-                    ...(pending ? { state: 'running' as const } : { settledAt: 2 }), cancellation: 'supported' } };
+                    ...(pending ? { state: 'running' as const } : { settledAt: 2 }), cancellation: 'supported',
+                    ...(delegated ? { domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller } } : {}) } };
             },
             projectAction: async request => {
                 if (request.actionId !== 'projects.script.run') throw new Error('unexpected_project_transport');
@@ -321,7 +387,7 @@ describe('Project Scripts Setup controls', () => {
                 return { operation: { version: 1, operationId: 'finite', revision: 1, actionId: 'projects.script.run', state: 'accepted',
                     scope: { accountId: 'alice', machineId: 'actual-guest' }, title: 'Test', createdAt: 2, cancellation: 'supported' } };
             },
-        })));
+        }), 'alice', settings));
         const homes = [serverId];
         const changed = () => {};
         const hook = await renderHook(() => useProjectScriptsController(workspace, changed,
@@ -330,10 +396,11 @@ describe('Project Scripts Setup controls', () => {
             await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
             expect(acquisitions).toEqual([]);
             expect(admissions).toEqual([]);
-            if (mode === 'cancel') {
+            if (mode === 'cancel' || mode === 'delegated-cancel') {
                 let running: Promise<void> | undefined;
                 act(() => { running = hook.getCurrent().run('test', { kind: 'named', name: 'test' }, undefined, draft); });
                 await waitForHomeGovernance(() => expect(hook.getCurrent().managedCreations.test?.acquisition.managedId).toBe('paid'));
+                if (confirmation) await waitForHomeGovernance(() => expect(confirmation).toHaveBeenCalledTimes(1));
                 act(() => hook.getCurrent().cancelRun('test'));
                 enrollmentGate.resolve();
                 await act(async () => { await running; });
@@ -341,9 +408,29 @@ describe('Project Scripts Setup controls', () => {
                 expect(acquisitions).toHaveLength(1);
                 expect(hook.getCurrent().managedCreations.test?.acquisition.managedId).toBe('paid');
                 expect(hook.getCurrent().retainedOperation).toBeNull();
+                expect(answers).toEqual([]);
                 return;
             }
             await act(async () => { await hook.getCurrent().run('test', { kind: 'named', name: 'test' }, undefined, draft); });
+            if (mode === 'delegated-decline' || mode === 'delegated-decline-failure') {
+                expect(hook.getCurrent().failure).toMatchObject({ key: 'test', code: mode === 'delegated-decline' ? 'auth_declined' : 'no_prompt' });
+                expect(admissions).toEqual([]);
+                expect(acquisitions).toHaveLength(1);
+                expect(answers).toEqual([expect.objectContaining({ homeId, managedId: 'paid', taskId: 'requester-pairing', answer: { approved: false } })]);
+                return;
+            }
+            if (mode === 'delegated-establish') {
+                expect(hook.getCurrent().failure).toBeNull();
+                expect(secretPrompt).toHaveBeenCalledTimes(1);
+                expect(answers).toEqual([expect.objectContaining({ homeId, managedId: 'paid', taskId: 'requester-pairing',
+                    expectedPromptKind: 'administrator.establish', expectedPromptId: 'administrator-prompt', answer: { password: secret } })]);
+                expect(harness.requestsFor('/v1/auth/response')).toHaveLength(0);
+                expect(JSON.stringify([acquisitions, admissions, hook.getCurrent().managedCreations])).not.toContain(secret);
+            }
+            if (mode === 'delegated-approve') {
+                expect(answers).toEqual([expect.objectContaining({ homeId, managedId: 'paid', taskId: 'requester-pairing', answer: { approved: true } })]);
+                expect(harness.requestsFor('/v1/auth/response')).toHaveLength(1);
+            }
             if (mode === 'pending-cancel' || mode === 'pending-retire') {
                 expect(admissions).toEqual([]);
                 expect(hook.getCurrent().managedCreations.test?.progress.kind).toBe('acquiring');
@@ -372,7 +459,7 @@ describe('Project Scripts Setup controls', () => {
             await act(async () => { await hook.getCurrent().run('test', { kind: 'named', name: 'test' }, undefined, draft); });
             expect(acquisitions).toHaveLength(1);
             expect(admissions).toHaveLength(2);
-        } finally { await hook.unmount(); }
+        } finally { enrollmentGate.resolve(); confirmation?.mockRestore(); secretPrompt?.mockRestore(); installation?.dispose(); await hook.unmount(); }
     });
 
     it('exposes the same live Setup Stop and review opener to compact Scripts hosts', async () => {

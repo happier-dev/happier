@@ -1,22 +1,32 @@
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import type { ActionId, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { HappyError } from '@/utils/errors/errors';
 
 import type { createDefaultActionExecutor, UiActionExecutorContext } from './defaultActionExecutor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
 type ActionExecutorLike = Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'> &
   Partial<Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare' | 'executeConfirmed'>>;
-export type FrontDoorActionExecute = ActionExecutorLike['execute'] & Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'> & Readonly<{ confirmed: ActionExecutorLike['execute'] }>;
+export type FrontDoorActionExecute = ActionExecutorLike['execute'] & Pick<ReturnType<typeof createDefaultActionExecutor>, 'prepare'> & Readonly<{
+  /** The surface's existing designed Confirm, for this exact clicked input. */
+  confirmed: ActionExecutorLike['execute'];
+}>;
 /** The UI front door admits the full Action catalog, including setup before a runtime effect. */
 export type FrontDoorRuntimeActionExecute = (
   args: Omit<RuntimeActionExecuteArgs, 'actionId'> & Readonly<{ actionId: ActionId }>,
   options?: Pick<NonNullable<Parameters<typeof createDefaultActionExecutor>[0]>, 'presentUserActionConfirmation'>,
 ) => Promise<unknown>;
+/** A runtime surface retains the same front door for preparation and designed confirmation. */
+export type FrontDoorRuntimeActionExecutor = FrontDoorRuntimeActionExecute & Readonly<{
+  actionExecute: FrontDoorActionExecute;
+}>;
 export type UiActionOperation = Pick<UiActionExecutorContext,
-  'signal' | 'presentUserConfirmation' | 'defaultSessionId' | 'actionRequestId' | 'onTransportIssued' | 'isPluginSettingsIntentCurrent'
-  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'reviewPublicProfilePreparedAction'> & Readonly<{ confirmed?: true }>;
+  'signal' | 'presentUserConfirmation' | 'defaultSessionId' | 'actionRequestId' | 'onTransportIssued' | 'isPluginSettingsIntentCurrent' | 'sessionMessageDisplayText'
+  | 'executionRunTargetMachineId' | 'executionRunLaunchOrigin' | 'externalActionTarget' | 'openRoute' | 'reviewPublicProfilePreparedAction' | 'capturePublicProfilePreview' | 'publicProfilePreviewAdmission'> & Readonly<{
+    confirmed?: true;
+  }>;
 
 /** Retain typed refusal and pending custody instead of exposing either as a completed effect. */
 export function requireActionSuccess(result: ActionExecuteResult): asserts result is Extract<ActionExecuteResult, { ok: true }> {
@@ -79,7 +89,6 @@ export function createFrontDoorActionExecute(
       if (!target.executeConfirmed) throw new Error('The injected Action executor does not implement confirmed dispatch');
       return target.executeConfirmed(actionId, confirmedInput, context);
     },
-
     prepare: async (...args: Parameters<ReturnType<typeof createDefaultActionExecutor>['prepare']>) => {
       const context = args[2];
       const lifetime = !resolved && !context?.serverId ? captureActiveServerAccountScopeLifetime() : null;
@@ -125,6 +134,8 @@ export function createFrontDoorUiActionExecutor(
       ...(options?.externalActionTarget ? { externalActionTarget: options.externalActionTarget } : {}),
       ...(options?.openRoute ? { openRoute: options.openRoute } : {}),
       ...(options?.reviewPublicProfilePreparedAction ? { reviewPublicProfilePreparedAction: options.reviewPublicProfilePreparedAction } : {}),
+      ...(options?.capturePublicProfilePreview ? { capturePublicProfilePreview: options.capturePublicProfilePreview } : {}),
+      ...(options?.publicProfilePreviewAdmission ? { publicProfilePreviewAdmission: options.publicProfilePreviewAdmission } : {}),
     });
     requireActionSuccess(result);
     return result.result;
@@ -147,12 +158,13 @@ export function createFrontDoorUiActionExecutor(
  */
 export function createFrontDoorRuntimeActionExecutor(
   executor?: ActionExecutorLike,
-): FrontDoorRuntimeActionExecute {
+): FrontDoorRuntimeActionExecutor {
   const execute = createFrontDoorActionExecute(executor);
-  return async ({ actionId, input, context }, options) => {
+  const runtimeExecute: FrontDoorRuntimeActionExecute = async ({ actionId, input, context }, options) => {
     // Presentation stays private to this invocation; the shared policy still decides whether to ask.
     const dispatch = options?.presentUserActionConfirmation ? createFrontDoorActionExecute(executor, options) : execute;
     const result = await dispatch(actionId, input, context);
     return result.ok ? result.result : result;
   };
+  return Object.assign(runtimeExecute, { actionExecute: execute });
 }

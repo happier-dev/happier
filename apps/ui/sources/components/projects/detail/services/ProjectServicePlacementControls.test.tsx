@@ -14,18 +14,21 @@ import { actionOperationStore } from '@/sync/domains/actionOperations/actionOper
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import type { ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import { getActionSpec } from '@happier-dev/protocol/actions';
-import { createActionExecutor } from '@happier-dev/protocol';
-import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createFrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { createDeferred, createMachineFixture, flushHookEffects } from '@/dev/testkit';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getLocalServiceLauncherState, publishLocalServiceLauncherSnapshot, resetLocalServiceLauncherStoreForTests } from '@/sync/domains/local/services/launch/sharedStore';
 import { publishLocalServiceInventorySnapshot, resetLocalServiceInventoryStoreForTests } from '@/sync/domains/local/services/inventory/sharedStore';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -108,6 +111,7 @@ async function setup(options: Readonly<{
   withRow?: boolean;
   collapsedRow?: boolean;
   liveFeeds?: boolean;
+  initialBindingMachineId?: string;
   disablePlacementRead?: boolean;
   showDivider?: boolean;
   /** A committed candidate cannot answer, while SOURCE still owns the native instance. */
@@ -137,7 +141,7 @@ async function setup(options: Readonly<{
   const poolReads: unknown[] = [];
   let placementReadsFail = false;
   let running = options.running;
-  let rowMachineId = 'devbox';
+  let rowMachineId = options.initialBindingMachineId ?? 'devbox';
   let actualFails = options.actualFails;
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -157,6 +161,10 @@ async function setup(options: Readonly<{
     {
       currentAccount: Boolean(moveBoundary),
       handleRequest: async (path, init) => {
+        if (options.initialBindingMachineId && moveBoundary && path === '/v1/machines?includeRevoked=true') {
+          return json([moveBoundary.machine, ...['hz-build-1', 'pool-worker'].map(id =>
+            createPlainMachineRowFixture({ id, accountId: 'artifact-account' }))]);
+        }
         const moveResponse = await moveBoundary?.handle(new URL(path, 'https://service-placement-ui.test'), init);
         if (moveResponse) return moveResponse;
         if (path === '/v1/artifacts/read') {
@@ -502,6 +510,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(Modal.confirm).not.toHaveBeenCalled();
       expect(moves).toHaveLength(1);
       expect(moves[0]).toMatchObject({
+        sourceMachineId: 'devbox',
         currentTarget: { managedServiceId: 'instance', machineId: 'devbox' },
         selectedTarget: { machineId: 'hz-build-1' },
         destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } },
@@ -509,6 +518,19 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(fixture!.boundary.list()).toEqual([]);
       expect(writes).toEqual([]);
     } finally { await screen.unmount(); }
+  });
+  it('reviews the source checkout Machine separately from incumbent and receiver Machines', async () => {
+    const moves: unknown[] = [];
+    const h = await setup({ running: true, liveFeeds: true, sharedObservation: true, offerWorker: true,
+      initialBindingMachineId: 'hz-build-1', waiveMoveApproval: false, onMove: input => moves.push(input) });
+    try {
+      await h.choose('pool-worker');
+      await vi.waitFor(() => expect(h.screen.findByTestId('placement.move.confirm')).toBeTruthy());
+      await h.screen.pressByTestIdAsync('placement.move.confirm');
+      await vi.waitFor(() => expect(moves).toHaveLength(1));
+      expect(moves[0]).toMatchObject({ sourceMachineId: 'devbox',
+        currentTarget: { machineId: 'hz-build-1' }, selectedTarget: { machineId: 'pool-worker' } });
+    } finally { await h.screen.unmount(); }
   });
   it('opens only this Project pending approval bodies across unrelated Starts, Back and reconnect', async () => {
     const bodyReads: string[] = [];
@@ -722,6 +744,20 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       expect(h.screen.getTextContent()).toContain('Worker workstation');
       await act(async () => h.setSourceRef('different-checkout'));
       expect(h.screen.getTextContent()).not.toContain('Worker workstation');
+    } finally { read.resolve(); await h.screen.unmount(); }
+  });
+
+  it('says it is still checking while the first placement read holds the controls, and only then', async () => {
+    const read = createDeferred<void>();
+    const h = await setup({ running: true, waitEnabled: false, beforePlacementRead: () => read.promise });
+    try {
+      await vi.waitFor(() => expect(h.screen.findByTestId('placement.runsOn')).toBeTruthy());
+      // Both choices are held until the binding is known; the held row says why instead of only dimming.
+      expect(h.runsOn().props.disabled).toBe(true);
+      expect(h.runsOn().props.loading).toBe(true);
+      await act(async () => { read.resolve(); });
+      await vi.waitFor(() => expect(h.runsOn().props.disabled).toBe(false));
+      expect(h.runsOn().props.loading).toBeFalsy();
     } finally { read.resolve(); await h.screen.unmount(); }
   });
 
@@ -1130,7 +1166,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       serviceRuntime: createFrontDoorRuntimeActionExecutor() });
     const homeId = resolveServerProfileScopeIdForIdentifier(serverId);
     const requests = (['server', 'other'] as const).map(serviceName => ProjectServiceRelocateInputV1Schema.parse({
-      workspace: { serverId, refId: 'checkout' }, serviceName, requestId: `move-${serviceName}`,
+      workspace: { serverId, refId: 'checkout' }, sourceMachineId: 'devbox', serviceName, requestId: `move-${serviceName}`,
       currentTarget: { kind: 'managed_service', machineId: 'devbox', managedServiceId: `instance-${serviceName}` },
       destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'hz-build-1' } }, selectedTarget: { machineId: 'hz-build-1' },
       desiredPlacement: { workspace: { serverId, refId: 'checkout' }, serviceName, expectedRevision: 'absent', expected: { kind: 'absent' },
@@ -1185,7 +1221,9 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       }),
     })));
     const { screen, choose, serverId, setLifecycle, setControlVisible, setRunning } = await setup({ running: true,
-      sharedObservation: true, serviceRuntime: async (...args) => { admitted = args[0]; return execute(...args); }, liveFeeds: true });
+      sharedObservation: true, serviceRuntime: Object.assign((...args: Parameters<typeof execute>) => {
+        admitted = args[0]; return execute(...args);
+      }, { actionExecute: execute.actionExecute }), liveFeeds: true });
     await choose('hz-build-1');
     await vi.waitFor(() => expect(screen.findByTestId('placement.move.approval')).toBeTruthy());
     expect(request!.input).toMatchObject({ requestId: request!.context?.actionRequestId });
@@ -1370,7 +1408,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     expect(screen.findByTestId('placement.move.confirm')).toBeNull();
   });
 
-  it.each(['ready', 'preset', 'dual', 'cancel', 'back', 'source-changed', 'declaration-changed', 'unknown', 'inventory', 'move', 'move-cancel'] as const)('keeps New Machine selection effect-free and continues the exact Service once (%s)', async mode => {
+  it.each(['ready', 'preset', 'preset-refused', 'dual', 'cancel', 'back', 'source-changed', 'declaration-changed', 'unknown', 'inventory', 'move', 'move-cancel'] as const)('keeps New Machine selection effect-free and continues the exact Service once (%s)', async mode => {
     const acquisitions: unknown[] = [];
     const acquisitionRequests: (string | undefined)[] = [];
     const starts: unknown[] = [];
@@ -1384,11 +1422,21 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     let machine: ManagedMachineV1;
     let inventoryReads = 0;
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
-    const frontDoor = createFrontDoorRuntimeActionExecutor(createActionExecutor(createActionExecutorBoundaryFixture({
+    const frontDoor = createFrontDoorRuntimeActionExecutor(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
       isActionApprovalRequired: () => false,
+      // Preset reads are the Home transport boundary; the real creation owner
+      // qualifies its current result before it can request an acquisition.
+      machinePresetAction: async request => {
+        if (request.actionId !== 'machines.presets.get') throw new Error('unexpected_preset_transport');
+        return MachinePresetActionOutputSchemasV1['machines.presets.get'].parse(mode === 'preset-refused'
+          ? { kind: 'refused', code: 'preset_archived' }
+          : { kind: 'found', preset: { id: 'service-preset', homeId: machine.homeId, revision: 1, name: 'Service worker',
+            owner: { kind: 'account', accountId: 'artifact-account' }, launch, controller, retention, wakeOnAcceptedMessage: false } });
+      },
       managedMachineAction: async request => {
         if (request.actionId === 'machines.managed.acquire') {
           acquisitions.push(request.input);
+          acquisitionRequests.push(request.context.actionRequestId ?? undefined);
           if (mode === 'unknown' && acquisitions.length === 1) throw new Error('allocation_ack_lost');
           return { managedId: 'paid-service', operation: { operationId: 'install-service' } };
         }
@@ -1407,12 +1455,8 @@ describe('Service Runs on through the placement and relocation Actions', () => {
         moves.push(request);
         return { status: 'refused', reasonCode: 'native_boundary_observed' };
       }),
-    })));
-    const execute: typeof frontDoor = async request => {
-      if (request.actionId === 'machines.managed.acquire') acquisitionRequests.push(request.context?.actionRequestId ?? undefined);
-      return frontDoor(request);
-    };
-    const { screen, writes, serverId, start, setSourceRef, setDetail, setDeclarationBasis, setControlVisible } = await setup({ running: moving, sharedObservation: true, serviceRuntime: execute,
+    }), 'artifact-account'));
+    const { screen, writes, serverId, start, setSourceRef, setDetail, setDeclarationBasis, setControlVisible } = await setup({ running: moving, sharedObservation: true, serviceRuntime: frontDoor,
       onStart: request => starts.push(request) });
     const homeId = getServerProfileById(serverId)!.serverIdentityId!;
     machine = { id: 'paid-service', homeId, custodianAccountId: 'artifact-account', launch, controller,
@@ -1420,7 +1464,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1, retention,
       wakeOnAcceptedMessage: false, ...(mode === 'inventory' ? {} : { enrolledMachineId: 'new-service-worker' }) };
     const draft = createManagedMachineSelectionDraft({ enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
-      selection: mode === 'preset' ? { kind: 'preset', homeId, id: 'service-preset', revision: 1 }
+      selection: mode === 'preset' || mode === 'preset-refused' ? { kind: 'preset', homeId, id: 'service-preset', revision: 1 }
       : { kind: 'one-off', homeId, launch, controller, retention, wakeOnAcceptedMessage: false },
       receipt: { launch, controller, optionStatus: 'current', prerequisites: [], billing: { location: 'local', stoppedBilling: 'not-billed' },
         retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention, wakeOnAcceptedMessage: false } });
@@ -1452,6 +1496,15 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     if (moving) {
       await screen.pressByTestIdAsync('placement.move.confirm');
     } else act(() => { completion = start(); });
+    if (mode === 'preset-refused') {
+      await act(async () => { await completion; });
+      expect(acquisitions).toEqual([]);
+      expect(starts).toEqual([]);
+      expect(moves).toEqual([]);
+      expect(writes).toEqual([]);
+      await screen.unmount();
+      return;
+    }
     await vi.waitFor(() => expect(acquisitions).toHaveLength(1));
     if (heldEnrollment || mode === 'inventory') {
       expect(starts).toEqual([]);
@@ -1775,6 +1828,17 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const { screen, runsOn } = await setup({ running: true, waitEnabled: false });
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('projectServices.runsHere'));
     expect(runsOn().props.disabled).toBeFalsy();
+  });
+
+  it('says why the fallback cannot change while the service runs, and stays quiet once it is stopped', async () => {
+    const live = await setup({ running: true, waitEnabled: false });
+    await vi.waitFor(() => expect(live.screen.getTextContent()).toContain('projectServices.fallbackLocked'));
+    expect(live.screen.findByTestId('placement.fallback:fail')?.props.accessibilityState).toMatchObject({ disabled: true });
+    await live.screen.unmount();
+    const stopped = await setup({ running: false, waitEnabled: false });
+    await vi.waitFor(() => expect(stopped.screen.findByTestId('placement.fallback:fail')?.props.accessibilityState).toMatchObject({ disabled: false }));
+    expect(stopped.screen.getTextContent()).not.toContain('projectServices.fallbackLocked');
+    await stopped.screen.unmount();
   });
 
   it('does not claim primary-only custody when the actual binding is unavailable', async () => {

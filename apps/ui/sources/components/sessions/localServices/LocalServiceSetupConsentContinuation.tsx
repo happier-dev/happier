@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 
 import type { ProjectSetupScope } from '@/components/projects/projectSetup/ProjectSetupReview';
@@ -31,7 +30,7 @@ const NO_CHANGE = () => {};
 export function LocalServiceSetupConsentContinuation(props: Readonly<{
     review: LocalServiceSetupConsentReview;
     binding: ServerCredentialAccountScopeBinding;
-    runtimeActionExecute: FrontDoorRuntimeActionExecute;
+    runtimeActionExecute: FrontDoorRuntimeActionExecutor;
     onComplete: (accepted: boolean) => void;
     testID: string;
 }>): React.ReactElement | null {
@@ -46,15 +45,8 @@ export function LocalServiceSetupConsentContinuation(props: Readonly<{
 function RetainedSetupContinuation(props: Parameters<typeof LocalServiceSetupConsentContinuation>[0] & Readonly<{
     workspace: NonNullable<LocalServiceSetupConsentReview['target']['workspace']>;
 }>): React.ReactElement | null {
-    // The supplied dispatcher is already the host's Action front door. Preserve its typed failure
-    // envelope while adapting its unwrapped success to the established Project Action client.
-    const execute = React.useMemo<NonNullable<Parameters<typeof useProjectScriptsController>[3]>['execute']>(() =>
-        async (actionId, input, context) => {
-            const value = await props.runtimeActionExecute({ actionId, input, context: context ?? {} });
-            const failure = ActionExecuteFailureSchema.safeParse(value);
-            return failure.success ? failure.data : { ok: true, result: value };
-        }, [props.runtimeActionExecute]);
-    const controller = useProjectScriptsController(props.workspace, NO_CHANGE, props.binding, { execute });
+    const controller = useProjectScriptsController(props.workspace, NO_CHANGE, props.binding,
+        { execute: props.runtimeActionExecute.actionExecute });
     const [operationId, setOperationId] = React.useState<string | null>(null);
     const started = React.useRef(false);
     const decline = React.useCallback(() => props.onComplete(false), [props.onComplete]);

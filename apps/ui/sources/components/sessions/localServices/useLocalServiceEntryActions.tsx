@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -34,7 +34,7 @@ export type LocalServiceEntryActionsInput = Readonly<{
   workspaceRoot?: string | null;
   scope: 'workspace' | 'machine';
   /** Defaults to the single front door, so ActionsSettings enablement and approval routing apply. */
-  runtimeActionExecute?: FrontDoorRuntimeActionExecute;
+  runtimeActionExecute?: FrontDoorRuntimeActionExecutor;
   /** The surface's feeds: an approved Action re-reads them, and Start/Clear apply their snapshot. */
   onRefresh?: LocalServiceLiveFeeds['refresh'];
   applyLauncherSnapshot?: LocalServiceLiveFeeds['applyLauncherSnapshot'];
