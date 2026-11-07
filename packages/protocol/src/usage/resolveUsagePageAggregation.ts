@@ -539,6 +539,8 @@ export type UsagePageAggregationInput = Readonly<{
   /** Already-opened machine labels authorized for this Account; absence withdraws retained labels. */
   sourceLocations?: readonly Readonly<{ machineId: string; displayLocation: string }>[];
   previous?: UsageQueryBatchResult;
+  /** This finite read's last projection; reuses calculations without claiming a replacement read. */
+  projectionPrevious?: UsageQueryBatchResult;
   pricingOverrides?: UsageModelPriceOverridesV1;
   coachPreferences?: UsageCoachPreferencesV1 | null;
 }>;
@@ -656,11 +658,12 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
   const howYouWork = new Map(input.howYouWork?.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
   const poolsByQuery = new Map(input.pools?.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
   const previous = new Map(input.previous?.results.map(slice => [slice.key, slice]));
+  const projectionPrevious = new Map((input.projectionPrevious ?? input.previous)?.results.map(slice => [slice.key, slice]));
   const results = [...queries].map(([key, query]) => {
     if (!query.includeAccounting) return resolveUsageQuotaPageAggregation({ ...input, queries: [query] }).results[0]!;
     const observed = accounting.get(key);
     const prior = previous.get(key);
-    const admitted = (prior as ProjectedUsageSlice | undefined)?.[usagePageProjections];
+    const admitted = (projectionPrevious.get(key) as ProjectedUsageSlice | undefined)?.[usagePageProjections];
     const pools = poolsByQuery.get(key);
     const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(input.quota, pools, prior?.pools);
     const snapshot = projectPrices(retainAccountingOnReadFailure(observed, prior?.accounting,
@@ -899,5 +902,5 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     };
     return slice;
   });
-  return retainUsageQueryResultReferences({ v: 1, results }, input.previous);
+  return retainUsageQueryResultReferences({ v: 1, results }, input.projectionPrevious ?? input.previous);
 }

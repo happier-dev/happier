@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectUsageQueryBatch } from './usageQueryProjection';
+import * as aggregation from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,8 +29,14 @@ it('does zero reprojections for value-equal push inputs and projects only a genu
         input = { ...input, admittedPrevious: batch };
         return batch;
     };
-    run(); run();
     const before = run();
+    // Observe the real owner; accounting retention can hide a duplicate
+    // aggregation from a contribution getter alone.
+    const aggregate = vi.spyOn(aggregation, 'resolveUsagePageAggregation');
+    visits.fill(0);
+    expect(run(), 'the owner consuming its own admitted output is not a new input').toBe(before);
+    expect(aggregate, 'consuming the admitted output schedules no new page aggregation').not.toHaveBeenCalled();
+    expect(visits, 'settling the first projection must not aggregate either population again').toEqual([0, 0]);
     let sourcePasses = 0;
     const work = new Proxy(input.work.map(snapshot => ({ ...snapshot, query: { ...snapshot.query } })), {
         get(target, property, receiver) {
@@ -48,7 +55,14 @@ it('does zero reprojections for value-equal push inputs and projects only a genu
     input = { ...input, work: [{ query: queries[0]!, status: 'unsupported', errorCode: 'NOT_REPOSITORY' }, input.work[1]!] };
     visits.fill(0);
     const changed = run();
+    expect(aggregate).toHaveBeenCalledTimes(1);
+    expect(aggregate.mock.calls[0]![0].queries).toEqual([queries[0]]);
     expect(changed.results[0]?.sources.find(source => source.source === 'work')?.status).toBe('unsupported');
     expect(changed.results[1]).toBe(before.results[1]);
     expect(visits[1], 'a changed member must not reproject the retained sibling').toBe(0);
+    visits.fill(0);
+    aggregate.mockClear();
+    expect(run()).toBe(changed);
+    expect(aggregate, 'a changed member is aggregated once, without self-triggered follow-up').not.toHaveBeenCalled();
+    expect(visits, 'consuming a changed member must not schedule a second aggregation').toEqual([0, 0]);
 });

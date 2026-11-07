@@ -145,7 +145,7 @@ export function projectUsageEnteredPrices(quota: OpenedQuotaRead, scope: ServerA
 
 type ProjectionSettings = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['accountSettings']>;
 type ProjectionInputs = Readonly<Record<string, unknown>>;
-type RetainedSliceProjection = Readonly<{ inputs: ProjectionInputs; slice: UsageQueryResultSlice; previous: UsageQueryResultSlice | undefined }>;
+type RetainedSliceProjection = Readonly<{ inputs: ProjectionInputs; slice: UsageQueryResultSlice }>;
 type ReadProjection = {
     lifetime: ServerAccountScopeLifetime;
     slices: Map<string, RetainedSliceProjection>;
@@ -193,7 +193,6 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
     const work = new Map(input.work.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
     const detail = new Map(input.howYouWork?.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
     const pools = new Map(input.pools.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
-    const admitted = new Map(input.admittedPrevious?.results.map(slice => [slice.key, slice]));
     const previous = new Map(input.previous?.results.map(slice => [slice.key, slice]));
     const baseDetailStatus = input.settledHowYouWorkQueries.size < input.evidenceQueries.length ? 'pending'
         : input.evidenceQueries.length === 0 ? 'not_loaded' : undefined;
@@ -228,7 +227,9 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
     const dirty = queries.filter(query => {
         const key = getUsageQueryKey(query);
         const retained = state.slices.get(key);
-        if (!retained || admitted.get(key) !== retained.previous) return true;
+        // admittedPrevious is this read's own last output, used to reuse
+        // calculations. Consuming it is not a change to an admitted source.
+        if (!retained) return true;
         const inputs = inputsFor(query, key, retained.slice);
         return Object.entries(inputs).some(([name, value]) => value !== retained.inputs[name]);
     });
@@ -242,7 +243,7 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
     for (const [index, query] of queries.entries()) {
         const key = getUsageQueryKey(query);
         const slice = batch.results[index]!;
-        state.slices.set(key, { inputs: inputsFor(query, key, slice), slice, previous: admitted.get(key) });
+        state.slices.set(key, { inputs: inputsFor(query, key, slice), slice });
     }
     state.batch = batch;
     return batch;
@@ -272,14 +273,15 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
         const delivery = accounting.get(getUsageQueryKey(query))?.delivery;
         return delivery && delivery.value === value ? delivery.projectedInput : value;
     };
-    const aggregationPrevious = admittedPrevious && { ...admittedPrevious, results: admittedPrevious.results.map(slice => {
+    const restorePrevious = (batch: UsageQueryBatchResult | undefined) => batch && { ...batch, results: batch.results.map(slice => {
         const value = restoreAccountingInput(slice.shownQuery, slice.accounting);
         const comparison = slice.comparison;
         const compared = comparison && restoreAccountingInput(comparison.query, comparison.accounting);
         return value === slice.accounting && compared === comparison?.accounting ? slice : { ...slice,
             accounting: value, ...(comparison ? { comparison: { ...comparison, accounting: compared } } : {}) };
     }) };
-    const batch = resolveUsagePageAggregation({ queries, accounting: [...accounting.values(), ...witnessedComparison], previous: aggregationPrevious,
+    const batch = resolveUsagePageAggregation({ queries, accounting: [...accounting.values(), ...witnessedComparison],
+        previous: restorePrevious(previous), projectionPrevious: restorePrevious(admittedPrevious),
         sourceLocations,
         accountSettings,
         coachPreferences: input.coachSuppressions ? accountSettings.usageCoachPreferencesV1 : null,

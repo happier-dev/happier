@@ -56,7 +56,7 @@ async function fixture() {
         input = { ...input, admittedPrevious: batch };
         return batch;
     };
-    const fresh = () => projectUsageQueryBatch({ ...oracleInput, accounting: new Map(oracleInput.accounting) });
+    const fresh = () => projectUsageQueryBatch({ ...oracleInput, admittedPrevious: undefined, accounting: new Map(oracleInput.accounting) });
     return { queries, visits, workVisits, run, fresh, input: () => input,
         update(change: Partial<typeof input>) { input = { ...input, ...change }; },
         reset() { visits.fill(0); workVisits.fill(0); } };
@@ -85,7 +85,8 @@ it('does zero population projection for unchanged progress and only projects the
     const initial = f.run();
     const retained = f.run();
     expect(initial.results[0]?.coach?.currentness).toBe('current');
-    expect(retained.results[0]?.coach?.currentness, 'pending private replacement preserves the canonical retained-Coach transition').toBe('stale');
+    expect(retained.results[0]?.coach?.currentness, 'publishing the same read is not a private replacement').toBe('current');
+    expect(retained).toBe(initial);
     const first = f.run();
     expect(first).toBe(retained);
     f.reset();
@@ -101,6 +102,14 @@ it('does zero population projection for unchanged progress and only projects the
     expect(f.workVisits[1], 'a sibling Work settlement must not enter this query’s Work projection').toBe(0);
     expect(f.visits[1], 'a sibling Work settlement must not project this accounting population').toBe(0);
     expectParity(changed, f.fresh());
+});
+
+it('retains Coach as stale when a new finite read replaces its private evidence', async () => {
+    const f = await fixture();
+    const previous = f.run();
+    const replacement = projectUsageQueryBatch({ ...f.input(), accounting: new Map(f.input().accounting),
+        previous, admittedPrevious: undefined });
+    expect(replacement.results[0]?.coach?.currentness).toBe('stale');
 });
 
 it('updates replacements, comparison, staged evidence, quota, labels and consumed settings like a fresh projection', async () => {
