@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import {
   findCodexRolloutFileById,
   normalizeCodexVendorResumeId,
-  resolveCodexLogicalRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 
@@ -41,10 +40,10 @@ export async function resolveCodexNativeSessionLogPath(input: Readonly<{
     join(codexHome, 'sessions'),
     join(codexHome, 'archived_sessions'),
   ]) {
-    const found = await findCodexRolloutFileById({ sessionsRoot, vendorResumeId });
     // Diagnostics and Agent transitions consume raw JSONL. Codex owns decompression;
     // expose the log once its native resume has materialized the plain representation.
-    if (found && found === resolveCodexLogicalRolloutPath(found)) return found;
+    const found = await findCodexRolloutFileById({ sessionsRoot, vendorResumeId, includeCompressed: false });
+    if (found) return found;
   }
   return null;
 }
