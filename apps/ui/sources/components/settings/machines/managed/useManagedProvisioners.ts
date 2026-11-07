@@ -1,15 +1,16 @@
 import * as React from 'react';
 import type { MachineProvisionerCheckResultV1, MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { createManagedProvisionerClient } from './managedProvisionerClient';
+import { createManagedProvisionerClient, type ManagedProvisionerReadResult } from './managedProvisionerClient';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { MachinePresetCollectionSettledResult } from './machinePresetCollectionClient';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
+import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 const EMPTY_PROVISIONERS: MachineProvisionersListResultV1['provisioners'] = [];
 type ProvisionerChecks = Readonly<Record<string, MachinePresetCollectionSettledResult<MachineProvisionerCheckResultV1>>>;
 const EMPTY_CHECKS: ProvisionerChecks = Object.freeze({});
@@ -18,6 +19,7 @@ type ProvisionerPresentation = Readonly<{
     binding: ServerCredentialAccountScopeBinding | null; accountId: string | null; requestKey: string;
     provisioners: MachineProvisionersListResultV1['provisioners']; checks: ProvisionerChecks;
     error: string | null; loading: boolean;
+    settled: Readonly<{ binding: ServerCredentialAccountScopeBinding; requestKey: string }> | null;
 }>;
 // Like managed inventory, retain only presentation under the existing Account
 // lifetime. Unmount still cancels reads; this grants no execution authority.
@@ -37,7 +39,7 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     const presentationKey = JSON.stringify([serverId, homeId, contributionKey]);
     const retained = lifetime?.isCurrent() ? presentations.get(lifetime)?.get(presentationKey) : undefined;
     const [state, setState] = React.useState<ProvisionerPresentation>(() => retained ?? {
-        lifetime, binding: null, accountId: null, requestKey: '', provisioners: EMPTY_PROVISIONERS, checks: EMPTY_CHECKS, error: null, loading: false,
+        lifetime, binding: null, accountId: null, requestKey: '', provisioners: EMPTY_PROVISIONERS, checks: EMPTY_CHECKS, error: null, loading: false, settled: null,
     });
     React.useEffect(() => {
         if (!lifetime?.isCurrent() || state.lifetime !== lifetime || state.requestKey !== requestKey || !state.accountId) return;
@@ -45,8 +47,8 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
         entries.set(presentationKey, state);
         presentations.set(lifetime, entries);
     }, [lifetime, presentationKey, requestKey, state]);
-    const setChecks = React.useCallback((update: React.SetStateAction<ProvisionerChecks>) => setState(current => ({ ...current,
-        checks: typeof update === 'function' ? update(current.checks) : update,
+    const setChecks = React.useCallback((update: React.SetStateAction<ProvisionerChecks>) => setState(current => retainShallow(current, { ...current,
+        checks: retainDeep(current.checks, typeof update === 'function' ? update(current.checks) : update),
     })), []);
     // Presence projections may recreate equivalent controller objects. Only the semantic
     // request key changes demand; the ref supplies that render's typed inputs to the effect.
@@ -75,25 +77,45 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
         const retirement = binding.onRetire(() => abort.abort());
         setState(current => {
             const keepPresentation = current.lifetime === lifetime && current.accountId === binding.accountId;
-            return { lifetime, binding, accountId: binding.accountId, requestKey,
+            return retainShallow(current, { lifetime, binding, accountId: binding.accountId, requestKey,
                 provisioners: keepPresentation ? current.provisioners : EMPTY_PROVISIONERS,
-                checks: keepPresentation ? current.checks : EMPTY_CHECKS, error: null, loading: true };
+                checks: keepPresentation ? current.checks : EMPTY_CHECKS,
+                settled: keepPresentation ? current.settled : null,
+                error: keepPresentation ? current.error : null, loading: true });
         });
-        const publish = (result: { kind: 'succeeded'; provisioners: MachineProvisionersListResultV1['provisioners'] } | { kind: 'failed'; code: string }) => {
+        const publish = (result: ManagedProvisionerReadResult<MachineProvisionersListResultV1>,
+            accountResult?: ManagedProvisionerReadResult<MachineProvisionersListResultV1>) => {
             if (abort.signal.aborted || !binding.isCurrent()) return;
-            setState(current => current.binding !== binding || current.requestKey !== requestKey ? current : {
-                ...current, loading: false,
-                provisioners: result.kind === 'succeeded' ? result.provisioners : current.provisioners,
-                error: result.kind === 'failed' ? result.code : null,
+            setState(current => {
+                if (current.binding !== binding || current.requestKey !== requestKey) return current;
+                const settled = retainShallow(current.settled ?? undefined, { binding, requestKey });
+                if (result.kind === 'failed') return retainShallow(current, { ...current, settled, loading: false, error: result.code });
+                const provisioners = [...result.value.provisioners];
+                const seen = new Set(provisioners.map(entry => buildQualifiedPluginContributionKey(entry.contribution)));
+                // The selected daemon owns its installed catalog and OS filtering. Account creation
+                // offers are also available when that installation has no copy of their declaration.
+                const accountEntries = accountResult?.kind === 'succeeded' ? accountResult.value.provisioners
+                    : accountResult?.kind === 'failed' ? current.provisioners : EMPTY_PROVISIONERS;
+                for (const entry of accountEntries) {
+                    const key = buildQualifiedPluginContributionKey(entry.contribution);
+                    if (entry.acquireExecutionTarget !== 'account' || seen.has(key)) continue;
+                    seen.add(key);
+                    provisioners.push(entry);
+                }
+                return retainShallow(current, { ...current, settled, loading: false,
+                    provisioners: retainDeep(current.provisioners, provisioners),
+                    error: accountResult?.kind === 'failed' ? accountResult.code : null });
             });
         };
-        void client.read('machines.provisioners.list', { homeId, ...(selectedController ? { controller: selectedController } : {}),
-            ...(contribution ? { contribution } : {}) },
-            { signal: abort.signal, onApprovalPending: registration => approvalRef.current?.(registration) }).then(result => {
-            publish(result.kind === 'succeeded' ? { kind: 'succeeded', provisioners: result.value.provisioners }
-                : { kind: 'failed', code: result.code });
-        }, () => {
-            publish({ kind: 'failed', code: 'unavailable' });
+        const read = (namedController?: ManagedControllerV1) => client.read('machines.provisioners.list', {
+            homeId, ...(namedController ? { controller: namedController } : {}), ...(contribution ? { contribution } : {}),
+        }, { signal: abort.signal, onApprovalPending: registration => approvalRef.current?.(registration) })
+            .catch(() => ({ kind: 'failed' as const, code: 'unavailable' }));
+        const selectedRead = read(selectedController);
+        const accountRead = selectedController && !contribution ? read() : undefined;
+        void selectedRead.then(async result => {
+            // A failed controller read settles immediately with its retained cards, as before.
+            publish(result, result.kind === 'succeeded' ? await accountRead : undefined);
         });
         return () => { abort.abort(); retirement.dispose(); };
     }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime]);
@@ -110,5 +132,11 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
     return { binding, resolution, homeId, client, provisioners: visible.provisioners,
         checks: enabled && sameAccount ? state.checks : EMPTY_CHECKS, setChecks,
         error: enabled && binding && !homeId ? 'unsupported_action' : visible.error,
-        loading: enabled && binding && !homeId ? false : visible.loading, refresh };
+        // Read demand and initial presentation are separate: an equal revalidation
+        // still refreshes native checks without withdrawing this Account's answer.
+        reading: enabled && binding && !homeId ? false : visible.loading,
+        loading: enabled && binding && !homeId ? false : visible.loading && (!sameAccount || state.settled === null),
+        current: enabled && sameAccount && homeId !== null && binding?.isCurrent() === true
+            && state.settled?.binding === binding && state.settled.requestKey === requestKey && state.error === null,
+        refresh };
 }

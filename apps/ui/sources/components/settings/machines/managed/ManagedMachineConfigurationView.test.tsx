@@ -22,6 +22,8 @@ import {
   createDeferred,
   standardCleanup,
   flushHookEffects,
+  reportPopoverContentLayout,
+  withPopoverWebGlobals,
 } from '@/dev/testkit';
 import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -203,6 +205,53 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
 };
 
 describe('mounted managed configurator', () => {
+  it('does not render a named controller page for another Machine publication and updates its controller name', () => withPopoverWebGlobals(async () => {
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://controller-selection.example.test',
+      serverIdentityId: 'srv_controller_selection', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const controllerMachine = createMachineFixture({ id: defaultController.machineId, installationId: defaultController.installationId,
+      metadata: { ...createMachineFixture().metadata!, displayName: 'Build computer' } });
+    const otherMachine = createMachineFixture({ id: 'other', installationId: 'other-installation',
+      metadata: { ...createMachineFixture().metadata!, displayName: 'Other computer' } });
+    const publicationScope = { sourceServerId: serverId, sourceAccountId: 'owner' };
+    const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
+    storage.getState().applyMachines([controllerMachine, otherMachine], true, publicationScope);
+    expect(storage.getState().machineRecordsByServerId[scopeServerId]?.host?.installationId).toBe(defaultController.installationId);
+    storage.getState().markMachineListSettled(serverId);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+      ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }])],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const commits = vi.fn();
+    const screen = await renderScreen(<React.Profiler id="managed-controller" onRender={commits}>
+      <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)}
+        initialController={defaultController} />
+    </React.Profiler>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:small')).not.toBeNull());
+    await flushHookEffects();
+    commits.mockClear();
+    await act(async () => storage.getState().applyMachines([{ ...otherMachine, metadataVersion: 2,
+      metadata: { ...otherMachine.metadata!, displayName: 'Renamed other computer' } }], false, publicationScope));
+    expect(storage.getState().machineRecordsByServerId[scopeServerId]?.other?.metadata?.displayName).toBe('Renamed other computer');
+    expect(commits).not.toHaveBeenCalled();
+    await act(async () => storage.getState().applyMachines([{ ...controllerMachine, metadataVersion: 2,
+      metadata: { ...controllerMachine.metadata!, displayName: 'Renamed build computer' } }], false, publicationScope));
+    expect(commits.mock.calls.length).toBeGreaterThan(0);
+    expect(screen.getTextContent()).toContain('Renamed build computer');
+    await screen.pressByTestIdAsync('managed-config.controller.chip');
+    await act(async () => reportPopoverContentLayout(screen.tree, { width: 400, height: 500 }));
+    await waitForHomeGovernance(() => {
+      const otherOption = screen.findHostByTestId('managed-config.controller.picker-option:other');
+      expect(otherOption?.props.accessibilityLabel ?? otherOption?.props['aria-label']).toContain('Renamed other computer');
+    });
+    await screen.unmount();
+  }));
   it.each(['agent37', 'freestyle', 'upstash-box', 'daytona', 'superserve', 'hetzner', 'railway', 'maritime'] as const)(
     'discloses stopped compute billing from real %s declarations without treating retained storage as compute', async (vendor) => {
       const providers = {
@@ -589,8 +638,13 @@ describe('mounted managed configurator', () => {
         && node.props.title === screenText.t('managedMachines.options.loading', { provider: 'Lima' }))).not.toHaveLength(0);
       await act(async () => hydration.resolve());
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image')).not.toBeNull());
-      const form = screen.tree.findAllByType(ActionInputFields).find(node => node.props.fields.some((field: Readonly<{ path: string }>) => field.path === 'store'));
+      // The blank required image stays in view; the controller-filled store and driver fold into Advanced, the size into Size.
+      const form = screen.tree.findAllByType(ActionInputFields).find(node => node.props.fields.some((field: Readonly<{ path: string }>) => field.path === 'image'));
       if (!form) throw new Error('Expected Lima options fields');
+      const fieldOf = (path: string) => screen.tree.findAllByType(ActionInputFields)
+        .flatMap(node => node.props.fields as readonly Readonly<{ path: string; description?: string }>[]).find(field => field.path === path);
+      expect(screen.findByTestId('managed-config.advanced')).not.toBeNull();
+      expect(fieldOf('store')).toBeUndefined();
       expect(form.props.input).toMatchObject({ store: info.limaHome, arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] });
       expect(form.props.input.image).toBeUndefined();
       expect(form.props.fields.find((field: Readonly<{ path: string }>) => field.path === 'image')).toMatchObject({ required: true,
@@ -606,7 +660,8 @@ describe('mounted managed configurator', () => {
       expect(refusal).toMatchObject({ code: 'lima_driver_unavailable', fieldPath: 'vmType', status: expect.anything() });
       const refusalCopy = typeof refusal?.status === 'string' ? refusal.status : refusal?.status.fallback;
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
-      expect(form.props.fields.find((field: Readonly<{ path: string }>) => field.path === 'vmType').description).toBe(refusalCopy);
+      // A refused field is never hidden in the closed disclosure: it opens on the refusal.
+      expect(fieldOf('vmType')?.description).toBe(refusalCopy);
       await act(async () => screen.changeTextByTestId('managed-config.field:image', 'https://example.test/ubuntu.img'));
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
@@ -945,6 +1000,17 @@ describe('mounted managed configurator', () => {
         harness.requestsFor('/v1/actions/machines.managed.acquire')[0]?.input,
       ).envelope,
     ).input;
+  it('names the unfinished choice instead of saying it is no longer available', async () => {
+    const screen = await mountAddRoute('unfinished-choice', 'personal', 'linux', undefined, false);
+    const { ManagedMachineConfigurator } = await import('./ManagedMachineConfigurator');
+    const { t } = await import('@/text');
+    const reason = () => screen.tree.findByType(ManagedMachineConfigurator).props.receipt.primary.footnote;
+    await waitForHomeGovernance(() => expect(reason()).toBe(t('session.actionsDraft.validation.requiredField', { field: t('managedMachines.config.size') })));
+    expect(createDisabled(screen)).toBe(true);
+    await screen.pressByTestIdAsync('managed-config.sizes:small');
+    await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+    await screen.unmount();
+  });
   it.each([
     [
       'personal',
@@ -1376,6 +1442,61 @@ describe('mounted managed configurator', () => {
     expect(onUse).toHaveBeenLastCalledWith(expect.objectContaining({
       selection: expect.objectContaining({ launch: expect.objectContaining({ choices: { on: 'local', size: { cpu: 4 } } }) }),
     }));
+    await screen.unmount();
+  });
+  it('folds the provider-filled launch details into one Advanced disclosure once the size has its own section (lab m-config L)', async () => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://advanced.example', serverIdentityId: 'srv_advanced',
+      accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    // Like Lima: a store and a driver the controller fills itself, and the size fields its one size row assigns.
+    const optionsSchema = { type: 'object', properties: { store: { type: 'string' }, vmType: { type: 'string', enum: ['qemu', 'vz'] },
+      cpus: { type: 'integer', minimum: 1 } }, additionalProperties: false };
+    const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
+      launchSchema: { ...optionsSchema, required: ['store', 'vmType', 'cpus'] } } };
+    const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: provisioner.contribution.pluginId,
+      occurrenceId: provisioner.occurrenceId, title: 'Native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
+      execution: { target: 'daemon' }, available: true, dangerLevel: 'safe',
+      inputHints: { fields: [
+        { path: 'store', title: 'Store', widget: 'text', required: true },
+        { path: 'vmType', title: 'VM driver', widget: 'select', required: true, requireExplicitSelection: true,
+          options: [{ value: 'qemu', label: 'QEMU' }, { value: 'vz', label: 'VZ' }] },
+        { path: 'cpus', title: 'CPU cores', widget: 'integer', required: true },
+      ] } });
+    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+      ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
+      installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId } },
+      actionsById: { [buildQualifiedPluginContributionKey({ pluginId: action.pluginId, localId: action.id })]: action } } });
+    nativeBoundary.rpc.mockImplementation(async (request: { method: string }) =>
+      request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
+        : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
+          : { ok: false, code: 'unsupported' });
+    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
+    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    answer('machines.provisioners.check', () => ({ available: true }));
+    answer('machines.provisioners.options', (input) => {
+      const cpus = (input as { selectors?: { cpus?: number } }).selectors?.cpus ?? 4;
+      return createMachineProvisionerOptionsFixture({ base: { launch: { store: '/home/me/.lima', vmType: 'qemu', cpus } },
+        dimensions: { image: [], location: [], network: [], duration: [], size: [{ id: `${cpus}`, title: `${cpus} CPU`,
+          assignments: [{ path: 'cpus', value: cpus }], nativeFacts: { size: { id: `${cpus}`, title: `${cpus} CPU`, cpuCores: cpus } } }] } });
+    });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} onUse={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+    // The size keeps its own section; the details fold into one closed row that says what it holds.
+    expect(screen.findByTestId('managed-config.size')).not.toBeNull();
+    expect(screen.findByTestId('managed-config.advanced')).not.toBeNull();
+    expect(screen.findByTestId('managed-config.field:store')).toBeNull();
+    expect(screen.getTextContent()).toContain('QEMU');
+    await act(async () => screen.pressByTestId('managed-config.advanced.header'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:store')).not.toBeNull());
+    // Open, the driver offers its other choice too.
+    expect(screen.getTextContent()).toContain('VZ');
     await screen.unmount();
   });
   it('keeps an explicit Ask choice until its administrator is named, never falling back to Preauthorized', async () => {
@@ -2416,6 +2537,41 @@ describe('mounted managed configurator', () => {
       }
     },
   );
+  it.each(['ready', 'unavailable'] as const)('publishes no loading or equal options-schema result on refresh (%s)', async outcome => {
+    const binding = {
+      serverId: 'server-a', accountId: 'owner', revision: 1,
+      scope: { serverId: 'server-a', accountId: 'owner' }, isCurrent: () => true,
+      onRetire: () => ({ dispose() {} }),
+    } satisfies ServerCredentialAccountScopeBinding;
+    let changed = false;
+    nativeBoundary.rpc.mockImplementation(async () => outcome === 'unavailable'
+      ? { ok: false, code: 'action_not_found' }
+      : { ok: true, inputSchema: { type: 'object', properties: changed ? { region: { type: 'string' } } : {}, additionalProperties: false } });
+    const { useManagedProvisionerOptionsInput } = await import('./useManagedProvisionerOptionsInput');
+    const publications: unknown[] = [];
+    const hook = await renderHook(({ refreshKey }) => {
+      const value = useManagedProvisionerOptionsInput({ binding, controller: defaultController, provisioner, refreshKey });
+      React.useEffect(() => { publications.push(value); }, [value]);
+      return value;
+    }, { initialProps: { refreshKey: 0 } });
+    try {
+      await flushHookEffects();
+      expect(hook.getCurrent().kind).toBe(outcome);
+      const settled = hook.getCurrent();
+      publications.length = 0;
+      await hook.rerender({ refreshKey: 1 });
+      await flushHookEffects();
+      expect(publications).toHaveLength(0);
+      expect(hook.getCurrent()).toBe(settled);
+      if (outcome === 'ready') {
+        changed = true;
+        await hook.rerender({ refreshKey: 2 });
+        await flushHookEffects();
+        expect(publications).toHaveLength(1);
+        expect(hook.getCurrent()).toMatchObject({ kind: 'ready', schema: { properties: { region: { type: 'string' } } } });
+      }
+    } finally { await hook.unmount(); }
+  });
   it('accepts a slow schema answer without starting a competing deadline', async () => {
     const binding = {
       serverId: 'server-a',

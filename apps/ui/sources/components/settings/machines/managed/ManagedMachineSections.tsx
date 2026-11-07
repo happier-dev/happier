@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type GestureResponderEvent } from 'react-native';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { useRevealSelectedRow } from '@/components/ui/lists/collection/useRevealSelectedRow';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import type { DevcontainerEffectReviewV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -26,8 +26,6 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
-import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { countryFlag, countryName } from './managedMachineDisplay';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -52,7 +50,7 @@ import { getMachineDisplayName, isMachineDisplayHydrating, readMachineName } fro
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
-import { getPreferredLanguage, t } from '@/text';
+import { t } from '@/text';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { ManagedReceiptColumns } from './ManagedReceiptPageLayout';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
@@ -60,8 +58,10 @@ import { ManagedCreationScopeRuleSection } from './ManagedCreationScopeRuleSecti
 import { ManagedMachineKeepControl, type ManagedMachineKeepControlProps } from './ManagedMachineKeepControl';
 import { useLiveValue, useLiveValueChannel, type LiveValueChannel } from './liveValueChannel';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
-import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedMachineLaunchSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
-import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets, managedSizeDimensions } from './managedConfigurationPresentation';
+import { MachineDeleteAudience } from '@/components/sharing/machines/MachineDeleteAudience';
+import { projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
+import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
+import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { describeKeepCosts, describeRetention, describeRetentionConsequence, formatRetentionDuration, retentionParking } from './managedRetentionPresentation';
 import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
@@ -77,7 +77,7 @@ import { readManagedMachinePolicyParent, readManagedMachineRebuildReview, type M
 import { useManagedMachineInventory, type ManagedMachineInventoryEntry } from './useManagedMachineInventory';
 import { ManagedMachineReadApprovalNotice } from './ManagedMachineReadApprovalNotice';
 import { currentManagedMoveController, readManagedMachineMoveCandidates, type ManagedMachineMoveCandidate } from './managedMachineMoveCandidates';
-import { happierPageTextMetrics, useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
+import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -104,8 +104,8 @@ type SectionProps = Readonly<{
 
 /**
  * One mounted detail consumer for pre-enrollment and ordinary enrolled Machine pages (lab `m-detail`):
- * what blocks use, the creation scope rule, the live Keep it, the controller and the launch on the
- * left, the immutable receipt beside them with native controls at its foot. A phone reads the same
+ * what blocks use, the creation scope rule, the live Keep it and the controller on the left, the
+ * immutable receipt (what it was made with) beside them with native controls at its foot. A phone reads the same
  * sections with Keep it as a summary row, then the receipt.
  */
 const PENDING_READ = Object.freeze({ kind: 'loading' } as const);
@@ -175,7 +175,7 @@ export function ManagedMachineSections(props: SectionProps) {
     const rebuildReviewKey = JSON.stringify([deleteReviewKey, machine.launch]);
     const currentRebuildReview = rebuildReview?.key === rebuildReviewKey ? rebuildReview.review : null;
     const reviewedDependencies = currentDeleteReview?.census;
-    // Delete… sits in the receipt; its review closes the page column below the fold. Opening it brings it into view.
+    // Delete… sits in the receipt and its review opens right under it; on a phone it is brought into view if needed.
     const deleteReviewRef = useRevealSelectedRow<View>(reviewedDependencies ? 'delete' : null, true);
     const interestRef = React.useRef<AbortController | null>(null);
     React.useEffect(() => {
@@ -234,6 +234,8 @@ export function ManagedMachineSections(props: SectionProps) {
     const [policyParent, setPolicyParent] = React.useState<ManagedMachinePolicyParent | null>(null);
     const [parentReadRevision, refreshPolicyParent] = React.useReducer(value => value + 1, 0);
     const [parentReadFailed, setParentReadFailed] = React.useState(false);
+    const parentReadIdentityRef = React.useRef<string | null>(null);
+    const [inspectPurpose, setInspectPurpose] = React.useState<'check' | 'logs'>('check');
     const policyController = !machine.controller ? undefined : requiredController && controllerPresence?.online ? machine.controller
         : controllerMachines?.map(row => currentManagedMoveController(row, machine.custodianAccountId, reachabilityScope)).find(row => row !== null)
             ?? (requiredController ? machine.controller : null);
@@ -242,20 +244,28 @@ export function ManagedMachineSections(props: SectionProps) {
     const parentControllerAvailable = !machine.controller || policyController !== null;
     React.useEffect(() => {
         const binding = props.binding;
-        setPolicyParent(null);
+        // A re-read of the same parent (after Check now or another completed Action) keeps the last answer until it
+        // settles, so Keep it never drops to "Checking choices…"; a different resource, controller or account starts over.
+        const readIdentity = JSON.stringify([parentReadKey, binding?.accountId ?? null, parentControllerAvailable]);
+        const rereading = parentReadIdentityRef.current === readIdentity;
+        parentReadIdentityRef.current = readIdentity;
+        if (!rereading) setPolicyParent(null);
         setParentReadFailed(false);
+        const settleFailed = () => { setPolicyParent(null); setParentReadFailed(true); };
         // Inventory revalidation flips `current` on every Home change; the read is keyed on the resource and its controller, not on that.
-        if (!parentControllerAvailable) { setParentReadFailed(true); return; }
+        if (!parentControllerAvailable) { settleFailed(); return; }
         if (!binding?.isCurrent()) return;
         const abort = new AbortController();
         const retirement = binding.onRetire(() => { abort.abort(); setPolicyParent(null); });
         void readManagedMachinePolicyParent({ machine, controller: policyController ?? undefined, binding, signal: abort.signal,
             onApprovalPending: registration => approvalRequestRef.current(registration) }).then(result => {
             if (abort.signal.aborted || !binding.isCurrent()) return;
-            if (result.kind === 'ready') setPolicyParent(result.parent); else setParentReadFailed(true);
+            // An equal re-read keeps the settled parent, so nothing that reads it re-renders.
+            if (result.kind === 'ready') setPolicyParent(current => current && sameStrictJsonValue(current, result.parent) ? current : result.parent);
+            else settleFailed();
         }).catch(() => {
             // An unavailable parent cannot enable Reset; the live row stays readable and says why it is read-only.
-            if (!abort.signal.aborted) setParentReadFailed(true);
+            if (!abort.signal.aborted) settleFailed();
         });
         return () => { abort.abort(); retirement.dispose(); };
     }, [props.binding, parentControllerAvailable, parentReadKey, parentReadRevision]);
@@ -488,11 +498,12 @@ export function ManagedMachineSections(props: SectionProps) {
         fireAndForget(runConfirmed('machines.managed.controller.update', { ...target, expectedIntentRevision: machine.intentRevision,
             controller, reviewedPendingEffects: true }), { tag: 'ManagedMachineSections.move' });
     };
-    const inspect = () => fireAndForget(run('machines.managed.inspect', target), { tag: 'ManagedMachineSections.inspect' });
-    const readGuestLogs = () => fireAndForget(run('machines.managed.inspect', { ...target, includeGuestDiagnostics: true }, result => {
+    // One Action serves Check now and Read log; the purpose says which button shows the work.
+    const inspect = () => { setInspectPurpose('check'); fireAndForget(run('machines.managed.inspect', target), { tag: 'ManagedMachineSections.inspect' }); };
+    const readGuestLogs = () => { setInspectPurpose('logs'); fireAndForget(run('machines.managed.inspect', { ...target, includeGuestDiagnostics: true }, result => {
         const inspected = ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(result);
         setGuestDiagnostics(inspected.guestDiagnostics ?? { status: 'unavailable', code: 'provider_unavailable' });
-    }), { tag: 'ManagedMachineSections.readGuestLogs' });
+    }), { tag: 'ManagedMachineSections.readGuestLogs' }); };
     const reviewDependencies = () => {
         if (pendingDeleteApprovalId) { openApproval(pendingDeleteApprovalId); return; }
         if (!canMutate) return;
@@ -579,7 +590,7 @@ export function ManagedMachineSections(props: SectionProps) {
         }
     })(), { tag: 'ManagedMachineSections.rebuildReview' });
     // Native controls sit at the receipt's foot, where its cost and launch state the consequence.
-    const receiptActions: NonNullable<ManagedReceiptModel['secondary']> = bound && machine.archivedAt === undefined ? [
+    const receiptActions: NonNullable<ManagedReceiptModel['secondary']> = canManage && bound && machine.archivedAt === undefined ? [
         ...(machine.creationState === 'active' ? managedReceiptPowerIntents(machine, supportedIntents, enrolledMachine && reachabilityScope ? {
             machineId: enrolledMachine.id,
             online: describeMachinePresenceLine(enrolledMachine, presenceNowMs, undefined, reachabilityScope).online,
@@ -618,7 +629,6 @@ export function ManagedMachineSections(props: SectionProps) {
         ...(receiptActions.length ? { secondary: receiptActions } : {}) };
     const credentialRowKeys = new Set(managedCredentialReceiptTargets(machine.launch).map(target => target.key));
     const credentialNames = receipt.facts.filter(fact => credentialRowKeys.has(fact.id)).map(fact => fact.value).join(', ');
-    const launchRows = managedLaunchRows(machine, provisionerPresentation.localized);
     const nativeExpiry = machine.observation?.nativeExpiry;
     const nativeExpiryDescription = nativeExpiry !== undefined ? t('managedRetention.nativeExpiry', {
         provider: provisionerPresentation.title ?? policyParent?.providerTitle ?? t('common.machine'), time: formatAsOfTime(nativeExpiry),
@@ -696,12 +706,38 @@ export function ManagedMachineSections(props: SectionProps) {
     const canCancelCreation = !machine.enrolledMachineId && machine.creationState === 'active' && machine.allocation !== 'confirmed-absent';
     const cancelCreation = () => fireAndForget(runConfirmed('machines.managed.cancel', { ...target, expectedIntentRevision: machine.intentRevision }),
         { tag: 'ManagedMachineSections.cancel' });
-    const canCancelCreationRow = canCancelCreation && !describeManagedCreation(machine, creationContext).actions.includes('cancel');
+    const canCancelCreationRow = (canManage || creatorScoped) && canCancelCreation
+        && !describeManagedCreation(machine, creationContext).actions.includes('cancel');
     // Changed here means it differs from the default it would reset to; otherwise say what the rule governs.
     const policyDescription = policyParent && !sameStrictJsonValue(policyParent.policy,
         { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage })
         ? t('managedRetention.changedFor', { name: machineName }) : t('managedRetention.policyDescription');
-    return <ManagedReceiptColumns receipt={receipt} compact={compact} testID="managed-machine.detail">
+    // Delete… opens its review in place, under the receipt that holds it (destructive pattern): what references it,
+    // who has access and who is using it, then the one closing decision with its consequence.
+    const deleteReviewView = reviewedDependencies ? <View ref={deleteReviewRef} testID="managed-machine.delete-review"><ItemGroup title={t('managedMachines.dependencies.title')}>
+            {reviewedDependencies.references.map(reference => <Item key={`${reference.kind}:${reference.id}`}
+                title={reference.name || reference.id} subtitle={reference.id} mode="info" showChevron={false}
+                testID={`managed-machine.delete-reference.${reference.kind}:${reference.id}`} />)}
+            {reviewedDependencies.coverage === 'partial' ? <SurfaceStateCard kind="warning" size="line"
+                title={t('managedMachines.dependencies.partial')} diagnosticCode={reviewedDependencies.unavailable.join(', ') || undefined}
+                testID="managed-machine.delete-coverage" /> : reviewedDependencies.references.length === 0 ?
+                <Item title={t('managedMachines.dependencies.empty')} mode="info" showChevron={false} /> : null}
+        </ItemGroup>
+        {machine.enrolledMachineId && props.binding?.scope ? <MachineDeleteAudience testID="managed-machine.delete-audience"
+            machineId={machine.enrolledMachineId} machineName={machineName} scope={props.binding.scope}
+            online={creationContext.enrolledMachine?.online ?? null} /> : null}
+        {/* The decision is one quiet button row: the way back, then the irreversible step last, then its consequence. */}
+        <ManagedDecisionRow testID="managed-machine.delete-decision" footnote={t('managedMachines.dependencies.help')}
+            onCancel={canMutate ? () => setDeleteReview(null) : undefined}
+            confirm={{ label: t('managedMachines.actions.deleteMachine'), testID: 'managed-machine.delete-confirm', disabled: !canMutate,
+                loading: pending === 'machines.managed.delete', onPress: () => {
+                    if (!canMutate || !currentDeleteReview) return;
+                    const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
+                    if (!input) { setError('intent_changed'); return; }
+                    fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
+                        { tag: 'ManagedMachineSections.delete' });
+                } }} /></View> : null;
+    return <ManagedReceiptColumns receipt={receipt} compact={compact} testID="managed-machine.detail" receiptFollowUp={deleteReviewView}>
         {pendingDeleteApprovalId
             ? <AttentionBanner testID="managed-machine.approval" tone="neutral"
                 title={resolveActionTitle('machines.managed.delete', null)} description={t('approvals.waitingForYou')}
@@ -716,8 +752,9 @@ export function ManagedMachineSections(props: SectionProps) {
             {...(!pendingDeleteApprovalId ? { reviewApproval: (artifactId: string) => router.push(
                 `/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.serverId)}` as never) } : {})}
             answerPrompt={answerPrompt}
+            checking={pending === 'machines.managed.inspect' && inspectPurpose === 'check'}
             providerAvailable={creationContext.providerAvailable}
-            mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current ? { checkNow: inspect } : {}),
+            mark={provisionerPresentation.markAt(MANAGED_PROVISIONER_MARK_SIZE.row)} controller={creationContext.controller} handlers={{ ...(props.current && !resourceConfirmedAbsent ? { checkNow: inspect } : {}),
             ...(canCancelCreation && canRecoverCreation ? { cancel: cancelCreation } : {}),
             ...(recoveryConsoleUrl ? { openProvider: () => {
                 if (!props.binding?.isCurrent()) return;
@@ -742,29 +779,18 @@ export function ManagedMachineSections(props: SectionProps) {
                 reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
                     expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
-        {props.binding?.accountId === machine.custodianAccountId && machine.resource ? <ItemGroup title={t('bugReports.composer.diagnostics.kinds.daemon.title')}>
-            <SectionButtonRow>
-                <RoundButton title={t('bugReports.composer.diagnostics.kinds.daemon.title')} display="secondary" size="small" testID="managed-machine.logs.read"
-                    disabled={!props.current || pending !== null} loading={pending === 'machines.managed.inspect'} onPress={readGuestLogs} />
-            </SectionButtonRow>
-            {guestDiagnostics?.status === 'unavailable' ? <SurfaceStateCard kind="unavailable" size="line"
-                title={t('common.unavailable')} diagnosticCode={guestDiagnostics.code}
-                diagnosticDetail={guestDiagnostics.exitCode === undefined ? undefined : String(guestDiagnostics.exitCode)} />
-                : guestDiagnostics?.status === 'collected' ? <>
-                    {guestDiagnostics.snapshot.daemonState ? <Item title={t('common.version')}
-                        subtitle={guestDiagnostics.snapshot.daemonState.startedWithCliVersion} mode="info" showChevron={false} /> : null}
-                    {guestDiagnostics.snapshot.sessionDiagnostics?.logs.filter(log => log.kind === 'daemon').map((log, index) =>
-                        log.status === 'collected' && log.artifact ? <SectionContentRow key={index}>
-                            <Text selectable>{log.artifact.content}</Text>
-                        </SectionContentRow> : <SurfaceStateCard key={index} kind="unavailable" size="line"
-                            title={t('common.unavailable')} />)}
-                </> : null}
-        </ItemGroup> : null}
+        {/* Ended (lab m-life): the record says what went and what stays; nothing is left to check or read. */}
+        {resourceConfirmedAbsent && machine.resource ? <ItemGroup testID="managed-machine.ended-record" surface="none"
+            title={t('managedPower.endedRecordTitle')} description={t('managedPower.endedRecord')}>{null}</ItemGroup> : null}
         {/* A request canceled before anything was made has no session rule to follow: its state row is the whole story. */}
         {isManagedCreationCanceledBeforeMade(machine) ? null
-            : <ManagedCreationScopeRuleSection machine={machine} serverId={props.serverId} binding={props.binding} />}
+            : <ManagedCreationScopeRuleSection machine={machine} serverId={props.serverId} binding={props.binding}
+                disabled={!canMutate || pending !== null} supportedEffects={supportedMachineRetentionEffectsV1(supportedIntents)}
+                onChange={effect => { fireAndForget(run('machines.managed.retention.update', { ...target,
+                    expectedIntentRevision: machine.intentRevision, creationScopeRetention: effect === 'keep' ? null : { effect } }),
+                    { tag: 'ManagedMachineSections.scopePolicy' }); }} />}
         {/* A resource confirmed gone, or a creation canceled, has nothing left to keep; its state row says what remains. */}
-        {resourceEnded || machine.creationState !== 'active' ? null : <ManagedMachinePolicySection testID="managed-machine.policy" description={policyDescription} keep={keep}
+        {resourceEnded || machine.creationState !== 'active' ? null : <ManagedMachinePolicySection testID="managed-machine.policy" description={policyDescription} keep={keep} readOnly={!canManage}
             compactSummary={compact ? { summary: describeRetention(policy.retention, undefined, parking),
                 onPress: () => {
                     closeKeepSheet();
@@ -798,9 +824,26 @@ export function ManagedMachineSections(props: SectionProps) {
                         : 'managedController.unavailableAccount', { account: credentialNames })
                         : presence?.label ?? t('common.unknown'), online: presence?.online ?? false, current, reachable };
             })} onMove={moveController} /> : null}
-        {/* A phone reads the receipt right after; the same launch rows above it would repeat it. */}
-        {/* Ended, the receipt beside it is the whole record; the same rows again would only repeat it. */}
-        {compact || resourceEnded ? null : <ManagedMachineLaunchSection testID="managed-machine.launch" rows={launchRows} />}
+        {/* Diagnostics are rare detail: after what people change here (Keep it, Managed from). */}
+        {props.binding?.accountId === machine.custodianAccountId && machine.resource && !resourceConfirmedAbsent ? <ItemGroup title={t('managedMachines.inspect.diagnosticsTitle')}
+            description={t('managedMachines.inspect.diagnosticsDescription')}
+            // The read is the section's one operation: it sits at the header's end, and a sheet appears only for what it returned.
+            surface={guestDiagnostics ? 'sheet' : 'none'}
+            action={<RoundButton title={t('managedMachines.inspect.readLog')} display="secondary" size="small" testID="managed-machine.logs.read"
+                disabled={!props.current || pending !== null} loading={pending === 'machines.managed.inspect' && inspectPurpose === 'logs'} onPress={readGuestLogs} />}>
+            {guestDiagnostics?.status === 'unavailable' ? <SurfaceStateCard kind="unavailable" size="line"
+                title={t('common.unavailable')} diagnosticCode={guestDiagnostics.code}
+                diagnosticDetail={guestDiagnostics.exitCode === undefined ? undefined : String(guestDiagnostics.exitCode)} />
+                : guestDiagnostics?.status === 'collected' ? <>
+                    {guestDiagnostics.snapshot.daemonState ? <Item title={t('common.version')}
+                        subtitle={guestDiagnostics.snapshot.daemonState.startedWithCliVersion} mode="info" showChevron={false} /> : null}
+                    {guestDiagnostics.snapshot.sessionDiagnostics?.logs.filter(log => log.kind === 'daemon').map((log, index) =>
+                        log.status === 'collected' && log.artifact ? <SectionContentRow key={index}>
+                            <Text selectable>{log.artifact.content}</Text>
+                        </SectionContentRow> : <SurfaceStateCard key={index} kind="unavailable" size="line"
+                            title={t('common.unavailable')} />)}
+                </> : null}
+        </ItemGroup> : null}
         {currentRebuildReview ? <>
             {(['host', 'child'] as const).map(scope => <ItemGroup key={scope} title={t(`managedMachines.rebuildReview.${scope}`)}>
                 {currentRebuildReview.effects.map((effect, index) => effect.scope === scope ? <Item key={index}
@@ -817,26 +860,6 @@ export function ManagedMachineSections(props: SectionProps) {
                             () => setRebuildReview(null), () => setRebuildReview(null)), { tag: 'ManagedMachineSections.rebuild' });
                     } }} />
         </> : null}
-        {reviewedDependencies ? <View ref={deleteReviewRef} testID="managed-machine.delete-review"><ItemGroup title={t('managedMachines.dependencies.title')}>
-            {reviewedDependencies.references.map(reference => <Item key={`${reference.kind}:${reference.id}`}
-                title={reference.name || reference.id} subtitle={reference.id} mode="info" showChevron={false}
-                testID={`managed-machine.delete-reference.${reference.kind}:${reference.id}`} />)}
-            {reviewedDependencies.coverage === 'partial' ? <SurfaceStateCard kind="warning" size="line"
-                title={t('managedMachines.dependencies.partial')} diagnosticCode={reviewedDependencies.unavailable.join(', ') || undefined}
-                testID="managed-machine.delete-coverage" /> : reviewedDependencies.references.length === 0 ?
-                <Item title={t('managedMachines.dependencies.empty')} mode="info" showChevron={false} /> : null}
-        </ItemGroup>
-        {/* The decision closes the page as one quiet button row: the way back, then the irreversible step last. */}
-        <ManagedDecisionRow testID="managed-machine.delete-decision" footnote={t('managedMachines.dependencies.help')}
-            onCancel={canMutate ? () => setDeleteReview(null) : undefined}
-            confirm={{ label: t('managedMachines.actions.deleteMachine'), testID: 'managed-machine.delete-confirm', disabled: !canMutate,
-                loading: pending === 'machines.managed.delete', onPress: () => {
-                    if (!canMutate || !currentDeleteReview) return;
-                    const input = buildReviewedManagedMachineDeleteInput(machine, currentDeleteReview);
-                    if (!input) { setError('intent_changed'); return; }
-                    fireAndForget(runConfirmed('machines.managed.delete', input, undefined, undefined, currentDeleteReview),
-                        { tag: 'ManagedMachineSections.delete' });
-                } }} /></View> : null}
         {/* Remove forgets a resource Delete can no longer end (lab m-life: an ended resource's quiet Remove); a live one keeps Delete. */}
         {canRemove && removeReviewKey !== deleteReviewKey && !describeManagedCreation(machine, creationContext).actions.includes('remove')
             && !receiptActions.some(action => action.testID === 'managed-machine.delete')
@@ -916,6 +939,8 @@ export type ManagedMachineHeaderIdentity = Readonly<{
     mark: React.ReactNode;
     description: string | null;
     meta: readonly PageHeaderMetaFact[];
+    /** Its lifecycle words for the header's presence line (`managedMachineHeaderPresence`). */
+    presence: MachineManagedPresence | null;
 }>;
 
 const MINUTE_MS = 60_000;
@@ -943,8 +968,9 @@ export function managedMachineHeaderMeta(input: Readonly<{
 }>): PageHeaderMetaFact[] {
     const meta: PageHeaderMetaFact[] = [];
     const power = input.machine.observation?.availability === 'present' ? input.machine.observation.power : undefined;
-    if (power === 'running' || power === 'stopped' || power === 'suspended') {
-        const uptime = power === 'running' && input.runningSince !== undefined && input.runningSince <= input.now
+    // Stopped, suspended or asleep is the header's presence sentence (`managedMachineHeaderPresence`); a second fact would repeat it.
+    if (power === 'running') {
+        const uptime = input.runningSince !== undefined && input.runningSince <= input.now
             ? formatUptime(input.now - input.runningSince) : null;
         meta.push({ key: 'managed-power', testID: 'machine-detail-managed-power',
             text: uptime ? t('managedMachines.detail.runningFor', { duration: uptime }) : t(`managedMachines.detail.power.${power}`) });
@@ -954,6 +980,14 @@ export function managedMachineHeaderMeta(input: Readonly<{
         meta.push({ key: 'managed-kind', text: kind });
     }
     return meta;
+}
+
+/**
+ * The created machine's lifecycle for its header presence line, in the one word the Machines rail uses (Asleep,
+ * Stopped, Starting…), so the header never says "Offline · last seen" beside a rail that says Asleep.
+ */
+export function managedMachineHeaderPresence(machine: ManagedMachineV1): MachineManagedPresence | null {
+    return machine.enrolledMachineId ? projectMachineManagedPresence({ id: machine.enrolledMachineId }, machine) : null;
 }
 
 /**
@@ -974,7 +1008,7 @@ export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | unde
     return { name: machine.launch.name, mark: presentation.mark,
         description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
             : provider ? t('managedMachines.detail.createdOn', { provider }) : null,
-        meta };
+        meta, presence: managedMachineHeaderPresence(machine) };
 }
 
 type ManagedKeepProps = Omit<ManagedMachineKeepControlProps, 'presentation' | 'testID' | 'showLabel'>;
@@ -1022,39 +1056,3 @@ function ManagedKeepSheet(props: Readonly<{ channel: LiveValueChannel<ManagedKee
     </ItemGroup>;
 }
 
-/**
- * What it was made with, from the reviewed native facts: each value first, then the fact that tells it
- * apart (its dimensions, what the system is, the country and region id). Glyphs are bare; the row owner
- * sizes and colours them. A place leads with its country's flag, as in the configurator.
- */
-function managedLaunchRows(machine: ManagedMachineV1, localized: PluginLocalizedTextResolver) {
-    const native = machine.reviewedFacts?.nativeFacts;
-    const title = (value: unknown) => localized(machine.launch.provider.pluginId, value);
-    const rows: { id: string; title: string; subtitle: string; leading: React.ReactNode }[] = [];
-    if (native?.size) {
-        const dimensions = managedSizeDimensions(native.size);
-        rows.push({ id: 'size', title: title(native.size.title),
-            subtitle: dimensions.length ? dimensions.join(' · ') : t('managedMachines.config.size'),
-            leading: <Icon name="cpu" /> });
-    }
-    if (native?.image) rows.push({ id: 'image', title: title(native.image.title),
-        subtitle: native.image.description ? title(native.image.description) : t('managedMachines.config.image'),
-        leading: <Icon name="image" /> });
-    if (native?.location) {
-        const flag = countryFlag(native.location.countryCode);
-        const country = countryName(native.location.countryCode, getPreferredLanguage());
-        rows.push({ id: 'location', title: title(native.location.title),
-            subtitle: [country, native.location.id].filter(Boolean).join(' · '),
-            leading: flag ? <Text style={launchStyles.flag}>{flag}</Text> : <Icon name="map-pin" /> });
-    }
-    if (native?.network) rows.push({ id: 'network', title: title(native.network.title), subtitle: t('managedMachines.config.network'),
-        leading: <Icon name="globe" /> });
-    if (native?.duration) rows.push({ id: 'duration', title: title(native.duration.title), subtitle: t('managedRetention.ends'),
-        leading: <Icon name="hourglass" /> });
-    return rows.length ? rows : [{ id: 'launch', title: machine.launch.name, subtitle: t('common.unknown'),
-        leading: <Icon name="desktop" /> }];
-}
-
-const launchStyles = StyleSheet.create({
-    flag: { ...happierPageTextMetrics('rowTitle') },
-});

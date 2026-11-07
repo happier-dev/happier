@@ -17,11 +17,13 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { readInputPath } from '@happier-dev/protocol/inputs';
 import { seedInputByFieldHints, writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { isMachineRetainedWakeEligibleV1, resolveMachineRetentionPolicyV1, supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
-import { useIsMachineListSettled } from '@/sync/store/hooks';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { useIsMachineListSettled, useServerScopedMachine } from '@/sync/store/hooks';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -68,7 +70,7 @@ import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner,
-    managedConfiguratorFacts, managedConfiguratorProjection, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities,
+    managedConfiguratorFacts, managedConfiguratorProjection, managedConfiguratorMissingDimension, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities,
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { describeKeepCosts, describeRetentionConsequence } from './managedRetentionPresentation';
 import { useAgentSignInTargets } from '@/components/settings/connectedServices/defaults/useAgentSignInTargets';
@@ -116,7 +118,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => approvalHandler.current(registration), []);
     const router = useRouter();
     const compact = useViewportClass() === 'compact';
-    const machines = useMachineListForServer(props.serverId) ?? [];
     const machineListSettled = useIsMachineListSettled(props.serverId);
     const [draft, setDraft] = React.useState<ManagedConfiguratorDraft | null>(null);
     // A setup-only preset (no creation part) is edited in this same editor: only its name and setup, no provider.
@@ -144,8 +145,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const accountAcquire = !creationPreset && acquireTarget === 'account';
     const controllerCandidate = creationPreset ? draft ? draft.controller : creationPreset.controller : draft?.controller ?? scope.controller;
     const requestedController = accountAcquire ? undefined : controllerCandidate;
-    const catalogController = (!props.presetId || !!creationPreset) && !delegatedAcquire && requestedController && machines.some(machine => machine.id === requestedController.machineId
-        && machine.installationId === requestedController.installationId) ? requestedController : undefined;
+    const requestedControllerPresent = useServerScopedMachine(props.serverId, requestedController?.machineId,
+        React.useCallback((machine: Machine | null) => !!machine && isMachineVisibleForSelection(machine)
+            && machine.installationId === requestedController?.installationId, [requestedController?.installationId]));
+    const catalogController = (!props.presetId || !!creationPreset) && !delegatedAcquire && requestedController && requestedControllerPresent
+        ? requestedController : undefined;
     const catalogPlacementAvailable = requestedController === undefined || catalogController !== undefined;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, catalogController,
         { enabled: !setupOnlyEdit && !delegatedAcquire && catalogPlacementAvailable && (!props.presetId || !!creationPreset), contributionKey: props.provisioner });
@@ -194,7 +198,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const needsApp = hostAvailability?.available === false;
     const pageChip = accountAcquire ? null : scope.chip;
     // A retained catalog remains readable while the selected controller answers, but cannot admit credential-bearing work.
-    const catalogCurrent = !catalog.loading && catalog.error === null;
+    const catalogCurrent = catalog.current;
     // Async authentication callbacks read the current mounted handoff, never a retired render's draft.
     const purposeHandoff = React.useRef({ activeHandoff: accountSetup, pendingCredential, binding: catalog.binding,
         controller: catalogController, provisioner: catalogProvisioner, available: catalogCurrent });
@@ -297,6 +301,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         }
         return seedInputByFieldHints({ inputHints: optionHints }, base);
     }, [draft?.optionsSelectors, draft?.selected, draft?.options?.base?.launch, draft?.preset, selectorKey, optionHints]);
+    // Fields the provider fills with its own defaults (a store, an image location, a driver) are reviewed rarely: they
+    // fold into one Advanced disclosure. The set is decided once, when the provider first answers, so no field moves
+    // while the person types; a required field it left blank stays in view.
+    const advancedPaths = React.useRef<Readonly<{ key: string; paths: ReadonlySet<string> }> | null>(null);
+    const [advancedOpen, setAdvancedOpen] = React.useState(false);
     const fields = React.useMemo(() => optionsInput.kind === 'ready'
         ? resolveEffectiveActionInputFields({ inputHints: optionHints }, fieldInput) : [],
         [optionsInput, optionHints, fieldInput]);
@@ -343,7 +352,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     React.useEffect(() => {
         if (!presetQuery.sameScope || !catalogPlacementAvailable || props.presetId || !provisioner || accountHostPending || accountHostUnreadable) return;
         const initial = catalogController;
-        if (initial && !machines.some(machine => machine.id === initial.machineId && machine.installationId === initial.installationId)) return;
         setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial, name: continuation?.draft.name ?? title,
             optionsSelectors: props.initialOptionsSelectors, enrollmentIdentity: props.initialEnrollmentIdentity,
             ...(continuation ? { setup: continuationSeed } : {}) }));
@@ -351,7 +359,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             continuationEntered.current = true;
             if (continuationSetup?.ok === false) setError('machine_setup_conflict', 'save');
         }
-    }, [presetQuery.sameScope, catalogController, catalogPlacementAvailable, accountHostPending, accountHostUnreadable, props.presetId, props.initialOptionsSelectors, props.initialEnrollmentIdentity, provisioner, machines, title, continuation, continuationSeed, continuationSetup, setError]);
+    }, [presetQuery.sameScope, catalogController, catalogPlacementAvailable, accountHostPending, accountHostUnreadable, props.presetId, props.initialOptionsSelectors, props.initialEnrollmentIdentity, provisioner, title, continuation, continuationSeed, continuationSetup, setError]);
     React.useEffect(() => {
         if (!presetQuery.sameScope || !hasManagedMachinePresetCreationV1(preset) || !provisioner || teamDenied) return;
         // A hand-off for this Preset resumes its unsaved draft at the revision that draft was based on.
@@ -377,7 +385,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, [presetQuery.sameScope, catalogProvisioner, catalogController, catalogPlacementAvailable, draft?.credentials, draft?.provisioner]);
 
     React.useEffect(() => {
-        if (!pendingCredential || catalog.loading || catalogProvisioner === pendingCredential.basis && !catalog.error) return;
+        if (!pendingCredential || catalog.reading || catalogProvisioner === pendingCredential.basis && !catalog.error) return;
         const { setup, account } = pendingCredential;
         const handoff = resolveConnectedAccountPurposeSetupHandoff(setup, { ...purposeHandoff.current,
             activeHandoff: purposeHandoff.current.pendingCredential?.setup ?? null });
@@ -387,7 +395,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         ]) : value);
         else setError(handoff.ok ? 'credential_unavailable' : handoff.error.code);
         setPendingCredential(null);
-    }, [pendingCredential, catalog.loading, catalog.error, catalog.binding, catalogProvisioner, catalogController]);
+    }, [pendingCredential, catalog.reading, catalog.error, catalog.binding, catalogProvisioner, catalogController]);
 
     // Credential retirement cancels IO; a same-Account bearer refresh keeps the local setup draft.
     React.useEffect(() => {
@@ -523,13 +531,17 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const receiptController = receiptFacts?.controller ?? controller;
     const savedControllerName = receiptController && preset?.controller && preset.controller.machineId === receiptController.machineId
         && preset?.controller?.installationId === receiptController?.installationId ? preset?.controllerDisplayName : undefined;
-    const knownControllerName = getMachineDisplayName(machines.find(machine => machine.id === receiptController?.machineId
-        && machine.installationId === receiptController?.installationId)) ?? savedControllerName;
+    const liveControllerName = useServerScopedMachine(props.serverId, receiptController?.machineId,
+        React.useCallback((machine: Machine | null) => machine && isMachineVisibleForSelection(machine)
+            && machine.installationId === receiptController?.installationId ? getMachineDisplayName(machine) : null,
+        [receiptController?.installationId]));
+    const knownControllerName = liveControllerName ?? savedControllerName;
     // Sentences ("Runs on …", "How much CPU and memory … has free") never say "Unknown": an unnamed controller is the
     // computer that manages it. The receipt's labelled fact keeps its explicit unknown value.
     const controllerName = knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const activeBinding = catalog.binding;
     const missingLaunchField = launchFields.find(field => field.required && isBlankInput(readInputPath(fieldInput, field.path)));
+    const missingDimension = draft ? managedConfiguratorMissingDimension(draft, projection) : undefined;
     // One decision owns both admission of the Create control and the reason beside it.
     const creationUnavailableReason = busy ? t('common.loading')
         : !activeBinding?.isCurrent() ? t('common.unavailable')
@@ -546,6 +558,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         : draft?.check?.available !== true ? t('managedMachines.options.loading', { provider: title })
         : launchRefusal ? localized(catalogProvisioner.contribution.pluginId, launchRefusal.status)
         : !facts ? missingLaunchField ? t('session.actionsDraft.validation.requiredField', { field: missingLaunchField.title })
+            : missingDimension ? t('session.actionsDraft.validation.requiredField', {
+                field: missingDimension === 'duration' ? t('managedRetention.ends') : t(`managedMachines.config.${missingDimension}`),
+            })
             : draft?.optionStatus === 'loading' || launchPresentationPending ? t('managedMachines.options.loading', { provider: title })
                 : t('managedMachines.options.unavailable')
         : facts.optionStatus !== 'current' ? t(facts.optionStatus === 'loading' ? 'common.loading' : 'managedMachines.options.unavailable')
@@ -812,6 +827,29 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         .map(field => launchRefusal?.fieldPath === field.path
             ? { ...field, description: localized(provisioner.contribution.pluginId, launchRefusal.status) } : field);
     const launchEditable = !!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true);
+    const advancedKey = draft ? buildQualifiedPluginContributionKey(draft.provisioner.contribution) : '';
+    // Decided on the provider's first answer; until then every field stays in view.
+    if (draft && draft.optionStatus !== 'loading' && formFields.length > 0 && advancedPaths.current?.key !== advancedKey) {
+        advancedPaths.current = { key: advancedKey, paths: new Set(formFields.filter(field => !field.required
+            || !isBlankInput(readInputPath(fieldInput, field.path))).map(field => field.path)) };
+    }
+    const advancedSet = advancedPaths.current?.key === advancedKey ? advancedPaths.current.paths : null;
+    // Only once the size is chosen elsewhere (its own form section or a size table) are the rest details; a provider
+    // whose form is its only choice keeps it in view. A preset's launch reads as its chosen rows, and the editor
+    // keeps every field in view.
+    const sizeChosenElsewhere = sizeFields.length > 0 || (draft?.options?.dimensions.size.length ?? 0) > 1;
+    const advancedFields = advancedSet && sizeChosenElsewhere && !presetLocked && !props.presetOnly
+        ? formFields.filter(field => advancedSet.has(field.path)) : [];
+    const primaryFields = formFields.filter(field => !advancedFields.includes(field));
+    // An error, or a required field emptied since, is never hidden in a closed disclosure.
+    const advancedNeedsYou = advancedFields.some(field => field.path === launchRefusal?.fieldPath
+        || field.required && isBlankInput(readInputPath(fieldInput, field.path)));
+    // Closed, it says what it holds: the short choices (architecture, driver), not paths.
+    const advancedSummary = advancedFields.flatMap(field => {
+        const value = readInputPath(fieldInput, field.path);
+        const label = field.options?.find(option => option.value === value)?.label;
+        return typeof label === 'string' && label ? [label] : [];
+    }).join(' · ');
     // The form sits in its section's sheet with the row insets every other row there has.
     const launchForm = (fields: typeof launchFields, invalidNotice: boolean) => <>
         <SectionContentRow>
@@ -881,8 +919,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 disabled={!catalogPlacementAvailable || !catalogProvisioner || busy || !!preset && !props.presetOnly}
                 onPress={event => { void openAccountSetup(purpose.purpose, resolvePressTriggerAnchor(event)); }} />)}
         </ItemGroup> : null}
-        {draft && showLaunchFields && formFields.length ? <ItemGroup title={t('managedMachines.detail.launchTitle')}>
-            {launchForm(formFields, true)}
+        {draft && showLaunchFields && primaryFields.length ? <ItemGroup title={t('managedMachines.detail.launchTitle')}>
+            {launchForm(primaryFields, true)}
         </ItemGroup> : null}
         {draft && (retainedChoice || choiceState || repairs.length) ? <ItemGroup title={retainedChoice ? t('managedMachines.config.otherChoices') : undefined}>
             {retainedChoice ? <Item testID="managed-config.retained-choice" mode="info" title={localized(provisioner.contribution.pluginId, retainedChoice.title)}
@@ -903,6 +941,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             incomplete={!!missingLaunchField}
             formSize={formSized ? { editor: showLaunchFields && sizeFields.length ? launchForm(sizeFields, formFields.length === 0) : undefined } : undefined}
             onChange={(dimension, id) => setDraft(current => current ? selectManagedConfiguratorDimension(current, dimension, id) : current)} /> : null}
+        {draft && showLaunchFields && advancedFields.length ? <ItemGroup header="none">
+            <ExpandableItem testID="managed-config.advanced" expanded={advancedOpen || advancedNeedsYou}
+                onExpandedChange={setAdvancedOpen} showDivider={false}
+                header={({ headerProps }) => <Item {...(headerProps as Readonly<Record<string, unknown>>)}
+                    testID="managed-config.advanced.header" title={t('managedMachines.config.advanced')} subtitle={advancedSummary || undefined} />}>
+                {advancedOpen || advancedNeedsYou ? launchForm(advancedFields, primaryFields.length === 0) : null}
+            </ExpandableItem>
+        </ItemGroup> : null}
         {/* How Happier runs on the machine it creates: reviewed after the choices the page leads with, edited only through the draft. */}
         {draft && !props.presetOnly && draft.enrollmentIdentity ? <ManagedEnrollmentIdentitySection testID="managed-config"
             identity={draft.enrollmentIdentity} computer={controllerName} disabled={busy}
@@ -1011,8 +1057,10 @@ function ManagedConfiguratorNativeChoices(props: Readonly<{
     const firstPrice = sizeChoices.flatMap(({ choice }) => choice.prices ?? [])[0];
     // The section says where the prices come from and when they bill, or, locally, whose share it is.
     const sizeDescription = billing.location === 'local' ? t('managedMachines.config.localSizeDescription', { computer: props.computer })
-        : [firstPrice ? t('managedMachines.config.pricesChecked', { provider: firstPrice.source, time: formatAsOfTime(firstPrice.observedAt) })
-            : t('managedMachines.price.unavailable', { provider: props.localized(pluginId, draft.provisioner.descriptor.title) }),
+        // A price's `source` is the provider's evidence reference (an API URL), not a name to show.
+        // Without a price the receipt already says it is unavailable and who bills: the section says only when it bills.
+        : [firstPrice ? t('managedMachines.config.pricesChecked', { provider: props.localized(pluginId, draft.provisioner.descriptor.title),
+            time: formatAsOfTime(firstPrice.observedAt) }) : null,
             billing.stoppedBilling === 'billed' ? t('managedMachines.config.billedWhileExists')
                 : billing.stoppedBilling === 'not-billed' ? t('managedMachines.config.billedWhileRunning')
                     : t('managedRetention.consequence.stopUnknown', { provider: props.localized(pluginId, draft.provisioner.descriptor.title) })]

@@ -28,7 +28,6 @@ import { resetRuntimeFetch, setRuntimeFetch as installRuntimeFetch } from '@/uti
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ManagedMachineDetail } from './ManagedMachineDetail';
-import { readAutomationEventAuthoringSeed } from '@/sync/domains/workflows/automationEventAuthoringSeed';
 
 /** Pages render under the app shell, which owns the Account's one Investigate owner (D5). */
 const renderScreen: typeof renderTestScreen = (element, options = {}) => {
@@ -37,7 +36,6 @@ const renderScreen: typeof renderTestScreen = (element, options = {}) => {
         ? ({ children }) => <AccountNoticeInvestigationBoundary><Outer>{children}</Outer></AccountNoticeInvestigationBoundary>
         : AccountNoticeInvestigationBoundary });
 };
-import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { t } from '@/text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -48,7 +46,7 @@ import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedMachineSections, ManagedEnrolledMachineSections, useManagedMachineHeaderIdentity, type ManagedMachineHeaderIdentity } from './ManagedMachineSections';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
-import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList, ManagedMachineLaunchSection } from './ManagedMachineDetailSections';
+import { ManagedMachinePolicySection, ManagedMachineControllerSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { MachineConfigurationReceipt } from './MachineConfigurationReceipt';
 import { ManagedMachineV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -245,6 +243,55 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
 }
 
 describe('managed Machine detail', () => {
+    it.each([true, false])('shows a Use member the managed policy without owner-only power, delete, or policy editors (enrolled: %s)', async enrolled => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-shared-use.test', scope: 'tab' });
+        const homeId = 'srv_managed_shared_use';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('viewer', { currentAccount: true }) });
+        const provider = { pluginId: 'custom.provisioner', localId: 'native' };
+        const controller = { machineId: 'shared-controller', installationId: 'installation' };
+        const launch = { provider, schemaVersion: 1, name: 'Shared sandbox', choices: {} };
+        const machine: ManagedMachineV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller,
+            allocation: 'bound', creationState: 'active', ...(enrolled ? { enrolledMachineId: 'shared-guest' } : {}),
+            observation: { observedAt: 1, availability: 'present', power: 'running' },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
+                prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
+        const access = { custodian: { accountId: 'owner', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } as const;
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        storage.setState({ machineListByServerId: { [serverId]: [
+            createMachineFixture({ id: controller.machineId, installationId: controller.installationId, isShared: true, access }),
+            createMachineFixture({ id: 'shared-guest', isShared: true, access }),
+        ] } });
+        setRuntimeFetch(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const screen = await renderScreen(enrolled
+            ? <ManagedEnrolledMachineSections serverId={target.id} enrolledMachineId="shared-guest" />
+            : <ManagedMachineDetail serverId={target.id} managedId={machine.id} />);
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.stop')).toBeNull();
+            expect(screen.findByTestId('managed-machine.delete')).toBeNull();
+            expect(screen.findByTestId('managed-machine.cancel')).toBeNull();
+            expect(screen.findByTestId('managed-machine.policy.keep')).toBeNull();
+            expect(screen.findByTestId('managed-machine.policy.whenUnused')).not.toBeNull();
+            const policyRow = screen.tree.findAllByType(Item).find(item => item.props.testID === 'managed-machine.policy.whenUnused');
+            expect(policyRow?.props.mode).toBe('info');
+            expect(policyRow?.props.onPress).toBeUndefined();
+            const check = screen.tree.findAllByType(RoundButton).find(button => button.props.title === t('managedMachines.inspect.checkNow'));
+            expect(check).toBeDefined();
+            expect(check?.props.disabled).not.toBe(true);
+        } finally { await screen.unmount(); }
+    });
     it('renders an Account-owned Machine without inventing a managing computer', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-account-detail.test', scope: 'tab' });
         const homeId = 'srv_managed_account_detail';
@@ -544,6 +591,7 @@ describe('managed Machine detail', () => {
             launch, controller, allocation: 'confirmed-absent', creationState: 'active',
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { observedAt: 5, availability: 'absent' },
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
                 prerequisites: [], retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
@@ -565,6 +613,10 @@ describe('managed Machine detail', () => {
         expect(screen.findByTestId('managed-machine.launch')).toBeNull();
         expect(screen.findByTestId('managed-machine.detail.receipt:cost')).toBeNull();
         expect(screen.getTextContent()).not.toContain(t('managedMachines.price.noBill'));
+        // Nothing is left to check or read: no Check now, no Read log; the record says what went and what stays.
+        expect(screen.findByTestId('managed-machine.observation-check')).toBeNull();
+        expect(screen.findByTestId('managed-machine.logs.read')).toBeNull();
+        expect(screen.findByTestId('managed-machine.ended-record')).not.toBeNull();
         await screen.unmount();
     });
     it.each(['provider', 'credential', 'credential-many'] as const)('offers the canonical %s recovery from current native facts without installation retry', async removed => {
@@ -627,7 +679,7 @@ describe('managed Machine detail', () => {
     it.each(['owned', 'shared', 'moved', 'different-home', 'fin-read-failed', 'other-focused-home', 'other-focused-bound',
         'unloaded-keep', 'unloaded-stop', 'unloaded-delete', 'unloaded-archived', 'unloaded-other-home',
         'unloaded-task-keep', 'unloaded-task-unrelated', 'unloaded-task-matching', 'unloaded-no-birth-bound',
-        'unloaded-task-birth-retry', 'unloaded-task-birth-run', 'unloaded-task-birth-demanded'] as const)('shows a birth-provenance archive rule only from known FIN facts in the exact Account/Home (%s)', async ownership => {
+        'unloaded-task-birth-retry', 'unloaded-task-birth-run', 'unloaded-task-birth-demanded'] as const)('shows the Home retention rule for its exact birth in the Account/Home (%s)', async ownership => {
         const unloaded = ownership.startsWith('unloaded-');
         const task = ownership.startsWith('unloaded-task-');
         const conflicting = ownership === 'unloaded-task-unrelated' || ownership === 'unloaded-task-matching';
@@ -647,7 +699,13 @@ describe('managed Machine detail', () => {
             launch: { provider, schemaVersion: 1, name: task ? 'Born for task' : 'Born for Session', choices: {} },
             controller: { machineId: ownership === 'moved' ? 'new-controller' : 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
             enrolledMachineId: 'guest', resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
-            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } satisfies ManagedMachineV1;
+            desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            ...(bound && (!conflicting || matching) ? { creationScopeRetention: {
+                effect: ownership === 'unloaded-delete' ? 'delete' as const : 'stop' as const,
+                source: task ? { kind: 'run' as const, source: { kind: 'workflow_run' as const, runId: '11111111-1111-4111-8111-111111111111' } }
+                    : { kind: 'session' as const, sessionId: 'original-source' },
+            } } : {}),
+        } satisfies ManagedMachineV1;
         const source = createSessionFixture({ id: 'original-source', serverId: target.id, metadata: {
             name: 'Original source Session', path: '/repo', host: 'guest', machineId: 'guest', sessionCreationCorrespondenceV1: { v: 1,
                 sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'birth' }),
@@ -721,7 +779,7 @@ describe('managed Machine detail', () => {
                 return Response.json(createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true } } }));
             if (url.pathname === '/v3/automations' || url.pathname === '/v3/automations/query') {
                 expect(url.origin).toBe(target.serverUrl);
-                triggerReads += 1;
+                if (url.pathname === '/v3/automations/query') triggerReads += 1;
                 return ownership === 'fin-read-failed' ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
                     : Response.json({ automations: rules, nextCursor: null });
             }
@@ -794,9 +852,8 @@ describe('managed Machine detail', () => {
             else {
                 expect(rows, JSON.stringify(finRequests)).toHaveLength(1);
                 expect(rows[0]!.props.rule.scope).toBe(task ? 'task' : 'session');
-                expect(triggerReads, JSON.stringify(finRequests)).toBeGreaterThan(0);
-                expect(rows[0]!.props.rule.summary, JSON.stringify(finRequests)).toBe(ownership === 'fin-read-failed'
-                    ? t('managedMachines.options.unavailable') : bound && (!conflicting || matching)
+                expect(triggerReads, JSON.stringify(finRequests)).toBe(0);
+                expect(rows[0]!.props.rule.summary, JSON.stringify(finRequests)).toBe(bound && (!conflicting || matching)
                         ? t('managedRetention.scopeRuleChosen', { rule: t(ownership === 'unloaded-delete'
                             ? 'managedRetention.scopeRuleDeleteIdle' : 'managedRetention.scopeRuleStopIdle', { name: machine.launch.name }), name: machine.launch.name })
                         : t('common.keep'));
@@ -822,34 +879,10 @@ describe('managed Machine detail', () => {
                 }
                 if (!unloaded) expect(screen.getTextContent()).toContain('Original source Session');
                 else expect(storage.getState().sessions[source.id]).toBeUndefined();
-                expect(typeof rows[0]!.props.rule.onOpen).toBe(ownership === 'shared' || ownership === 'fin-read-failed' ? 'undefined' : 'function');
-                if (ownership !== 'shared' && ownership !== 'fin-read-failed') {
-                    const router = (await import('expo-router')).router;
+                expect(typeof rows[0]!.props.rule.onOpen).toBe(ownership === 'shared' ? 'undefined' : 'function');
+                if (ownership !== 'shared') {
                     await act(async () => rows[0]!.props.rule.onOpen());
-                    expect(router.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: task ? '/workflows' : '/session/[id]/triggers',
-                        params: expect.objectContaining({ ...(task ? {} : { id: source.id }), serverId: resolveServerProfileScopeIdForIdentifier(target.id) }) }));
-                    if (matching) expect(router.push).toHaveBeenLastCalledWith(expect.objectContaining({
-                        params: expect.objectContaining({ trigger: 'birth-task-rule' }),
-                    }));
-                    if (task && !matching) {
-                        const href: unknown = vi.mocked(router.push).mock.calls.at(-1)?.[0];
-                        expect(href).toMatchObject({ params: { automationEventSeedId: expect.any(String) } });
-                        if (!href || typeof href !== 'object' || !('params' in href) || !href.params
-                            || typeof href.params !== 'object' || !('automationEventSeedId' in href.params)
-                            || typeof href.params.automationEventSeedId !== 'string') throw new Error('Task editor seed is missing');
-                        const seed = readAutomationEventAuthoringSeed(href.params.automationEventSeedId,
-                            { serverId: resolveServerProfileScopeIdForIdentifier(target.id) || target.id, accountId: 'owner' });
-                        expect(seed).toMatchObject({ kind: 'managedRunLifecycle', source: {
-                            kind: 'workflow_run', runId: '11111111-1111-4111-8111-111111111111',
-                        }, project: { machineId: machine.controller.machineId } });
-                        if (!seed || !('kind' in seed) || seed.kind !== 'managedRunLifecycle') throw new Error('Wrong task seed');
-                        expect(seed.actionTargets.map(target => readManagedMachineTriggerAction(target))).toEqual([
-                            expect.objectContaining({ actionId: 'machines.managed.power.set',
-                                input: expect.objectContaining({ homeId: machine.homeId, managedId: machine.id }) }),
-                            expect.objectContaining({ actionId: 'machines.managed.delete',
-                                input: expect.objectContaining({ homeId: machine.homeId, managedId: machine.id }) }),
-                        ]);
-                    }
+                    expect((await import('expo-router')).router.push).not.toHaveBeenCalled();
                 }
             }
         } finally {
@@ -1748,7 +1781,7 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.policy).toMatchObject({ intentRevision: 3 });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
     });
-    it.each(['modal', 'aws', 'gcp', 'descriptor-fallback', 'unavailable', 'different-launch', 'refresh-unavailable'] as const)(
+    it.each(['modal', 'aws', 'gcp', 'descriptor-fallback', 'unavailable', 'different-launch', 'refresh-unavailable', 'refresh-equal'] as const)(
         'qualifies live BYOC retention from the current exact native variant, not the creation receipt (%s)', async variant => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-live-variant-${variant}.test`, scope: 'tab' });
         const homeId = `srv_managed_live_variant_${variant}`;
@@ -1796,6 +1829,7 @@ describe('managed Machine detail', () => {
         const policyWrites: unknown[] = [];
         let refreshFailed = false;
         const initialOptions = variant === 'unavailable' || variant === 'different-launch' ? createDeferred<void>() : null;
+        const refreshOptions = variant === 'refresh-equal' ? createDeferred<void>() : null;
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             const machines = managedControllerReadBatch(machine, url, init);
@@ -1811,6 +1845,7 @@ describe('managed Machine detail', () => {
                 if (actionId === 'machines.provisioners.options') {
                     optionInputs.push(request.input);
                     await initialOptions?.promise;
+                    if (optionInputs.length > 1) await refreshOptions?.promise;
                 }
                 if (actionId === 'machines.managed.retention.update') policyWrites.push(request.input);
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [provisioner] }
@@ -1849,6 +1884,19 @@ describe('managed Machine detail', () => {
                 unavailableReason: expect.any(String),
             });
         });
+        if (variant === 'refresh-equal') {
+            const settledPolicy = screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy;
+            const check = screen.tree.findAllByType(RoundButton).find(button =>
+                button.props.testID === 'managed-machine.progress:checkNow' || button.props.testID === 'managed-machine.observation-check');
+            await act(async () => check!.props.onPress());
+            await waitForHomeGovernance(() => expect(optionInputs).toHaveLength(2));
+            try {
+                expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.capabilitiesAvailable).toBe(true);
+                expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBe(settledPolicy);
+            } finally { refreshOptions?.resolve(); }
+            await flushHookEffects();
+            expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBe(settledPolicy);
+        }
         if (variant === 'refresh-unavailable') {
             expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
             refreshFailed = true;
@@ -1882,8 +1930,9 @@ describe('managed Machine detail', () => {
             expect(keep.finiteOnly === true).toBe(finite);
             expect(keep.effects).toEqual(finite ? ['delete'] : ['stop', 'delete']);
             expect(keep.canWake).toBe(!finite);
-            expect(Boolean(screen.findByTestId('managed-machine.start'))).toBe(!finite);
-            expect(Boolean(screen.findByTestId('managed-machine.stop'))).toBe(!finite);
+            // The observation reports no power: neither Start nor Stop is offered until Check now observes it.
+            expect(screen.findByTestId('managed-machine.start')).toBeNull();
+            expect(screen.findByTestId('managed-machine.stop')).toBeNull();
             expect(keep.defaultPolicy).toMatchObject({ retention: finite ? { kind: 'unused', effect: 'delete' }
                 : { kind: 'until-delete' }, wakeOnAcceptedMessage: !finite });
             // A machine that kept its parent's rule is not "changed for" it: the parent is compared as a policy, not its resolution record.
@@ -2342,6 +2391,10 @@ describe('managed Machine detail', () => {
         expect(nativeRequests).toEqual([]);
         const confirm = screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete-confirm' && typeof node.props.onPress === 'function')[0];
         expect(confirm).toBeDefined();
+        // The review opens in place under the receipt that holds Delete…, and names who has access and who is using it.
+        const aside = screen.findByTestId('managed-machine.detail.receipt-aside');
+        expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-review').length).toBeGreaterThan(0);
+        expect(aside?.findAll(node => node.props?.testID === 'managed-machine.delete-audience').length).toBeGreaterThan(0);
         // The decision is one closing button row: the button names it, so no row repeats "Delete machine".
         expect(screen.findByTestId('managed-machine.delete-decision')).not.toBeNull();
         expect(screen.findByTestId('managed-machine.delete-decision.cancel')).not.toBeNull();
@@ -3601,15 +3654,12 @@ describe('managed Machine detail', () => {
         expect(receipt.props.model.keep).toBeUndefined();
         // The size and its labelled native dimensions are the receipt's spec line (RV-C F13).
         expect(receipt.props.model.spec).toBe(`Four-core guest · ${t('managedMachines.receipt.cores', { count: 4 }).replace(/ /g, '\u00a0')}`);
-        // Stop and Delete sit at the receipt's foot, beside the cost they change.
+        // Delete sits at the receipt's foot. Power is not observed yet, so no Start beside Stop: Check now reads it first.
         expect(receipt.props.model.secondary?.map((action: { testID?: string }) => action.testID))
-            .toEqual(['managed-machine.start', 'managed-machine.stop', 'managed-machine.delete']);
-        expect(screen.tree.findByType(ManagedMachineLaunchSection).props.rows).toEqual([
-            expect.objectContaining({ id: 'size', title: 'Four-core guest', subtitle: t('managedMachines.receipt.cores', { count: 4 }).replace(/ /g, '\u00a0') }),
-            // Each value's own fact, never the category word ("Image", "Location") again.
-            expect.objectContaining({ id: 'image', title: 'Original Linux image', subtitle: 'Long-term support' }),
-            expect.objectContaining({ id: 'location', title: 'Original region', subtitle: expect.stringMatching(/ · captured-location$/) }),
-        ]);
+            .toEqual(['managed-machine.delete']);
+        // What it was made with is the receipt alone: no second "Size, image and place" section repeats it.
+        expect(screen.findByTestId('managed-machine.launch')).toBeNull();
+        expect(receipt.props.model.facts.map((fact: { id: string }) => fact.id)).toEqual(expect.arrayContaining(['image', 'location']));
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy').length).toBeGreaterThan(0);
         const controller = createMachineFixture({ id: machine.controller.machineId,
             installationId: machine.controller.installationId, activeAt: Date.now() });
@@ -3705,11 +3755,32 @@ describe('managed Machine detail', () => {
         expect(bare.some(fact => fact.key === 'managed-native-id')).toBe(false);
         const stopped = managedMachineHeaderMeta({ machine: { ...machine, observation: { ...machine.observation, power: 'stopped' as const } },
             provider: 'Hetzner', kindTitle: 'Server', runningSince: now - 3_600_000, now });
-        expect(stopped.find(fact => fact.key === 'managed-power')?.text).toBe(t('managedMachines.detail.power.stopped'));
+        // Stopped or asleep is the header's sentence, from the one lifecycle presenter the rail uses; no second fact repeats it.
+        expect(stopped.some(fact => fact.key === 'managed-power')).toBe(false);
         const missing = managedMachineHeaderMeta({ machine: { ...machine, resource: { value: { owned: {} } } }, provider: 'Hetzner',
             kindTitle: 'Server', now });
         expect(missing.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
         expect(missing.some(fact => fact.key === 'managed-native-id')).toBe(false);
+    });
+    it('says an offline created machine\'s state in the same word as the Machines rail', async () => {
+        const { managedMachineHeaderPresence } = await import('./ManagedMachineSections');
+        const { describeMachinePresenceLine } = await import('@/utils/sessions/machinePresenceLine');
+        const { resolveManagedMachineWorkStatus } = await import('@/components/work/status/resolveWorkStatusTone');
+        const asleep = { id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Lima', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'after-idle', intentRevision: 1,
+            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineV1;
+        const rail = resolveManagedMachineWorkStatus({ online: false, managedMachine: asleep, machineId: 'guest' })?.word;
+        expect(rail).toBeTruthy();
+        const offlineGuest = createMachineFixture({ id: 'guest', active: false, activeAt: 1 });
+        expect(describeMachinePresenceLine(offlineGuest, 10_000_000, managedMachineHeaderPresence(asleep)).label).toBe(rail);
+        // Nothing observed yet: still the rail's word, never a second vocabulary.
+        const unobserved = { ...asleep, observation: undefined };
+        expect(describeMachinePresenceLine(offlineGuest, 10_000_000, managedMachineHeaderPresence(unobserved)).label)
+            .toBe(resolveManagedMachineWorkStatus({ online: false, managedMachine: unobserved, machineId: 'guest' })?.word);
     });
     it('does not imply continuing billing after confirmed absence, even with a retained cleanup marker', async () => {
         const screen = await renderScreen(<ManagedCreationProgress machine={{ id: 'absent', homeId: 'home', custodianAccountId: 'owner',
@@ -3718,6 +3789,22 @@ describe('managed Machine detail', () => {
             cleanup: { disposition: 'pending', reason: 'previous_cleanup' }, desired: 'delete', desiredWhen: 'now', intentRevision: 2,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }} />);
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost')).toHaveLength(0);
+    });
+    it('shows Check now working while its check runs', async () => {
+        const stopped = { id: 'checking', homeId: 'home', custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Lima', choices: {} },
+            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
+            allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped', storage: 'retained' } } satisfies ManagedMachineV1;
+        const check = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree.findAll(node =>
+            node.props?.testID === 'managed-machine.observation-check' && typeof node.props?.onPress === 'function')[0];
+        const idle = await renderScreen(<ManagedCreationProgress machine={stopped} handlers={{ checkNow: () => {} }} />);
+        expect(check(idle)?.props.loading).toBeFalsy();
+        await idle.unmount();
+        const checking = await renderScreen(<ManagedCreationProgress machine={stopped} handlers={{ checkNow: () => {} }} checking />);
+        expect(check(checking)?.props.loading).toBe(true);
     });
     it.each(['approval', 'retired', 'plan-failed', 'effects-changed'] as const)('prepares a retained setup retry from exact current source copies before Apply (%s)', async outcome => {
         const target = await upsertAndActivateServer({ serverUrl: `https://retained-setup-${outcome}.test`, scope: 'tab' });

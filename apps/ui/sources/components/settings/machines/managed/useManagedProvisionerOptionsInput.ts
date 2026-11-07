@@ -7,6 +7,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { machinePluginActionSchemasRead } from '@/sync/ops/machineContributionRegistryProjection';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readPluginAccountAvailability, usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 
 export type ManagedProvisionerOptionsInput = Readonly<{ kind: 'none' | 'loading' }>
     | Readonly<{ kind: 'unavailable'; error: string }>
@@ -64,21 +65,25 @@ export function useManagedProvisionerOptionsInput(input: Readonly<{
     const localId = provisioner?.descriptor.actions.options;
     const identity = localId && provisioner ? { pluginId: provisioner.contribution.pluginId, localId } : null;
     const occurrenceId = provisioner?.occurrenceId;
-    const key = JSON.stringify([binding?.scope, binding?.revision, controller, identity, occurrenceId, refreshKey]);
+    const key = JSON.stringify([binding?.scope, binding?.revision, controller, identity, occurrenceId]);
     const [state, setState] = React.useState<Readonly<{ key: string; value: ManagedProvisionerOptionsInput }>>({ key: '', value: { kind: 'loading' } });
     React.useEffect(() => {
         if (!binding?.isCurrent() || !identity || !occurrenceId || !provisioner) return;
         const abort = new AbortController();
         const retirement = binding.onRetire(() => { abort.abort(); setState({ key: '', value: { kind: 'loading' } }); });
-        setState({ key, value: { kind: 'loading' } });
+        // Retry asks the same question again; it does not withdraw its settled answer.
+        setState(current => current.key === key ? current : { key, value: loading });
+        const publish = (value: ManagedProvisionerOptionsInput) => setState(current => retainShallow(current, {
+            key, value: retainDeep(current.key === key ? current.value : undefined, value),
+        }));
         void readManagedProvisionerOptionsInput({ binding, controller, provisioner, signal: abort.signal }).then(value => {
             if (abort.signal.aborted || !binding.isCurrent()) return;
-            setState({ key, value });
+            publish(value);
         }).catch(() => {
-            if (!abort.signal.aborted && binding.isCurrent()) setState({ key, value: { kind: 'unavailable', error: 'unavailable' } });
+            if (!abort.signal.aborted && binding.isCurrent()) publish({ kind: 'unavailable', error: 'unavailable' });
         });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [binding, controller?.machineId, controller?.installationId, key, accountReader]);
+    }, [binding, controller?.machineId, controller?.installationId, key, refreshKey, accountReader]);
     if (!localId) return none;
     if (!binding?.isCurrent()) return controllerUnavailable;
     return state.key === key ? state.value : loading;
