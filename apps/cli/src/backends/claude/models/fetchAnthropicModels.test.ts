@@ -42,6 +42,23 @@ function okResponse(): Response {
 }
 
 describe('fetchAnthropicModels', () => {
+  it('does not grant HTTP a fresh budget after credential preparation exhausts the probe deadline', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => okResponse());
+    await expect(fetchAnthropicModels({ apiKey: 'key', timeoutMs: 5_000,
+      deadlineAt: Date.now() - 1, fetchImpl })).resolves.toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('discards a response when the caller cancels during the request', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      controller.abort();
+      return okResponse();
+    });
+    await expect(fetchAnthropicModels({ apiKey: 'key', timeoutMs: 5_000,
+      signal: controller.signal, fetchImpl })).resolves.toBeNull();
+  });
+
   it('returns an empty array for a successful response with no model rows', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
 
@@ -72,6 +89,20 @@ describe('fetchAnthropicModels', () => {
     const headers = fetchImpl.mock.calls[0]![1].headers;
     expect(headers['x-api-key']).toBe('sk-ant-key');
     expect(headers['Authorization']).toBeUndefined();
+  });
+
+  it('sends an apiKeyHelper value as both x-api-key and Bearer without the oauth beta header', async () => {
+    const fetchImpl = vi.fn<(input: unknown, init: { headers: Record<string, string> }) => Promise<Response>>(async () => okResponse());
+    await fetchAnthropicModels({
+      apiKeyHelperValue: 'helper-key',
+      baseUrl: 'https://gateway.example',
+      timeoutMs: 1_000,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const headers = fetchImpl.mock.calls[0]![1].headers;
+    expect(headers['Authorization']).toBe('Bearer helper-key');
+    expect(headers['x-api-key']).toBe('helper-key');
+    expect(headers['anthropic-beta']).toBeUndefined();
   });
 
   it('sends Bearer + oauth beta header when an access token is provided', async () => {

@@ -408,12 +408,10 @@ vi.mock('@/api/api', () => ({
   isMachineContentPublicKeyMismatchError: vi.fn(() => false),
 }));
 
-vi.mock('axios', () => ({
-  default: {
-    get: harness.axiosGet,
-    isAxiosError: (error: unknown) => Boolean((error as { isAxiosError?: unknown } | null)?.isAxiosError),
-  },
-}));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, get: harness.axiosGet } };
+});
 
 vi.mock('@/api/accountProfile', () => ({
   fetchAccountProfile: vi.fn(async () => ({

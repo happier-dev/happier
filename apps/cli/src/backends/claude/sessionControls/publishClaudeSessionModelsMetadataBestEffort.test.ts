@@ -46,6 +46,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
@@ -80,6 +81,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
@@ -113,6 +115,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-haiku-4-5',
@@ -150,6 +153,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6[1m]',
@@ -175,6 +179,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     const state: { metadata: Metadata } = { metadata: {} as Metadata };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
@@ -204,6 +209,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
     const state: { metadata: Metadata } = { metadata: {} as Metadata };
 
     await publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: '   ',
@@ -223,6 +229,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
 
   it('does not reject when metadata persistence fails', async () => {
     await expect(publishClaudeSessionModelsMetadataBestEffort({
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
       cwd: '/',
       timeoutMs: 250,
       currentModelId: 'claude-sonnet-4-6',
@@ -255,6 +262,7 @@ describe('publishClaudeSessionModelsMetadataBestEffort', () => {
       const state: { metadata: Metadata } = { metadata };
       await publishClaudeSessionModelsMetadataBestEffort({
         reconcileModels,
+        accountSettings: { claudeDynamicModelProbeEnabled: false },
         cwd: '/',
         timeoutMs: 250,
         currentModelId: 'claude-fable-5',

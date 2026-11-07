@@ -171,7 +171,7 @@ describe('happier session stop (integration)', () => {
         }),
       });
 
-      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId);
+      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId, { source: { surface: 'cli' } });
       expect(emitSpy).not.toHaveBeenCalled();
       expect(sessionStatusFetchCount).toBeGreaterThanOrEqual(2);
 
@@ -218,7 +218,7 @@ describe('happier session stop (integration)', () => {
         }),
       });
 
-      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId);
+      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId, { source: { surface: 'cli' } });
       expect(emitSpy).not.toHaveBeenCalled();
       expect(sessionStatusFetchCount).toBeGreaterThanOrEqual(1);
 
@@ -290,7 +290,7 @@ describe('happier session stop (integration)', () => {
         }),
       });
 
-      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId);
+      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId, { source: { surface: 'cli' } });
       expect(listSessionMarkersMock).toHaveBeenCalledTimes(1);
       expect(isPidSafeHappySessionProcessMock).not.toHaveBeenCalled();
       expect(processKillSpy).not.toHaveBeenCalled();
@@ -346,7 +346,7 @@ describe('happier session stop (integration)', () => {
         }),
       });
 
-      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId);
+      expect(stopDaemonSessionMock).toHaveBeenCalledWith(sessionId, { source: { surface: 'cli' } });
       expect(sessionStatusFetchCount).toBeGreaterThanOrEqual(1);
 
       const parsed = output.json();

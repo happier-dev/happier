@@ -1,3 +1,4 @@
+import { withCatalogProbeLifecycle, type CatalogProbeLifecycle } from '@/capabilities/probes/catalogProbeLifecycle';
 import { resolveClaudeCodeUserAgent } from '@/backends/claude/utils/claudeCodeUserAgent';
 
 export const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
@@ -122,14 +123,18 @@ export function parseAnthropicModelsResponse(body: unknown): AnthropicModelEntry
   return entries.length > 0 || wasExplicitlyEmpty ? entries : null;
 }
 
-export type FetchAnthropicModelsParams = Readonly<{
+export type FetchAnthropicModelsParams = CatalogProbeLifecycle & Readonly<{
   /** OAuth access token (subscription/Claude Code). Sent as `Authorization: Bearer`. */
   accessToken?: string | null;
   /** Anthropic API key. Sent as `x-api-key` only when no bearer token is available. */
   apiKey?: string | null;
+  /**
+   * Output of Claude Code's `apiKeyHelper`. Sent as Claude Code sends it, as both `x-api-key` and
+   * `Authorization: Bearer`, without the subscription OAuth beta header.
+   */
+  apiKeyHelperValue?: string | null;
   /** Anthropic-compatible endpoint root (`ANTHROPIC_BASE_URL`). Defaults to the Anthropic host. */
   baseUrl?: string | null;
-  timeoutMs: number;
   userAgent?: string;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
@@ -148,7 +153,10 @@ export async function fetchAnthropicModels(
   const accessToken = typeof params.accessToken === 'string' && params.accessToken.trim().length > 0
     ? params.accessToken.trim()
     : null;
-  if (!apiKey && !accessToken) return null;
+  const apiKeyHelperValue = typeof params.apiKeyHelperValue === 'string' && params.apiKeyHelperValue.trim().length > 0
+    ? params.apiKeyHelperValue.trim()
+    : null;
+  if (!apiKey && !accessToken && !apiKeyHelperValue) return null;
 
   const fetchImpl = params.fetchImpl ?? fetch;
   const headers: Record<string, string> = {
@@ -159,6 +167,9 @@ export async function fetchAnthropicModels(
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
     headers['anthropic-beta'] = OAUTH_BETA_HEADER_VALUE;
+  } else if (apiKeyHelperValue) {
+    headers['Authorization'] = `Bearer ${apiKeyHelperValue}`;
+    headers['x-api-key'] = apiKeyHelperValue;
   } else if (apiKey) {
     headers['x-api-key'] = apiKey;
   }
@@ -166,21 +177,20 @@ export async function fetchAnthropicModels(
   const modelsUrl = resolveAnthropicModelsUrl(params.baseUrl);
   if (!modelsUrl) return null;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(250, params.timeoutMs));
   try {
-    const response = await fetchImpl(modelsUrl, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      redirect: 'error',
+    return await withCatalogProbeLifecycle(params, async ({ signal }) => {
+      const response = await fetchImpl(modelsUrl, {
+        method: 'GET',
+        headers,
+        signal,
+        redirect: 'error',
+      });
+      if (!response.ok) return null;
+      const body: unknown = await response.json();
+      signal.throwIfAborted();
+      return parseAnthropicModelsResponse(body);
     });
-    if (!response.ok) return null;
-    const body = await response.json().catch(() => null);
-    return parseAnthropicModelsResponse(body);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
