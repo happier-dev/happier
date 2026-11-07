@@ -88,6 +88,25 @@ it('keeps a disabled Team route unsupported after the Action envelope is decoded
     expect(homeDomainFailureFromActionFailure({ errorCode: 'teams_unavailable' }).kind).toBe('unsupported');
 });
 
+it.each([
+    { status: 409, error: 'references_conflict', kind: 'conflict' },
+    { status: 403, error: 'references_conflict', kind: 'unknown' },
+    { status: 409, error: 'unknown_refusal', kind: 'unknown' },
+])('preserves the Saved Secret currentness classification for $status $error', ({ status, error, kind }) => {
+    expect(homeDomainFailureFromActionFailure({ errorCode: error, details: { error, httpStatus: status } }, 'secrets.shared.delete'))
+        .toMatchObject({ kind, code: error, httpStatus: status, retryable: false });
+});
+
+it('retains only canonical vault repair hints for Saved Secret failures', () => {
+    const failure = { errorCode: 'authentication_required', details: { repair: 'unlock', nativeError: 'private-marker' } };
+    expect(homeDomainFailureFromActionFailure(failure, 'secrets.list')).toMatchObject({
+        code: 'authentication_required', details: { repair: 'unlock' },
+    });
+    expect(JSON.stringify(homeDomainFailureFromActionFailure(failure, 'secrets.list'))).not.toContain('private-marker');
+    expect(homeDomainFailureFromActionFailure({ ...failure, details: { repair: 'private-marker' } }, 'secrets.list').details).toBeUndefined();
+    expect(homeDomainFailureFromActionFailure(failure, 'teams.members.list').details).toBeUndefined();
+});
+
 it('retains retryable Team qualification failure inside a successful discovery transport', () => {
     // Discovery carries per-Team refusals in HTTP 200. The original single-Team
     // owner serves this exact refusal as 503, so it must still offer Retry.

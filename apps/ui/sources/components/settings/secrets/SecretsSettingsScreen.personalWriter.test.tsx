@@ -8,9 +8,10 @@ import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { createSecretSettingsTestHarness } from './secretSettingsTestHarness';
@@ -96,6 +97,70 @@ it('renames and replaces an imported private resource directly, but confirms del
     expect(home.persistedSettings.secrets).toEqual([]);
     expect(home.settingsWrites).toHaveLength(settingsWritesBeforeEdit);
     expect(alert).not.toHaveBeenCalled();
+});
+
+it.each([
+    { mode: 'plain', stale: 'revision' },
+    { mode: 'e2ee', stale: 'settings' },
+    { mode: 'e2ee', stale: 'references' },
+] as const)('deletes a pushed $mode creation without reloading with stale $stale', async ({ mode, stale }) => {
+    let conflict = stale === 'references';
+    home = await createSecretSettingsTestHarness({ mode, settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+        if (path !== '/v1/account/saved-secrets/resources/delete' || !conflict) return null;
+        conflict = false;
+        home!.replaceSettings(home!.persistedSettings, { version: 2, publish: false });
+        return Response.json({ error: 'references_conflict' }, { status: 409 });
+    } });
+    const ref = 'happier:shared-secret:v1:resource-a';
+    const screen = await renderSecretPage(ref);
+    await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(home!.scope)).toMatchObject({ status: 'ready', data: [] }));
+    // The other client creates while this page is mounted. Its Home change must reach this subscriber.
+    await act(async () => {
+        await home!.addOwnerResource();
+        publishHomeAccountChange(home!.scope.serverId, ['resource-a'], { changeKinds: ['savedSecretResource'] });
+    });
+    await waitForSecretPage(ref, screen);
+    const resource = home.resources[0]!;
+    if (!('resourceId' in resource)) throw new Error('Expected the created resource');
+    expect(resource.entry.revision).toBe(3);
+    if (stale === 'revision') {
+        // A later receipt has not reached the page yet.
+        home.resources[0] = { ...resource, entry: { ...resource.entry, revision: 4 } };
+    } else if (stale === 'settings') {
+        // Agent activity can advance Settings before this client receives that push.
+        home.replaceSettings(home.persistedSettings, { version: 2, publish: false });
+    }
+    await screen.pressByTestIdAsync(`saved-secret:${ref}:delete`);
+    await vi.waitFor(() => expect(home?.deletes).toHaveLength(1));
+    expect(home.deletes[0]).toMatchObject({ expectedRevision: stale === 'revision' ? 4 : 3,
+        expectedSettingsVersion: stale === 'revision' ? 1 : 2 });
+    // The Action policy owns whether to ask; currentness recovery must never ask twice.
+    expect(confirm.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(alert).not.toHaveBeenCalled();
+    expect(home.resources).toHaveLength(0);
+    expect(home.settingsWrites).toHaveLength(0);
+});
+
+it.each([
+    { status: 409, error: 'resource_changed', attempts: 2 },
+    { status: 409, error: 'references_conflict', attempts: 2 },
+    { status: 403, error: 'forbidden', attempts: 1 },
+])('settles a persistent $error refusal without looping or repeating confirmation', async ({ status, error, attempts }) => {
+    let deletes = 0;
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+        if (path !== '/v1/account/saved-secrets/resources/delete') return null;
+        deletes += 1;
+        return Response.json({ error }, { status });
+    } });
+    const { entry } = await home.addOwnerResource();
+    const screen = await renderSecretPage(entry.ref);
+    await waitForSecretPage(entry.ref, screen);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:delete`);
+    await vi.waitFor(() => expect(alert).toHaveBeenCalledTimes(1));
+    expect(deletes).toBe(attempts);
+    expect(confirm.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(home.resources).toHaveLength(1);
+    expect(home.deletes).toHaveLength(0);
 });
 
 it('names the Provider connection in a deletion refusal without exposing its binding path', async () => {

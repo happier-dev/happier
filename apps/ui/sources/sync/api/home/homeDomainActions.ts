@@ -181,9 +181,10 @@ export function homeDomainFailureFromActionFailure(
         });
     }
     const savedSecret = SavedSecretResourceActionErrorV1Schema.safeParse(details);
-    if (savedSecret.success && savedSecret.data.error === code && code === 'settings_conflict') {
-        // Saved Secret promotion's source Settings CAS is a canonical HTTP 409.
-        // Other resource endpoints retain their own refusal/status semantics.
+    if (savedSecret.success && savedSecret.data.error === code
+        && (code === 'settings_conflict' || code === 'references_conflict' && httpStatus === 409)) {
+        // Settings CAS and the resource's reference census retain their canonical
+        // currentness refusal through the Action envelope.
         return withDetails({ kind: 'conflict', retryable: false, code });
     }
     if (parsedDetails?.code === code) {
