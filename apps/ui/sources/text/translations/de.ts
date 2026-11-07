@@ -2732,6 +2732,10 @@ export const de: TranslationStructure = {
             actionDenied: "Das ist hier nicht erlaubt.",
             actionStale: "Diese Seite ist veraltet. Öffne sie erneut und versuche es noch einmal.",
             actionNoAnswer: "Es kam nicht rechtzeitig eine Antwort, der Vorgang läuft möglicherweise noch.",
+            agentActionOptions: ({ action }: { action: string }) => `Optionen für ${action}`,
+            agentActionStartNow: "Jetzt starten",
+            agentActionAddInstructions: "Anweisungen hinzufügen…",
+            agentActionEdit: "Aktion bearbeiten…",
         },
     },
 

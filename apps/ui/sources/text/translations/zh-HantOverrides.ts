@@ -1471,6 +1471,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       actionDenied: "此處不允許此操作。",
       actionStale: "此頁面已過期，請重新開啟後再試。",
       actionNoAnswer: "未及時收到回應，操作可能仍會完成。",
+      agentActionOptions: ({ action }: { action: string }) => `${action} 選項`,
+      agentActionStartNow: "立即開始",
+      agentActionAddInstructions: "新增說明…",
+      agentActionEdit: "編輯動作…",
     },
   },
   approvals: {

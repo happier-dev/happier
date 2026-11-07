@@ -2888,6 +2888,10 @@ export const fr: TranslationStructure = {
       actionDenied: "Ce n’est pas autorisé ici.",
       actionStale: "Cette page n’est plus à jour. Rouvre-la et réessaie.",
       actionNoAnswer: "Aucune réponse n’est arrivée à temps, l’opération peut encore aboutir.",
+      agentActionOptions: ({ action }: { action: string }) => `Options de ${action}`,
+      agentActionStartNow: "Lancer maintenant",
+      agentActionAddInstructions: "Ajouter des instructions…",
+      agentActionEdit: "Modifier l’action…",
     },
   },
 

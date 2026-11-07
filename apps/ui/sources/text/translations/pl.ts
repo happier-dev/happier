@@ -2890,6 +2890,10 @@ export const pl: TranslationStructure = {
       actionDenied: "To nie jest tutaj dozwolone.",
       actionStale: "Ta strona jest nieaktualna. Otwórz ją ponownie i spróbuj jeszcze raz.",
       actionNoAnswer: "Odpowiedź nie nadeszła na czas, więc operacja może się jeszcze zakończyć.",
+      agentActionOptions: ({ action }: { action: string }) => `Opcje: ${action}`,
+      agentActionStartNow: "Uruchom teraz",
+      agentActionAddInstructions: "Dodaj instrukcje…",
+      agentActionEdit: "Edytuj akcję…",
     },
   },
 

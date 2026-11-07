@@ -22,6 +22,7 @@ export type { UsageCalendarArtModel, UsageNinetyPlanetsModel, UsageStreakThreadM
 export { ApprovalFields, type ApprovalFieldRow, type ApprovalFieldsProps } from './ApprovalFields.js';
 export { ApprovalPendingNotice, type ApprovalPendingNoticeProps } from './ApprovalPendingNotice.js';
 export { ApprovalPrompt, type ApprovalPromptProps } from './ApprovalPrompt.js';
+export { AgentActionButton, type AgentActionButtonProps, type AgentActionLaunchMode } from './AgentActionButton.js';
 export {
   Button,
   IconButton,

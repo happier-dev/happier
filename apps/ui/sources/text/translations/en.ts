@@ -3125,6 +3125,10 @@ const enUi = {
     actionDenied: "This isn't allowed here.",
     actionStale: "This page is out of date. Reopen it and try again.",
     actionNoAnswer: "No answer came back in time, so it may still finish.",
+    agentActionOptions: ({ action }: { action: string }) => `${action} options`,
+    agentActionStartNow: "Start now",
+    agentActionAddInstructions: "Add instructions…",
+    agentActionEdit: "Edit action…",
   },
 };
 

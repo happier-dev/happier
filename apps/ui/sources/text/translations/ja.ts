@@ -3032,6 +3032,10 @@ export const ja: TranslationStructure = {
       actionDenied: "ここでは許可されていません。",
       actionStale: "このページは最新ではありません。開き直してからもう一度お試しください。",
       actionNoAnswer: "時間内に応答がありませんでした。処理はまだ完了する可能性があります。",
+      agentActionOptions: ({ action }: { action: string }) => `${action} のオプション`,
+      agentActionStartNow: "今すぐ開始",
+      agentActionAddInstructions: "指示を追加…",
+      agentActionEdit: "アクションを編集…",
     },
   },
 

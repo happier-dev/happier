@@ -2893,6 +2893,10 @@ export const ru: TranslationStructure = {
       actionDenied: "Здесь это не разрешено.",
       actionStale: "Эта страница устарела. Откройте её заново и попробуйте ещё раз.",
       actionNoAnswer: "Ответ не пришёл вовремя, поэтому операция ещё может завершиться.",
+      agentActionOptions: ({ action }: { action: string }) => `Параметры: ${action}`,
+      agentActionStartNow: "Запустить сейчас",
+      agentActionAddInstructions: "Добавить инструкции…",
+      agentActionEdit: "Изменить действие…",
     },
   },
 

@@ -48,6 +48,8 @@ const APPROVED_CATALOG_VOCABULARY = [
   'ApprovalPrompt', 'ApprovalPendingNotice', 'Timeline',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
   'Button', 'IconButton',
+  // Owner ruling 2026-11-07 "Agent actions: one shared flow": one split for every agent action.
+  'AgentActionButton',
   'Action.Control', 'Action.Execute', 'Action.Copy', 'Action.OpenExternal', 'Action.OpenSurface', 'Action.Refresh',
   'ActionPanel', 'ActionPanel.Section',
   'List', 'List.Section', 'List.Item', 'Item', 'ItemGroup', 'ItemAddRow',
@@ -736,6 +738,26 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     },
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'The add action owns a caller-controlled inline form; declarative sections retain their Action nodes.' },
+  },
+  {
+    publicName: 'AgentActionButton',
+    propTypeName: 'AgentActionButtonProps',
+    family: 'Agent action split button',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    // A plugin-ui composition of Button and Menu (owner ruling 2026-11-07); core feature pages adopt it next.
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/AgentActionButton.tsx',
+    sharedSymbol: 'AgentActionButton',
+    pluginOwner: { module: 'components/AgentActionButton.tsx', symbol: 'AgentActionButton' },
+    coreConsumers: [],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/triage/src/ui/header/entryActionControls.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'The launch modes call back into the caller\'s launch owner; there is no declarative launch node.' },
   },
   {
     publicName: 'CountedDisclosureItem',
@@ -3165,6 +3187,7 @@ describe('graduated shared presentation families (§8.2)', () => {
 
     expect(unfinished).toEqual([
       'ItemAddRow',
+      'AgentActionButton',
       'createListMultiSelectionStore',
       'ListMultiSelectionProvider',
       'ListSelectionActionBar',

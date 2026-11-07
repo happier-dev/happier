@@ -5,9 +5,11 @@ import {
     MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     TRIAGE_DEFAULT_ACTIONS_V1,
+    applyTriageActionLaunchModeV1,
     isTriageActionConfigurationCoherentV1,
     mutateTriageAction,
     parseTriageActions,
+    readTriageActionLaunchModeV1,
     readTriageActions,
     type TriageActionV1,
 } from './actions.js';
@@ -654,4 +656,22 @@ describe('the caller-observed revision', () => {
         expect(second.status).toBe('applied');
     });
 
+});
+describe('a press\'s launch mode (owner ruling 2026-11-07 "Agent actions: one shared flow")', () => {
+    it('reads the configured delivery as the action\'s launch mode', () => {
+        expect(readTriageActionLaunchModeV1(FIX)).toBe('review');
+        expect(readTriageActionLaunchModeV1(EXPLAIN)).toBe('start');
+    });
+
+    it('turns Start now into a send and Add instructions into a compose, leaving the record otherwise whole', () => {
+        const started = applyTriageActionLaunchModeV1(FIX, 'start');
+        const reviewed = applyTriageActionLaunchModeV1(FIX, 'review');
+        expect(started).toEqual({ ...FIX, target: { ...FIX.target, delivery: 'send' } });
+        expect(reviewed).toEqual({ ...FIX, target: { ...FIX.target, delivery: 'compose' } });
+    });
+
+    it('refuses a start that names no task, since a background start has nobody to type it', () => {
+        expect(applyTriageActionLaunchModeV1(ASK, 'start')).toBeNull();
+        expect(applyTriageActionLaunchModeV1(ASK, 'review')).toEqual(ASK);
+    });
 });

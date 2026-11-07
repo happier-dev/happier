@@ -497,6 +497,32 @@ export function isTriageActionConfigurationCoherentV1(
             && action.appliesTo[0] === 'pullRequest');
 }
 
+/**
+ * The launch mode a person sees on the action's split button (owner ruling 2026-11-07, "Agent actions: one shared
+ * flow"). It is the record's `delivery`, named the way the button names it: `send` starts in the background, and
+ * `compose` opens the prefilled composer first. A `reviewStart` action only starts runs.
+ */
+export type TriageActionLaunchModeV1 = 'start' | 'review';
+
+export function readTriageActionLaunchModeV1(action: Pick<TriageActionV1, 'target'>): TriageActionLaunchModeV1 {
+    return action.target.kind === 'reviewStart' || action.target.delivery === 'send' ? 'start' : 'review';
+}
+
+/**
+ * The pressed action with the person's chosen launch for this one press, or `null` when that launch is incoherent
+ * for it: a start needs a task, and a code review cannot wait in a composer. The stored record is unchanged.
+ */
+export function applyTriageActionLaunchModeV1(
+    action: TriageActionV1,
+    mode: TriageActionLaunchModeV1,
+): TriageActionV1 | null {
+    if (action.target.kind === 'reviewStart') return mode === 'start' ? action : null;
+    const delivery: TriageActionDeliveryV1 = mode === 'start' ? 'send' : 'compose';
+    if (action.target.delivery === delivery) return action;
+    const launched: TriageActionV1 = { ...action, target: { ...action.target, delivery } };
+    return isTriageActionConfigurationCoherentV1(launched) ? launched : null;
+}
+
 /** The catalog projection shared by surfaces that do not know one subject. */
 export function planTriageOfferableActionsV1(
     actions: readonly TriageActionV1[],

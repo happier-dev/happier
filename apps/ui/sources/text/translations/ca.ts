@@ -2876,6 +2876,10 @@ export const ca: TranslationStructure = {
               actionDenied: "Aquí no està permès.",
               actionStale: "Aquesta pàgina no està actualitzada. Torna-la a obrir i prova-ho de nou.",
               actionNoAnswer: "No ha arribat cap resposta a temps, així que encara podria acabar.",
+              agentActionOptions: ({ action }: { action: string }) => `Opcions de ${action}`,
+              agentActionStartNow: "Inicia ara",
+              agentActionAddInstructions: "Afegeix instruccions…",
+              agentActionEdit: "Edita l’acció…",
           },
       },
 

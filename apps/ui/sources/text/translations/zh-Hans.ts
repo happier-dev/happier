@@ -2851,6 +2851,10 @@ export const zhHans: TranslationStructure = {
       actionDenied: "此处不允许此操作。",
       actionStale: "此页面已过期，请重新打开后再试。",
       actionNoAnswer: "未及时收到响应，操作可能仍会完成。",
+      agentActionOptions: ({ action }: { action: string }) => `${action} 选项`,
+      agentActionStartNow: "立即开始",
+      agentActionAddInstructions: "添加说明…",
+      agentActionEdit: "编辑操作…",
     },
   },
 
