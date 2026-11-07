@@ -59,12 +59,13 @@ describe('Usage host fragment presets', () => {
         const read = await owner.readState();
         expect(read.kind).toBe('missing');
         expect(read.layout.items).toEqual(presets[0]!.items);
-        // One Card · Lines group: the period's figures lead as one band, then the daily bars across the page.
+        // One Card · Lines group whose top band is the daily bars on the left half and, on the right half, the
+        // period's figures over Capacity (lab d2top-A, PLAN U5).
         const first = read.layout.items[0]!;
         expect(first).toMatchObject({ kind: 'group', width: 'full' });
         expect(first.kind === 'group' ? first.children.slice(0, 3) : []).toMatchObject([
-            { size: 'full', instance: { definition: { id: 'usage_period_summary' } } },
-            { size: 'full', instance: { definition: { id: 'usage_daily' } } },
+            { size: 'tall', instance: { definition: { id: 'usage_daily' } } },
+            { size: 'medium', instance: { definition: { id: 'usage_period_summary' } } },
             { size: 'medium', instance: { definition: { id: 'usage_capacity' } } }]);
         // Costs: the daily cost bars beside Breakdowns over Efficiency, so the chart gets a real plot height (lab d2views-COST 2-up).
         const bandsOf = (presetId: string) => {
@@ -77,11 +78,10 @@ describe('Usage host fragment presets', () => {
             return packWidgetGroupBands(resolveWidgetGroupCells('corePage', kids.map(child => ({ id: child.instance.id, size: child.size }))), 2)
                 .map(band => band.kind === 'row' ? [[nameOf(band.cell.id)]] : band.kind === 'columns' ? band.columns.map(column => column.map(cell => nameOf(cell.id))) : []);
         };
-        // Overview pairs half cells that fill from the same facts: Capacity beside Projections (a connected
-        // subscription), Efficiency beside Rhythm (sessions). On a first run both partners of a pair are
-        // empty together, so no one-line empty state stands under a taller neighbour.
-        expect(bandsOf('overview')).toEqual([[['usage_period_summary']], [['usage_daily']],
-            [['usage_capacity'], ['usage_projections']], [['usage_coach']], [['usage_efficiency'], ['usage_rhythm']]]);
+        // Overview's top band: the chart's half beside the figures and Capacity (lab d2top-A). Efficiency pairs
+        // with Rhythm (both fill from sessions), so on a first run both are empty together.
+        expect(bandsOf('overview')).toEqual([[['usage_daily'], ['usage_period_summary', 'usage_capacity']],
+            [['usage_projections']], [['usage_coach']], [['usage_efficiency'], ['usage_rhythm']]]);
         expect(bandsOf('costs')).toEqual([[['usage_cost_facts']], [['usage_daily'], ['usage_breakdowns', 'usage_efficiency']],
             [['usage_plan_fit']], [['usage_outcomes']]]);
         // Plans: Capacity, then Projections and Plan fit stack beside the longer Resets list instead of leaving a column empty.

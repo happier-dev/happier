@@ -32,11 +32,11 @@ const w = (id: string, size: WidgetSizeV1, extra?: Omit<PresetWidget, 'id' | 'si
  * capacity (lab d2views-OV) — and a phone stacks the same children in reading order.
  */
 const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>> = {
-    // The daily bars run across the page. Half cells pair widgets that fill from the same facts, Capacity beside
-    // Projections (a connected subscription) and Efficiency beside Rhythm (sessions), so on a first run both
-    // partners are empty together and no one-line state stands under a taller neighbour.
-    overview: [{ width: 'full', widgets: [w('usage_period_summary', 'full'), w('usage_daily', 'full'),
-        w('usage_capacity', 'medium'), w('usage_projections', 'medium'), w('usage_coach', 'full'),
+    // The top band (lab d2top-A, PLAN U5): the daily bars take the left half and the period's figures over
+    // Capacity the right half; a phone stacks them in that reading order. Efficiency beside Rhythm (both fill
+    // from sessions), so on a first run both partners are empty together.
+    overview: [{ width: 'full', widgets: [w('usage_daily', 'tall'), w('usage_period_summary', 'medium'),
+        w('usage_capacity', 'medium'), w('usage_projections', 'full'), w('usage_coach', 'full'),
         w('usage_efficiency', 'medium'), w('usage_rhythm', 'medium')] }],
     // Cost facts holds the money facts and the prices line behind them, so it takes the full band. The daily
     // cost bars sit beside Breakdowns over Efficiency (lab d2views-COST 2-up), so the chart's plot takes that
