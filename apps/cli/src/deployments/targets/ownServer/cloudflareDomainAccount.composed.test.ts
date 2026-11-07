@@ -11,9 +11,9 @@ import { createActionExecutor, type ActionExecutorContext, DeploymentActionInput
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
     bindExternalActionExecutionAuthorizationVerifyHttpPathV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
-    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1,
-    verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+    verifyExternalActionMachineRequestV1, decodeDeploymentChildExecutionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddAdmissionInputV1Schema,
     DeploymentDomainPreparedContentInputV1Schema, DeploymentDomainTransitionInputV1Schema,
     deploymentDomainObservationProofPayloadV1, nativeCaddyDomainRouteIdsV1,
@@ -69,8 +69,8 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 
 /** Home, Cloudflare and native Socket.IO are the system boundaries. The
  * reviewed issuer, Account module, credential purpose, sealing and CAS stay real. */
-it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final',
-    'recovery Add a3318568 missing selection', 'recovery Add no recorded ingress', 'remove unprepared absent tunnel', 'remove unprepared partial config', 'remove unprepared foreign route', 'remove unprepared app gone',
+it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'connector admitted Domain child proof', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final',
+    'recovery Add a3318568 missing selection', 'recovery Add no recorded ingress', 'recovery Add no recorded ingress multiple members', 'remove unprepared absent tunnel', 'remove unprepared partial config', 'remove unprepared foreign route', 'remove unprepared app gone',
     'remove unprepared configuration without version', 'remove unprepared null configuration', 'remove unprepared malformed configuration',
     'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination'] as const)(
     'runs the admitted Domain Action and its selected Account child before native work: %s', async scenario => withSocketTempDir(async directory => {
@@ -102,7 +102,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const controllerSeed = new Uint8Array(32).fill(81), targetSeed = new Uint8Array(32).fill(82);
     const controller = nacl.sign.keyPair.fromSeed(controllerSeed), targetKeys = nacl.sign.keyPair.fromSeed(targetSeed);
     const receiverBSeed = new Uint8Array(32).fill(83), receiverB = nacl.sign.keyPair.fromSeed(receiverBSeed);
-    const members = scenario === 'two members' || scenario === 'partial grant' ? ['receiver', 'receiver-b'] : ['receiver'];
+    const members = scenario === 'two members' || scenario === 'partial grant' || scenario === 'recovery Add no recorded ingress multiple members' ? ['receiver', 'receiver-b'] : ['receiver'];
     const grantedMembers = scenario === 'partial grant' ? ['receiver'] : members;
     const installation = (machineId: string) => `${machineId}-installation`;
     const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`,
@@ -138,7 +138,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const environment = createDeploymentEnvironmentDetailV1();
     environment.environment.owner = { kind: 'account', accountId: 'owner' };
     const domainIngressOnly = scenario === 'authored domain ingress' || scenario === 'authored domain ingress null configuration' || scenario === 'authored domain DNS refused';
-    if (domainIngressOnly || scenario === 'recovery Add no recorded ingress') delete environment.content.ingress;
+    if (domainIngressOnly || scenario === 'recovery Add no recorded ingress' || scenario === 'recovery Add no recorded ingress multiple members') delete environment.content.ingress;
     else environment.content.ingress = { kind: 'cloudflareTunnel' };
     const targetLink = environment.targetLinks[0];
     if (!targetLink) throw new Error('Expected the canonical Environment target-link fixture');
@@ -153,7 +153,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
         healthCheck: { path: '/health', expectStatus: 200 }, ingress: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
             config: { hostname: 'app.example.test', controller: vendorController }, credentialRefs: [
                 { purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount', account: credentialRef } }] } };
-    const authoredDomain = scenario === 'authored ui' || scenario === 'authored agent' || scenario === 'Home Domain admission refused' || scenario === 'rejected authored' || domainIngressOnly || scenario === 'recovery Add a3318568 missing selection' || scenario === 'recovery Add no recorded ingress';
+    const authoredDomain = scenario === 'authored ui' || scenario === 'authored agent' || scenario === 'Home Domain admission refused' || scenario === 'rejected authored' || domainIngressOnly || scenario === 'recovery Add a3318568 missing selection' || scenario === 'recovery Add no recorded ingress' || scenario === 'recovery Add no recorded ingress multiple members';
     const { ingress: _vendorSelection, ...authoredContent } = content;
     const authoredInput = { serverId: 'home', environmentId: environment.environment.id,
         domainId: 'domain', expectedRevision: environment.environment.revision, targetLinkId: link.id,
@@ -305,6 +305,23 @@ it.each(['connector grant authorization refused', 'create connector grant author
             installationId: 'controller-installation', deploymentSecretLaunch: {
                 requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } }, proof, publicKey: controller.publicKey })).toBe(true);
         if (body.operation !== 'set') throw new Error('Expected the sole connector SET writer');
+        if (scenario === 'connector admitted Domain child proof') {
+            // Home is the network boundary: require the controller's actual
+            // admitted child HTTP proof, rather than accepting only Account signing.
+            const header = request.headers[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER];
+            const child = typeof header === 'string' ? decodeDeploymentChildExecutionV1(header, authorization.token) : null;
+            const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+            const signed = child && typeof signature === 'string' && verifyExternalActionMachineRequestV1({
+                authorizationToken: authorization.token, effectActionId: actionId, target,
+                installationId: 'controller-installation', requestId: envelope.requestId,
+                method: 'POST', path: request.url, body: request.body, deploymentChildExecution: child,
+                publicKey: controller.publicKey, signature });
+            if (!child || !signed) return reply.code(401).send({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
+            expect(child.externalActionExecution.deploymentChildRouting).toMatchObject({ kind: 'domain', actionId,
+                machineId: body.subject.machineId, installationId: body.subject.installationId,
+                expectedDomainRevision: domain?.revision, actionOperationId: 'domain-operation',
+                capture: domain?.placements?.find(capture => capture.placement.machineId === body.subject.machineId) });
+        }
         if (grantAuthorizationRefused) return reply.code(401).send({ error: 'invalid_token', authorizationRefusal: 'deployment_child_http' });
         if (scenario === 'partial grant' && body.subject.machineId === 'receiver-b')
             return reply.code(503).send({ ok: false, error: 'service_unavailable' });
@@ -492,7 +509,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                     dockerEngineId: `engine-${job.machineId}`, privateNetworks: [], replicas: [], caddy: { status: 'ready', containerId: 'caddy-receiver',
                         containerName: 'owned-caddy', adminSocketPath: '/run/happier-caddy/admin.sock', networkNames: ['environment_default'],
                         servers: [{ serverId: 'private_app', listen: [':9381'], tls: false, automaticHttpsDisabled: true, endpoints: [] },
-                            ...(domainIngressOnly ? [{ serverId: 'public_app', listen: [':443'], tls: true, automaticHttpsDisabled: false,
+                            ...(domainIngressOnly || scenario === 'recovery Add no recorded ingress' ? [{ serverId: 'public_app', listen: [':443'], tls: true, automaticHttpsDisabled: false,
                                 endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] }] : [])],
                         containerOrigins: [{ serverId: 'private_app', networkName: 'environment_default', service: 'http://172.18.0.2:9381' }] } }) });
                 return;
@@ -565,15 +582,31 @@ it.each(['connector grant authorization refused', 'create connector grant author
             actionsSettings: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(undefined), actionId,
                 surface, approvalRequired: scenario === 'rejected authored' }), operationAcceptance: { operationId: 'domain-operation', accept() {} } };
         const result = await executor.execute(actionId, input, context);
-        if (scenario === 'recovery Add a3318568 missing selection' || scenario === 'recovery Add no recorded ingress'
+        if (scenario === 'recovery Add a3318568 missing selection' || scenario === 'recovery Add no recorded ingress multiple members'
             || scenario === 'authored ui' || scenario === 'authored agent') {
             expect(result).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable',
-                details: { requiredFact: scenario === 'recovery Add no recorded ingress'
+                details: { requiredFact: scenario === 'recovery Add no recorded ingress multiple members'
                     ? 'domain_ingress_required' : 'cloudflare_selection_required', remedy: expect.any(String) } });
             expect(nativeJobs).toEqual([]);
-            expect(discoveredPrivateCandidates).toEqual([]);
-            expect(privateWrites).toEqual([]);
+            // The admitted native path allocates its private candidate before placement discovery.
+            // Ambiguity must still stop Domain admission and every native/vendor effect.
+            if (scenario === 'recovery Add no recorded ingress multiple members') expect(privateWrites).toEqual(['/v1/artifacts']);
+            else {
+                expect(discoveredPrivateCandidates).toEqual([]);
+                expect(privateWrites).toEqual([]);
+            }
             expect(trace).not.toContain('domain-admitted');
+            expect(vendorRequests).toEqual([]);
+            return;
+        }
+        if (scenario === 'recovery Add no recorded ingress') {
+            expect(result, JSON.stringify({ result, trace })).toMatchObject({ ok: true, result: { ok: true } });
+            expect(nativeJobs).toMatchObject([
+                { capture: { listener: 'privateOrigin', placement: { nativeServer: 'private_app' } } },
+                { capture: { listener: 'public', placement: { nativeServer: 'public_app' } } },
+            ]);
+            expect(nativeJobs.every(job => job.cloudflareConnector === undefined)).toBe(true);
+            expect(trace).toContain('domain-admitted');
             expect(vendorRequests).toEqual([]);
             return;
         }
@@ -692,7 +725,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
             expect(trace.indexOf('content-cas')).toBeGreaterThan(trace.indexOf('vendor-dns'));
         } else expect(trace.indexOf('content-cas'), JSON.stringify({ result, trace })).toBeGreaterThan(trace.indexOf('sealed-for-target'));
         if (createWithoutVersion) expect(trace).toContain('vendor-tunnel-created');
-        expect(result).toMatchObject({ ok: false, errorCode: scenario === 'prepared' || createWithoutVersion || omittedConfiguration || scenario === 'two members' ? 'native_route_unavailable'
+        expect(result).toMatchObject({ ok: false, errorCode: scenario === 'prepared' || scenario === 'connector admitted Domain child proof' || createWithoutVersion || omittedConfiguration || scenario === 'two members' ? 'native_route_unavailable'
             : scenario === 'content conflict' ? 'deployment_conflict' : 'outcome_unknown' });
         if (scenario === 'content conflict') {
             expect(nativeJobs).toEqual([]);

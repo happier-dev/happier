@@ -5,6 +5,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentPublishPrepareResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
@@ -209,7 +210,7 @@ export function StoreAppPreparationReview(
       approval.requestApproval(outcome.artifactId);
       return;
     }
-    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'prepare' });
+    if ('ok' in outcome) setRefusal({ code: outcome.errorCode, step: 'prepare', failure: outcome });
   }, [
     approval,
     chosen,
@@ -572,6 +573,7 @@ export function StoreAppPreparationReview(
           title={refusal.step === 'create'
             ? t('projects.deployments.createFailedTitle')
             : t('capabilities.store.appPage.refused', { name })}
+          reason={readDeploymentFailureRecoveryV1(refusal.code, refusal.failure?.details).remedy}
           diagnosticCode={refusal.code}
         />
       ) : null}

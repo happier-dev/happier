@@ -10,18 +10,18 @@ import { caddyPublicHttpServerId, type CaddyDomainRouteInput } from './caddyRout
 type ResolvedDomainIngress = Readonly<{ status: 'ready'; ingress?: DeploymentIngressV1;
     selection: ReturnType<typeof readCloudflareNamedControllerSelection> }>
     | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable';
-        details: Readonly<{ requiredFact: 'cloudflare_selection_required' | 'domain_ingress_required'; remedy: string }> }>;
+        details: Readonly<{ requiredFact: 'cloudflare_selection_required'; remedy: string }> }>;
 
 /** Environment topology never supplies the private named controller or credentials.
- * Add resolves a full selection before admission; accepted native work consumes it. */
+ * Tunnel Add resolves a full selection before admission; native placement decides
+ * whether absent topology is unambiguous. Accepted native work consumes the result. */
 export function resolveDomainIngress(domain: DeploymentDomainContentV1, ingress?: DeploymentIngressV1,
     requireSelection = false): ResolvedDomainIngress {
     const selection = readCloudflareNamedControllerSelection(domain.ingress);
-    if (requireSelection && !selection && (!ingress || ingress.kind === 'cloudflareTunnel')) return {
+    if (requireSelection && !selection && ingress?.kind === 'cloudflareTunnel') return {
         status: 'unavailable', reason: 'required_fact_unavailable', details: {
-            requiredFact: ingress ? 'cloudflare_selection_required' : 'domain_ingress_required',
-            remedy: ingress ? 'Choose a named Cloudflare tunnel and zone, then add the Domain again.'
-                : 'No ingress is recorded for this Environment. Choose the Domain ingress before adding it.',
+            requiredFact: 'cloudflare_selection_required',
+            remedy: 'Choose a named Cloudflare tunnel and zone, then add the Domain again.',
         },
     };
     return { status: 'ready', ingress: selection ? { kind: 'cloudflareTunnel' } : ingress, selection };
@@ -52,7 +52,9 @@ export function selectDomainCaddyPlacements(input: Readonly<{
     const members = input.members.filter(member => member.state === 'active');
     if (!members.length || !input.ingress && members.length > 1) return { status: 'unavailable',
         reason: 'required_fact_unavailable', machineIds: members.map(member => member.machineId),
-        details: members.length ? { requiredFact: 'domainIngress' } : activeDomainMembersDetails };
+        details: members.length ? { requiredFact: 'domain_ingress_required',
+            remedy: 'No ingress is recorded for this multi-Machine Environment. Choose the Domain ingress before adding it.' }
+            : activeDomainMembersDetails };
     const placements: Placement[] = [];
     const tunnelMachineIds = input.ingress?.kind === 'cloudflareTunnel' ? members.map(member => member.machineId) : undefined;
     const tunnelMembers: Array<{ machineId: string; installationId: string; containerId: string; nativeServer: string;

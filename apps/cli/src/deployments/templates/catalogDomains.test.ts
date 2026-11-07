@@ -56,7 +56,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 // Persistence/Artifact and native transport are the boundaries. Catalog admission,
 // reviewed-child issuance, template apply and Domain placement/settlement stay real.
 it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'optionalOnly', 'firstInstall', 'deployRetry', 'newProject', 'noProbe'] as const)('spends one Catalog create review on the real Domain owner: %s', async outcome => {
-    const state = outcome === 'active' || outcome === 'warning' ? outcome : outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'newProject' || outcome === 'noProbe' ? 'active' : 'failed';
+    const state = outcome === 'active' || outcome === 'warning' ? outcome : outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'newProject' || outcome === 'noProbe' || outcome === 'optionalOnly' ? 'active' : 'failed';
     const fixture = await createSavedSecretsCliHttpFixture({ serverIdentityId: 'srv_template_home' });
     const socket = await createRequesterCurrentnessSocketHarness();
     const nativeRoot = await mkdtemp(join(tmpdir(), 'happier-template-domain-'));
@@ -135,6 +135,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         let deployAttempts = 0;
         let domain: DeploymentDomainHeaderV1 | undefined;
         let nativeEffects = 0;
+        const nativeCaptures: DeploymentDomainObservationBodyV1['capture'][] = [];
         const put = (id: string, kind: string, content: unknown) => artifactRows.set(id, { id, ownerAccountId: accountId,
             access: 'owner', publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             header: encodePlainArtifactStoredContent({ kind, title: 'Catalog content' }),
@@ -304,6 +305,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
                                 endpoints: [{ hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443 }] },
                         ] } });
                 nativeEffects++;
+                nativeCaptures.push(job.capture);
                 if (outcome === 'nativeFailure') return { ok: false, errorCode: 'service_unavailable' };
                 const observation = { capture: job.capture, state } satisfies DeploymentDomainObservationBodyV1;
                 return { ...observation, proof: signMachineInstallationProof({ privateKey: identity.privateKey,
@@ -342,20 +344,19 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             domainBindings: [{ templateDomainId: 'web', hostname: 'app.example.test' }] });
         if (outcome === 'optionalOnly') {
             const context = { runtimeAccountId: accountId, actionRequestId: 'catalog-root' };
-            expect(await templates.prepareCreate(input, context)).toMatchObject({ ok: false, errorCode: 'template_domain_route_required' });
+            expect(await templates.prepareCreate(input, context)).toMatchObject({ input: { requestKey: input.requestKey },
+                preview: { template: { deploy: { requestKey: input.requestKey } } } });
             const unselected = await templates.prepareCreate({ ...input, domainBindings: undefined }, context);
             expect(unselected).toHaveProperty('input');
             if ('preview' in unselected) expect(unselected.preview).toMatchObject({ template: { domains: [] } });
             expect(writes).toEqual([]);
-            return;
+        } else {
+            expect(await templates.prepareCreate({ ...input, domainBindings: undefined }, { runtimeAccountId: accountId }))
+                .toMatchObject({ ok: false, errorCode: 'template_domain_required' });
         }
-        expect(await templates.prepareCreate({ ...input, domainBindings: undefined }, { runtimeAccountId: accountId }))
-            .toMatchObject({ ok: false, errorCode: 'template_domain_required' });
         expect(writes).toEqual([]); expect(contents.size).toBe(0);
         // Store's first install and retained retry share the instantiate Action root.
-        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry';
-        if (!templateRoot) expect(await templates.prepareCreate(input, { runtimeAccountId: accountId, actionRequestId: 'catalog-root' }))
-            .toMatchObject({ input: { requestKey: input.requestKey }, preview: { template: { deploy: { requestKey: input.requestKey } } } });
+        const templateRoot = outcome === 'firstInstall' || outcome === 'deployRetry' || outcome === 'optionalOnly';
         const rootAction = templateRoot ? 'deployments.templates.instantiate' as const : 'deployments.environments.create' as const;
         let rootInput = templateRoot ? DeploymentTemplateInstantiateInputV1Schema.parse({
             mode: 'apply', serverId: input.serverId, machineId: 'target', projectSourceId: input.projectSourceId, templateRef,
@@ -371,24 +372,26 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             });
             expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true,
                 result: { kind: 'preview', review: { deploy: { requestKey: input.requestKey } } } });
-            const normalized = await templates.prepare(DeploymentTemplateInstantiateInputV1Schema.parse(rootInput),
-                { runtimeAccountId: accountId, actionRequestId: 'catalog-admission' });
-            expect(normalized).toMatchObject({ input: { deploy: { requestKey: input.requestKey } },
-                preview: { deploy: { requestKey: input.requestKey } } });
-            if (!('input' in normalized)) throw new Error('Expected canonical install preparation');
-            rootInput = normalized.input;
-            if (outcome === 'firstInstall') {
-                // Home records this person's agent allowance for the reviewed root and children.
-                // Default Ask and retained-review freshness stay covered by approval controls.
-                const document = AccountSettingsV2GetResponseSchema.parse(settings.data);
-                if (document.content?.t !== 'plain') throw new Error('Expected plain fixture Settings');
-                let actionsSettingsV1 = setActionApprovalOverride({ settings: accountSettingsParse(document.content.v).actionsSettingsV1,
-                    actionId: rootAction, surface: 'agent', approvalRequired: false });
-                for (const child of normalized.hostReviewedChildren.children) actionsSettingsV1 = setActionApprovalOverride({
-                    settings: actionsSettingsV1, actionId: child.action, surface: 'agent', approvalRequired: false });
-                settings.data = { ...document, content: { t: 'plain', v: { ...document.content.v, actionsSettingsV1 } } };
-            }
         }
+        const normalized = templateRoot
+            ? await templates.prepare(DeploymentTemplateInstantiateInputV1Schema.parse(rootInput),
+                { runtimeAccountId: accountId, actionRequestId: 'catalog-admission' })
+            : await templates.prepareCreate(input, { runtimeAccountId: accountId, actionRequestId: 'catalog-root' });
+        expect(normalized).toMatchObject(templateRoot
+            ? { input: { deploy: { requestKey: input.requestKey } }, preview: { deploy: { requestKey: input.requestKey } } }
+            : { input: { requestKey: input.requestKey }, preview: { template: { deploy: { requestKey: input.requestKey } } } });
+        if (!('input' in normalized)) throw new Error('Expected canonical install preparation');
+        rootInput = normalized.input;
+        const surface = outcome === 'firstInstall' ? 'agent' : 'ui';
+        // Home records this person's allowance for the reviewed root and its owner-produced children.
+        // Default Ask and retained-review freshness stay covered by approval controls.
+        const document = AccountSettingsV2GetResponseSchema.parse(settings.data);
+        if (document.content?.t !== 'plain') throw new Error('Expected plain fixture Settings');
+        let actionsSettingsV1 = setActionApprovalOverride({ settings: accountSettingsParse(document.content.v).actionsSettingsV1,
+            actionId: rootAction, surface, approvalRequired: false });
+        for (const child of normalized.hostReviewedChildren.children) actionsSettingsV1 = setActionApprovalOverride({
+            settings: actionsSettingsV1, actionId: child.action, surface, approvalRequired: false });
+        settings.data = { ...document, content: { t: 'plain', v: { ...document.content.v, actionsSettingsV1 } } };
         sourceReads = 0;
         const target = { kind: 'machine' as const, machineId: 'target' };
         const envelope = { v: 1 as const, requestId: 'catalog-root', target, input: rootInput };
@@ -406,7 +409,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             serverHttpBaseUrl: fixture.origin, ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => executor });
         if (!requester) throw new Error('Expected requester content custody');
         onTestFinished(() => requester.dispose());
-        const prepared = await executor.prepare(rootAction, rootInput, { surface: outcome === 'firstInstall' ? 'agent' : 'ui', authority: 'present_user',
+        const prepared = await executor.prepare(rootAction, rootInput, { surface, authority: 'present_user',
             actionCaller: { kind: 'host' }, runtimeAccountId: accountId, serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
             actionsSettings: requester.actionsSettings,
             actionRequestId: envelope.requestId, executionRunTargetMachineId: 'target',
@@ -451,7 +454,7 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             sourceCanManage = true; sourceReads = 0;
             const resumed = await executor.prepare('deployments.templates.instantiate', retry, { surface: 'ui', authority: 'present_user',
                 actionCaller: { kind: 'host' }, runtimeAccountId: accountId, serverId: 'srv_template_home', serverIdentityId: 'srv_template_home',
-                actionsSettings: accountSettings.actionsSettingsV1,
+                actionsSettings: retryRequester.actionsSettings,
                 actionRequestId: retryEnvelope.requestId, executionRunTargetMachineId: 'target', externalActionTarget: target,
                 originalActionEnvelope: retryEnvelope, externalActionExecutionAuthorization: retryRequester.authorization,
                 operationAcceptance: { operationId: 'retry-operation', accept() {} } });
@@ -473,13 +476,20 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
         expect(result).toMatchObject(state === 'failed'
             ? { ok: false, errorCode: failureCode, details: { kind: 'partial', phase: 'domains',
                 environmentId: environment.environment.id, errorCode: failureCode } }
-            : outcome === 'firstInstall' ? { ok: true, result: { kind: 'applied', environmentId: environment.environment.id,
+            : templateRoot ? { ok: true, result: { kind: 'applied', environmentId: environment.environment.id,
                 deployment: { ok: true, deploymentId: 'receipt', state: 'succeeded' } } }
                 : { ok: true, result: { ok: true, environmentId: environment.environment.id } });
         if (outcome === 'discoveryFailure') expect(domain).toBeUndefined();
         else expect(domain).toMatchObject({ state: outcome === 'nativeFailure' ? 'pending' : state,
             environmentId: environment.environment.id, targetLinkId: link.id });
         expect(environment.content.definition).toMatchObject({ kind: 'stored' });
+        if (outcome === 'optionalOnly') {
+            expect(environment.content).not.toHaveProperty('ingress');
+            expect(nativeCaptures).toMatchObject([
+                { listener: 'privateOrigin', placement: { nativeServer: 'private_app' } },
+                { listener: 'public', placement: { nativeServer: 'public_app' } },
+            ]);
+        }
         expect(sourceReads).toBe(1);
         expect(nativeEffects).toBe(outcome === 'discoveryFailure' ? 0 : outcome === 'nativeFailure' ? 1 : 2);
         expect(writes).toEqual(['deployments.environments.create', 'deployments.bindings.set', 'deployments.deploy',

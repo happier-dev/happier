@@ -11,6 +11,8 @@ import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/conn
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -21,7 +23,8 @@ export type DomainIngressInspection = ReturnType<typeof createDeploymentActions>
 type Selection = NonNullable<DeploymentDomainContentV1['ingress']>;
 type TunnelOption = Readonly<{ label: string; selection: Selection }>;
 type Zone = Readonly<{ zoneId: string; name: string }>;
-type ZoneRead = Readonly<{ key: string }> & (
+type Defaults = Readonly<{ accountId?: string; connector: Readonly<{ imageRef: string; version: string }> }>;
+type ZoneRead = Readonly<{ key: string; credentialKey: string; defaults?: Defaults }> & (
   | Readonly<{ kind: 'ready'; zones: readonly Zone[] }>
   | Readonly<{ kind: 'unavailable'; reason: string }>
 );
@@ -50,8 +53,16 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const [tunnels, setTunnels] = React.useState<TunnelRead | null>(null);
   const [tunnelChoice, setTunnelChoice] = React.useState<string | null>(null);
   const [reading, setReading] = React.useState<'zones' | 'tunnels' | null>(null);
-  const input = { credentialRef, accountId: accountId.trim(), hostname: props.hostname,
-    connector: { imageRef: imageRef.trim(), version: version.trim() } };
+  const [advanced, setAdvanced] = React.useState(false);
+  const credentialKey = JSON.stringify(credentialRef);
+  const defaults = zones?.credentialKey === credentialKey ? zones.defaults : undefined;
+  const connectorOverride = imageRef.trim() || version.trim() ? {
+    imageRef: imageRef.trim() || defaults?.connector.imageRef || '',
+    version: version.trim() || defaults?.connector.version || '',
+  } : undefined;
+  const input = { credentialRef, hostname: props.hostname,
+    ...(accountId.trim() ? { accountId: accountId.trim() } : {}),
+    ...(connectorOverride ? { connector: connectorOverride } : {}) };
   const zoneKey = JSON.stringify(input);
   const currentZones = zones?.key === zoneKey ? zones : null;
   const explicitZone = currentZones?.kind === 'unavailable' && currentZones.reason === 'zone_list_unavailable';
@@ -61,23 +72,29 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const currentTunnels = tunnels?.key === tunnelKey ? tunnels : null;
   const selected = currentTunnels?.kind === 'ready' && tunnelChoice !== null
     ? currentTunnels.options[Number(tunnelChoice)]?.selection : undefined;
-  const canRead = !!props.inspect && !!credentialRef && !!input.accountId && !!props.hostname
-    && !!input.connector.imageRef && !!input.connector.version && !props.busy && !reading;
+  const canRead = !!props.inspect && !!credentialRef && !!props.hostname
+    && (!connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
   const inspect = async (kind: 'zones' | 'tunnels') => {
     if (!canRead || !props.inspect || kind === 'tunnels' && !zoneId) return;
     setReading(kind);
     try {
       const result = await props.inspect(selectionAction, { ...input, ...(kind === 'tunnels' ? { zoneId } : {}) });
       const value: unknown = result.ok ? result.value : null;
+      const supplied = isRecord(value) && isRecord(value.defaults) ? value.defaults : null;
+      const resolvedDefaults: Defaults | undefined = supplied && isRecord(supplied.connector)
+        && typeof supplied.connector.imageRef === 'string' && typeof supplied.connector.version === 'string'
+        ? { connector: { imageRef: supplied.connector.imageRef, version: supplied.connector.version },
+            ...(typeof supplied.accountId === 'string' ? { accountId: supplied.accountId } : {}) } : undefined;
+      const metadata = { credentialKey, ...(resolvedDefaults ? { defaults: resolvedDefaults } : {}) };
       const reason = isRecord(value) && value.kind === 'unavailable' && typeof value.reason === 'string'
         ? value.reason : !result.ok ? result.code : 'invalid_provider_output';
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
         if (rows && rows.every((zone): zone is Zone => isRecord(zone) && typeof zone.zoneId === 'string' && typeof zone.name === 'string')) {
-          setZones({ key: zoneKey, kind: 'ready', zones: rows });
+          setZones({ key: zoneKey, ...metadata, kind: 'ready', zones: rows });
           setZoneChoice(rows.length === 1 ? rows[0]!.zoneId : null);
         } else {
-          setZones({ key: zoneKey, kind: 'unavailable', reason });
+          setZones({ key: zoneKey, ...metadata, kind: 'unavailable', reason });
           setZoneChoice(null);
         }
         setTunnels(null);
@@ -97,7 +114,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       }
     } catch {
       if (kind === 'zones') {
-        setZones({ key: zoneKey, kind: 'unavailable', reason: 'provider_unavailable' });
+        setZones({ key: zoneKey, credentialKey, kind: 'unavailable', reason: 'provider_unavailable' });
         setZoneChoice(null);
       } else {
         setTunnels({ key: tunnelKey, kind: 'unavailable', reason: 'provider_unavailable' });
@@ -116,18 +133,23 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         accountsOnly
         disabled={props.busy}
       />
+      <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
+        header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
+          title={t('projects.deployments.domainIngressAdvanced')} />}
+      >
       <FieldItem label={t('projects.deployments.domainIngressAccountId')}>
-        <FieldTextInput testID={`${id}.accountId`} value={accountId} onChangeText={setAccountId}
+        <FieldTextInput testID={`${id}.accountId`} value={accountId || defaults?.accountId || ''} onChangeText={setAccountId}
           accessibilityLabel={t('projects.deployments.domainIngressAccountId')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
       <FieldItem label={t('projects.deployments.domainIngressImage')} supportingText={t('projects.deployments.domainIngressConnectorHint')}>
-        <FieldTextInput testID={`${id}.imageRef`} value={imageRef} onChangeText={setImageRef}
+        <FieldTextInput testID={`${id}.imageRef`} value={imageRef || defaults?.connector.imageRef || ''} onChangeText={setImageRef}
           accessibilityLabel={t('projects.deployments.domainIngressImage')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
       <FieldItem label={t('projects.deployments.domainIngressVersion')}>
-        <FieldTextInput testID={`${id}.version`} value={version} onChangeText={setVersion}
+        <FieldTextInput testID={`${id}.version`} value={version || defaults?.connector.version || ''} onChangeText={setVersion}
           accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
       </FieldItem>
+      </ExpandableItem>
       <SectionActionButton testID={`${id}.zones.read`} title={t('projects.deployments.domainIngressReadZones')}
         icon="arrow-clockwise" onPress={() => { void inspect('zones'); }} disabled={!canRead} loading={reading === 'zones'} />
       {currentZones?.kind === 'ready' ? (

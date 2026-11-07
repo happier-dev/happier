@@ -176,12 +176,10 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         if (contentRevision === null) return refuse('deployment_conflict');
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
-        // Every install root reviews required-Domain deployment before allocating its Environment.
-        if (input.environment.kind === 'create' && !input.deploy && template.domains.some(domain => domain.required)) {
+        // Every install root reviews selected-Domain deployment before allocating its Environment.
+        if (input.environment.kind === 'create' && !input.deploy && prepared.domains.length) {
             input = { ...input, deploy: creationReview?.deploy ?? { requestKey: input.environment.requestKey } };
         }
-        // Optional-only Catalog selection retains its existing refusal until an explicit deploy is requested.
-        if (prepared.domains.length && input.environment.kind === 'create' && !input.deploy) return refuse('template_domain_route_required');
         const name = current?.content.name ?? (input.environment.kind === 'create' ? input.environment.name : '');
         const projectOwner = input.newProject?.owner ?? source?.source.owner
             ?? (source ? { kind: 'account' as const, accountId: source.source.createdByAccountId } : refuse('invalid_parameters'));

@@ -1220,7 +1220,7 @@ admits the captured Account credential reference and native delete operands once
 existing reviewed-child issuer then performs deletion through the declared data
 Action and records success, failure or an unknown outcome in the ordinary
 teardown receipt. Editing the live data link from A to B does not redirect cleanup
-of A or delete B. Replaying the same teardown request reuses its existing receipt
+of A or delete B. Replaying a successful teardown request reuses its existing receipt
 and content Artifact without a second provider deletion. A missing or unknown
 creation result cannot authorize cleanup.
 Data-only cleanup has no application source revision; it retains receipt outcome
@@ -2070,7 +2070,10 @@ scheduled snapshot with `backupOperationId` plus the exact `restoreBackupId`
 snapshot ID from inventory or history. The host selects that scoped successful
 run receipt; callers never provide a manifest or native capture. Omitting
 `backupOperationId` retains pre-migration receipt selection. Confirm must repeat
-the preparation's exact operands.
+the preparation's exact operands. Retained run selection spans deployment
+generations within the same Account, Home, Machine installation, Environment
+and target link. Callers keep the active `deploymentId`; the receipt retains its
+original generation, and restore targets the active native deployment.
 
 New backup runs retain optional `restoreCaptures` with their original PostgreSQL
 database, source, configuration and repository, without credential values. Older
@@ -2503,7 +2506,12 @@ keep the disposition owner's existing inventory and revision rules.
 
 The native teardown Action uses one receipt and the existing signed transition
 writer. Its finite continuation observes the first unproved owned step before
-dispatch, skips recorded proved steps and does not replay an unknown removal.
+dispatch and skips recorded proved steps. Retry on a native teardown receipt
+invokes `deployments.teardown` through the same Action executor. While the daemon
+retains that admitted invocation, it resumes the same operation and receipt with
+the original signed request and resource retention choices, without preparing or
+approving another teardown. A fresh observation may prove that the unproved step
+still needs execution; an unknown observation remains an unproved removal.
 Development own-server teardown accepts an Environment/target revision intent;
 the Action placement owner routes an unprepared intent to the Machine, where
 the installed host prepares its workload inventory before approval, including

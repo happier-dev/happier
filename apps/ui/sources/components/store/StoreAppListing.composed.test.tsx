@@ -32,6 +32,8 @@ import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/registries';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 // The real Registry read, App preparation hook, Action front door and Store listing body run; only the Home's
 // HTTP boundary answers (the same harness as the App data owner's own test).
@@ -120,7 +122,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
   const preparations: ReturnType<
     typeof DeploymentPublishPrepareInputV1Schema.parse
   >[] = [];
-  const mode = { value: 'prepared' as 'prepared' | 'refused' | 'approval' };
+  const mode: { value: 'prepared' | 'refused' | 'approval'; failure?: ActionExecuteFailure } = { value: 'prepared' };
   const serverId = await homes.addHome({
     name: 'App Home',
     serverUrl,
@@ -190,7 +192,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           requestId: envelope.requestId,
           execution:
             mode.value === 'refused'
-              ? {
+              ? mode.failure ?? {
                   ok: false,
                   errorCode: 'machine_unavailable',
                   error: 'machine_unavailable',
@@ -616,6 +618,8 @@ it('prepares the exact App only on the person’s review and shows prepared, ref
       screen.findHostByTestId('store.app.prepare.back')!.props.onPress?.();
     });
     fixture.mode.value = 'refused';
+    const failureDetails = { requiredFact: 'routeUpstreams' };
+    fixture.mode.failure = { ok: false, errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', details: failureDetails };
     await act(async () => {
       await screen
         .findHostByTestId('store.app.prepare.review')!
@@ -628,6 +632,8 @@ it('prepares the exact App only on the person’s review and shows prepared, ref
       screen.findHostByTestId('store.app.prepare.refused')!.props,
     ).toBeTruthy();
     expect(screen.findHostByTestId('store.app.prepare.prepared')).toBeFalsy();
+    expect(screen.getTextContent()).toContain(projectDeploymentFailureRecoveryV1(failureDetails, 'required_fact_unavailable').remedy);
+    expect(screen.getTextContent()).not.toContain('required_fact_unavailable');
 
     fixture.mode.value = 'approval';
     await act(async () => {
@@ -888,6 +894,8 @@ it('creates the App in a new Project named and owned by the person, carrying tha
     await press('store.app.prepare.confirm');
     await waitForHomeGovernance(() => expect(screen.findAll(node => node.props?.testID === 'store.app.prepare.refused'
       && node.props.diagnosticCode === 'deployment_access_denied')).not.toHaveLength(0));
+    expect(screen.getTextContent()).toContain(projectDeploymentFailureRecoveryV1({}, 'deployment_access_denied').remedy);
+    expect(screen.getTextContent()).not.toContain('deployment_access_denied');
     expect(pushed).toEqual([]);
     expect(fixture.creations.at(-1)).not.toHaveProperty('projectSourceId');
     expect(fixture.creations.at(-1)?.newProject).toEqual(prepared.newProject);

@@ -7,7 +7,8 @@ import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol
 import { createPackageAssetArchiveV1, readDeclaredPackageAssetsV1 } from '@happier-dev/protocol/plugins/availability/packageAssetV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactReadActionOutputV1Schema,
-    normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
+    PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
+    PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
     createPluginUiArtifactArchiveV1, encodePluginUiArtifactArchiveBodyV1, PluginUiArtifactsManifestV2Schema } from '@happier-dev/protocol/plugins/ui';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -114,10 +115,18 @@ export async function registerAuthoredAccountActionRelease(app: FastifyInstance,
             artifactId: slot.artifactId, tier: slot.tier, platform: slot.platform,
             artifactDigest: slot.artifactDigest, hostUiApiRange: slot.hostUiApiRange,
             accountArtifactId: fixture.hostedArtifacts.find(artifact => artifact.graphArtifactId === slot.artifactId)!.artifactId })), packageAssets: [] });
-    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async () => ({
-        availabilityCursor: 1, pluginIds: [...fixtures.map(fixture => fixture.pluginId), ...(options.includeBundledPluginIds ?? [])],
-        intentReads: [...fixtures.map(fixture => ({ pluginId: fixture.pluginId, response: response(fixture) })),
-            ...(options.includeBundledPluginIds ?? []).map(pluginId => ({ pluginId, response: response(undefined) }))], failedPluginIds: [] }));
+    app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], async request => {
+        const input = PluginAvailabilityIntentsListActionInputV1Schema.parse(request.body);
+        const fixtureIds = [...fixtures.map(fixture => fixture.pluginId), ...(options.includeBundledPluginIds ?? [])];
+        // Home returns an explicit absent-intent read for caller-known ids too.
+        const candidates = [...new Set([...fixtureIds, ...(input.knownPluginIds ?? [])])]
+            .filter(pluginId => !input.cursor || pluginId > input.cursor).sort();
+        const pageIds = candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
+        return PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+            pluginIds: fixtureIds.filter(pluginId => pageIds.includes(pluginId)),
+            intentReads: pageIds.map(pluginId => ({ pluginId, response: response(fixtures.find(fixture => fixture.pluginId === pluginId)) })),
+            failedPluginIds: [], ...(candidates.length > pageIds.length ? { nextCursor: pageIds.at(-1)! } : {}) });
+    });
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async request => {
         const { pluginId } = PluginAvailabilityIntentReadActionInputV1Schema.parse(request.body);
         return response(fixtures.find(fixture => fixture.pluginId === pluginId));
