@@ -422,6 +422,28 @@ async function renderDatabase(
   };
 }
 
+describe('Environment → Data → Add (P10)', () => {
+  it('gives an Environment defined in its repository one real next step: Store databases on its Machine', async () => {
+    const { showDeploymentAddSheet } = await import('./DeploymentDatabasePage');
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, runtimeTargetLink: null, memberVersions: {},
+      content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } } };
+    const screen = await renderScreen(<ModalProvider />);
+    try {
+      await act(async () => {
+        showDeploymentAddSheet({ detail, review: noReview, machineName: () => 'vps-2',
+          lifetime: { scope: { serverId: 'home', accountId: 'account-owner' }, isCurrent: () => true } as never });
+      });
+      expect(screen.findByTestId('project-deployments.add.blocked')).not.toBeNull();
+      routerMock.spies.push.mockClear();
+      await screen.pressByTestIdAsync('project-deployments.add.openStore');
+      const pushed = String(routerMock.spies.push.mock.calls[0]?.[0] ?? '');
+      expect(pushed).toContain('kind=app');
+      expect(pushed).toContain('database');
+    } finally { await screen.unmount(); }
+  });
+});
+
 describe('Environment → Data → Database page (P9)', () => {
   it('reads backup history once on open, shows it, and Back up now runs the same Action an agent uses', async () => {
     const view = await renderDatabase({

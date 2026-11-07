@@ -18777,6 +18777,7 @@ settingsSession: {
       restoreRecoveryRequired: "Die Wiederherstellung brach mittendrin ab; die Daten müssen repariert werden",
       restoreCodeUnchanged: "Der laufende Code bleibt unverändert.",
       restoreCheckAgain: "Diese Prüfung ist nicht mehr aktuell. Prüfe das Backup erneut.",
+      addOpenStore: "Datenbank im Store finden",
       addTitle: "Dienst oder Datenbank hinzufügen",
       addRepositoryDefined: "Dieses Environment ist in seinem Repository definiert. Füge den Dienst dort in die Compose-Datei ein.",
       addNeedsMachine: "Verbinde zuerst eine Machine mit diesem Environment.",

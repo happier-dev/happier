@@ -22123,6 +22123,7 @@ const enProjects = {
       restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
       restoreCodeUnchanged: "The running code is unchanged.",
       restoreCheckAgain: "That check is no longer current. Check the backup again.",
+      addOpenStore: "Find a database in Store",
       addTitle: "Add a service or database",
       addRepositoryDefined: "This Environment is defined in its repository. Add the service to its Compose file there.",
       addNeedsMachine: "Link a Machine to this Environment before adding services.",

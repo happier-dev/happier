@@ -18290,6 +18290,7 @@ settingsSession: {
       restoreRecoveryRequired: "恢复中途停止，数据需要修复",
       restoreCodeUnchanged: "正在运行的代码保持不变。",
       restoreCheckAgain: "该检查已过期。请重新检查备份。",
+      addOpenStore: "在 Store 中查找数据库",
       addTitle: "添加服务或数据库",
       addRepositoryDefined: "此 Environment 在其仓库中定义。请在那里的 Compose 文件中添加服务。",
       addNeedsMachine: "请先为此 Environment 关联一台 Machine。",

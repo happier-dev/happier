@@ -18624,6 +18624,7 @@ settingsSession: {
       restoreRecoveryRequired: "Восстановление остановилось на полпути, данные нужно восстановить",
       restoreCodeUnchanged: "Работающий код не меняется.",
       restoreCheckAgain: "Эта проверка устарела. Проверьте копию ещё раз.",
+      addOpenStore: "Найти базу данных в Store",
       addTitle: "Добавить сервис или базу данных",
       addRepositoryDefined: "Этот Environment описан в репозитории. Добавьте сервис в его файл Compose там.",
       addNeedsMachine: "Сначала подключите Machine к этому Environment.",

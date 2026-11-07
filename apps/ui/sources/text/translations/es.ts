@@ -18671,6 +18671,7 @@ settingsSession: {
       restoreRecoveryRequired: "La restauración se detuvo a medias y hay que recuperar los datos",
       restoreCodeUnchanged: "El código en ejecución no cambia.",
       restoreCheckAgain: "Esa comprobación ya no está al día. Comprueba la copia otra vez.",
+      addOpenStore: "Buscar una base de datos en Store",
       addTitle: "Añadir un servicio o una base de datos",
       addRepositoryDefined: "Este Environment se define en su repositorio. Añade el servicio a su archivo Compose allí.",
       addNeedsMachine: "Vincula primero una Machine a este Environment.",

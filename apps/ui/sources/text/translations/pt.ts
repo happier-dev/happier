@@ -18777,6 +18777,7 @@ settingsSession: {
       restoreRecoveryRequired: "O restauro parou a meio e os dados precisam de recuperação",
       restoreCodeUnchanged: "O código em execução não muda.",
       restoreCheckAgain: "Essa verificação já não é atual. Verifica o backup novamente.",
+      addOpenStore: "Encontrar uma base de dados na Store",
       addTitle: "Adicionar um serviço ou base de dados",
       addRepositoryDefined: "Este Environment é definido no seu repositório. Adiciona o serviço ao ficheiro Compose lá.",
       addNeedsMachine: "Liga primeiro uma Machine a este Environment.",

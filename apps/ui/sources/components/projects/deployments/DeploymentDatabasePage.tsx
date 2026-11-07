@@ -47,6 +47,8 @@ import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetShe
 import { StoreKindPage, StoreRegistryItemSelectContext } from '@/components/store/StoreKindPage';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { useRegistryItem } from '@/registries/useRegistryItem';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
@@ -622,12 +624,21 @@ function DeploymentAddSheet(props: DeploymentAddSheetInput & CustomModalInjected
   const blocked = definition.kind !== 'stored' ? t('projects.deployments.addRepositoryDefined')
     : !link || !member ? t('projects.deployments.addNeedsMachine') : null;
   const { setChrome, onClose } = props;
+  const router = useRouter();
   const back = chosen ? () => setChosen(null) : null;
   if (blocked || !link || !member || definition.kind !== 'stored') {
+    // This Environment can't take a template in place; its one way forward is a database of its own from Store,
+    // on the same Machine, connected later through Variables (the Data card's own guide).
+    const openStore = () => {
+      onClose();
+      router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', query: 'database',
+        machine: { serverId: props.lifetime.scope.serverId, machineId: detail.environment.controllerMachineId } }) as never);
+    };
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.add" style={deploymentSheetStyles.body}>
-          <SurfaceStateCard testID="project-deployments.add.blocked" size="line" kind="unavailable" title={blocked ?? ''} />
+          <SurfaceStateCard testID="project-deployments.add.blocked" size="line" kind="unavailable" title={blocked ?? ''}
+            action={{ label: t('projects.deployments.addOpenStore'), onPress: openStore, testID: 'project-deployments.add.openStore' }} />
         </View>
       </ListPresentationProvider>
     );

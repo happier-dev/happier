@@ -18585,6 +18585,7 @@ settingsSession: {
       restoreRecoveryRequired: "復元が途中で止まり、データの回復が必要です",
       restoreCodeUnchanged: "実行中のコードは変わりません。",
       restoreCheckAgain: "この確認は最新ではありません。バックアップをもう一度確認してください。",
+      addOpenStore: "Store でデータベースを探す",
       addTitle: "サービスまたはデータベースを追加",
       addRepositoryDefined: "この Environment はリポジトリで定義されています。サービスはそこの Compose ファイルに追加してください。",
       addNeedsMachine: "先にこの Environment に Machine をリンクしてください。",

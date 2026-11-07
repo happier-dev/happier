@@ -18545,6 +18545,7 @@ settingsSession: {
       restoreRecoveryRequired: "La restauration s’est arrêtée en cours de route et les données doivent être récupérées",
       restoreCodeUnchanged: "Le code en cours d’exécution ne change pas.",
       restoreCheckAgain: "Cette vérification n’est plus à jour. Vérifie à nouveau la sauvegarde.",
+      addOpenStore: "Trouver une base de données dans le Store",
       addTitle: "Ajouter un service ou une base de données",
       addRepositoryDefined: "Cet Environment est défini dans son dépôt. Ajoute le service à son fichier Compose là-bas.",
       addNeedsMachine: "Relie d’abord une Machine à cet Environment.",

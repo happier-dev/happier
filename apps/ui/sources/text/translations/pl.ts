@@ -18496,6 +18496,7 @@ settingsSession: {
       restoreRecoveryRequired: "Przywracanie zatrzymało się w połowie i dane wymagają odzyskania",
       restoreCodeUnchanged: "Działający kod pozostaje bez zmian.",
       restoreCheckAgain: "To sprawdzenie jest już nieaktualne. Sprawdź kopię ponownie.",
+      addOpenStore: "Znajdź bazę danych w Store",
       addTitle: "Dodaj usługę lub bazę danych",
       addRepositoryDefined: "To Environment jest zdefiniowane w repozytorium. Dodaj usługę do jego pliku Compose.",
       addNeedsMachine: "Najpierw połącz Machine z tym Environment.",

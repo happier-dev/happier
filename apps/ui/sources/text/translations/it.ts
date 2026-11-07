@@ -18673,6 +18673,7 @@ settingsSession: {
       restoreRecoveryRequired: "Il ripristino si è fermato a metà e i dati vanno recuperati",
       restoreCodeUnchanged: "Il codice in esecuzione non cambia.",
       restoreCheckAgain: "Questa verifica non è più attuale. Verifica di nuovo il backup.",
+      addOpenStore: "Trova un database nello Store",
       addTitle: "Aggiungi un servizio o un database",
       addRepositoryDefined: "Questo Environment è definito nel suo repository. Aggiungi il servizio al file Compose lì.",
       addNeedsMachine: "Collega prima una Machine a questo Environment.",
