@@ -1,6 +1,6 @@
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isDeepStrictEqual } from 'node:util';
-import { hasStoredSessionCredentialProvenance } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { selectHostAccountExecutionIdentityForSession } from '../agentIsolation/agentIsolationAccountCustody';
@@ -13,6 +13,23 @@ import {
   readRequesterSessionExecutionCustodyForHost,
   resolveRequesterSessionExecutionIdentityForHost,
 } from './requesterSessionCredentials';
+
+/** A new ordinary launch captures today's sign-in, not the daemon's startup
+ * bearer. Home still qualifies the exact Machine/Session; the bound Account
+ * cannot change, and the captured sign-in stays exact through admission. */
+export async function captureOrdinaryRequesterSessionAccountCustodyForHost(
+  input: Omit<Parameters<typeof readOrdinaryRequesterSessionAccountCustodyForHost>[0], 'captured'>,
+): Promise<RequesterAccountActionCustody | null> {
+  input.signal?.throwIfAborted();
+  const credentials = await readStoredCredentialsForServerId(input.serverId);
+  const accountId = input.sessionCustodianAccountId ?? readAccountIdFromToken(input.credentials.token);
+  if (!credentials || !accountId || readAccountIdFromToken(credentials.token) !== accountId) return null;
+  const custody = await readOrdinaryRequesterSessionAccountCustodyForHost({ ...input, credentials,
+    isCurrent: async () => await input.isCurrent()
+      && sameStoredCredentials(credentials, await readStoredCredentialsForServerId(input.serverId)),
+  });
+  return custody?.attribution.accountId === accountId ? custody : null;
+}
 
 /** Ordinary Account custody is available only for the independently qualified
  * physical owner and exact Session, with literal absence of private birth.

@@ -1,10 +1,13 @@
 import { access, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { requesterSessionCredentialPath } from '../sessionEncryption/requesterSessionCredentials';
 import { createOnChildExited } from '../sessions/onChildExited';
+import { readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
+import { createRunnerIsolationIdentity } from '../agentRuntime/runnerIsolationIdentity';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 // The listener is an OS boundary. Retained custody, Account admission, runtime
@@ -17,6 +20,69 @@ vi.mock('@/daemon/controlServer', async original => ({
   },
 }));
 afterEach(() => { vi.restoreAllMocks(); boundary.control = null; });
+
+it.each(['unchanged', 'renewed', 'other-account'] as const)('native runner admits the exact ordinary Account with %s sign-in', async signIn => {
+  const origin = { serverIdentityId: 'srv_ordinary_runner', machineId: 'machine' };
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
+    ordinaryAccountSession: true, externalActionAccountId: 'requester', homeServerIdentityId: origin.serverIdentityId,
+    resolveCurrentMachineExecutionOriginContext: async () => origin,
+  });
+  const credentials = await readStoredCredentialsForServerId('session-home');
+  if (!credentials) throw new Error('Missing fixture credentials');
+  if (signIn !== 'unchanged') {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: signIn === 'renewed' ? 'requester' : 'another-account',
+      jti: 'runner-renewal', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    await writeStoredCredentialsForServerId('session-home', { token, encryption: null });
+  }
+  const identity = createRunnerIsolationIdentity({ signal: h.signal, serverId: 'session-home',
+    serverBaseUrl: 'https://session-home.test', machineId: 'machine', sessionId: h.sessionId,
+    credentials, custodianAccountId: 'requester', tracked: h.tracked, origin,
+    readOrigin: async () => origin, isCurrent: () => true, releaseRuntime: async () => {},
+  });
+  await expect(identity.resolve()).resolves.toMatchObject(signIn === 'other-account'
+    ? { kind: 'unknown', reason: 'session_requester_unavailable' }
+    : { kind: 'isolated', separationRequired: false, requester: { accountId: 'requester' } });
+});
+
+it.each(['unchanged', 'renewed', 'other-account', 'other-daemon-account'] as const)('ordinary owner Resume preserves Account binding with %s sign-in', async signIn => {
+  const home = 'srv_ordinary_resume';
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, undefined, undefined, {
+    ordinaryAccountSession: true,
+    externalActionAccountId: signIn === 'other-daemon-account' ? 'another-account' : 'requester', homeServerIdentityId: home,
+    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: home, machineId: 'machine' }),
+  });
+  h.tracked.pid = 2_147_000_000;
+  h.tracked.sessionRunnerPid = h.tracked.pid;
+  h.tracked.stopRequestedAtMs = Date.now();
+  h.pidToTrackedSession.clear();
+  h.pidToTrackedSession.set(h.tracked.pid, h.tracked);
+  const exited = createOnChildExited({ pidToTrackedSession: h.pidToTrackedSession,
+    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  await exited(h.tracked.pid, { reason: 'process-exited', code: 0, signal: null });
+  h.pidToTrackedSession.clear();
+  if (signIn === 'renewed' || signIn === 'other-account') {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: signIn === 'renewed' ? 'requester' : 'another-account',
+      jti: 'renewed-terminal', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    await writeStoredCredentialsForServerId('session-home', {
+      token, encryption: null,
+    });
+    if (signIn === 'renewed') {
+      // Home is the authority boundary: only the renewed fixture bearer can
+      // qualify this Session. A JWT subject comparison cannot substitute it.
+      const read = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (...args) => {
+        if (String(args[0]).includes('/v2/sessions/') && args[1]?.headers?.Authorization !== `Bearer ${token}`) {
+          throw new Error('Retired fixture bearer');
+        }
+        return read(...args);
+      });
+    }
+  }
+  await expect(h.daemon.spawnSession({ existingSessionId: h.sessionId, directory: h.cwd,
+    environmentVariables: { 'INVALID=KEY': 'fixture' } }))
+    .resolves.toMatchObject({ type: 'error', errorCode: signIn === 'other-account' || signIn === 'other-daemon-account'
+      ? 'DAEMON_RPC_UNAVAILABLE' : 'INVALID_ENVIRONMENT_VARIABLES' });
+});
 
 it('keeps persisted requester birth through Stop, physical exit and cold Resume', async () => {
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control);

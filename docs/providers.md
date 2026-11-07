@@ -2441,6 +2441,11 @@ Connected Account homes as birth. Runner cleanup releases the live runtime, not
 the retained Session's private birth. Unavailable requester custody does not
 authorize another Account's runtime. Historical custody already deleted by an
 older daemon cannot be reconstructed from native transcript files.
+For ordinary owner Sessions without private requester birth, a new Resume or
+runner native-launch admission captures the currently stored sign-in through
+the ordinary Session custody owner. Same-Account bearer renewal does not change
+the Session's Account; Home still qualifies the exact Machine and Session, and
+a different Account or unavailable retained birth refuses admission.
 Resume and Session creation share the existing Connected Service diagnostic
 presenter, including `provider_session_state_unavailable_for_resume`; local
 paths and native Session ids remain outside the alert.

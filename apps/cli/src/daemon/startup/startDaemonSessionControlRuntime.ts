@@ -167,7 +167,7 @@ import { logger } from '@/ui/logger';
 import { createDaemonQualifiedRequestAuthCallbacks } from '../connectedServices/requestAuth/createDaemonQualifiedRequestAuthCallbacks';
 import { resolveRequesterSessionRuntimeDirectories } from '../sessionEncryption/createRequesterSessionRuntimeContext';
 import { assertRequesterSessionAccountContextCurrent, listRequesterSessionCredentialBindings } from "../sessionEncryption/requesterSessionCredentials";
-import { readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from '../sessionEncryption/ordinaryRequesterSessionAccountCustody';
+import { captureOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountCustodyForHost, readOrdinaryRequesterSessionAccountOperationContextForHost } from '../sessionEncryption/ordinaryRequesterSessionAccountCustody';
 import { resolveRequesterLaunchAdmissionFailure } from '../lifecycle/requesterWorkAttribution';
 import { readRequesterHomeWithinActionLifetime } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { buildRuntimeAuthUsageLimitRecoveryProjection } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryUsageLimitMetadata';
@@ -4181,9 +4181,8 @@ export async function startDaemonSessionControlRuntime(
             && !isRuntimePublicationQuiescing() && behavior.isLaunchAdmissionCurrent()
             && !!origin && origin.machineId === params.machineId
             && !await resolveRequesterLaunchAdmissionFailure(options)
-            && sameStoredCredentials(params.credentials, await readStoredCredentialsForServerId(custodyServerId))
             && isDeepStrictEqual(origin, await params.resolveCurrentMachineExecutionOriginContext?.(signal));
-          const custody = await readOrdinaryRequesterSessionAccountCustodyForHost({
+          const custody = await captureOrdinaryRequesterSessionAccountCustodyForHost({
             happyHomeDir: configuration.happyHomeDir, serverId: custodyServerId,
             serverHttpBaseUrl: params.serverBaseUrl, sessionId: existingSessionId, machineId: params.machineId,
             hostHomeServerIdentityId: origin?.machineId === params.machineId ? origin.serverIdentityId : null,
@@ -4214,7 +4213,9 @@ export async function startDaemonSessionControlRuntime(
               requesterRuntime.activateSessionPurposeBindings,
             activatePurposeBindings: requesterRuntime.activatePurposeBindings,
           }
-        : params;
+        : ordinaryAgentIsolationAccountSource?.kind === 'ordinarySession'
+          ? { ...params, credentials: ordinaryAgentIsolationAccountSource.custody.credentials }
+          : params;
       // Automatic launch admission precedes all native preparation, including
       // a never-opened template's admitted software setup. The later physical
       // launch boundary still observes local Stop/cancellation and requester custody.
