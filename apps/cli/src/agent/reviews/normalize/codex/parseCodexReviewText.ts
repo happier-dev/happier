@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
-import type { ReviewFinding } from '@happier-dev/protocol';
+import { lazySchema, type ReviewFinding } from '@happier-dev/protocol';
 
 import { parseJsonWithTrailingCommas } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
 
@@ -29,7 +29,7 @@ type JsonSpan = TextSpan & { text: string; terminated: boolean };
 const REVIEW_COMMENTS_HEADER_PATTERN = /^(?:Full review comments|Review comment):\s*$/i;
 const FINDING_BULLET_PATTERN = /^\s*-\s+(.+?)\s+(?:--|[-\u2013\u2014])\s+(.+):(\d+)(?:-(\d+))?\s*$/u;
 const INDENTED_BODY_LINE_PATTERN = /^(?: {2,}|\t)(.*)$/;
-const CODEX_JSON_REVIEW_SCHEMA = z.object({
+const CODEX_JSON_REVIEW_SCHEMA = lazySchema(() => z.object({
   findings: z.array(z.object({
     title: z.string().trim().min(1),
     body: z.string().trim().min(1),
@@ -44,18 +44,17 @@ const CODEX_JSON_REVIEW_SCHEMA = z.object({
     }),
   })),
   overall_explanation: z.string().trim(),
-});
+}));
 const SEVERITY_BY_PRIORITY = ['blocker', 'high', 'medium', 'low'] as const;
-const REVIEW_JSON_FIELDS = new Set([
-  ...Object.keys(CODEX_JSON_REVIEW_SCHEMA.shape),
-  'overall_correctness',
-  'overall_confidence_score',
-]);
+function isReviewJsonField(field: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CODEX_JSON_REVIEW_SCHEMA.shape, field)
+    || field === 'overall_correctness'
+    || field === 'overall_confidence_score';
+}
 
 function hasReviewFields(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return [...REVIEW_JSON_FIELDS]
-    .some((field) => Object.prototype.hasOwnProperty.call(value, field));
+  return Object.getOwnPropertyNames(value).some(isReviewJsonField);
 }
 
 function containsReviewFields(value: unknown): boolean {
@@ -80,7 +79,7 @@ function readJsonFieldToken(text: string): { name: string; rest: string; complet
 function hasReviewFieldText(text: string): boolean {
   for (const match of text.matchAll(/[{,]/g)) {
     const token = readJsonFieldToken(text.slice(match.index + 1));
-    if (token && REVIEW_JSON_FIELDS.has(token.name)) return true;
+    if (token && isReviewJsonField(token.name)) return true;
   }
   return false;
 }
@@ -93,7 +92,7 @@ function canStartJsonValue(text: string, start: number): boolean {
   if (tail.startsWith('}')) return true;
   const key = readJsonFieldToken(tail);
   if (!key) return false;
-  if (REVIEW_JSON_FIELDS.has(key.name)) return true;
+  if (isReviewJsonField(key.name)) return true;
   return tail.startsWith('"') && key.complete && /^\s*:/.test(key.rest);
 }
 
@@ -321,8 +320,8 @@ export function parseCodexReviewText(rawText: string): ParsedCodexReview | null 
     // A findings object without native Codex envelope fields belongs to the
     // existing Happier JSON validator. Do not let its trailing-object parser
     // select a different review from the complete output.
-    const hasNativeEnvelope = [...REVIEW_JSON_FIELDS].some((field) => (
-      field !== 'findings' && Object.prototype.hasOwnProperty.call(json, field)
+    const hasNativeEnvelope = Object.getOwnPropertyNames(json).some((field) => (
+      field !== 'findings' && isReviewJsonField(field)
     ));
     if (!hasNativeEnvelope) {
       strictJsonText = span.text;

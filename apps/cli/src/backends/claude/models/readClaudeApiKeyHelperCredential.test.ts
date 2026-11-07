@@ -127,14 +127,12 @@ describe('readClaudeApiKeyHelperCredential', () => {
     });
     const controller = new AbortController();
     let cleanup: NativeCatalogCleanup | undefined;
-    let settled = false;
     const reading = readClaudeApiKeyHelperCredential({ claudeConfigDir, env: process.env,
-      timeoutMs: 10_000, signal: controller.signal, onNativeCleanup: next => { cleanup = next; } })
-      .then(value => { settled = true; return value; });
+      timeoutMs: 10_000, signal: controller.signal, onNativeCleanup: next => { cleanup = next; } });
     try {
       await vi.waitFor(async () => { pids = await ownedPids(); expect(pids).toHaveLength(2); });
       controller.abort();
-      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 5_000 });
+      // Process discovery uses the suite's real-process budget; settlement is the contract.
       await expect(reading).resolves.toEqual({ status: 'failed' });
       for (const pid of pids) expect(() => realKill(pid, 0)).not.toThrow();
       await expect(cleanup?.()).rejects.toMatchObject({ code: 'process_tree_termination_incomplete' });

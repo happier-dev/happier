@@ -624,8 +624,8 @@ describe('registerSessionHandlers session controls', () => {
     expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({
       status: 'waiting', runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:b',
     });
-    expect(version).toBe(3);
-    expect(socket.emitWithAck).toHaveBeenCalledTimes(2);
+    expect(version).toBe(2);
+    expect(socket.emitWithAck).toHaveBeenCalledTimes(1);
     expect(notifyUsageLimitWaitResumeCancelled).not.toHaveBeenCalled();
   });
 
