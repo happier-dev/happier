@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  orderWidgetGroupCellsForStack,
   packWidgetGroupBands,
   resolveWidgetGroupColumns,
 } from './widgetGroupLayout.js';
@@ -141,5 +142,16 @@ describe('packWidgetGroupBands', () => {
         (band) => band.key,
       ),
     ).toEqual(['a', 'b']);
+  });
+
+  it('stacks a full group on a phone in the order its two columns read, the lead fact before the tall chart beside it', () => {
+    // Lab d2top-A / P: the chart's half beside the figures over Capacity reads as figures, chart, Capacity on a phone.
+    const top = cells(['tall', 'daily'], ['medium', 'summary'], ['medium', 'capacity'], ['full', 'coach']);
+    expect(packWidgetGroupBands(top, 2).map((band) => band.kind === 'columns' ? band.columns.map((column) => column.map((cell) => cell.id)) : band.key))
+      .toEqual([[['daily'], ['summary', 'capacity']], 'coach']);
+    expect(orderWidgetGroupCellsForStack(top).map((cell) => cell.id)).toEqual(['summary', 'daily', 'capacity', 'coach']);
+    // Equal heights keep their reading order; full-width children keep their place.
+    expect(orderWidgetGroupCellsForStack(cells(['medium', 'a'], ['medium', 'b'], ['full', 'c'], ['tall', 'd'], ['tall', 'e']))
+      .map((cell) => cell.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
   });
 });

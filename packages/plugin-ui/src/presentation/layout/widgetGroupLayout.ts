@@ -124,3 +124,32 @@ export function packWidgetGroupBands(
   flush();
   return bands;
 }
+
+/**
+ * The order a full group's children stack in when it has one column (a phone): the order its two
+ * columns read in on a wide page, not the stored list order. Each band is read top to bottom by where
+ * its cells start, and at the same start the shorter cell first, so the lead fact beside a tall chart
+ * comes before the chart (lab d2top-A on a phone: figures, chart, Capacity). Equal heights and
+ * full-width children keep their reading order. The stored order is unchanged; customizing shows it.
+ */
+export function orderWidgetGroupCellsForStack<Cell extends WidgetGroupCellInput>(
+  cells: readonly Cell[],
+): Cell[] {
+  const byId = new Map(cells.map((cell) => [cell.id, cell]));
+  const ordered: Cell[] = [];
+  for (const band of packWidgetGroupBands(cells, 2)) {
+    if (band.kind === 'row') ordered.push(byId.get(band.cell.id)!);
+    if (band.kind !== 'columns') continue;
+    const placed = band.columns.flatMap((column, side) => {
+      let start = 0;
+      return column.map((cell, index) => {
+        const entry = { cell, side, index, start };
+        start += cell.rowSpan;
+        return entry;
+      });
+    });
+    placed.sort((a, b) => a.start - b.start || a.cell.rowSpan - b.cell.rowSpan || a.side - b.side || a.index - b.index);
+    ordered.push(...placed.map((entry) => byId.get(entry.cell.id)!));
+  }
+  return ordered;
+}
