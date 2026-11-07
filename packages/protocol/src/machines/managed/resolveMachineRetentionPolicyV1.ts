@@ -37,7 +37,8 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   const retainedWake = retainedTarget && observation?.storage === 'retained'
     && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities);
   const wakeState = starting ? 'starting' : retainedWake && parked ? 'asleep' : null;
-  return { available, ready, wakeState, acceptedInputWakeOwner: machine.controller ? 'home' : 'caller',
+  // Home dispatches accepted input through an assigned controller or its custodian Account daemon.
+  return { available, ready, wakeState, acceptedInputWakeOwner: 'home',
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
     inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };
 }

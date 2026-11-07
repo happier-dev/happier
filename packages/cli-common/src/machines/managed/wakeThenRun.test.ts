@@ -90,13 +90,19 @@ describe('explicit managed execution', () => {
         expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, 'guest', true).ready).toBe(false);
     });
 
-    it.each([true, false])('leaves controller-owned accepted input at Home without private native reads (ready: %s)', async nativeReady => {
+    it.each([
+        { controller: true, nativeReady: true }, { controller: true, nativeReady: false },
+        { controller: false, nativeReady: true }, { controller: false, nativeReady: false },
+    ])('leaves Home-owned accepted input without private native reads (controller: $controller, ready: $nativeReady)', async ({ controller, nativeReady }) => {
+        const machine = { ...asleep, controller: controller ? asleep.controller : undefined,
+            observation: { ...asleep.observation!, power: nativeReady ? 'running' as const : 'stopped' as const } };
+        const runtime = resolveManagedMachineRuntimeV1(machine, 'guest', true);
         const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.message.send',
             input: { sessionId: 'same-session', message: 'hello' }, context: { surface: 'ui' },
             machineRuntimeDemand: { target: { kind: 'session', sessionId: 'same-session' }, activation: 'accepted-input' } }, {
             readSessionMachineId: async () => 'guest',
             readMachineTarget: async () => ({ reachable: true, managedMachineRef: { homeId: 'home', managedId: 'managed' },
-                managedInputRuntime: { nativeReady, wakeState: null, acceptedInputWakeOwner: 'home' as const } }),
+                managedInputRuntime: { nativeReady: runtime.ready, wakeState: runtime.wakeState, acceptedInputWakeOwner: runtime.acceptedInputWakeOwner } }),
             // Native detail HTTP is a different authority from the recipient's Machine read.
             readManagedMachine: async () => { throw new ManagedMachineControllerError('permission_denied'); },
         });
@@ -225,7 +231,8 @@ describe('explicit managed execution', () => {
     it('prepares exactly the paid child for an asleep original demand without executing it or consulting unattended consent', async () => {
         const targets: unknown[] = [];
         const reads: ManagedWakePreparationReads = {
-            readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' } }),
+            readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' },
+                managedInputRuntime: { nativeReady: false, wakeState: 'asleep', acceptedInputWakeOwner: 'home' } }),
             readSessionMachineId: async () => 'guest',
             readManagedMachine: async target => { targets.push(target); return asleep; },
         };
