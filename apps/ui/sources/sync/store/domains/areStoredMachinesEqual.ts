@@ -147,6 +147,7 @@ function areStoredMachineValuesEqual(
     if (!previous || !next) return previous === next;
     return previous.id === next.id
         && areSessionValuesDeepEqual(previous.managedMachineRef, next.managedMachineRef)
+        && areSessionValuesDeepEqual(previous.managedInputRuntime, next.managedInputRuntime)
         && previous.kind === next.kind
         && (!includeResources || previous.seq === next.seq)
         && previous.createdAt === next.createdAt

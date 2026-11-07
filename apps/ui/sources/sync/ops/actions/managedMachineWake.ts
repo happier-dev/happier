@@ -1,6 +1,7 @@
+import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol/actions/executor/types';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { assertManagedMachineRuntimeAvailable, executeManagedMachineWakeThenRun, isManagedMachineExecutionReady, ManagedMachineControllerError, waitForChangeOrDeadline, type ManagedMachinePreparedRuntime, type ManagedMachineRuntimeDemandExecution } from '@happier-dev/cli-common/machines/managed';
+import { executeManagedMachineWakeThenRun, ManagedMachineControllerError, waitForChangeOrDeadline, type ManagedMachinePreparedRuntime, type ManagedMachineRuntimeDemandExecution } from '@happier-dev/cli-common/machines/managed';
 import { retainManagedMachineInventory, type ManagedMachineInventoryEntry } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { isMachineReachable, subscribeMachineRequestReachability } from '@/sync/domains/machines/reachability/machineReachability';
@@ -78,10 +79,11 @@ export async function executeUiManagedMachineWakeThenRun<T>(input: UiManagedMach
                 if (entry?.status === 'ready') {
                     const machine = inventory.getMachine(managed.managedId);
                     if (!machine) throw new ManagedMachineControllerError('managed_not_found');
-                    assertManagedMachineRuntimeAvailable(machine);
                     const currentGuest = readGuest();
-                    if (isManagedMachineExecutionReady(machine, Boolean(currentGuest
-                        && isMachineReachable(input.account.accountLifetime.scope, currentGuest)))) return machine;
+                    const runtime = resolveManagedMachineRuntimeV1(machine, input.machineRuntime.machineId, Boolean(currentGuest
+                        && isMachineReachable(input.account.accountLifetime.scope, currentGuest)));
+                    if (!runtime.available) throw new ManagedMachineControllerError('native_resource_unavailable');
+                    if (runtime.ready) return machine;
                 }
                 if (await waitForChangeOrDeadline({ signal, waitForChange }) === 'aborted') signal?.throwIfAborted();
             }

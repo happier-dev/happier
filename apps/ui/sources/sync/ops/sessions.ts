@@ -91,7 +91,8 @@ import { machineResolveSpawnSessionByNonceUntilSettled } from './machines';
 import { captureLazyActionAccountContext, withActionAccountRequestSignal } from './actions/actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { randomUUID } from '@/platform/randomUUID';
-import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
+import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { mergeAbortSignals, throwIfAborted } from '@/utils/runtime/abortSignals';
 export {
     sessionScmBranchCheckout,
@@ -624,10 +625,10 @@ export async function ensureSessionRuntimeForPendingInput(
     const activation = options.pendingActivationAuthorization;
     const target = activation?.managedWakeTargetV1;
     if (target) {
-        // A protected Session reference selects the native read. Ambient Machine
-        // metadata and a desired Start are neither enrollment nor running facts.
+        // The admitted Pending target selects the exact public Machine projection.
+        // Home owns native qualification; scoped presence owns guest reachability.
         const serverId = options.accountLifetime?.scope.serverId ?? options.serverId;
-        if (!serverId || options.accountLifetime?.isCurrent() === false
+        if (!serverId || options.accountLifetime?.isCurrent() === false || activation.status !== 'waiting'
             || target.origin.kind !== 'session-input' || target.origin.session.sessionId !== options.sessionId
             || target.origin.session.homeId !== target.homeId || target.enrolledMachineId !== options.machineId
             || target.origin.pendingRequestId !== activation.requestId || target.origin.requestedAt !== activation.requestedAt) {
@@ -637,18 +638,14 @@ export async function ensureSessionRuntimeForPendingInput(
         try {
             if (account.serverIdentityId !== target.homeId
                 || (options.accountLifetime && !areServerAccountScopesEqual(account.accountLifetime.scope, options.accountLifetime.scope))) return { type: 'pending' };
-            const managed = await createManagedMachineActionClient({ request: account.request }).execute('machines.managed.get', {
-                homeId: target.homeId, managedId: target.managedId,
-            });
             account.assertCurrent();
-            const observed = managed.observation;
-            if (options.accountLifetime?.isCurrent() === false || managed.id !== target.managedId
-                || managed.homeId !== target.homeId || managed.enrolledMachineId !== target.enrolledMachineId
-                || managed.creationState !== 'active' || managed.allocation === 'confirmed-absent'
-                || activation.status !== 'waiting' || observed?.availability !== 'present'
-                || observed.power !== 'running' || observed.storage === 'lost' || observed.daemon !== 'connected') return { type: 'pending' };
+            const guest = resolveServerScopedMachine(storage.getState(), account.serverId, target.enrolledMachineId);
+            if (options.accountLifetime?.isCurrent() === false || !guest
+                || guest.managedMachineRef?.homeId !== target.homeId || guest.managedMachineRef.managedId !== target.managedId
+                || guest.managedInputRuntime?.nativeReady !== true
+                || !isMachineReachable(account.accountLifetime.scope, guest)) return { type: 'pending' };
         } catch {
-            // Missing/unknown native observations leave accepted custody intact.
+            // An unavailable projection leaves accepted Pending input waiting.
             // Server/controller wake and guest activation retain their owners.
             return { type: 'pending' };
         } finally { account.dispose(); }

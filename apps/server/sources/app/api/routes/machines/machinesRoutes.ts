@@ -135,7 +135,7 @@ async function serializeMachineRowForRequest(
 ) {
     const projection = await inTx(async tx => ({
         machine: await tx.machine.findUniqueOrThrow({ where: { id: row.id }, select: {
-            managedResource: { select: { id: true, homeId: true } },
+            managedResource: true,
         } }),
         devcontainerChild: await readMachineDevcontainerChildInTx(tx, row.id),
     }));

@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Machine } from '@/sync/domains/state/storageTypes'
 
-import { buildUpdatedMachineFromSocketUpdate } from './syncMachines'
+import { buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './syncMachines'
 import { Encryption } from '@/sync/encryption/encryption'
 import * as platformCrypto from 'rn-encryption'
 import { createDeferred, createMachineFixture } from '@/dev/testkit'
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent'
 import { hasCurrentMachineContent } from '@/sync/domains/machines/resolveServerScopedMachines'
+import { encodeBase64 } from '@/encryption/base64'
+import { storage } from '@/sync/domains/state/storageStore'
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures'
 
 type MachineUpdate = {
     machineId: string
@@ -41,17 +44,70 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
 }
 
 describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
-    it('applies explicit managed enrollment changes and retains the fact through content-only pushes', async () => {
+    it('applies managed enrollment and input-wake changes and retains them through content-only pushes', async () => {
         const ordinary = createMachineFixture({ managedMachineRef: null });
         const ref = { homeId: 'home', managedId: 'retained' };
-        const update = (existingMachine: Machine, patch: { managedMachineRef?: Machine['managedMachineRef'] }) =>
+        const update = (existingMachine: Machine, patch: { managedMachineRef?: Machine['managedMachineRef']; managedInputRuntime?: Machine['managedInputRuntime'] }) =>
             buildUpdatedMachineFromSocketUpdate({ existingMachine, machineUpdate: { machineId: ordinary.id, ...patch },
                 updateSeq: 2, updateCreatedAt: 2, getMachineEncryption: () => null });
-        const enrolled = await update(ordinary, { managedMachineRef: ref });
+        const asleep = { nativeReady: false, wakeState: 'asleep' as const };
+        const enrolled = await update(ordinary, { managedMachineRef: ref, managedInputRuntime: asleep });
         expect(enrolled?.managedMachineRef).toEqual(ref);
+        expect(enrolled).toHaveProperty('managedInputRuntime', asleep);
         expect((await update(enrolled!, {}))?.managedMachineRef).toEqual(ref);
+        expect(await update(enrolled!, {})).toHaveProperty('managedInputRuntime', asleep);
+        const starting = await update(enrolled!, { managedInputRuntime: { nativeReady: false, wakeState: 'starting' } });
+        expect(starting).toHaveProperty('managedInputRuntime', { nativeReady: false, wakeState: 'starting' });
+        expect(await update(starting!, { managedInputRuntime: null })).toHaveProperty('managedInputRuntime', null);
         expect((await update(enrolled!, { managedMachineRef: null }))?.managedMachineRef).toBeNull();
     });
+    it.each(['plain', 'e2ee'] as const)('opens same-version content again after a %s installation replacement, retaining equal replays', async storageMode => {
+        const initialState = storage.getState();
+        const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+        encryption.configureNativeCryptoWorker({ routing: { mode: 'off' } });
+        const fixture = createMachineFixture({ id: 'installation-reuse', daemonState: { status: 'running', pid: 1 } });
+        const dataKey = new Uint8Array(32).fill(2);
+        await encryption.initializeMachines(new Map([[fixture.id, storageMode === 'e2ee' ? dataKey : null]]));
+        const cipher = encryption.getMachineEncryption(fixture.id)!;
+        let row = { ...createPlainMachineRowFixture({ id: fixture.id, accountId: 'bob', machine: fixture }),
+            managedInputRuntime: { nativeReady: true, wakeState: null } as Machine['managedInputRuntime'] };
+        if (storageMode === 'e2ee') row = { ...row, dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey), 'base64'),
+            access: { ...row.access!, resourceMode: 'e2ee' },
+            metadata: await cipher.encryptMetadata(fixture.metadata!), daemonState: await cipher.encryptDaemonState(fixture.daemonState) };
+        storage.setState({ machines: {}, machineDisplayById: {}, machineListByServerId: {} });
+        const params: Parameters<typeof fetchAndApplyMachines>[0] = {
+            credentials: { token: 'header.eyJzdWIiOiJib2IifQ==.signature',
+                ...(storageMode === 'e2ee' ? { secret: encodeBase64(new Uint8Array(32).fill(1), 'base64url') } : {}) },
+            sourceServerId: 'installation-test-home', expectedAccountMode: storageMode,
+            encryption, machineDataKeys: new Map(), replace: true,
+            getMachineSnapshot: () => storage.getState().machines,
+            getExistingMachine: id => storage.getState().machines[id],
+            request: async () => Response.json([row]),
+            applyMachines: (machines, replace) => storage.getState().applyMachines(machines, replace),
+        };
+        try {
+            await fetchAndApplyMachines(params);
+            const first = storage.getState().machines[fixture.id];
+            expect(first.metadata?.host).toBe(fixture.metadata?.host);
+            expect(first.managedInputRuntime).toEqual({ nativeReady: true, wakeState: null });
+            await fetchAndApplyMachines(params);
+            expect(storage.getState().machines[fixture.id]).toBe(first);
+            const metadata = { ...fixture.metadata!, host: 'replacement-host' };
+            const daemonState = { status: 'running', pid: 2 };
+            row = { ...row, installationId: 'replacement-installation',
+                metadata: storageMode === 'plain' ? encodePlainMachineStoredContent(metadata) : await cipher.encryptMetadata(metadata),
+                daemonState: storageMode === 'plain' ? encodePlainMachineStoredContent(daemonState) : await cipher.encryptDaemonState(daemonState) };
+            await fetchAndApplyMachines(params);
+            const replacement = storage.getState().machines[fixture.id];
+            expect(replacement.metadata?.host).toBe('replacement-host');
+            expect(replacement.daemonState?.pid).toBe(2);
+            expect(replacement.metadata).not.toBe(first.metadata);
+            expect(replacement.daemonState).not.toBe(first.daemonState);
+            await fetchAndApplyMachines(params);
+            expect(storage.getState().machines[fixture.id]).toBe(replacement);
+        } finally { storage.setState(initialState, true); }
+    });
+
     it.each((['plain', 'e2ee'] as const).flatMap(storageMode =>
         (['opened', 'unopened', 'locked', 'key-replaced'] as const).map(admission => ({ storageMode, admission })),
     ))('preserves only admitted same-key presentation during a pending $storageMode socket update: $admission', async ({ storageMode, admission }) => {

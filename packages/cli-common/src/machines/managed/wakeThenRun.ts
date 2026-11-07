@@ -1,28 +1,9 @@
-import type { ManagedMachineRefV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineRefV1, ManagedMachineV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ActionAdmittedExecutionV1, ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, ActionMachineRuntimeDemandV1, ActionPreparedMachineTargetV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { resolveMachineWakeNativeIntentV1, isManagedMachineWakeInspectionRequiredV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveMachineWakeNativeIntentV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { prepareManagedPowerProvisionerAdmissionV1, type ManagedProvisionerSelectionRead } from './provisioners.js';
-
-/** A positively unavailable resource cannot become ready by observing its daemon. */
-export function assertManagedMachineRuntimeAvailable(machine: Pick<ManagedMachineV1, 'creationState' | 'allocation' | 'observation'>): void {
-    if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent'
-        || machine.observation?.availability === 'absent' || machine.observation?.storage === 'lost') {
-        throw new ManagedMachineControllerError('native_resource_unavailable');
-    }
-}
-
-/** Native power and the existing scoped daemon observation are independent facts. */
-export function isManagedMachineExecutionReady(machine: Pick<ManagedMachineV1, 'creationState' | 'allocation' | 'observation'>,
-    machineReachable: boolean): boolean {
-    return machine.creationState === 'active' && machine.allocation !== 'confirmed-absent'
-        // A reachable daemon proves readiness through failed native Inspect,
-        // unless the provider positively reports loss or a parked Machine.
-        && (machine.observation?.availability === 'present' || machine.observation?.availability === 'unavailable')
-        && machine.observation.power !== 'stopped' && machine.observation.power !== 'suspended'
-        && machine.observation.storage !== 'lost' && machineReachable;
-}
 
 export type ManagedWakePreparationReads = Readonly<{
     /** Identity of the installed in-process daemon, which already supplies this runtime. */
@@ -30,6 +11,7 @@ export type ManagedWakePreparationReads = Readonly<{
     /** The target's Home owns enrollment; null positively identifies an ordinary Machine. */
     readMachineTarget(machineId: string, context: ActionExecutorContext): Promise<Readonly<{
         reachable: boolean; managedMachineRef: ManagedMachineRefV1 | null;
+        managedInputRuntime?: ManagedMachineInputRuntimeV1 | null;
     }> | ActionExecuteFailure>;
     readSessionMachineId(target: Extract<ActionMachineRuntimeDemandV1['target'], { kind: 'session' }>,
         context: ActionExecutorContext): Promise<string | null | ActionExecuteFailure>;
@@ -78,9 +60,12 @@ export async function prepareManagedMachineWakeChildren(
         executeAdmittedAction: execution => execution.execute(execution.context,
             { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}) }),
     };
+    // The admitted input and its controller wake belong to Home, after enqueue.
+    // Caller-owned wake still prepares the original reviewed native children.
+    if (demand.activation === 'accepted-input' && target.managedInputRuntime?.acceptedInputWakeOwner === 'home') return null;
     const machine = await reads.readManagedMachine(target.managedMachineRef, request.context);
     if (machine && 'ok' in machine) return machine;
-    const powerInput = machine && isManagedMachineWakeInspectionRequiredV1(machine, machineId, target.reachable)
+    const powerInput = machine && resolveManagedMachineRuntimeV1(machine, machineId, target.reachable).inspectionRequired
         ? managedMachineWakePowerInput(machine) : undefined;
     const providerRoles = machine && powerInput ? await prepareManagedPowerProvisionerAdmissionV1(machine,
         reads.readSelectedProvisioners ?? (async () => null)) : null;

@@ -7,6 +7,7 @@ import { DevcontainerChildProjectionV1Schema, type DevcontainerChildProjectionV1
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { StoredMachinePublishedMetadataV1Schema, type MachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readMachineName, resolveMachineDisplayNameParts, type MachineNameMetadata } from '@happier-dev/protocol/machines/machineDisplayNames';
+import { ManagedMachineInputRuntimeV1Schema, type ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { StoredCredentials } from '@/persistence';
 import { resolvePublishedMachineContentCodec } from './machineDataEncryptionKey';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
@@ -20,6 +21,7 @@ import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/clie
 // `metadata` blob it genuinely needs. Labels and decoded platform facts remain
 // CLI projections of that metadata and never alter machine identity.
 const ACCOUNT_MACHINE_ROW_SCHEMA = z.looseObject({ ...ExternalActionMachineBootstrapV1Schema.shape,
+    managedInputRuntime: z.optional(z.nullable(ManagedMachineInputRuntimeV1Schema)),
     metadata: z.optional(z.string()), activeAt: z.optional(z.nullable(z.number())), access: z.optional(AccessibleMachineAccessV1Schema),
     devcontainerChild: z.optional(z.nullable(DevcontainerChildProjectionV1Schema)) });
 
@@ -32,6 +34,7 @@ export type CurrentAccountMachineTarget = Readonly<{
 export type CurrentAccountMachineInventoryItem = Readonly<{
   id: string; label: string; kind: 'persistent' | 'ephemeral_session_runner';
   managedMachineRef: ExternalActionMachineBootstrapV1['managedMachineRef'];
+  managedInputRuntime?: ManagedMachineInputRuntimeV1 | null;
   installationId: string | null;
   active: boolean; revokedAt: number | null; replacedByMachineId: string | null;
   activeAt?: number | null;
@@ -143,6 +146,7 @@ export async function listCurrentAccountMachines(params: Readonly<{
         machine: {
           id: row.id, label: readMachineName(nameMetadata) ?? row.id, kind: row.kind, active: row.active,
           managedMachineRef: row.managedMachineRef,
+          ...(row.managedInputRuntime !== undefined ? { managedInputRuntime: row.managedInputRuntime } : {}),
           installationId: row.installationId,
           revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId,
           ...(row.activeAt === undefined ? {} : { activeAt: row.activeAt }),

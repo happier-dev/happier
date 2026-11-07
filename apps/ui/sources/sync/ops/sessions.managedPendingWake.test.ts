@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -6,14 +6,14 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { storage } from '@/sync/domains/state/storage';
 import { enqueuePendingMessageV2, updatePendingRequestedActionV2 } from '@/sync/engine/pending/pendingQueueV2';
 import { resetPendingQueueState, currentPendingEnqueueAck } from '@/sync/engine/pending/pendingQueueV2.testHelpers';
-import { submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
+import { submitAppSessionComposerMessage } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import type { SessionSubmitPort } from '@/sync/domains/session/input/types';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
@@ -23,9 +23,12 @@ import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { ensureSessionRuntimeForPendingInput } from './sessions';
 import { sync } from '@/sync/sync';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ManagedMachineV1Schema, ManagedMachineInputRuntimeV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 // Keep Machine routing, Account custody and codecs real through the Socket.IO boundary.
@@ -36,7 +39,9 @@ const daemonRequests = installSessionActionRpcBoundary(request => {
 });
 installApprovalCommonModuleMocks();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
-beforeAll(loadSyncSingletonForTests);
+let disposeActionLoader: (() => void) | undefined;
+beforeAll(async () => { await loadSyncSingletonForTests(); disposeActionLoader = await installRealActionExecutorModuleLoader(); });
+afterAll(() => disposeActionLoader?.());
 beforeEach(() => {
     // This public submit persists custody before its HTTP enqueue. Keep that
     // owner real beneath an explicit browser persistence boundary.
@@ -50,7 +55,7 @@ afterEach(async () => {
 });
 
 describe('accepted managed input native prerequisite', () => {
-    it.each(['stopped', 'running'] as const)('preserves accepted pending custody and admits a warm consumer only for observed %s compute', async (power) => {
+    it.each(['stopped', 'running', 'shared-running', 'shared-native-unready'] as const)('keeps real Send acceptance before native prerequisites (%s)', async (power) => {
         const profileId = 'server-a';
         const accountId = 'wake-owner';
         await resetPendingQueueState({ serverId: profileId, accountId });
@@ -65,6 +70,9 @@ describe('accepted managed input native prerequisite', () => {
                 origin: { kind: 'session-input', session: { homeId: 'srv_home_a', sessionId: 'session-a' }, pendingRequestId: 'request-a', requestedAt: 10 },
             } },
         });
+        const machineRow = (id: string) => ({ ...createPlainMachineRowFixture({ id, accountId }),
+            managedMachineRef: { homeId: 'srv_home_a', managedId: 'managed-a' },
+            managedInputRuntime: ManagedMachineInputRuntimeV1Schema.parse({ nativeReady: power !== 'shared-native-unready' && observedPower === 'running', wakeState: observedPower === 'stopped' ? 'asleep' : null, acceptedInputWakeOwner: controller ? 'home' : 'caller' }) });
         const wireSession = SessionCurrentProjectionRecordV1Schema.parse({
             id: session.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
             active: session.active, activeAt: session.activeAt, encryptionMode: 'plain',
@@ -75,7 +83,7 @@ describe('accepted managed input native prerequisite', () => {
         });
         const paths: string[] = [];
         let admitted = false;
-        let observedPower = power;
+        let observedPower: 'stopped' | 'running' = power === 'running' || power.startsWith('shared-') ? 'running' : 'stopped';
         connection = await restoreServerAccountForTest({
             serverUrl: 'https://server-a', serverIdentityId: 'srv_home_a', accountId,
             credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
@@ -83,7 +91,12 @@ describe('accepted managed input native prerequisite', () => {
             request: createSessionReadBatchFetchBoundary(async (input, init) => {
                 const url = new URL(String(input));
                 expect(url.origin).toBe('https://server-a');
-                if (url.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (url.pathname === '/v1/features') {
+                    const baseline = createRootLayoutFeaturesResponse();
+                    return Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+                        session: { ...baseline.capabilities.session, pendingInput: { protocolVersion: 3 } },
+                    } }));
+                }
                 if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
                 if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (url.pathname === '/v1/account/encryption/currentness') return Response.json({
@@ -91,23 +104,23 @@ describe('accepted managed input native prerequisite', () => {
                     recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
                 });
                 if (url.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
-                if (url.pathname === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'guest-a', accountId })]);
-                if (url.pathname === '/v1/machines/guest-a') return Response.json({ machine: createPlainMachineRowFixture({ id: 'guest-a', accountId }) });
+                if (url.pathname === '/v1/machines') return Response.json([machineRow('guest-a')]);
+                if (url.pathname === '/v1/machines/guest-a') return Response.json({ machine: machineRow('guest-a') });
                 if (url.pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-                    id => id === 'guest-a' ? createPlainMachineRowFixture({ id, accountId }) : null);
+                    id => id === 'guest-a' ? machineRow(id) : null);
                 if (url.pathname === '/v2/sessions' || url.pathname === '/v2/sessions/active') {
                     // Keep the authoritative initial list and later refreshes on
                     // the same real Session, rather than racing a store override.
-                    return Response.json(V2SessionListResponseSchema.parse({
+                    return Response.json(createSessionListSourceFixture({
                         sessions: url.pathname.endsWith('/active') ? [] : [{
                             ...wireSession,
-                            ...(admitted ? { pendingActivationAuthorization: session.pendingActivationAuthorization } : {}),
+                            ...(admitted ? { pendingActivationAuthorization: session.pendingActivationAuthorization ?? undefined } : {}),
                         }], nextCursor: null, hasNext: false,
                     }));
                 }
                 const bootstrap = createEmptyAccountBootstrapHttpResponse(url.pathname, init);
                 if (bootstrap) return bootstrap;
-                if (!['/v2/sessions/session-a/pending', '/v2/sessions/session-a', '/v1/machines/managed/actions/get'].includes(url.pathname)) {
+                if (!['/v2/sessions/session-a/pending', '/v2/sessions/session-a', '/v1/machines/managed/actions/get', '/v1/machines/managed/actions/list'].includes(url.pathname)) {
                     return Response.json({ error: 'not_found' }, { status: 404 });
                 }
                 paths.push(url.pathname);
@@ -118,26 +131,30 @@ describe('accepted managed input native prerequisite', () => {
                         ...(admitted ? { pendingActivationAuthorization: session.pendingActivationAuthorization } : {}),
                     } });
                 }
-                expect(url.pathname).toBe('/v1/machines/managed/actions/get');
-                return Response.json({
+                expect(['/v1/machines/managed/actions/get', '/v1/machines/managed/actions/list']).toContain(url.pathname);
+                if (power.startsWith('shared-')) return Response.json({ error: 'permission_denied' }, { status: 403 });
+                const machine = ManagedMachineV1Schema.parse({
                     id: 'managed-a', homeId: 'srv_home_a', custodianAccountId: accountId,
                     launch: { provider: contribution, schemaVersion: 1, name: 'Guest', choices: {} },
                     resource: { contributionRef: contribution, schemaVersion: 1, value: {} },
                     controller, allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest-a',
-                    desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-                    observation: { observedAt: 10, availability: 'present', power: observedPower, storage: 'retained', daemon: observedPower === 'running' ? 'connected' : 'disconnected' },
+                    desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' },
+                    wakeOnAcceptedMessage: true,
+                    observation: { observedAt: 10, availability: 'present', power: observedPower, storage: 'retained' },
                 });
+                return Response.json(url.pathname.endsWith('/list') ? { machines: [machine] } : machine);
             }),
         });
         expect(connection.home).toMatchObject({ id: profileId, serverIdentityId: 'srv_home_a' });
         await sync.refreshSessions();
         await sync.ensureSessionVisibleForMessageRoute(session.id, { forceRefresh: true, hydrateMessages: false });
         expect(storage.getState().sessions[session.id], 'real HTTP list must hydrate the submitted Session').toMatchObject({ id: session.id });
-        storage.setState({ machines: { 'guest-a': createMachineFixture({ id: 'guest-a', active: true, activeAt: Date.now() }) } });
         const account = await captureLazyActionAccountContext(profileId);
         // Public invocation custody uses the configured canonical profile key,
         // not the alias by which this Home was originally added.
         const scope = account.accountLifetime.scope;
+        await sync.refreshMachines({ serverId: scope.serverId });
+        observeMachinePresenceForTest(scope, ['guest-a']);
         expect(scope.accountId).toBe(accountId);
         const beforeAdmission = storage.getState().sessions[session.id];
         if (!beforeAdmission) throw new Error('Real Session route did not hydrate the submitted Session');
@@ -169,7 +186,7 @@ describe('accepted managed input native prerequisite', () => {
             },
         };
         try {
-            const result = await submitSessionUserMessage(port, {
+            const result = await submitAppSessionComposerMessage(port, {
                 sessionId: session.id, session: beforeAdmission, serverId: scope.serverId, accountLifetime: account.accountLifetime,
                 text: 'Original queued input', localId: 'request-a', configuredMode: 'agent_queue',
                 sessionInactiveResumePolicy: 'online_only', resumeCapabilityOptions: {},
@@ -178,12 +195,13 @@ describe('accepted managed input native prerequisite', () => {
             expect(result.errorCode, JSON.stringify(result)).toBeUndefined();
             expect(result.errorMessage, JSON.stringify(result)).toBeUndefined();
             expect(admitted, JSON.stringify({ result, paths })).toBe(true);
-            expect(result).toMatchObject(power === 'stopped'
+            const nativePending = power === 'stopped' || power === 'shared-native-unready';
+            expect(result).toMatchObject(nativePending
                 ? { type: 'wake_pending', persistence: 'pending', localId: 'request-a', wake: { attempted: false, state: 'pending' } }
                 : { type: 'success', persistence: 'pending', localId: 'request-a', wake: { attempted: true, state: 'started' } });
             expect(storage.getState().sessionPending[session.id]?.messages).toHaveLength(1);
             expect(storage.getState().sessionPending[session.id]?.messages[0]?.source).toBe('local_outbound');
-            if (power === 'stopped') expect(daemonRequests).toEqual([]);
+            if (nativePending) expect(daemonRequests).toEqual([]);
             else {
                 expect(daemonRequests).toHaveLength(1);
                 // Protected native qualification belongs to the host's read;
@@ -191,7 +209,7 @@ describe('accepted managed input native prerequisite', () => {
                 expect(daemonRequests[0]?.params).not.toHaveProperty('pendingActivationAuthorization');
                 expect(daemonRequests[0]?.params).not.toHaveProperty('managedWakeTargetV1');
             }
-            expect(paths).toContain('/v1/machines/managed/actions/get');
+            expect(paths).not.toContain('/v1/machines/managed/actions/get');
             expect(paths).toContain('/v2/sessions/session-a');
             expect(paths.indexOf('/v2/sessions/session-a/pending')).toBeLessThan(paths.lastIndexOf('/v2/sessions/session-a'));
             if (power === 'stopped') {
@@ -200,6 +218,7 @@ describe('accepted managed input native prerequisite', () => {
                 // An unresolved Start retains waiting authority. A later native
                 // observation can activate that exact input without rearming it.
                 observedPower = 'running';
+                await sync.refreshMachines();
                 const resume = buildResumeSessionBaseOptionsFromSession({ sessionId: session.id, session,
                     resumeCapabilityOptions: {}, resumeTargetOverride: { machineId: 'guest-a', directory: '/project' } });
                 if (!resume) throw new Error('Expected the original resumable Session');

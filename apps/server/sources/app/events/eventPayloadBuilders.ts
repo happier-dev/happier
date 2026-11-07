@@ -21,9 +21,9 @@ import { type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/prot
 import { applySessionTranscriptPublicationCeiling } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
 import { projectSessionFollowWakeBatchDelivery } from "@/app/session/follow/projectSessionFollowWakeBatchDelivery";
-import { serializeMachineKeyBasis, serializeMachinePresence, serializeManagedMachineRef } from "@/app/machines/machineSerialization";
+import { serializeMachineKeyBasis, serializeMachinePresence, serializeManagedMachineRef, serializeManagedInputRuntime, type MachineSerializationRow } from "@/app/machines/machineSerialization";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
-import type { ManagedMachineRefV1 } from "@happier-dev/protocol/machines/managed/managedMachineV1";
+import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ChangeKind } from '@happier-dev/protocol/changes';
@@ -604,7 +604,7 @@ export function buildAccountSettingsChangedUpdate(settingsVersion: number, updat
 
 export function buildNewMachineUpdate(machine: {
     id: string;
-    managedResource: Readonly<{ id: string; homeId: string }> | null;
+    managedResource: MachineSerializationRow['managedResource'];
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: MachineKind;
     seq: number;
@@ -633,6 +633,7 @@ export function buildNewMachineUpdate(machine: {
         body: {
             t: 'new-machine',
             managedMachineRef: serializeManagedMachineRef(machine),
+            managedInputRuntime: serializeManagedInputRuntime(machine),
             devcontainerChild: machine.devcontainerChild ?? null,
             kind: MachineKindFromLegacyProjectionSchema.parse(machine.kind),
             machineId: machine.id,
@@ -668,6 +669,7 @@ export function buildUpdateMachineUpdate(
     daemonState?: { value: string | null; version: number },
     extra?: {
         managedMachineRef?: ManagedMachineRefV1 | null;
+        managedInputRuntime?: ManagedMachineInputRuntimeV1 | null;
         devcontainerChild?: DevcontainerChildProjectionV1 | null;
         dataEncryptionKey?: string | null;
         keyBasis?: MachineKeyBasisV1;

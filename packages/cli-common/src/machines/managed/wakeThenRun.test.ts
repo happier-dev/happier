@@ -1,9 +1,11 @@
+import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { executeManagedMachineWakeThenRun, isManagedMachineExecutionReady, managedMachineWakePowerInput, prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from './wakeThenRun.js';
+import { executeManagedMachineWakeThenRun, managedMachineWakePowerInput, prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from './wakeThenRun.js';
+import { ManagedMachineControllerError } from './controllerErrors.js';
 
 const asleep = ManagedMachineV1Schema.parse({
     id: 'managed', homeId: 'home', custodianAccountId: 'owner',
@@ -65,27 +67,40 @@ describe('explicit managed execution', () => {
 
     it('admits a reachable guest despite unavailable Inspect while preserving positive loss guards', () => {
         const machine = { ...asleep, observation: { availability: 'unavailable' as const, observedAt: 2 } };
-        expect(isManagedMachineExecutionReady(machine, true)).toBe(true);
-        expect(isManagedMachineExecutionReady(machine, false)).toBe(false);
-        expect(isManagedMachineExecutionReady({ ...machine, observation: undefined }, true)).toBe(false);
-        expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, availability: 'absent' } }, true)).toBe(false);
-        expect(isManagedMachineExecutionReady({ ...machine, allocation: 'confirmed-absent' }, true)).toBe(false);
-        expect(isManagedMachineExecutionReady({ ...machine, creationState: 'canceled' }, true)).toBe(false);
+        expect(resolveManagedMachineRuntimeV1(machine, 'guest', true).ready).toBe(true);
+        expect(resolveManagedMachineRuntimeV1(machine, 'guest', false).ready).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, observation: undefined }, 'guest', true).ready).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, availability: 'absent' } }, 'guest', true).ready).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, allocation: 'confirmed-absent' }, 'guest', true).ready).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, creationState: 'canceled' }, 'guest', true).ready).toBe(false);
         for (const power of ['stopped', 'suspended'] as const) {
-            expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, power } }, true)).toBe(false);
+            expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, power } }, 'guest', true).ready).toBe(false);
         }
-        expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, true)).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, 'guest', true).ready).toBe(false);
     });
 
     it('uses reachable execution when the native observation does not report power or storage', () => {
         const machine = { ...asleep, observation: { availability: 'present' as const, observedAt: 1 } };
-        expect(isManagedMachineExecutionReady(machine, true)).toBe(true);
-        expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, power: 'unknown' } }, true)).toBe(true);
-        expect(isManagedMachineExecutionReady(machine, false)).toBe(false);
+        expect(resolveManagedMachineRuntimeV1(machine, 'guest', true).ready).toBe(true);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, power: 'unknown' } }, 'guest', true).ready).toBe(true);
+        expect(resolveManagedMachineRuntimeV1(machine, 'guest', false).ready).toBe(false);
         for (const power of ['stopped', 'suspended'] as const) {
-            expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, power } }, true)).toBe(false);
+            expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, power } }, 'guest', true).ready).toBe(false);
         }
-        expect(isManagedMachineExecutionReady({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, true)).toBe(false);
+        expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, 'guest', true).ready).toBe(false);
+    });
+
+    it.each([true, false])('leaves controller-owned accepted input at Home without private native reads (ready: %s)', async nativeReady => {
+        const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.message.send',
+            input: { sessionId: 'same-session', message: 'hello' }, context: { surface: 'ui' },
+            machineRuntimeDemand: { target: { kind: 'session', sessionId: 'same-session' }, activation: 'accepted-input' } }, {
+            readSessionMachineId: async () => 'guest',
+            readMachineTarget: async () => ({ reachable: true, managedMachineRef: { homeId: 'home', managedId: 'managed' },
+                managedInputRuntime: { nativeReady, wakeState: null, acceptedInputWakeOwner: 'home' as const } }),
+            // Native detail HTTP is a different authority from the recipient's Machine read.
+            readManagedMachine: async () => { throw new ManagedMachineControllerError('permission_denied'); },
+        });
+        expect(prepared).toBeNull();
     });
 
     it('flattens Account power and inspect into the same original Send review before any native effect', async () => {

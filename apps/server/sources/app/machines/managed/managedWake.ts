@@ -28,7 +28,7 @@ import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPre
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from '@/app/api/socket/machineSocketInstallationProof';
 import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { readPendingSessionInputAdmission } from '@/app/session/pending/pendingInputAdmission';
-import { isManagedMachineWakeInspectionRequiredV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
 
@@ -178,12 +178,13 @@ async function readManagedWakeTargetBindingInTx(tx: Tx, input: Readonly<{
     const controllerRole = await resolveManagedMachineRoleInTx(tx, row, input.actorAccountId);
     let projected;
     try { projected = projectManagedMachine(row); } catch { return undefined; }
-    if (projected.observation?.availability === 'absent' || projected.observation?.storage === 'lost') return undefined;
+    const runtime = resolveManagedMachineRuntimeV1(projected, input.machineId,
+        guest !== null && isMachineReachableV1({ machine: serializeMachinePresence(guest) }));
+    if (!runtime.available) return undefined;
     return { binding: { homeId, managedId: row.id, enrolledMachineId: input.machineId,
         expectedIntentRevision: row.intentRevision, controller, reason: 'admitted-work' as const }, controllerRole,
         wakeOnAcceptedMessage: row.wakeOnAcceptedMessage,
-        inspectionRequired: isManagedMachineWakeInspectionRequiredV1(projected, input.machineId,
-            guest !== null && isMachineReachableV1({ machine: serializeMachinePresence(guest) })) };
+        inspectionRequired: runtime.inspectionRequired };
 }
 
 export async function resolveManagedWakeTargetInTx(tx: Tx, input: Readonly<{
@@ -450,8 +451,8 @@ export async function readManagedWakeTargets(input: Readonly<{ actorAccountId: s
         const candidateIds = new Set(managedRows.flatMap(row => {
             const projected = projectManagedMachine(row);
             return row.enrolledMachineId && (projected.submittedNativeEffect
-                || isManagedMachineWakeInspectionRequiredV1(projected, row.enrolledMachineId,
-                    row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) }))) ? [row.id] : [];
+                || resolveManagedMachineRuntimeV1(projected, row.enrolledMachineId,
+                    row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) })).inspectionRequired) ? [row.id] : [];
         }));
         const machineIds = managedRows.flatMap(row => row.enrolledMachineId ? [row.enrolledMachineId] : []);
         const targets: ManagedWakeTargetV1[] = [];

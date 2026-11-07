@@ -80,6 +80,7 @@ type MachineIdentityFieldSource = Readonly<Partial<Omit<MachineIdentityFields, '
 export type FetchedMachineRow = Readonly<{
     id: string;
     managedMachineRef?: Machine['managedMachineRef'];
+    managedInputRuntime?: Machine['managedInputRuntime'];
     devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: Machine['kind'];
     metadata: string | null;
@@ -158,6 +159,7 @@ function readMachineIdentityFields(source: MachineIdentityFieldSource): MachineI
 function readMachinePublishedContext(machine: FetchedMachineRow) {
     return {
         ...(machine.managedMachineRef !== undefined ? { managedMachineRef: machine.managedMachineRef } : {}),
+        ...(machine.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}),
         dataEncryptionKey: machine.dataEncryptionKey ?? null,
         ...(machine.keyBasis !== undefined ? { keyBasis: machine.keyBasis } : {}),
         ...(machine.access !== undefined ? { access: machine.access } : {}),
@@ -273,6 +275,8 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
         id: machineId,
         ...(machineUpdate.managedMachineRef !== undefined ? { managedMachineRef: machineUpdate.managedMachineRef }
             : existingMachine?.managedMachineRef !== undefined ? { managedMachineRef: existingMachine.managedMachineRef } : {}),
+        ...(machineUpdate.managedInputRuntime !== undefined ? { managedInputRuntime: machineUpdate.managedInputRuntime }
+            : existingMachine?.managedInputRuntime !== undefined ? { managedInputRuntime: existingMachine.managedInputRuntime } : {}),
         // IMPORTANT: socket UpdateContainer.seq is an account cursor, not the machine entity seq.
         seq: existingMachine?.seq ?? 0,
         createdAt: existingMachine?.createdAt ?? updateCreatedAt,

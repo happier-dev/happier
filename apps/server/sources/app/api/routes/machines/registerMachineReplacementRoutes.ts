@@ -78,7 +78,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
 
             const updatedOldMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
-                include: { managedResource: { select: { id: true, homeId: true } } },
+                include: { managedResource: true },
             });
 
             return { kind: "ok" as const, machine: updatedOldMachine };
@@ -136,7 +136,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
 
             const updatedMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
-                include: { managedResource: { select: { id: true, homeId: true } } },
+                include: { managedResource: true },
             });
 
             return { kind: "ok" as const, machine: updatedMachine };

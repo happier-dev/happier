@@ -1,9 +1,9 @@
+import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol/actions/executor/types';
 import { UpdateContainerSchema, EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { assertManagedMachineRuntimeAvailable, executeManagedMachineWakeThenRun, isManagedMachineExecutionReady,
-    ManagedMachineControllerError, type ManagedMachineRuntimeDemandExecution, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
+import { executeManagedMachineWakeThenRun, ManagedMachineControllerError, type ManagedMachineRuntimeDemandExecution, type ManagedWakePreparationReads } from '@happier-dev/cli-common/machines/managed';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { observeSessionSocketEvents } from '@/session/transport/socket/sessionSocketAgentState';
 import { waitForChange } from '@/utils/async/waitForChange';
@@ -20,7 +20,8 @@ export async function readCliManagedMachineTarget(machineId: string, context: Ac
             ...(context.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
             serverHttpBaseUrl: account.serverUrl, projection: 'hostFacts', machineIds: [machineId], signal: context.signal });
         if (!machine) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        return { reachable: isMachineReachableV1({ machine }), managedMachineRef: machine.managedMachineRef };
+        return { reachable: isMachineReachableV1({ machine }), managedMachineRef: machine.managedMachineRef,
+            ...(machine.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}) };
     } catch {
         const code = context.signal?.aborted ? 'cancelled' : 'machine_inventory_unavailable';
         return { ok: false, errorCode: code, error: code };
@@ -77,8 +78,9 @@ export async function executeCliManagedMachineRuntimeDemand(request: ManagedMach
                     if ('ok' in target) throw ManagedMachineControllerError.fromActionFailure(target, request.actionId);
                     if (machine && 'ok' in machine) throw ManagedMachineControllerError.fromActionFailure(machine, request.actionId);
                     if (!machine) throw new ManagedMachineControllerError('managed_not_found');
-                    assertManagedMachineRuntimeAvailable(machine);
-                    if (isManagedMachineExecutionReady(machine, target.reachable)) return;
+                    const runtime = resolveManagedMachineRuntimeV1(machine, machineId, target.reachable);
+                    if (!runtime.available) throw new ManagedMachineControllerError('native_resource_unavailable');
+                    if (runtime.ready) return;
                     await waitForChange({ signal, hasChanged: () => changed || failure !== undefined,
                         subscribe: wake => { listeners.add(wake); return () => { listeners.delete(wake); }; } });
                 }

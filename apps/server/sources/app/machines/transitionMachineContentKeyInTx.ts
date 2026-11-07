@@ -24,7 +24,7 @@ export async function readMachineContentKeySnapshotInTx(params: Readonly<{
     machineId: string;
 }>): Promise<ReturnType<typeof serializeMachineRow> | null> {
     const machine = await params.tx.machine.findUnique({ where: { id: params.machineId },
-        include: { managedResource: { select: { id: true, homeId: true } } } });
+        include: { managedResource: true } });
     if (!machine || machine.accountId !== params.accountId || machine.kind !== "persistent"
         || machine.revokedAt || machine.replacedByMachineId) return null;
     const account = await params.tx.account.findUnique({ where: { id: params.accountId }, select: {
@@ -102,7 +102,7 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
         return { kind: "conflict", current: serializeMachineKeyBasis(fresh) };
     }
     const committed = await tx.machine.findUniqueOrThrow({ where: { id: machine.id },
-        include: { managedResource: { select: { id: true, homeId: true } } } });
+        include: { managedResource: true } });
     const devcontainerChild = await readMachineDevcontainerChildInTx(tx, machine.id);
     // Recipient tuples are bound to the retired owner wrapping. Wake their
     // existing row readers without publishing the new owner-only wrapping as a

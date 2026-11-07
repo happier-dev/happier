@@ -20,6 +20,7 @@ export interface MachineDisplayRenderable {
     isShared?: Machine['isShared'];
     /** Names only: a managed Machine is told apart by its short id, never its generated host. */
     managedMachineRef?: Machine['managedMachineRef'];
+    managedInputRuntime?: Machine['managedInputRuntime'];
     access?: Machine['access'];
     kind?: Machine['kind'];
     updatedAt: number;
@@ -65,6 +66,7 @@ export function buildMachineDisplayRenderableFromMachine(machine: Machine, lastK
         id: machine.id,
         ...(machine.isShared !== undefined ? { isShared: machine.isShared } : {}),
         ...(machine.managedMachineRef ? { managedMachineRef: machine.managedMachineRef } : {}),
+        ...(machine.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}),
         ...(machine.access ? { access: machine.access } : {}),
         kind: machine.kind,
         updatedAt: machine.updatedAt,
@@ -115,6 +117,8 @@ function areMachineDisplayValuesEqual(
     return previous.id === next.id
         && previous.isShared === next.isShared
         && (previous.managedMachineRef?.managedId ?? null) === (next.managedMachineRef?.managedId ?? null)
+        && previous.managedInputRuntime?.nativeReady === next.managedInputRuntime?.nativeReady
+        && previous.managedInputRuntime?.wakeState === next.managedInputRuntime?.wakeState
         && previous.access?.custodian.accountId === next.access?.custodian.accountId
         && previous.access?.custodian.displayName === next.access?.custodian.displayName
         && previous.access?.role === next.access?.role

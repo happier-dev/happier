@@ -157,7 +157,7 @@ export async function createMachineWithInstallationIdentityInTx(
 
     if (params.managedEnrollment) await linkManagedEnrollmentInTx(tx, params.managedEnrollment, params.accountId, machine.id);
     const enrolled = await tx.machine.findUniqueOrThrow({ where: { id: machine.id }, select: {
-        managedResource: { select: { id: true, homeId: true } },
+        managedResource: true,
     } });
     const child = await readMachineDevcontainerChildInTx(tx, machine.id);
     const access = await resolveMachineAccessInTx(tx, { actorAccountId: params.accountId, machineId: machine.id });
