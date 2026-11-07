@@ -30,13 +30,13 @@ export async function requestAccounts(context: DeploymentContext, query: string)
 }
 
 /** Project-issued upload JWTs use their own header, never the Account token binding. */
-export async function requestPagesAssets(context: DeploymentContext, path: string, jwt: string, payload: unknown): Promise<Reply> {
+export async function requestPagesAssets(context: DeploymentContext, path: 'check-missing' | 'upload' | 'upsert-hashes', jwt: string, payload: unknown): Promise<Reply> {
   return send(context, { url: `${origin}/client/v4/pages/assets/${path}`, method: 'POST', redirect: 'error',
     headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
-    body: new TextEncoder().encode(JSON.stringify(payload)) }, 'send');
+    body: new TextEncoder().encode(JSON.stringify(payload)) }, 'send', path !== 'check-missing');
 }
 
-async function send(context: DeploymentContext, input: HttpRequest, phase: Phase): Promise<Reply> {
+async function send(context: DeploymentContext, input: HttpRequest, phase: Phase, acknowledgementOnly = false): Promise<Reply> {
   context.signal.throwIfAborted();
   const mutation = input.method !== 'GET';
   let response;
@@ -59,6 +59,9 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(response.body)); }
   catch { return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase); }
-  if (!isObject(body) || body.success !== true || !('result' in body)) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
+  if (isObject(body) && body.success === false) return failure('provider_request_failed', phase);
+  // Cloudflare's asset upload and hash-registration ACKs contain success/errors/messages,
+  // without result. Data-bearing endpoints still require their result envelope.
+  if (!isObject(body) || body.success !== true || (!acknowledgementOnly && !('result' in body))) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
   return { value: body.result, ...(body.result_info === undefined ? {} : { resultInfo: body.result_info }) };
 }

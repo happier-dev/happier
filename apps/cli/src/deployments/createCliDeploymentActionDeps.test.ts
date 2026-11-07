@@ -4,10 +4,10 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
-import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema,
+import { DeploymentPrepareInputV1Schema, DeploymentEnvironmentCreationReviewV1Schema, DeploymentReceiptListResultV1Schema,
     ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { resolveDeploymentCreationDefaultsV1 } from '@happier-dev/deployments';
 import { DeploymentEnvironmentContentV1Schema, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -20,6 +20,25 @@ import type { StoredCredentials } from '@/persistence';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it('publishes recovery for failed and unknown receipt-list rows without opening private receipt content', async () => {
+    const rows = (['outcome_unknown', 'failed', 'succeeded'] as const).map((state, index) => createDeploymentReceiptHeaderV1({
+        id: `receipt-${index}`, state,
+    }));
+    const http = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, items: rows, nextCursor: null } });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async () => { throw new Error('A list cannot dispatch a deployment'); } });
+    const result = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' }, {});
+    expect(result).toMatchObject({ ok: true, items: [
+        { state: 'outcome_unknown', requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) },
+        { state: 'failed', requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) },
+        { state: 'succeeded' },
+    ] });
+    if (!('items' in result)) throw new Error('Expected receipt list');
+    expect(result.items[2]).not.toHaveProperty('remedy');
+    expect(DeploymentReceiptListResultV1Schema.parse(result)).toEqual(result);
+    expect(http).toHaveBeenCalledTimes(1);
+});
 
 it.each([
     { state: 'failed', errorCode: 'deployment_failed' },
@@ -81,7 +100,7 @@ it.each([401, 403])('preserves the closed Home authorization phase on HTTP %s ac
     ];
     for (const result of results) expect(result).toEqual({ ok: false, errorCode: 'action_forbidden',
         error: 'action_forbidden (home_signed_authorization_rejected:effect_family)',
-        failureCause: { phase: 'home.authorization.effect_family', errorClass: 'HttpStatusError', errorCode: null, httpStatus: status } });
+        failureCause: { phase: 'home.authorization.effect_family', errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: status } });
 });
 
 it('does not disclose unknown Home refusal metadata or classify bearer authentication as signed execution', async () => {
@@ -96,7 +115,7 @@ it('does not disclose unknown Home refusal metadata or classify bearer authentic
         const result = await deps.deploymentAction!('deployments.receipts.list', { serverId: 'home', environmentId: 'environment' }, {});
         expect(result).toEqual(signed ? { ok: false, errorCode: 'action_forbidden',
             error: 'action_forbidden (home_signed_authorization_rejected)',
-            failureCause: { phase: 'home.authorization.signed_request', errorClass: 'HttpStatusError', errorCode: null, httpStatus: 401 } }
+            failureCause: { phase: 'home.authorization.signed_request', errorClass: 'HttpStatusError', errorCode: 'action_forbidden', httpStatus: 401 } }
             : { ok: false, errorCode: 'action_home_signed_out', error: 'action_home_signed_out' });
     }
 });

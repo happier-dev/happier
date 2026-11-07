@@ -28,8 +28,13 @@ from existing metadata; it does not open private receipt content or claim a
 provider prerequisite. Detailed private failures remain the existing receipt
 reader's responsibility.
 
-In development source, native teardown can prove an unused sole target link empty from its complete receipt
-lineage when it has no deployment receipt or active deployment. A missing Docker
+In 0.3 development, Stop and remove prepares a typed `nothingDeployed` result when
+complete Environment-wide receipt History is empty and no target has an active
+deployment or imported native workload. It skips source content, receipt creation
+and native preparation, then uses the same teardown Action and HTTP route to
+invoke the existing Environment deletion owner. That owner retains its authority,
+revision and complete-workload disposition checks. Partial or unavailable History
+and deployments on another target cannot establish this absence. A missing Docker
 executable alone does not prove absence on a previously used target. Unavailable
 observation or removal keeps the outcome unknown, with a sanitized cause code in
 the step proof and Action details; command output is not included.

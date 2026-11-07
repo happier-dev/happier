@@ -17,7 +17,7 @@ import {
   type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
-import { isDeploymentPromoteActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentPromoteActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -197,7 +197,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         input = prepared.data;
       }
       context.signal?.throwIfAborted();
-      if (actionId === 'deployments.teardown' && !('detachKeepRunning' in input)) {
+      if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('detachKeepRunning' in input) && !('nothingDeployed' in input)) {
         if (!params.admitTeardown) return failure('unsupported_action');
         const unsupported = await params.admitTeardown(DeploymentTeardownInputV1Schema.parse(input), context);
         if (unsupported) return unsupported;
@@ -277,7 +277,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       }
       if (actionId === 'deployments.cancel') body = { ...transportInput, kind: 'cancel' };
       if (actionId === 'deployments.deploy' || actionId === 'deployments.rollback' || actionId === 'deployments.promote'
-        || actionId === 'deployments.teardown' && !('detachKeepRunning' in transportInput)) {
+        || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('detachKeepRunning' in transportInput) && !('nothingDeployed' in transportInput)) {
         const actionOperationId = context.operationAcceptance?.operationId;
         if (!actionOperationId) return failure('operation_unavailable');
         body = { ...transportInput, actionOperationId };
@@ -365,7 +365,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     }
     if ('errorCode' in result || !('ok' in result) || !result.ok
       || (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown')) return result;
-    if (actionId === 'deployments.teardown' && 'detached' in result) return result;
+    if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && ('detached' in result || 'nothingDeployed' in result)) return result;
     const receipt = DeploymentReceiptResultV1Schema.parse(result);
     if (!receipt.ok) return receipt;
     if (!('deploymentId' in receipt)) return receipt;

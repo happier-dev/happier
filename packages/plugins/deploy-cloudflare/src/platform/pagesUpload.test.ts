@@ -25,7 +25,7 @@ function result(exitCode = 0): PluginProcessResult {
   return { termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } }, stdout: new Uint8Array(),
     stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
-async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate' | 'malformedCreate' | 'denied' | 'cached' | 'observeLost' | 'observeDenied' | 'monorepo' | 'acceptedQueued' = 'success') {
+async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate' | 'malformedCreate' | 'denied' | 'cached' | 'observeLost' | 'observeDenied' | 'monorepo' | 'acceptedQueued' | 'assetRejected' = 'success') {
   const root = await mkdtemp(join(tmpdir(), 'pages-upload-'));
   const sourceRoot = join(root, 'approved');
   await mkdir(sourceRoot);
@@ -72,6 +72,14 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lostCreate
   const http = createPluginHttpFixture({ async request(request) {
     requests.push(request);
     const path = new URL(request.url).pathname;
+    if (mode === 'assetRejected' && path.endsWith('/check-missing')) {
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+        errors: [{ code: 10000, message: 'private-provider-detail private-upload-jwt' }], result: null })) };
+    }
+    // Cloudflare's upload/upsert-hashes ACK has no result property.
+    if (path.endsWith('/assets/upload') || path.endsWith('/assets/upsert-hashes')) {
+      return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: true, errors: [], messages: [] })) };
+    }
     let value: unknown = null;
     if (path.endsWith('/upload-token')) value = { jwt: 'private-upload-jwt' };
     else if (path.endsWith('/check-missing')) value = mode === 'cached' ? [] : ['pinned-vendor-hash'];
@@ -166,6 +174,17 @@ it('settles a lost deployment response as unknown without replaying the write or
     expect(JSON.stringify(outcome)).not.toContain('private-upload-jwt');
     expect(JSON.stringify(outcome)).not.toContain('private-provider-detail');
     expect(h.requests.filter(request => request.url.endsWith('/deployments'))).toHaveLength(1);
+  } finally { await h.dispose(); }
+});
+
+it('settles a definitive asset rejection as failed before creating a deployment, retaining no provider content', async () => {
+  const h = await fixture('assetRejected');
+  try {
+    const outcome = await h.invoke().catch((error: unknown) => error);
+    expect(outcome).toMatchObject({ code: 'provider_request_failed', retryable: false, details: { phase: 'send' } });
+    expect(JSON.stringify(outcome)).not.toContain('private-provider-detail');
+    expect(JSON.stringify(outcome)).not.toContain('private-upload-jwt');
+    expect(h.requests.map(request => request.method)).toEqual(['GET', 'POST']);
   } finally { await h.dispose(); }
 });
 
