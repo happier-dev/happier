@@ -380,7 +380,9 @@ describe('HomeCompletedBots', () => {
       const metricsRow = tree.root.findAll(node => node.props.testID === `home.completed-bots.${home}.metrics`
         && typeof node.props.title === 'string')[0]!;
       expect(metricsRow.props.title).toBe('Metrics');
-      expect(metricsRow.props.subtitle).toBeUndefined();
+      // No preview is not no result: the row says so and stays the way in (Living PLAN "preview unavailable" and Open).
+      expect(metricsRow.props.subtitle).toBe('homeIndex.completedBotPreviewUnavailable');
+      expect(metricsRow.props.onPress).toBeTypeOf('function');
       // The turn names a run, but no loaded run supplies its name: no Habit label is invented.
       expect(
         textOf(tree, `home.completed-bots.${home}.triager.subtitle`),
@@ -392,7 +394,7 @@ describe('HomeCompletedBots', () => {
             { kind: 'available', value: { title: 'Daily sweep' } }),
         ], { serverId: home, accountId: 'me' });
       });
-      expect(textOf(tree, `home.completed-bots.${home}.metrics.subtitle`)).toBe('Daily sweep');
+      expect(textOf(tree, `home.completed-bots.${home}.metrics.subtitle`)).toBe('Daily sweep · homeIndex.completedBotPreviewUnavailable');
       expect(textOf(tree, `home.completed-bots.${home}.triager.subtitle`)).toBe('Issue triager · Daily sweep');
 
       await act(async () => {

@@ -218,6 +218,22 @@ describe('managed workflow Run presentation', () => {
             progress: { ...progress, blockKind: 'step', invocationPath: { blockId: 'a', scope: [] } } });
         expect(step.failureCause).toMatchObject({ headline: producer });
     });
+    it.each([
+        ['native_check_unsupported', 'errors.machineNativeCheckUnsupported'],
+        ['native_check_unavailable', 'errors.machineNativeCheckUnavailable'],
+        ['native_effect_failed', 'errors.machineNativeEffectFailed'],
+        ['native_protocol_invalid', 'errors.machineNativeProtocolInvalid'],
+    ] as const)('heads a %s Setup failure in words and keeps the code for Technical details', (code, key) => {
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        for (const message of [undefined, code]) {
+            const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1', blockKind: 'action',
+                invocationPath: { blockId: 'setup-0', scope: [] }, attempt: '0', logicalInvocationRecordId: invocation.id,
+                reason: { code, ...(message ? { message } : {}) } });
+            const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
+                invocation, progress, machineHomeDirectory: null });
+            expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code, message: message ?? null, headline: t(key) });
+        }
+    });
     it('keeps the canonical cancelled outcome separate from pending physical custody', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 5 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'pending', stepProgress: { completed: 1, total: 5 } });

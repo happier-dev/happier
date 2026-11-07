@@ -21,6 +21,7 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { describeMachineNativeFailureCode } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
@@ -305,6 +306,7 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
         ? { kind: 'reported_failure', blockKind: params.progress.blockKind, code: params.progress.reason.code,
             message: reportedMessage,
             headline: issue.message ?? describeRecordedTransportFailure(params.progress.reason.code)
+                ?? describeMachineNativeFailureCode(params.progress.reason.code)
                 ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
                 ?? reportedMessage,
             reset: issue.reset,

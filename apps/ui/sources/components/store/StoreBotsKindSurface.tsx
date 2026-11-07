@@ -9,6 +9,7 @@ import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { BOTS_GLYPH } from '@/components/sessions/bots/botsGlyph';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
@@ -90,7 +91,11 @@ export default function StoreBotsKindSurface(props: Readonly<{ kind: string; inp
         </> : <>
             {/* A search that finds nothing shared leaves the Store's own answer to speak for it. */}
             {query && !received.loading && !received.error && received.items.length === 0 ? null :
-            <ItemGroup surface="none" title={t('botTemplates.sharedWithYou')} description={t('botTemplates.sharedWithYouDescription')}>
+            <ItemGroup surface="none" title={t('botTemplates.sharedWithYou')} description={t('botTemplates.sharedWithYouDescription')}
+                // A healthy section asks its reader again; a failed read already offers Try again on its own line.
+                action={received.error ? undefined : <SectionActionButton testID="store.kind.bot.shared.refresh"
+                    title={t('common.refresh')} icon="arrow-clockwise" loading={received.loading} disabled={received.loading}
+                    onPress={() => { void received.refresh(); }} />}>
                 <Directory kind="bot" label={t('botTemplates.sharedWithYou')} rows={receivedRows} groups={NO_GROUPS}
                     list={received} query={query} sourceTitle={null}
                     emptyState={<EmptyState testID="store.kind.bot.shared.empty" layout="inline" iconName={BOTS_GLYPH}

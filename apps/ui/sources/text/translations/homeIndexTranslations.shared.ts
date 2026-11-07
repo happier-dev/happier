@@ -35,6 +35,8 @@ export type HomeIndexTranslation = Readonly<{
     reorderHandle: (params: Readonly<{ section: string }>) => string;
     /** Home's section of unread completed Bot results, under the composer. */
     completedBotsTitle: string;
+    /** A completed result whose preview this device cannot show; the row still opens it. */
+    completedBotPreviewUnavailable: string;
 }>;
 
 
@@ -68,4 +70,5 @@ export const homeIndexTranslationsEnglish = { en: {
         showAgain: ({ count }) => `${count} · Show again`,
         reorderHandle: ({ section }) => `Reorder ${section}`,
         completedBotsTitle: 'Done while you were away',
+        completedBotPreviewUnavailable: 'No preview – open to read it',
     } } satisfies Pick<Readonly<Record<string, HomeIndexTranslation>>, "en">;

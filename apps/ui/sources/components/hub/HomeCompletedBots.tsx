@@ -104,7 +104,8 @@ const HomeCompletedBotRow = React.memo(function HomeCompletedBotRow(
       titleLines={1}
       subtitle={result.preview.state === 'available'
         ? habit ? `${candidate.title} · ${habit}` : candidate.title
-        : habit ?? undefined}
+        // No preview is not no result: the row says so and stays the way in to read it.
+        : habit ? `${habit} · ${t('homeIndex.completedBotPreviewUnavailable')}` : t('homeIndex.completedBotPreviewUnavailable')}
       subtitleTestID={`${testID}.subtitle`}
       leftElement={
         facts ? <SessionBotFace facts={facts} size={FACE_SIZE} motion="interaction" /> : undefined

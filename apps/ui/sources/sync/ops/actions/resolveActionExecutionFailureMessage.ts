@@ -50,6 +50,20 @@ function readWidgetRefusalMessage(code: unknown, details?: unknown): string | nu
     }
 }
 
+/**
+ * A Machine's native setup refusal, in words. Action results and recorded Workflow failures (a Setup step's
+ * reported code) read the same sentence; the raw code stays with the caller's technical detail.
+ */
+export function describeMachineNativeFailureCode(code: unknown): string | null {
+    switch (code) {
+        case 'native_protocol_invalid': return t('errors.machineNativeProtocolInvalid');
+        case 'native_check_unavailable': return t('errors.machineNativeCheckUnavailable');
+        case 'native_check_unsupported': return t('errors.machineNativeCheckUnsupported');
+        case 'native_effect_failed': return t('errors.machineNativeEffectFailed');
+        default: return null;
+    }
+}
+
 function readFailureMessage(value: unknown): string | null {
     const record = asRecord(value);
     if (!record) return null;
@@ -57,10 +71,8 @@ function readFailureMessage(value: unknown): string | null {
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
-    if (code === 'native_protocol_invalid') return t('errors.machineNativeProtocolInvalid');
-    if (code === 'native_check_unavailable') return t('errors.machineNativeCheckUnavailable');
-    if (code === 'native_check_unsupported') return t('errors.machineNativeCheckUnsupported');
-    if (code === 'native_effect_failed') return t('errors.machineNativeEffectFailed');
+    const nativeFailure = describeMachineNativeFailureCode(code);
+    if (nativeFailure) return nativeFailure;
     if (code === 'invalid_setting_value' || code === 'account_settings_mutation_invalid') return t('settings.writeValueRefused');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');

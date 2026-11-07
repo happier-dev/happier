@@ -69,6 +69,11 @@ it.each(['open', 'add'] as const)('browses metadata and reaches the shared previ
     // Nothing shared with this viewer: that section explains templates under its own title, never the page's "Nothing here yet".
     expect(screen.findAllByTestId('store.kind.bot.empty')).toHaveLength(0);
     expect(screen.findByTestId('store.kind.bot.shared.empty')).toBeTruthy();
+    // A healthy page still offers Refresh: it asks the received reader again, nothing else.
+    const sharedReads = () => fixture.requests.filter(request => request.path.includes('artifact')).length;
+    const readsBefore = sharedReads();
+    await screen.pressByTestIdAsync('store.kind.bot.shared.refresh');
+    await waitForHomeGovernance(() => expect(sharedReads()).toBeGreaterThan(readsBefore));
     const rowId = `store.kind.bot.row.${row.key}`;
     await screen.pressByTestIdAsync(path === 'add' ? `${rowId}.add` : rowId);
     await waitForHomeGovernance(() => expect(promptRegistriesRouterPushSpy).toHaveBeenCalled());
