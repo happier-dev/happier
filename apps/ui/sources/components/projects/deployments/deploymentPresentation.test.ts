@@ -116,6 +116,11 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
             .toEqual({ kind: 'deploying', deploymentId: 'd-run' });
     });
 
+    it('a newer catalog release is the quietest notice: it shows only when nothing else does', () => {
+        expect(deploymentEnvironmentAttention({ ...calm, catalogUpdate: true })).toEqual({ kind: 'catalogUpdate' });
+        expect(deploymentEnvironmentAttention({ ...calm, catalogUpdate: true, servingState: 'running_unverified' })?.kind).toBe('runningUnverified');
+    });
+
     it('an unknown controller makes no claim; a degraded service needs the person', () => {
         expect(deploymentEnvironmentAttention({ ...calm, controller: { state: 'unknown' } })).toBeNull();
         expect(deploymentEnvironmentAttention({ ...calm, health: { status: 'degraded' } })?.kind).toBe('unhealthy');

@@ -40,6 +40,15 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it('shows the selected deployment failure policy independently of migration recovery', async () => {
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'keepPartial',
+        ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } }, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="facts" />,
+    );
+    expect(screen.getTextContent()).toContain('projects.deployments.receipt.keepPartial');
+  });
+
   it('does not redraw the approval page when only the Machine presence changes', async () => {
     const serverId = getActiveServerSnapshot().serverId;
     const machine = createMachineFixture({ id: 'machine-target', metadata: { displayName: 'Rebound workstation', host: 'w.local',

@@ -136,7 +136,8 @@ export function useHealthNoticeInvestigate(
       controller.current = null;
     };
   }, [subjectIdentity]);
-  const performInvestigation = React.useCallback(async (placement?: HealthNoticeInvestigationPlacement) => {
+  const performInvestigation = React.useCallback(async (placement?: HealthNoticeInvestigationPlacement,
+    delivery?: 'compose' | 'send') => {
     if (!investigation || controller.current) return;
     const own = new AbortController();
     controller.current = own;
@@ -170,7 +171,8 @@ export function useHealthNoticeInvestigate(
         });
         return;
       }
-      const result = await investigation.run(selection, {
+      // The agent-action control's launch for this one press: start sends, review opens the prefilled composer.
+      const result = await investigation.run(delivery ? { ...selection, delivery } : selection, {
         signal: own.signal,
         ...(placement ? { placement } : {}),
       });
@@ -187,5 +189,8 @@ export function useHealthNoticeInvestigate(
   const investigate = React.useCallback(() => performInvestigation(), [performInvestigation]);
   const investigateWithPlacement = React.useCallback((placement: HealthNoticeInvestigationPlacement) =>
     performInvestigation(placement), [performInvestigation]);
-  return { investigate, investigateWithPlacement, pending, outcome };
+  /** `AgentActionButton`'s launch: the same configured Investigate, in the mode the person chose. */
+  const launch = React.useCallback((mode: 'start' | 'review') =>
+    performInvestigation(undefined, mode === 'start' ? 'send' : 'compose'), [performInvestigation]);
+  return { investigate, investigateWithPlacement, launch, pending, outcome };
 }

@@ -9,7 +9,7 @@ import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/de
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
-import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from './approvalFailureOutcome';
+import { presentActionFailureOutcome, presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from './approvalFailureOutcome';
 import { formatApprovalStatusLabel, resolveApprovalDisplayStatus } from '@/components/approvals/approvalStatusLabel';
 
 const response = DaemonLocalServiceLauncherStartResponseV1Schema.parse({
@@ -249,5 +249,17 @@ describe('confidential fill outcome', () => {
         expect(status({ status: 'canceled', code: 'canceled' })).toBe('Canceled');
         expect(status({ status: 'unknown', code: 'delivery_unknown' })).toBe('Outcome unknown');
         expect(status({ status: 'filled', code: 'filled' })).toBe('Executed');
+    });
+});
+
+describe('deploy refused for missing required secrets', () => {
+    it('names the secrets without values as the reason, and only for the typed deployment refusal', () => {
+        const failure = { ok: false as const, errorCode: 'secret_missing', error: 'secret_missing',
+            details: { deployable: false, missingRequiredSecretNames: ['DATABASE_URL', 'STRIPE_KEY'] } };
+        const reason = presentActionFailureOutcome(failure, 'deployment').reason;
+        expect(reason).toContain('DATABASE_URL');
+        expect(reason).toContain('STRIPE_KEY');
+        expect(presentActionFailureOutcome({ ...failure, details: { names: ['DATABASE_URL'] } }, 'deployment').reason ?? '')
+            .not.toContain('DATABASE_URL');
     });
 });

@@ -246,6 +246,9 @@ function describeReviewFields(
       ...field('ifItFails', t('projects.deployments.review.ifItFails'), ownServer.autoRestorePreviousRelease
         ? t('projects.deployments.review.restoresPrevious') : t('projects.deployments.review.staysDown')),
     ] : []),
+    // The rollout choice the person made before requesting; reviewed as captured, changed only by asking again.
+    ...field('onFailure', t('projects.deployments.receipt.policy'), review.onFailure
+      ? t(`projects.deployments.receipt.${review.onFailure}`) : null),
   ];
   return { rows, unrepresentable: null };
 }

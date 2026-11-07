@@ -11,6 +11,7 @@ import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/de
 import { DeploymentTeardownEnvironmentPartialDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/deployment-protocol/v1';
 
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
@@ -116,8 +117,13 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const technicalDetails = presentActionFailureTechnicalDetails(failure, scope);
     const retiredDomain = technicalDetails.find(line => line.key === 'failure-domain')?.value;
     const remedy = technicalDetails.find(line => line.key === 'failure-remedy')?.value;
+    // A deploy refused before review names the required secrets that have no value (names only, never values).
+    const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
+        ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
     return {
-        reason: retiredDomain ? `${retiredDomain} · ${remedy}` : presented.reason || remedy || null,
+        reason: missingSecrets?.success
+            ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
+            : retiredDomain ? `${retiredDomain} · ${remedy}` : presented.reason || remedy || null,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
         code: presented.code,
         technicalDetails,

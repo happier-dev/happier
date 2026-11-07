@@ -1,3 +1,4 @@
+import type { DeploymentEnvironmentDestinationV1 } from '@happier-dev/deployments';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -18,6 +19,9 @@ import {
 } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
+import { AgentActionButton } from '@happier-dev/plugin-ui/components';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
+import { readDeploymentFailureRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { useAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigationSessionResult } from '@/hooks/inbox/useInvestigationSessionResult';
@@ -25,6 +29,7 @@ import { OperationsOutcomeGroup } from '@/components/workflows/run/OperationsOut
 import { Item } from '@/components/ui/lists/Item';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Typography } from '@/constants/Typography';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -82,6 +87,8 @@ export const DeploymentReceiptDetail = React.memo(
       demand: DeploymentReadDemandV1;
       accountId: string;
       onBack: () => void;
+      /** Leaves the receipt for one of its Environment's pages (a recovery's next action: Variables, History, Logs). */
+      onOpenEnvironmentTab?: (next: DeploymentEnvironmentDestinationV1) => void;
       /** The Action owner's rollback; absent while the Source's Account is not current. */
       rollback: ReturnType<typeof createDeploymentActions>['rollback'] | null;
       /** The Action owner's cancel, offered only while the receipt read says this receipt is cancellable. */
@@ -98,6 +105,8 @@ export const DeploymentReceiptDetail = React.memo(
       serverId: string;
       /** The Action owner's per-step stage-log read; absent while the Source's Account is not current. */
       readLogs: DeploymentReadLogs | null;
+      /** Opens the Environment where a failure's canonical next action points (RECOVERY-COPY); absent, it is not offered. */
+      onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
     }>,
   ) {
     // The serving pointer lives on the Environment's runtime link; the controller shares that read.
@@ -132,6 +141,18 @@ export const DeploymentReceiptDetail = React.memo(
     [failed, props.serverId, props.environmentId, props.deploymentId]);
     const investigation = useInvestigateFailure(investigateSubject);
     const investigationOwner = useAccountNoticeInvestigation();
+    // An unresolved placement opens the composer, where the person chooses it; no placement picker on this page.
+    // Once only: if the composer itself still asks for a placement, its own chooser stays as the way forward.
+    const placementUnresolved = investigation.outcome?.kind === 'placement_choice_required';
+    const { launch: launchInvestigation } = investigation;
+    const openedComposerForPlacement = React.useRef(false);
+    React.useEffect(() => {
+      if (!placementUnresolved || openedComposerForPlacement.current) return;
+      openedComposerForPlacement.current = true;
+      void launchInvestigation('review');
+    }, [placementUnresolved, launchInvestigation]);
+    const showInvestigationOutcome = investigation.outcome !== null
+      && (!placementUnresolved || openedComposerForPlacement.current && !investigation.pending);
     const persistedInvestigation = useInvestigationSessionResult(investigationOwner, investigateSubject, investigation.outcome);
     const outcomeInput = React.useMemo(() => persistedInvestigation && investigateSubject ? {
       subject: investigateSubject,
@@ -167,6 +188,9 @@ export const DeploymentReceiptDetail = React.memo(
       );
     }
     const { deployment, content, facts } = value;
+    // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.
+    const recovery = deployment.state === 'failed' && facts.failure
+      ? readDeploymentFailureRecoveryV1(facts.failure.code, facts.failure) : null;
     const { rollback, cancel, deploy, promote, environmentId, phone } = props;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
@@ -200,6 +224,7 @@ export const DeploymentReceiptDetail = React.memo(
     };
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
+    const images = 'images' in content ? content.images : NO_IMAGES;
     const notice = deploymentStateNotice(deployment.state, facts.failure);
     const serving = activeId !== null && activeId === deployment.id;
     const firstMachine = machineName(content.machines[0] ?? '');
@@ -232,8 +257,20 @@ export const DeploymentReceiptDetail = React.memo(
       health: environmentValue?.healthAggregate,
       state: deployment.state,
     });
-    const investigateAction = { label: t('inbox.work.healthNotice.investigate'),
-      loading: investigation.pending, disabled: investigation.pending, onPress: investigation.investigate };
+    // Investigate is the shared agent-action control (DEPLOY-COMPOSE R4): its face opens the prefilled New Session
+    // composer beside this receipt; Start now runs it in the background. The configured Triage owner decides the rest.
+    // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.
+    const investigateControl = (
+      <CorePluginUiPresentationScope>
+        <AgentActionButton
+          title={t('inbox.work.healthNotice.investigate')}
+          launchMode="review"
+          onLaunch={(mode) => { void investigation.launch(mode); }}
+          disabled={investigation.pending}
+          compact={phone}
+        />
+      </CorePluginUiPresentationScope>
+    );
     const showLogs = deployment.state === 'failed' || deployment.state === 'outcome_unknown'
       || deployment.state === 'cancelled';
     // With a reader, the existing viewer opens operation references even when no steps were recorded.
@@ -370,8 +407,10 @@ export const DeploymentReceiptDetail = React.memo(
                 testID="project-deployments.receipt.outcome.failed"
                 tone="danger"
                 iconName="x-circle"
-                title={deploymentFailureTitle(facts.failure, deployment.operation === 'rollback')}
-                description={failureConsequence(facts, content.machineResults, firstMachine) ?? undefined}
+                title={deploymentFailureTitle(facts.failure, deployment.operation)}
+                // What is serving now (the receipt's own facts), then the canonical remedy for its recorded cause.
+                description={[failureConsequence(facts, content.machineResults, firstMachine), recovery?.remedy ?? null]
+                  .filter(Boolean).join(' ') || undefined}
                 action={rollbackTarget ? {
                   label: backupTarget ? t(migrationPolicy === 'ask' ? 'projects.deployments.chooseRecovery' : 'projects.deployments.restoreBackupAndCode')
                     : migrationRan ? t('projects.deployments.rollbackCodeOnly')
@@ -380,9 +419,15 @@ export const DeploymentReceiptDetail = React.memo(
                   loading: rollingBack,
                   disabled: rollingBack || reviewPending,
                   onPress: chooseRecovery,
-                } : investigateAction}
+                } : null}
                 // Recovery leads when there is one; finding out why is the way forward beside it.
-                secondaryAction={rollbackTarget ? investigateAction : null}
+                control={investigateControl}
+                // The canonical next action opens where the cause is fixed; it never retries anything.
+                moreActions={recovery && props.onOpenRecoveryDestination ? [{
+                  label: recovery.nextAction.label,
+                  testID: 'project-deployments.receipt.outcome.failed.recovery',
+                  onPress: () => props.onOpenRecoveryDestination?.(recovery.nextAction.destination),
+                }] : undefined}
                 details={facts.failure ? [facts.failure.code] : undefined}
               />
             ) : deployment.state === 'succeeded' ? (
@@ -394,7 +439,7 @@ export const DeploymentReceiptDetail = React.memo(
                 serving={serving}
               />
             ) : null}
-            {investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
+            {showInvestigationOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId}
               testID="project-deployments.receipt.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
             {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" /> : null}
             {notice ? (
@@ -416,6 +461,27 @@ export const DeploymentReceiptDetail = React.memo(
                 <View style={styles.facts}>
                   <FactStrip facts={stripFacts} />
                 </View>
+              </ItemGroup>
+            ) : null}
+            {images.length > 0 ? (
+              // The exact images this release ran (lab `rollback/image`): what a rollback to it starts again.
+              <ItemGroup
+                testID="project-deployments.receipt.images"
+                title={t('projects.deployments.receipt.imagesTitle')}
+                description={t('projects.deployments.receipt.imagesDescription')}
+              >
+                {images.map((image) => (
+                  <Item
+                    key={`${image.service}:${image.platform}`}
+                    testID={`project-deployments.receipt.image.${image.service}.${image.platform}`}
+                    title={image.service}
+                    subtitle={image.registryReference ?? image.configDigest}
+                    subtitleStyle={styles.mono}
+                    subtitleLines={phone ? 2 : 1}
+                    detail={image.platform}
+                    showChevron={false}
+                  />
+                ))}
               </ItemGroup>
             ) : null}
             {logs.map((log) => (
@@ -668,7 +734,10 @@ function restorationLabel(
   return null;
 }
 
+const NO_IMAGES: readonly never[] = Object.freeze([]);
+
 const styles = StyleSheet.create((theme) => ({
+  mono: Typography.mono(),
   page: { flex: 1, minHeight: 0 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   phoneAction: { flexGrow: 1 },

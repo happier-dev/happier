@@ -7,7 +7,7 @@ import { selectDeploymentReceiptRetainedHistoryV1 } from '@happier-dev/deploymen
 import type {
     DeploymentReadControllerV1, DeploymentReadDemandV1, DeploymentReadLeaseV1, DeploymentReadSnapshotV1,
     DeploymentReadPageFactsV1, DeploymentReadPageLeaseV1,
-    DeploymentCollectionQueryV1,
+    DeploymentCollectionQueryV1, DeploymentHistoryQueryV1,
     DeploymentEnvironmentHealthMemberV1,
 } from '@happier-dev/deployments';
 
@@ -230,11 +230,17 @@ export function useDeploymentEnvironment(controller: DeploymentReadControllerV1 
     return { ...read, catalogUpdate, healthFeed: read.snapshot.value?.healthFeed ?? null, healthNotices };
 }
 
+const NO_HISTORY_QUERY: DeploymentHistoryQueryV1 = Object.freeze({});
+
 export function useDeploymentHistory(controller: DeploymentReadControllerV1 | null, environmentId: string | null, demand: DeploymentReadDemandV1,
-    query: Readonly<{ cursor?: string }> = {}) {
+    query: DeploymentHistoryQueryV1 = NO_HISTORY_QUERY) {
+    const { cursor, state, actorAccountId, operation } = query;
+    // The read owner applies the narrowing before paging; each distinct query is its own keyed page lease.
     const acquire = React.useMemo(() => controller && environmentId
-        ? () => controller.acquireHistory(environmentId, query, INACTIVE) : null,
-    [controller, environmentId, query.cursor]);
+        ? () => controller.acquireHistory(environmentId, { ...(cursor === undefined ? {} : { cursor }),
+            ...(state === undefined ? {} : { state }), ...(actorAccountId === undefined ? {} : { actorAccountId }),
+            ...(operation === undefined ? {} : { operation }) }, INACTIVE) : null,
+    [controller, environmentId, cursor, state, actorAccountId, operation]);
     const read = useDeploymentPage(acquire, demand);
     return { ...read, result: projectDeploymentEnvironmentTabResult(read.snapshot, read.snapshot.value?.items ?? NO_TAB_ITEMS,
         read.refresh, read.snapshot.value?.coverage) };

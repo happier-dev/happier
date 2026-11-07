@@ -8,6 +8,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton, type RoundButtonDisplay } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { usePageListInsets } from '@/components/ui/lists/listPresentation';
@@ -39,7 +40,7 @@ export type AttentionBannerAction = Readonly<{
  *
  * `presentation="strip"` is the same notice as the compact band across the top of a pane or reading
  * surface (Walkthrough lab `wk-band`), drawn by the shared banner's strip: the title leads when a
- * description finishes the sentence, the second ways forward are words and the action is the band's one
+ * description finishes the sentence (a failure's title always leads: it names the fact first), the second ways forward are words and the action is the band's one
  * button at its end. A strip that fails is announced as an alert; any other is a polite status.
  */
 export const AttentionBanner = React.memo(function AttentionBanner(props: Readonly<{
@@ -57,6 +58,11 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     /** A domain-specific status mark, still rendered through the shared banner slot. */
     icon?: React.ReactNode;
     action?: AttentionBannerAction | null;
+    /**
+     * The primary way forward when it is a shared control rather than a button (the agent-action split button,
+     * `AgentActionButton`): drawn in the action's place, so a notice never grows a second actions row.
+     */
+    control?: React.ReactNode;
     /**
      * A notice whose sibling states differ in how many ways forward they offer keeps its actions in one
      * place: `below` puts even a single action under the words, where two or more always sit.
@@ -95,8 +101,9 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     const fullWidthAction = compact && props.compactActionPlacement === 'full-width';
     const toggleDetails = React.useCallback(() => setDetailsOpen((open) => !open), []);
     const hasDetails = (props.details?.length ?? 0) > 0;
-    const actions = props.action || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
+    const actions = props.action || props.control || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
         <View style={[styles.actions, fullWidthAction ? { width: '100%' } : null]}>
+            {props.control ?? null}
             {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} /> : null}
             {props.secondaryAction
                 ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet />
@@ -145,7 +152,7 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
                             style={styles.detailsToggle}
                         >
                             <Text style={styles.detailsToggleText}>{t('common.details')}</Text>
-                            <Icon name={detailsOpen ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                            <DisclosureCaret expanded={detailsOpen} size={ICON_SIZE.xs} />
                         </HappierPressable>
                     ) : null}
                     {hasDetails && detailsOpen ? (
@@ -180,7 +187,7 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
     const presentationTheme = usePluginUiTheme(theme);
     const links = [...(props.secondaryAction ? [{ action: props.secondaryAction, testID: `${props.testID}.secondaryAction` }] : []),
         ...(props.moreActions ?? []).map((action, index) => ({ action, testID: `${props.testID}.moreAction.${index}` }))];
-    const hasActions = Boolean(props.action) || links.length > 0;
+    const hasActions = Boolean(props.action) || Boolean(props.control) || links.length > 0;
     return (
         <HappierBanner
             presentation="strip"
@@ -197,7 +204,7 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
                 size={HAPPIER_FRESHNESS_LINE_METRICS.glyphPx} color={tone === 'neutral' ? theme.colors.text.tertiary : palette.foreground} />}
             titleContent={(
                 <Text style={stripStyles.text}>
-                    {props.description ? <Text style={stripStyles.lead}>{props.title}</Text> : props.title}
+                    {props.description || tone === 'danger' ? <Text style={stripStyles.lead}>{props.title}</Text> : props.title}
                     {props.description ? ` ${props.description}` : null}
                 </Text>
             )}
@@ -211,6 +218,7 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
                                 label={action.label} onPress={action.onPress} disabled={action.disabled} />
                         </View>
                     ))}
+                    {props.control ?? null}
                     {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} /> : null}
                 </>
             ) : undefined}
