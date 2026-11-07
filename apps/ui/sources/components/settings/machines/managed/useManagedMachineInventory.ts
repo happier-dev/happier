@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
@@ -145,11 +146,8 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         const cancellation = new AbortController();
         controller = cancellation;
         awaitingApproval = false;
-        // Revalidating the same live binding does not make a hydrated answer
-        // non-current. Keep its authority and mutations stable until the new
-        // read either replaces it or returns a terminal failure.
-        if (entry.status !== 'ready') publish({ accountId, homeId, managedId, enrolledMachineId, includeArchived, machines: entry.machines,
-            ...(entry.asOf !== undefined ? { asOf: entry.asOf } : {}), status: 'loading' });
+        // Revalidation keeps the settled answer, including failures, until it
+        // changes. Initial loading and pending approval have their own transitions.
         return (async () => {
                 try {
                     type ReadResult = Readonly<{ kind: 'succeeded'; machines: ManagedMachineV1[] }> | Readonly<{ kind: 'failed'; code: string }>;
@@ -169,7 +167,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                                     onSucceeded: value => callbacks.onApprovalSucceeded('machines' in value ? value.machines : [value]),
                                     onFailed: callbacks.onApprovalFailed,
                                 });
-                                if (isCurrent() && !cancellation.signal.aborted) publish({ ...entry, status: 'loading', approval });
+                                if (isCurrent() && !cancellation.signal.aborted) publish({ ...entry, status: 'loading', errorCode: undefined, approval });
                                 return { approvalPending: true };
                             }
                             const machines = input.managedId
@@ -277,7 +275,10 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
             absent?: ReadonlyMap<string, string>, admitMembership = false) {
             if (sourceServerId !== serverId || sourceAccountId !== accountId || sourceHomeId !== homeId
                 || !isCurrent()) return;
-            receiveRows(rows, absent, admitMembership);
+            // Only an exact authorized receipt for this selection settles its
+            // readiness. Broad rows and another selection's read remain projections.
+            const settled = admitMembership && managedId !== undefined && (rows.has(managedId) || absent?.has(managedId) === true);
+            receiveRows(rows, absent, admitMembership, settled);
         },
         subscribe(binding: ServerAccountScopeLifetime, listener: () => void) {
             consumers.set(listener, binding);
@@ -416,6 +417,7 @@ export function useAdmittedManagedMachineRow(serverId: string, managedId: string
 /** A demanded projection of the canonical server inventory, with no persisted UI resource state. */
 export function useManagedMachineInventory<TExecute extends InventoryExecute = FrontDoorActionExecute>(serverIds: readonly string[], managedId?: string,
     requestedExecuteAction?: TExecute, includeArchived = false, enrolledMachineId?: string) {
+    const presented = useLayoutPresentationActive();
     const executeAction = requestedExecuteAction ?? execute;
     const idsKey = JSON.stringify([...new Set(serverIds.map(id => resolveServerProfileScopeIdForIdentifier(id) || id))].sort());
     const requestedIdsKey = JSON.stringify(serverIds);
@@ -437,14 +439,14 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
             serverId, bindings.get(serverId)?.accountId, getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId,
         )]));
         for (const [serverId, read] of reads.current) {
-            if (read.binding === bindings.get(serverId) && read.binding.isCurrent() && read.reader.isCurrent()
+            if (presented && read.binding === bindings.get(serverId) && read.binding.isCurrent() && read.reader.isCurrent()
                 && read.key === keys.get(serverId) && read.executeAction === executeAction) continue;
             read.release(); reads.current.delete(serverId);
         }
         for (const serverId of ids) {
             const binding = bindings.get(serverId);
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
-            if (!binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
+            if (!presented || !binding?.isCurrent() || !homeId || reads.current.has(serverId)) continue;
             const key = keys.get(serverId)!;
             const reader = getInventoryReader(serverId, binding.accountId, homeId, managedId, includeArchived, executeAction, entries[serverId], enrolledMachineId);
             const ownedReader = reader;
@@ -454,7 +456,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
         }
         // Entry updates are projections, not new demand. Only binding/target changes reacquire a reader.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [bindings, ids, managedId, includeArchived, enrolledMachineId, executeAction]);
+    }, [presented, bindings, ids, managedId, includeArchived, enrolledMachineId, executeAction]);
 
     const currentEntries = React.useMemo(() => {
         const result: Record<string, ManagedMachineInventoryEntry> = {};

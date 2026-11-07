@@ -11,7 +11,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { HappierBrandMark, type HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import { useServerInstalledPluginBrand } from '@/components/settings/plugins/PluginMark';
 import { useBundledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
-import { getPreferredLanguage } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import { launchPluginSurfaceAction } from '@/components/plugins/surfaces/launchPluginSurfaceAction';
@@ -23,10 +23,21 @@ import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/avail
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { useServerScopedMachine } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { readRuntimeFetchHost } from '@/utils/system/runtimeFetch';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 
 type Provisioner = MachineProvisionersListResultV1['provisioners'][number];
+const selectInstallationId = (machine: Machine | null) => machine?.installationId;
+
+/** A failed read is not a provider verdict; keep its cause human wherever the offer is drawn. */
+export function describeManagedProvisionerFailure(code: string): string {
+    return readTransientAvailabilityFailure(code)?.message
+        ?? resolveSystemTaskFailureMessage({ code })
+        ?? t('managedMachines.providers.unavailable');
+}
 /** Public descriptor only; a preset projection never carries credential options or a native catalog occurrence. */
 export function projectManagedPresetProvisioner(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controller' | 'delegatedAcquire'> | null | undefined): Provisioner | undefined {
     return hasManagedMachinePresetCreationV1(preset) && preset.delegatedAcquire?.kind === 'ready' ? { contribution: preset.launch.provider,
@@ -126,8 +137,8 @@ export function useManagedProvisionerPresentation(input: Readonly<{
         if (!input.controller && pluginId && accountReader && accountSelection?.kind === 'unavailable'
             && accountSelection.code === 'plugin_ui_declaration_pending') void accountReader.ensureCurrentAccountExecution(pluginId);
     }, [accountReader, input.controller, pluginId, accountSelection?.kind, accountSelection?.kind === 'unavailable' ? accountSelection.code : null]);
-    const controllerMachine = useServerScopedMachine(input.serverId, input.controller?.machineId ?? '');
-    const controllerAdmitted = !!input.controller && controllerMachine?.installationId === input.controller.installationId;
+    const controllerInstallationId = useServerScopedMachine(input.serverId, input.controller?.machineId ?? '', selectInstallationId);
+    const controllerAdmitted = !!input.controller && controllerInstallationId === input.controller.installationId;
     const projection = useDaemonMergedProjectionInputs({ serverId: input.serverId, machineId: controllerAdmitted ? input.controller?.machineId : undefined, enabled: controllerAdmitted,
         sections: input.purpose === 'mark' ? MARK_SECTIONS : PRESENTATION_SECTIONS,
         ...(input.refreshKey === undefined ? {} : { refreshKey: input.refreshKey }) });

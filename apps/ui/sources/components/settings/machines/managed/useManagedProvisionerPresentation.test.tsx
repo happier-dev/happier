@@ -1,9 +1,13 @@
 import * as React from 'react';
 import { Text } from 'react-native';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
-import { createValidPluginBrandPngFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createValidPluginBrandPngFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 
 const bundledMarks = vi.hoisted(() => [] as { pluginId: string; resourceId: string; releaseVersion: string; displayName: string; digest: string; bytes: Uint8Array }[]);
@@ -31,6 +35,39 @@ function Presentation(props: Readonly<{ icon: string; pluginId?: string }>) {
 }
 
 describe('managed provisioner presentation', () => {
+    it('does not render Preset presenters for resource-only publications, but observes installation replacement', async () => {
+        await selectActiveTestHomeForTests();
+        const serverId = getActiveServerSnapshot().serverId;
+        const previous = storage.getState();
+        let machine = createMachineFixture({ id: 'controller', installationId: 'previous-installation',
+            daemonStateVersion: 1, daemonState: { status: 'running', resources: { activeSessions: 0 } } });
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        const input = { serverId, controller: { machineId: machine.id, installationId: 'expected-installation' },
+            provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1, purpose: 'mark' as const };
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useManagedProvisionerPresentation(input); });
+        try {
+            await flushHookEffects({ cycles: 30 });
+            renders = 0;
+            for (let arrival = 1; arrival <= 12; arrival += 1) {
+                machine = { ...machine, daemonStateVersion: arrival + 1,
+                    daemonState: { ...machine.daemonState, resources: { activeSessions: arrival } } };
+                await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: serverId }));
+            }
+            expect(storage.getState().machineListByServerId[serverId]?.[0]?.daemonState?.resources).toEqual({ activeSessions: 12 });
+            expect(renders).toBe(0);
+            machine = { ...machine, installationId: input.controller.installationId };
+            await act(async () => storage.getState().applyMachines([machine], false, { sourceServerId: serverId }));
+            await flushHookEffects();
+            expect(renders).toBeGreaterThan(0);
+            renders = 0;
+            await act(async () => storage.getState().applyMachines([], true, { sourceServerId: serverId }));
+            expect(renders).toBeGreaterThan(0);
+        } finally {
+            await hook.unmount();
+            storage.setState(previous);
+        }
+    });
     it('renders the app-published package mark on an Add card without a controller projection', async () => {
         const bytes = createValidPluginBrandPngFixture();
         bundledMarks.push({ pluginId: 'custom.compute.branded', resourceId: 'brand-icon', releaseVersion: '0.0.0',
