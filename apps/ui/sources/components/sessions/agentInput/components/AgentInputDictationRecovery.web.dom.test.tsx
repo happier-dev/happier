@@ -61,6 +61,9 @@ async function render(overrides: Partial<Props>): Promise<HTMLDivElement> {
     onDiscard: vi.fn(
       async () => ({ ok: true, result: { status: 'completed' } }) as never,
     ),
+    notice: null,
+    onDismissNotice: vi.fn(),
+    onOpenSetup: vi.fn(),
     ...overrides,
   };
   act(() => {
@@ -105,6 +108,37 @@ describe('AgentInputDictationRecovery', () => {
     });
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives a cause fixed in setup its Set up, and a dictation that kept nothing its one action and a close', async () => {
+    const onOpenSetup = vi.fn();
+    const kept = await render({ onOpenSetup });
+    await act(async () => {
+      button(kept, 'agent-input-dictation-recovery-setup').click();
+    });
+    expect(onOpenSetup).toHaveBeenCalledTimes(1);
+    act(() => {
+      root?.unmount();
+    });
+    container?.remove();
+
+    const allow = vi.fn();
+    const onDismissNotice = vi.fn();
+    const refused = await render({
+      failure: null,
+      notice: { kind: 'microphone', title: 'Microphone off', action: { label: 'Allow microphone', onPress: allow } },
+      onDismissNotice,
+    });
+    expect(refused.textContent).toContain('Microphone off');
+    expect(refused.querySelector('[data-testid="agent-input-dictation-recovery-retry"]')).toBeNull();
+    await act(async () => {
+      button(refused, 'agent-input-dictation-recovery-action').click();
+    });
+    await act(async () => {
+      button(refused, 'agent-input-dictation-recovery-close').click();
+    });
+    expect(allow).toHaveBeenCalledTimes(1);
+    expect(onDismissNotice).toHaveBeenCalledTimes(1);
   });
 
   it('holds Retry while capture teardown settles and while a retry is transcribing', async () => {
@@ -156,3 +190,4 @@ describe('useDictationRecoveryFailure', () => {
         expect(seen).toEqual(['transcription_failed', 'transcription_failed', null, null]);
     });
 });
+

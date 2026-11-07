@@ -30,6 +30,15 @@ export function PluginDictationButton(props: Omit<DictationButtonProps, 'fallbac
         onTranscription: props.onTranscription,
     });
     const failure = useDictationRecoveryFailure(dictation.failure, dictation.status);
+    const { notice } = dictation;
+    if (!failure && notice) {
+        // A dictation that kept nothing: its one action (or a close) takes the microphone's place, the cause in its name.
+        return <IconButton testID={props.testID ? `${props.testID}-notice` : 'plugin-dictation-notice'}
+            iconName={notice.action ? 'warning' : 'x'} variant="plain" tone="danger" size={ACCESSORY_SIZE} iconSize={16}
+            accessibilityLabel={notice.action ? `${notice.action.label}. ${notice.title}` : `${t('common.close')}. ${notice.title}`}
+            tooltip={notice.title} tooltipPlacement="bottom"
+            onPress={notice.action ? notice.action.onPress : dictation.onDismissNotice} />;
+    }
     if (failure) {
         // A plugin owns its field's layout, so the kept recording's recovery takes the microphone's
         // place: Retry (its tooltip and name carry the cause) and a quiet Discard.

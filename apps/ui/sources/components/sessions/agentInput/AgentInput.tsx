@@ -3330,15 +3330,18 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     // person discards it; the field's text is never touched by either.
     const recoveryFailure = useDictationRecoveryFailure(dictation.failure, dictation.status);
     const retainedDictationFailure = voiceEnabled ? recoveryFailure : null;
-    const dictationRecovery = React.useMemo(() => retainedDictationFailure ? (
+    const dictationNotice = voiceEnabled ? dictation.notice : null;
+    const dictationRecovery = React.useMemo(() => retainedDictationFailure || dictationNotice ? (
         // The line's glyph stands on the field's text edge, inside the same inset as the input-lock note.
         <View testID="agent-input-dictation-recovery-slot" style={styles.composerPresentationEffects}>
             <HappierBodyEdgeContext.Provider value>
-                <AgentInputDictationRecovery failure={retainedDictationFailure} status={dictation.status}
-                    onRetry={dictation.onRetry} onDiscard={dictation.onDiscard} />
+                <AgentInputDictationRecovery failure={retainedDictationFailure} notice={dictationNotice} status={dictation.status}
+                    onRetry={dictation.onRetry} onDiscard={dictation.onDiscard}
+                    onDismissNotice={dictation.onDismissNotice} onOpenSetup={dictation.onOpenSetup} />
             </HappierBodyEdgeContext.Provider>
         </View>
-    ) : null, [retainedDictationFailure, dictation.status, dictation.onRetry, dictation.onDiscard, styles.composerPresentationEffects]);
+    ) : null, [retainedDictationFailure, dictationNotice, dictation.status, dictation.onRetry, dictation.onDiscard,
+        dictation.onDismissNotice, dictation.onOpenSetup, styles.composerPresentationEffects]);
     const composerPresentationFeedback = React.useMemo(() => {
         const inputLock = props.composerInputLock ?? null;
         if (inputLock === null && dictationRecovery === null) return null;

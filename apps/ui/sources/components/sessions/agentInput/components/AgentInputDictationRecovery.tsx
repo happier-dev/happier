@@ -1,9 +1,10 @@
 import * as React from 'react';
 
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import type { TextInputDictation } from '@/voice/dictation/useTextInputDictation';
-import { resolveVoiceDictationFailureTranslationKey } from '@/voice/dictation/voiceDictationErrorCopy';
+import type { TextInputDictation, TextInputDictationNotice } from '@/voice/dictation/useTextInputDictation';
+import { resolveVoiceDictationFailureTranslationKey, voiceDictationFailureNeedsSetup } from '@/voice/dictation/voiceDictationErrorCopy';
 
 type RetainedDictationFailure = NonNullable<TextInputDictation['failure']>;
 
@@ -25,22 +26,43 @@ export function useDictationRecoveryFailure(
 }
 
 /**
- * A failed dictation whose recording was kept (Paseo rank 1): one quiet line beside the field that
- * names the cause and offers Retry, with Discard after it. It stays while the recording is retained,
- * keeps its reason through a repeated failure, and leaves the field's text alone. Retry waits while
- * capture is still settling or a retry is already transcribing; both operations dispatch through the
- * field's Dictation Actions (`useTextInputDictation`).
+ * Dictation's one recovery look, a quiet line beside the field for every failure (Paseo rank 1).
+ *
+ * A failure whose recording was kept names the cause and offers Retry, with Discard after it; a cause
+ * fixed in Dictation's setup also offers Set up in its sentence. It stays while the recording is
+ * retained, keeps its reason through a repeated failure, and leaves the field's text alone. Retry waits
+ * while capture is still settling or a retry is already transcribing; both operations dispatch through
+ * the field's Dictation Actions (`useTextInputDictation`). A dictation that kept nothing (a refused
+ * microphone, a setup problem, no speech) is a `notice`: its cause, its one action and a close.
  */
 export function AgentInputDictationRecovery(
   props: Readonly<{
-    failure: NonNullable<TextInputDictation['failure']>;
+    failure: TextInputDictation['failure'];
+    notice: TextInputDictationNotice | null;
     status: TextInputDictation['status'];
     onRetry: TextInputDictation['onRetry'];
     onDiscard: TextInputDictation['onDiscard'];
+    onDismissNotice: TextInputDictation['onDismissNotice'];
+    onOpenSetup: TextInputDictation['onOpenSetup'];
     testID?: string;
   }>,
-): React.ReactElement {
+): React.ReactElement | null {
   const testID = props.testID ?? 'agent-input-dictation-recovery';
+  if (!props.failure) {
+    const { notice } = props;
+    if (!notice) return null;
+    return (
+      <SurfaceStateCard
+        testID={testID}
+        size="line"
+        kind={notice.kind === 'message' ? 'warning' : 'error'}
+        accessibilitySemantics="alert"
+        title={notice.title}
+        action={notice.action ? { label: notice.action.label, testID: `${testID}-action`, onPress: notice.action.onPress } : undefined}
+        secondaryAction={{ label: t('common.close'), testID: `${testID}-close`, onPress: props.onDismissNotice }}
+      />
+    );
+  }
   const transcribing = props.status === 'transcribing';
   return (
     <SurfaceStateCard
@@ -51,6 +73,10 @@ export function AgentInputDictationRecovery(
       title={t(
         resolveVoiceDictationFailureTranslationKey(props.failure.reason),
       )}
+      reasonContent={voiceDictationFailureNeedsSetup(props.failure.reason) ? (
+        <TextLinkButton testID={`${testID}-setup`} size="meta" label={t('voicePresence.recovery.setUp')} onPress={props.onOpenSetup} />
+      ) : undefined}
+      reason={voiceDictationFailureNeedsSetup(props.failure.reason) ? t('voicePresence.recovery.setUp') : undefined}
       action={{
         label: t('common.retry'),
         testID: `${testID}-retry`,

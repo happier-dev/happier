@@ -16,6 +16,18 @@ export type VoiceDictationErrorTranslationKey =
     | 'voiceAssistant.dictationErrors.microphoneOwnedByVoice'
     | 'voiceAssistant.dictationErrors.microphoneOwnedByDictation';
 
+/** Failures whose fix is in Dictation's setup (its copy says to review it): their recovery offers Set up. */
+const SETUP_FAILURES: ReadonlySet<VoiceDictationFailureReason> = new Set<VoiceDictationFailureReason>([
+    'provider_unavailable',
+    'transcription_credentials_required',
+    'transcription_machine_unavailable',
+    'transcription_failed',
+]);
+
+export function voiceDictationFailureNeedsSetup(reason: VoiceDictationFailureReason): boolean {
+    return SETUP_FAILURES.has(reason);
+}
+
 export function resolveVoiceDictationFailureTranslationKey(
     reason: VoiceDictationFailureReason,
 ): VoiceDictationErrorTranslationKey {

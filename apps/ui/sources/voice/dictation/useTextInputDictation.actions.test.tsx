@@ -150,8 +150,12 @@ describe('mounted field Dictation Actions', () => {
         setRuntimeFetch(async (url, init) => String(url) === 'blob:dictation-action'
             ? new Response(blob) : home.request(url, init));
         let permission: 'prompt' | 'granted' = 'prompt';
+        let microphoneRefused = false;
         vi.stubGlobal('navigator', { permissions: { query: async () => ({ state: permission }) },
-            mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) } });
+            mediaDevices: { getUserMedia: async () => {
+                if (microphoneRefused) throw Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' });
+                return { getTracks: () => [{ stop() {} }] };
+            } } });
         const recipient = createTransferRecipientKeyPair();
         let transcriptionFails = true;
         machineRpc.mockImplementation(async ({ method }: { method: string }) => {
@@ -202,6 +206,15 @@ describe('mounted field Dictation Actions', () => {
         expect(consent, JSON.stringify(consent))
             .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'dictation_consent_required' } });
         expect(recording.starts).toBe(0);
+        // A refused microphone is the field's own recovery line with its one action, never a dialog.
+        microphoneRefused = true;
+        await act(async () => { await field.getCurrent().onPress(); });
+        expect(field.getCurrent().notice).toMatchObject({ kind: 'microphone' });
+        expect(field.getCurrent().notice?.action).toBeTruthy();
+        expect(modalScreen.findByTestId('web-modal-button-0')).toBeNull();
+        await act(async () => { field.getCurrent().onDismissNotice(); });
+        expect(field.getCurrent().notice).toBeNull();
+        microphoneRefused = false;
         permission = 'granted';
         const approvalWait = new AbortController();
         const requested = executor.execute('ui.current_context.command.invoke', { commandId: start }, { ...agent, signal: approvalWait.signal });
@@ -304,6 +317,9 @@ describe('mounted field Dictation Actions', () => {
         expect(voiceDictationController.getSnapshot()).toMatchObject({ status: 'listening' });
         await act(async () => { await accountField.getCurrent().onPress(); });
         expect(voiceDictationController.getSnapshot()).toMatchObject({ failure: { sessionId: 'account-retirement-field', canRetry: true } });
+        // The kept recording's line is the one recovery: no second dialog for the same failure.
+        expect(modalScreen.findByTestId('web-modal-button-0')).toBeNull();
+        expect(accountField.getCurrent().notice).toBeNull();
         const revoke = vi.spyOn(URL, 'revokeObjectURL');
         try {
             await act(async () => { retireActiveServerAccountScopeLifetime(); });

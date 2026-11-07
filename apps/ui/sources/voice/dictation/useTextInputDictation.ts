@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
-import { Modal } from '@/modal';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { t } from '@/text';
 import { useVoiceDictation } from './useVoiceDictation';
-import { resolveVoiceDictationFailureTranslationKey, resolveVoiceDictationStartErrorTranslationKey } from './voiceDictationErrorCopy';
+import { resolveVoiceDictationFailureTranslationKey, resolveVoiceDictationStartErrorTranslationKey,
+    voiceDictationFailureNeedsSetup } from './voiceDictationErrorCopy';
 import { useCurrentUiContextMountPublisher, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { executeMountedCurrentUiContextCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -17,10 +20,25 @@ import { checkMicrophonePermission } from '@/utils/platform/microphonePermission
 import { VoiceDictationActionResultSchema, VoiceSetupMicrophonePermissionActionResultSchema,
     type VoiceDictationActionResult, type VoiceDictationOperation } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 
+/**
+ * A dictation that could not happen and kept no recording (a refused microphone, a setup problem, no
+ * speech): the field's one recovery line says why, with its one next step. A failure that kept its
+ * recording is `failure` (Retry/Discard) instead; the two never show at once and never as a dialog.
+ */
+export type TextInputDictationNotice = Readonly<{
+    kind: 'microphone' | 'setup' | 'message';
+    title: string;
+    action: Readonly<{ label: string; onPress(): void }> | null;
+}>;
+
 export type TextInputDictation = Readonly<{
     status: ReturnType<typeof useVoiceDictation>['status'];
     available: boolean;
     failure: ReturnType<typeof useVoiceDictation>['failure'];
+    notice: TextInputDictationNotice | null;
+    onDismissNotice(): void;
+    /** Dictation's settings, where a setup failure is fixed. */
+    onOpenSetup(): void;
     onRetry(): Promise<ActionExecuteResult>;
     onDiscard(): Promise<ActionExecuteResult>;
     onPress(): Promise<void>;
@@ -56,6 +74,26 @@ export function useTextInputDictation(input: Readonly<{
     const publisher = useCurrentUiContextMountPublisher();
     const reader = useOptionalCurrentUiContextReader();
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
+    const router = useRouter();
+    const [notice, setNotice] = React.useState<TextInputDictationNotice | null>(null);
+    const onDismissNotice = React.useCallback(() => setNotice(null), []);
+    const onOpenSetup = React.useCallback(() => {
+        setNotice(null);
+        router.push(SETTINGS_ROUTES.voiceDictation as never);
+    }, [router]);
+    const pressRef = React.useRef<() => Promise<void>>(async () => {});
+    const showMessage = React.useCallback((title: string) => setNotice({ kind: 'message', title, action: null }), []);
+    const showMicrophoneRefused = React.useCallback(() => {
+        const account = focus.current?.account;
+        setNotice({ kind: 'microphone', title: t('voiceMoments.setupMicrophoneDeniedTitle'), action: Platform.OS === 'web'
+            // A browser can ask again from the same press; a device's refusal is undone in its settings.
+            ? { label: t('voiceMoments.setupMicrophoneAction'), onPress: () => { setNotice(null); void pressRef.current(); } }
+            : { label: t('voiceMoments.setupOpenSystemSettings'), onPress: () => {
+                setNotice(null);
+                void execute('ui.voice_global.setup.system_settings.open', {}, { surface: 'ui', authority: 'present_user',
+                    serverId: account?.scope.serverId, expectedAccountId: account?.scope.accountId });
+            } } });
+    }, [execute]);
     const mount = React.useMemo(() => publisher?.createMount() ?? null, [publisher, input.controlId]);
     const focus = React.useRef<Readonly<{ account: ActiveServerAccountScopeLifetime; enrichment: CurrentUiContextMountedEnrichment; dispose(): void }> | null>(null);
     React.useEffect(() => () => {
@@ -151,13 +189,19 @@ export function useTextInputDictation(input: Readonly<{
     React.useEffect(() => {
         if (!dictation.failure) return;
         // Retained recordings belong to the field's persistent Retry/Discard
-        // presentation. A generic alert must not auto-dismiss their custody.
-        if (dictation.failure.canRetry !== undefined) return;
-        if (dictation.failure.kind !== 'mic_permission_denied') {
-            Modal.alert(t('common.error'), t(resolveVoiceDictationFailureTranslationKey(dictation.failure.reason)));
+        // presentation; their custody is never dismissed here.
+        if (dictation.failure.canRetry !== undefined) {
+            setNotice(null);
+            return;
         }
-        dictation.dismissFailure(dictation.failure.id);
-    }, [dictation.dismissFailure, dictation.failure]);
+        const { failure } = dictation;
+        if (failure.kind === 'mic_permission_denied') showMicrophoneRefused();
+        else if (voiceDictationFailureNeedsSetup(failure.reason)) setNotice({ kind: 'setup',
+            title: t(resolveVoiceDictationFailureTranslationKey(failure.reason)),
+            action: { label: t('voicePresence.recovery.setUp'), onPress: onOpenSetup } });
+        else showMessage(t(resolveVoiceDictationFailureTranslationKey(failure.reason)));
+        dictation.dismissFailure(failure.id);
+    }, [dictation.dismissFailure, dictation.failure, onOpenSetup, showMessage, showMicrophoneRefused]);
 
     const onPress = React.useCallback(async () => {
         const current = authorityRef.current;
@@ -166,6 +210,7 @@ export function useTextInputDictation(input: Readonly<{
         const status = dictationRef.current.getSnapshot().status;
         if (status !== 'idle' && status !== 'listening') return;
         const operation = status === 'listening' ? 'finish' : 'start';
+        setNotice(null);
         const actionId = operation === 'start' ? 'ui.voice_global.dictation.start' : 'ui.voice_global.dictation.finish';
         try {
             let outcome = await invokeAction(operation);
@@ -180,7 +225,12 @@ export function useTextInputDictation(input: Readonly<{
                     serverId: account?.scope.serverId, expectedAccountId: account?.scope.accountId });
                 if (!permissionOutcome.ok && presentActionTurnedOffNoticeIfOff(permissionOutcome, permissionAction)) return;
                 requireActionSuccess(permissionOutcome);
-                if (VoiceSetupMicrophonePermissionActionResultSchema.parse(permissionOutcome.result).status !== 'completed') return;
+                const permission = VoiceSetupMicrophonePermissionActionResultSchema.parse(permissionOutcome.result);
+                if (permission.status !== 'completed') {
+                    if (permission.permission === 'unavailable') showMessage(t('voiceAssistant.dictationErrors.captureFailed'));
+                    else showMicrophoneRefused();
+                    return;
+                }
                 outcome = await invokeAction('start');
                 if (!outcome.ok && presentActionTurnedOffNoticeIfOff(outcome, actionId)) return;
                 requireActionSuccess(outcome);
@@ -188,21 +238,30 @@ export function useTextInputDictation(input: Readonly<{
             }
             const owner = authorityRef.current;
             if (owner.controlId !== admittedKey || !owner.enabled || !owner.presented || !owner.editable) return;
+            // A failure the controller holds (a kept recording) is already the field's recovery line.
+            if (dictationRef.current.getSnapshot().failure) return;
             if (result.status === 'unavailable') {
-                if (result.code === 'dictation_failed' || result.code === 'dictation_microphone_unavailable' || result.code === 'dictation_capture_unavailable') {
-                    Modal.alert(t('common.error'), t(resolveVoiceDictationStartErrorTranslationKey(captureErrorRef.current) ?? 'errors.dictationFailed'));
+                if (result.code === 'dictation_consent_required') showMicrophoneRefused();
+                else if (result.code === 'dictation_failed' || result.code === 'dictation_microphone_unavailable' || result.code === 'dictation_capture_unavailable') {
+                    showMessage(t(resolveVoiceDictationStartErrorTranslationKey(captureErrorRef.current) ?? 'errors.dictationFailed'));
                 }
                 return;
             }
-            if (operation === 'finish' && !result.inserted && !dictationRef.current.getSnapshot().failure) {
-                Modal.alert(t('voiceAssistant.dictationNoSpeech'));
+            if (operation === 'finish' && !result.inserted) {
+                showMessage(t('voiceAssistant.dictationNoSpeech'));
                 return;
             }
         } catch (error) {
-            if (error instanceof Error && error.message === 'mic_permission_denied') return;
+            if (dictationRef.current.getSnapshot().failure) return;
+            if (error instanceof Error && error.message === 'mic_permission_denied') {
+                showMicrophoneRefused();
+                return;
+            }
             const key = resolveVoiceDictationStartErrorTranslationKey(error);
-            Modal.alert(t('common.error'), t(key ?? 'errors.dictationFailed'));
+            showMessage(t(key ?? 'errors.dictationFailed'));
         }
-    }, [execute, invokeAction, input.controlId]);
-    return { status: dictation.status, available, failure: dictation.failure, onPress, onFocus, onRetry, onDiscard };
+    }, [execute, invokeAction, input.controlId, showMessage, showMicrophoneRefused]);
+    pressRef.current = onPress;
+    return { status: dictation.status, available, failure: dictation.failure, notice, onDismissNotice, onOpenSetup,
+        onPress, onFocus, onRetry, onDiscard };
 }
