@@ -152,6 +152,8 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         props.monospace && props.value ? styles.inputMono : null,
                         grows && contentHeight !== null ? { height: Math.max(contentHeight, 0) } : null,
                         props.textAlign ? { textAlign: props.textAlign, fontVariant: ['tabular-nums'] } : null,
+                        // A right-aligned value keeps a word space before its trailing unit.
+                        props.textAlign === 'right' && props.trailing ? { paddingRight: theme.space.s4 } : null,
                         { color: colors.valueColor },
                         props.trailing ? styles.inputWithAction : null,
                     ]}
