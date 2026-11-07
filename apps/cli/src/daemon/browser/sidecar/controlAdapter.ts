@@ -10,6 +10,7 @@ import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import type { BrowserSidecarInteractions } from './interactions';
+import type { LocalBrowserWindowSurface } from './localWindow';
 import type { BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { createBrowserViewportOwner, type BrowserViewportOwner } from './viewport';
 import { SIDECAR_CDP_DIAGNOSTICS_FIDELITY } from './diagnostics/cdpEventSource';
@@ -122,6 +123,7 @@ export type BrowserSidecarContextCaptureSurface = Readonly<{
      * a per-view event source the moment a view's CDP page handle exists (and detach on close).
      */
     subscribeViewLifecycle?(listener: BrowserSidecarViewLifecycleSubscriber): () => void;
+    getNavigationEvent?(view: Readonly<{ browserSessionId: string; viewId: string }>): Extract<BrowserEventV1, { kind: 'navigationStateChanged' }> | null;
     getNavigationState?(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserSidecarNavigationState | null;
     subscribeBrowserEvents?(listener: (event: BrowserEventV1) => void): () => void;
 }>;
@@ -131,6 +133,7 @@ export type BrowserSidecarControlAdapterFactoryResult =
         ok: true;
         adapter: BrowserDaemonControlAdapter;
         extensions?: BrowserSidecarExtensionSurface;
+        localWindow?: LocalBrowserWindowSurface;
         dispose?: () => void | Promise<void>;
         contextCapture?: BrowserSidecarContextCaptureSurface;
         readProcessRoots?: () => readonly HappierProcessRootSource[];
@@ -182,6 +185,7 @@ type BrowserSidecarCdpControlAdapterInput = Readonly<{
 export type BrowserSidecarCdpControlAdapter = BrowserDaemonControlAdapter & Readonly<{
     viewportOwner: BrowserViewportOwner;
     extensions: Pick<BrowserSidecarExtensionSurface, 'openView'>;
+    getNavigationEvent(view: Readonly<{ browserSessionId: string; viewId: string }>): Extract<BrowserEventV1, { kind: 'navigationStateChanged' }> | null;
     getNavigationState(view: Readonly<{ browserSessionId: string; viewId: string }>): BrowserSidecarNavigationState | null;
     subscribeBrowserEvents(listener: (event: BrowserEventV1) => void): () => void;
     resolvePageHandle(
@@ -640,12 +644,16 @@ export function createBrowserSidecarCdpControlAdapter(
                 catch { /* The existing confidential binding remains retained on transport loss. */ }
                 return cdpFailure(command);
             }
+            const previous = boundViews.get(browserViewKey(command));
             boundViews.set(browserViewKey(command), {
                 browserSessionId: command.browserSessionId,
                 viewId: command.viewId,
                 target: command.target,
                 platform: command.platform,
-                state: { navigationGeneration: 0, ...(currentUrl.success ? { currentUrl: currentUrl.data } : {}), loadingState: 'loading', canGoBack: false, canGoForward: false },
+                // Existing viewers retain this logical view and its event ordering. A new
+                // native page advances that ordering, including controllerChanged publications.
+                state: { navigationGeneration: previous ? previous.state.navigationGeneration + 1 : 0,
+                    ...(currentUrl.success ? { currentUrl: currentUrl.data } : {}), loadingState: 'loading', canGoBack: false, canGoForward: false },
                 targetId: page.targetId,
                 ...(page.sessionId ? { sessionId: page.sessionId } : {}),
             });
@@ -725,6 +733,10 @@ export function createBrowserSidecarCdpControlAdapter(
                 sourceId: browserViewKey(view), target: view.target, platform: view.platform,
                 adapterKind: 'chromiumSidecar' as const,
                 events: [openedViewEvent(view), stateEvent(view)] }));
+        },
+        getNavigationEvent(view) {
+            const bound = boundViews.get(browserViewKey(view));
+            return bound ? stateEvent(bound) : null;
         },
         getNavigationState(view) { return boundViews.get(browserViewKey(view))?.state ?? null; },
         resolvePageHandle(view) {

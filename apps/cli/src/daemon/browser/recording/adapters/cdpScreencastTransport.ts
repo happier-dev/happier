@@ -4,7 +4,7 @@ import type { BrowserRecordingInputControlResolver } from '../service';
 import type { BrowserRecordingCdpScreencastSession, BrowserRecordingCdpScreencastTransport } from './cdpScreencast';
 import { startBrowserRecordingOverlay } from './overlay';
 
-/** Owns recording-only rendering and overlay lifetime on the shared JPEG source. */
+/** Owns the recording overlay; the shared JPEG source owns rendering lifetime. */
 export function createBrowserRecordingCdpScreencastTransport(
   options: Readonly<{
     producer: BrowserCdpScreencastProducer;
@@ -26,24 +26,15 @@ export function createBrowserRecordingCdpScreencastTransport(
           await capture?.stop();
         } finally {
           try {
-            await options.contextCapture.transport.dispatchPageCommand({ ...handle,
-              method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } });
+            // Failed capture cleanup must still remove key listeners and navigation hooks.
+            await overlay.stop();
           } finally {
-            try {
-              // Failed capture cleanup must still remove key listeners and navigation hooks.
-              await overlay.stop();
-            } finally {
-              unregisterDrain?.();
-            }
+            unregisterDrain?.();
           }
         }
       })();
       const unregisterDrain = control?.registerConfidentialityDrain(stop);
       try {
-        // Hidden Chromium tabs suspend animation. Keep this recording's target rendering
-        // without activating it or taking the foreground from a popup or another tab.
-        await options.contextCapture.transport.dispatchPageCommand({ ...handle,
-          method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
         capture = await options.producer.start({
           view: input.recording, onFrame: input.onFrame,
           onError: error => { void stop().catch(input.onError ?? (() => {})); input.onError?.(error); },

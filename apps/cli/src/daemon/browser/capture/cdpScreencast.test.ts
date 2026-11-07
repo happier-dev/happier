@@ -1,14 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserCdpScreencastProducer, type BrowserCdpScreencastFrame } from './cdpScreencast';
-import type { BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
+import type { BrowserSidecarCdpEventSubscriber, BrowserSidecarViewLifecycleSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserViewportOwner } from '../sidecar/viewport';
 
 const view = { browserSessionId: 'browser', viewId: 'page' };
 function harness() {
     const commands: { method: string; params?: Record<string, unknown> }[] = [];
     const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+    const lifecycle = new Set<BrowserSidecarViewLifecycleSubscriber>();
+    let handle = { targetId: 'page', sessionId: 'page-cdp' };
     const contextCapture = {
-        resolvePageHandle: () => ({ targetId: 'page', sessionId: 'page-cdp' }),
+        resolvePageHandle: () => handle,
+        subscribeViewLifecycle: (listener: BrowserSidecarViewLifecycleSubscriber) => {
+            lifecycle.add(listener); return () => { lifecycle.delete(listener); };
+        },
         subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
             listeners.add(listener); return () => { listeners.delete(listener); };
         },
@@ -22,14 +27,59 @@ function harness() {
         ...contextCapture, resolveViewportOwner: () => viewportOwner,
     } });
     const frames: BrowserCdpScreencastFrame[] = [];
-    const emit = () => { for (const listener of listeners) listener({ sessionId: 'page-cdp', method: 'Page.screencastFrame',
+    const emit = (sessionId = handle.sessionId) => { for (const listener of listeners) listener({ sessionId, method: 'Page.screencastFrame',
         params: { sessionId: 1, data: 'ZnJhbWU=', metadata: { deviceWidth: 1280, deviceHeight: 800 } } }); };
     const starts = () => commands.filter(c => c.method === 'Page.startScreencast');
-    return { producer, viewportOwner, commands, frames, emit, starts };
+    const bind = (next = handle) => {
+        handle = next;
+        for (const listener of lifecycle) listener({ type: 'bound', ...view });
+    };
+    return { producer, viewportOwner, commands, frames, emit, starts, bind };
 }
 
 afterEach(() => vi.useRealTimers());
 describe('shared browser screencast encoding owner', () => {
+    it('keeps subscriptions on native rebind, ignores equal binding facts, and stops the current source on last release', async () => {
+        vi.useFakeTimers();
+        const h = harness();
+        const errors: unknown[] = [];
+        const observation: BrowserCdpScreencastFrame[] = [];
+        try {
+            const human = await h.producer.start({ view, purpose: 'humanViewer', onFrame: f => h.frames.push(f), onError: e => errors.push(e) });
+            const observer = await h.producer.start({ view, onFrame: f => observation.push(f), onError: e => errors.push(e) });
+            h.emit();
+            const before = h.commands.length;
+            for (let repeat = 0; repeat < 3; repeat++) h.bind();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(h.commands).toHaveLength(before);
+            h.bind({ targetId: 'reopened', sessionId: 'reopened-cdp' });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(errors).toEqual([]);
+            expect(h.starts()).toHaveLength(2);
+            h.emit('page-cdp');
+            expect(h.frames).toHaveLength(1);
+            expect(observation).toHaveLength(1);
+            h.emit();
+            expect(h.frames).toHaveLength(2);
+            expect(observation).toHaveLength(2);
+            await human?.stop();
+            h.emit();
+            expect(h.frames).toHaveLength(2);
+            expect(observation).toHaveLength(3);
+            await observer?.stop();
+            expect(h.commands.filter(c => c.method === 'Page.stopScreencast')).toHaveLength(2);
+            expect(h.commands.filter(c => c.method === 'Page.stopScreencast').at(-1))
+                .toMatchObject({ targetId: 'reopened', sessionId: 'reopened-cdp' });
+            expect(h.commands.filter(c => c.method === 'Emulation.setFocusEmulationEnabled').at(-1))
+                .toMatchObject({ params: { enabled: false } });
+            const stopped = h.commands.length;
+            h.emit();
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(h.commands).toHaveLength(stopped);
+            expect(observation).toHaveLength(3);
+        } finally { await h.producer.dispose(); h.viewportOwner.dispose(); }
+    });
+
     it('caps encoding at the applied controller backing store, updates resize once, and stays idle', async () => {
         vi.useFakeTimers();
         const h = harness();

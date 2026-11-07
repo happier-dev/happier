@@ -43,7 +43,7 @@ import type { DaemonSessionMutationCustody } from '@/daemon/connectedServices/us
 import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser recording capture', () => {
-    it('keeps the recorded page rendering behind a popup without stealing its foreground', async () => {
+    it('keeps the shared recorded and human-viewed page rendering behind a popup without stealing its foreground', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-browser-recording-'));
         environment.directory = process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME ?? root;
         const server = createServer((_request, response) => {
@@ -69,11 +69,12 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
             expect(await runtime.adapter.dispatchCommand({ kind: 'openView', commandId: 'recording-open', focus: true, ...view,
                 platform: 'web', target: { kind: 'externalUrl', targetId: 'fixture', url: `http://127.0.0.1:${address.port}/` },
             })).toMatchObject({ status: 'dispatched' });
-            const handle = capture.resolvePageHandle(view);
+            let handle = capture.resolvePageHandle(view);
             if (!handle) throw new Error('Recording view is not bound');
             const evaluate = (expression: string) => capture.transport.dispatchPageCommand({ ...handle, method: 'Runtime.evaluate',
                 params: { expression, returnByValue: true, awaitPromise: true, userGesture: true } });
             let frames = 0;
+            let liveFrames = 0;
             let rawFrames = 0;
             const visibilityEvents: unknown[] = [];
             unsubscribe = capture.subscribeCdpEvents?.(event => {
@@ -93,9 +94,10 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
             expect(recordingSession).not.toBeNull();
             const measure = async (stage: string) => {
                 const before = frames;
+                const liveBefore = liveFrames;
                 const rawBefore = rawFrames;
                 const state = await evaluate('new Promise(resolve=>{const before=ticks;setTimeout(()=>resolve({visibility:document.visibilityState,focused:document.hasFocus(),ticks:ticks-before}),1500)})');
-                const sample = { stage, frames: frames - before, rawFrames: rawFrames - rawBefore, visibilityEvents: [...visibilityEvents], state };
+                const sample = { stage, frames: frames - before, liveFrames: liveFrames - liveBefore, rawFrames: rawFrames - rawBefore, visibilityEvents: [...visibilityEvents], state };
                 console.info('QA-R90 recording sample', JSON.stringify(sample));
                 return sample;
             };
@@ -112,6 +114,10 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
                 .toMatchObject({ result: { value: true } });
             await recordingSession?.stop();
             const stopped = await measure('after-recording-stop');
+            // A viewer reopens a hidden page after recording no longer keeps it rendering.
+            const viewer = await producer.start({ view, purpose: 'humanViewer', onFrame: () => { liveFrames += 1; } });
+            const viewerOnly = await measure('hidden-human-only');
+            expect(viewerOnly.liveFrames).toBeGreaterThan(1);
             recordingSession = await transport.start({ recording, onFrame: () => { frames += 1; } });
             expect(recordingSession).not.toBeNull();
             const restarted = await measure('recording-started-after-popup');
@@ -127,6 +133,31 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
             }
             await recordingSession?.stop();
             recordingSession = null;
+            const afterRecording = await measure('human-viewer-after-recording-stop');
+            expect(afterRecording.liveFrames).toBeGreaterThan(1);
+            expect(await capture.transport.dispatchPageCommand({ ...popupHandle, method: 'Runtime.evaluate',
+                params: { expression: 'document.hasFocus()', returnByValue: true } }))
+                .toMatchObject({ result: { value: true } });
+            let secondFrames = 0;
+            const errors: unknown[] = [];
+            const secondViewer = await producer.start({ view, purpose: 'humanViewer',
+                onFrame: () => { secondFrames += 1; }, onError: error => { errors.push(error); } });
+            const previousHandle = handle;
+            expect(await runtime.adapter.dispatchCommand({ kind: 'openView', commandId: 'ordinary-reopen', focus: false,
+                ...view, platform: 'web', target: { kind: 'externalUrl', targetId: 'fixture', url: `http://127.0.0.1:${address.port}/` },
+            })).toMatchObject({ status: 'dispatched' });
+            handle = capture.resolvePageHandle(view);
+            expect(handle).not.toEqual(previousHandle);
+            if (!handle) throw new Error('Reopened view is not bound');
+            const secondBefore = secondFrames;
+            const reopened = await measure('ordinary-reopen-with-two-existing-viewers');
+            expect(reopened.liveFrames).toBeGreaterThan(1);
+            expect(secondFrames - secondBefore).toBeGreaterThan(1);
+            expect(errors).toEqual([]);
+            await secondViewer?.stop();
+            await viewer?.stop();
+            const fullyStopped = await measure('all-capture-stopped');
+            expect(fullyStopped.state).toMatchObject({ result: { value: { visibility: 'hidden', focused: false, ticks: 0 } } });
         } finally {
             unsubscribe?.();
             try { await recordingSession?.stop(); await producer?.dispose(); }

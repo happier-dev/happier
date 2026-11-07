@@ -96,6 +96,24 @@ describe('browser automation daemon service', () => {
     } finally { finishRelease(); service.dispose(); }
   });
 
+  it('yields disconnected viewer control after physical release without releasing a newer viewer', async () => {
+    let finishRelease: () => void = () => undefined;
+    const release = new Promise<void>(resolve => { finishRelease = resolve; });
+    const service = createBrowserAutomationDaemonService({ adapter: { ...readOnlyAdapter(), releaseInput: () => release } });
+    try {
+      await service.recordHumanInput({ ...view, authority: 'present_user' });
+      service.claimViewerInput({ ...view, viewerId: 'old' });
+      const disconnecting = service.releaseViewerInput({ ...view, viewerId: 'old' });
+      expect(service.getStatus(view).controller).toBe('human');
+      expect(service.claimViewerInput({ ...view, viewerId: 'new' })).toEqual({ ok: true });
+      finishRelease();
+      await disconnecting;
+      expect(service.isViewerControlling({ ...view, viewerId: 'new' })).toBe(true);
+      await service.releaseViewerInput({ ...view, viewerId: 'new' });
+      await vi.waitFor(() => expect(service.getStatus(view).controller).toBe('none'));
+    } finally { finishRelease(); service.dispose(); }
+  });
+
   it('retains human control when the physical pointer release is unknown so hand back can be retried', async () => {
     let releaseFails = true;
     const service = createBrowserAutomationDaemonService({ adapter: { ...readOnlyAdapter(), releaseInput: async () => {
@@ -110,6 +128,20 @@ describe('browser automation daemon service', () => {
     } finally { service.dispose(); }
   });
 
+  it('owns recent activity retention and retires the closed view', async () => {
+    const service = createBrowserAutomationDaemonService({ adapter: readOnlyAdapter() });
+    for (let index = 0; index < 501; index++) {
+      expect((await service.execute(request({ automationRequestId: `recent_${index}` }))).status).toBe('succeeded');
+    }
+    const timeline = service.getTimeline(view);
+    expect(timeline.entries).toHaveLength(500);
+    expect(timeline.entries[0]?.automationRequestId).toBe('recent_1');
+    expect(timeline.entries.at(-1)?.automationRequestId).toBe('recent_500');
+    service.closeView(view);
+    expect(service.getRuntimeStats().runtimeCount).toBe(0);
+    expect(service.getTimeline(view).entries).toEqual([]);
+    service.dispose();
+  });
   it('publishes uncertainty recovery only after a successful fresh observation without replaying the interrupted input', async () => {
     let finishClick: () => void = () => undefined;
     const click = new Promise<void>(resolve => { finishClick = resolve; });
@@ -149,7 +181,7 @@ describe('browser automation daemon service', () => {
       dispatchPageQuery: async () => ({ ok: true }),
       // This is the physical CDP transport boundary; the service and shared input owner remain real.
       prepareConfidentialFill: async () => ({ nativeObservation: 'not_observable',
-        recheck: async () => true, fill: async () => ({ status: 'filled', code: 'filled' }),
+        fill: async () => ({ status: 'filled', code: 'filled' }),
         finish: async () => undefined,
       }),
     } }) });
@@ -177,7 +209,7 @@ describe('browser automation daemon service', () => {
         physicalPreparation.push('prepare');
         resolveStarted();
         await preparing;
-        return { recheck: async () => true, fill: async () => ({ status: 'filled', code: 'filled' }),
+        return { fill: async () => ({ status: 'filled', code: 'filled' }),
           finish: async () => undefined };
       },
     } }) });
@@ -212,7 +244,7 @@ describe('browser automation daemon service', () => {
       dispatchPageQuery: async () => ({ ok: true }),
       prepareConfidentialFill: async () => {
         const ordinal = ++preparation;
-        return { recheck: async () => true,
+        return {
           isSafe: async () => ordinal === 3,
           fill: async () => { physicalFills += 1; return ordinal === 3 ? { status: 'refused', code: 'target_changed' }
             : ordinal === 1 && firstStatus === 'unknown' ? { status: 'unknown', code: 'delivery_unknown' }

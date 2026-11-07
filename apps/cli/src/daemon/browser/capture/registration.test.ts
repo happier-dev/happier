@@ -1,21 +1,10 @@
-import { createBrowserSidecarInteractions } from '../sidecar/interactions';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
-import { resolveMachineLiveStreamFramePayloadByteLimit } from '@/api/machine/liveStreamFrameBudget';
-import { sealMachineLiveStreamEnvelopeV1, openMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
-import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
-import { createBrowserDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
-import { createBrowserDaemonFeatureGate } from '../featureGate';
-import { createBrowserDaemonControlRoutes } from '../control/routes';
-import { createBrowserDaemonControlBroker } from '../control/broker';
-import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { createSnapshotCaptureTestRoutes, snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { MachineLiveStreamDecodedEnvelopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { MachineLiveStreamReceiptV1Schema, type MachineLiveStreamReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserAutomationDaemonService } from '../automation/service';
@@ -30,6 +19,19 @@ import { registerDaemonLiveStreamRelayHandlers } from '@/rpc/handlers/daemonLive
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
+import { createBrowserSidecarInteractions } from '../sidecar/interactions';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { resolveMachineLiveStreamFramePayloadByteLimit } from '@/api/machine/liveStreamFrameBudget';
+import { sealMachineLiveStreamEnvelopeV1, openMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { startMachineLiveStreamFramePump } from '../../peer/mediation/stream/framePump';
+import { createBrowserDaemonControlBroker } from '../control/broker';
+import { createBrowserDaemonControlRoutes } from '../control/routes';
+import { createBrowserDaemonRuntimeActionExecutor } from '../actions/runtimeActionExecutor';
+import { createBrowserDaemonFeatureGate } from '../featureGate';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { applyBrowserControlEvent, createBrowserControlState } from '../../../../../ui/sources/sync/domains/browser/control/reducer';
 
 describe('browser live capture', () => {
     it.each([
@@ -64,7 +66,7 @@ describe('browser live capture', () => {
         const interactions = createBrowserSidecarInteractions({ transport, resolvePageHandle: adapter.resolvePageHandle,
             subscribeViewLifecycle: adapter.subscribeViewLifecycle });
         const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, interactions, resolvePageHandle: adapter.resolvePageHandle,
-            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
             subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
         const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
             transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
@@ -162,7 +164,7 @@ describe('browser live capture', () => {
                 .toEqual({ ok: false, reasonCode: 'capture_stopped' });
         } finally { await stop?.(); registration.dispose(); await interactions.dispose(); await producer.dispose(); }
     });
-    it.each(['controller', 'navigation', 'interaction'] as const)('publishes only the changed %s fact between startup and recovery snapshots', async change => {
+    it.each(['controller', 'navigation', 'interaction', 'viewer disconnect', 'unclaimed viewer disconnect', 'passive viewer disconnect'] as const)('publishes only the changed %s fact between startup and recovery snapshots', async change => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         // Chromium is the only substituted boundary; metadata reaches the real stream codec.
         const transport = {
@@ -178,7 +180,7 @@ describe('browser live capture', () => {
         const interactions = createBrowserSidecarInteractions({ transport, resolvePageHandle: adapter.resolvePageHandle,
             subscribeViewLifecycle: adapter.subscribeViewLifecycle });
         const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, interactions, resolvePageHandle: adapter.resolvePageHandle,
-            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
             subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
         const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
             transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
@@ -189,6 +191,7 @@ describe('browser live capture', () => {
         const metadata: BrowserEventBatchV1[] = [];
         const sourceId = browserViewKey(view);
         let stop: (() => void | Promise<void>) | undefined;
+        let stopObserver: (() => void | Promise<void>) | undefined;
         try {
             await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
                 target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
@@ -196,7 +199,8 @@ describe('browser live capture', () => {
             if (!source.ok) throw new Error('fixture capture source missing');
             const startRequest = MachineLiveStreamStartRequestV1Schema.parse({ v: 1, streamId: 'human', sourceId,
                 streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', routeKind: 'loopback_direct' });
-            const result = await source.source.adapter.start({ streamId: 'human', callerAuthority: 'present_user', startRequest,
+            const startViewer = (streamId: string) => source.source.adapter.start({ streamId, callerAuthority: 'present_user',
+                startRequest: { ...startRequest, streamId },
                 streamFamily: 'browser.streamed', sourceMachineId: 'machine', targetMachineId: 'viewer', caps: {},
                 startedAtMs: Date.now(), expiresAtMs: Date.now() + 60_000, nowMs: Date.now,
                 offerFrame: frame => {
@@ -204,11 +208,15 @@ describe('browser live capture', () => {
                         JSON.parse(Buffer.from(frame.payloadBase64, 'base64').toString('utf8'))));
                     return { ok: true };
                 }, applyControl: () => ({ ok: true }), emitReceipt: () => {} });
+            const result = await startViewer('human');
             if (!result.ok) throw new Error('fixture capture failed');
             stop = () => result.session.stop();
             const expectSnapshot = () => {
                 expect(metadata).toHaveLength(1);
                 expect(metadata[0].events.map(event => event.kind)).toEqual(['navigationStateChanged', 'controllerChanged']);
+                const current = adapter.listViews?.(view.browserSessionId).flatMap(row => row.events)
+                    .find(event => event.kind === 'navigationStateChanged' && event.viewId === view.viewId);
+                expect(metadata[0].events.find(event => event.kind === 'navigationStateChanged')).toEqual(current);
                 expect(metadata[0].interactionState).toEqual(interactions.getState(view));
                 expect(metadata[0].viewerInput).toEqual({ controlling: false, controlEpoch: automation.getStatus(view).controlEpoch });
             };
@@ -227,6 +235,37 @@ describe('browser live capture', () => {
                 expect(metadata[0].events).toEqual([expect.objectContaining({ kind: 'navigationStateChanged',
                     currentUrl: 'https://example.test/next', navigationGeneration: 1 })]);
                 expect(Object.keys(metadata[0]).sort()).toEqual(['events', 'v']);
+            } else if (change === 'passive viewer disconnect') {
+                const before = automation.getStatus(view);
+                await result.session.stop();
+                expect(automation.getStatus(view)).toEqual(before);
+                return;
+            } else if (change === 'viewer disconnect' || change === 'unclaimed viewer disconnect') {
+                if (change === 'viewer disconnect') {
+                    const observer = await startViewer('observer');
+                    if (!observer.ok) throw new Error('fixture observer capture failed');
+                    stopObserver = () => observer.session.stop();
+                    expect(result.session.applySidebandControl?.({ v: 1, streamId: 'human', sourceId,
+                        eventId: 'human-type', kind: 'keyboard_text', text: 'hello' })).toEqual({ ok: true });
+                    await vi.waitFor(() => expect(automation.getTimeline(view).entries).toHaveLength(1));
+                } else {
+                    // Toolbar take-control/navigation has no stream-input claim. The last
+                    // admitted human stream still owns the disconnect boundary for that hold.
+                    await automation.recordHumanInput({ ...view, authority: 'present_user' });
+                }
+                expect(automation.getStatus(view).controller).toBe('human');
+                metadata.length = 0;
+                await result.session.stop();
+                await vi.waitFor(() => expect(automation.getStatus(view).controller).toBe('none'));
+                if (change === 'viewer disconnect') {
+                    // The remaining viewer must receive the owner's new presence fact;
+                    // changing only the service's local state would leave its capsule stale.
+                    expect(metadata.at(-1)).toMatchObject({
+                        events: [{ kind: 'controllerChanged', state: { controller: 'none' } }],
+                        viewerInput: { controlling: false, controlEpoch: automation.getStatus(view).controlEpoch },
+                    });
+                }
+                return;
             } else {
                 for (const listener of [...listeners]) listener({ method: 'Page.javascriptDialogOpening', sessionId: 'cdp-page',
                     params: { type: 'confirm', message: 'Continue?' } });
@@ -241,7 +280,7 @@ describe('browser live capture', () => {
                 expectSnapshot();
             }
         } finally {
-            await stop?.(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); await interactions.dispose();
+            await stop?.(); await stopObserver?.(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose(); await interactions.dispose();
         }
     });
 
@@ -266,7 +305,7 @@ describe('browser live capture', () => {
         const view = { browserSessionId: 'browser', viewId: 'view' };
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
         const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, resolvePageHandle: adapter.resolvePageHandle,
-            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+            getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
             subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
         const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
             transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
@@ -379,7 +418,7 @@ describe('browser live capture', () => {
                     commands.push(String(command.params?.text));
                     if (command.params?.text === 'agent effect') { inputStarted(); return pendingAck; }
                 }
-                return command.method === 'Runtime.evaluate' ? { result: { type: 'string', value: 'safe page' } } : {};
+                return snapshotReadBoundaryFixture(command) ?? (command.method === 'Runtime.evaluate' ? { result: { type: 'string', value: 'safe page' } } : {});
             },
             dispatchBrowserCommand: async () => ({ success: true }),
             subscribeCdpEvents: (listener: BrowserSidecarCdpEventSubscriber) => {
@@ -387,11 +426,12 @@ describe('browser live capture', () => {
             },
         };
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
-        const contextCapture = { transport, resolvePageHandle: adapter.resolvePageHandle,
-            getNavigationState: adapter.getNavigationState, subscribeCdpEvents: transport.subscribeCdpEvents,
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState, subscribeCdpEvents: transport.subscribeCdpEvents,
             subscribeViewLifecycle: adapter.subscribeViewLifecycle };
         const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
-            transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
+            transport: createControlAdapterAutomationTransport({ adapter, contextCapture,
+                browserContext: createSnapshotCaptureTestRoutes(contextCapture) }),
         }) });
         const producer = createBrowserCdpScreencastProducer({ contextCapture });
         const registry = createMachineLiveStreamCaptureRegistry();
@@ -455,8 +495,8 @@ describe('browser live capture', () => {
         };
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar',
             transport, resolveInputControl: () => control });
-        const contextCapture = { transport, resolvePageHandle: adapter.resolvePageHandle,
-            getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, resolvePageHandle: adapter.resolvePageHandle,
+            getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState, subscribeBrowserEvents: adapter.subscribeBrowserEvents,
             subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle };
         const automation = createBrowserAutomationDaemonService({ owners, adapter: createBrowserAutomationCdpAdapter({
             transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
@@ -533,14 +573,15 @@ describe('browser live capture', () => {
             await relay.dispose(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose();
         }
     });
-    it('streams the exact owned view and routes viewer input through human takeover without a simulator lease', async () => {
+    it('keeps every observer streaming and receiving presence across an existing-view reopen', async () => {
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const commands: Array<{ method: string; params?: Record<string, unknown> }> = [];
         let failInput = false;
+        let pageOpens = 0;
         // Chromium/CDP is the system boundary; capture, registry, codec/credit admission and
         // automation/controller arbitration below it are real owners.
         const transport = {
-            openPage: async () => ({ targetId: 'page', sessionId: 'cdp-page' }),
+            openPage: async () => ({ targetId: `page-${++pageOpens}`, sessionId: `cdp-page-${pageOpens}` }),
             dispatchPageCommand: async (command: (typeof commands)[number]) => {
                 commands.push(command);
                 if (failInput && command.method === 'Input.insertText') throw new Error('native input failed');
@@ -552,9 +593,9 @@ describe('browser live capture', () => {
             },
         };
         const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: 'browser', sidecarId: 'sidecar', transport });
-        const contextCapture = { transport, resolvePageHandle: adapter.resolvePageHandle,
+        const contextCapture = { resolveViewportOwner: () => adapter.viewportOwner, transport, resolvePageHandle: adapter.resolvePageHandle,
             subscribeCdpEvents: transport.subscribeCdpEvents, subscribeViewLifecycle: adapter.subscribeViewLifecycle,
-            subscribeBrowserEvents: adapter.subscribeBrowserEvents, getNavigationState: adapter.getNavigationState };
+            subscribeBrowserEvents: adapter.subscribeBrowserEvents, getNavigationEvent: adapter.getNavigationEvent, getNavigationState: adapter.getNavigationState };
         const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
             transport: createControlAdapterAutomationTransport({ adapter, contextCapture }),
         }) });
@@ -565,18 +606,25 @@ describe('browser live capture', () => {
         const view = { browserSessionId: 'browser', viewId: 'view' };
         const sourceId = browserViewKey(view);
         const envelopes: MachineLiveStreamRelayEnvelopeV1[] = [];
+        let observerState = createBrowserControlState();
         const browserEvents = () => envelopes.flatMap(envelope => envelope.message.kind === 'frame'
             && envelope.message.frame.payloadKind === 'metadata'
             ? BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8'))).events : []);
         const relay = createMachineLiveStreamRelayTerminator({ captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), machineId: 'machine', nowMs: Date.now,
             emitEnvelope: envelope => {
                 envelopes.push(envelope);
+                if (envelope.message.kind === 'frame' && envelope.message.frame.streamId === 'late-human'
+                    && envelope.message.frame.payloadKind === 'metadata') {
+                    const batch = BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')));
+                    for (const event of batch.events) observerState = applyBrowserControlEvent(observerState, event);
+                }
                 if (envelope.message.kind === 'frame') relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
                     message: { kind: 'control', control: { v: 1, streamId: envelope.message.frame.streamId, kind: 'ack', nextSequence: envelope.message.frame.sequence + 1 } } });
             } });
         try {
             await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
                 target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+            for (const event of adapter.listViews(view.browserSessionId)[0].events) observerState = applyBrowserControlEvent(observerState, event);
             const source = registry.resolve({ sourceId, streamFamily: 'browser.streamed' });
             expect(source.ok).toBe(true);
             if (!source.ok) return;
@@ -590,7 +638,7 @@ describe('browser live capture', () => {
             // Signature authentication belongs to server ingress. This test exercises the actual
             // daemon terminator, registry, frame pump and controller under its admitted contract.
             expect(await relay.start(start, 'present_user')).toEqual({ ok: true, streamId: 'stream' });
-            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
+            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: `cdp-page-${pageOpens}`,
                 params: { sessionId: 1, data: 'AQID', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
             expect(envelopes.filter(envelope => envelope.message.kind === 'frame' && envelope.message.frame.payloadKind !== 'metadata')).toMatchObject([
                 { message: { frame: { streamId: 'stream', sequence: expect.any(Number), payloadBase64: 'AQID', codecId: 'image.mjpeg' } } },
@@ -609,11 +657,12 @@ describe('browser live capture', () => {
             expect(commands.filter(command => command.method === 'Page.startScreencast')).toHaveLength(1);
             expect(commands.filter(command => command.method === 'Page.screencastFrameAck')).toHaveLength(1);
             expect(browserEvents()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'none' }) })]));
-            for (const listener of [...listeners]) listener({ method: 'Page.frameNavigated', sessionId: 'cdp-page',
+            for (const listener of [...listeners]) listener({ method: 'Page.frameNavigated', sessionId: `cdp-page-${pageOpens}`,
                 params: { frame: { id: 'main', loaderId: 'next-document', url: 'https://example.test/next' } } });
             expect(browserEvents()).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'navigationStateChanged', currentUrl: 'https://example.test/next', navigationGeneration: 1 })]));
             expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer', message: {
-                kind: 'sideband_control', control: { v: 1, streamId: 'stream', sourceId, eventId: 'click', kind: 'tap', x: 0.5, y: 0.5 },
+                kind: 'sideband_control', control: { v: 1, streamId: 'stream', sourceId, eventId: 'click', kind: 'tap', x: 0.5, y: 0.5,
+                    button: 'right', clickCount: 2, modifiers: ['shift'] },
             } })).toEqual({ ok: true });
             await vi.waitFor(() => expect(automation.getTimeline(view).entries.map(({ status, reasonCode }) => ({ status, reasonCode })))
                 .toEqual([{ status: 'succeeded', reasonCode: undefined }]));
@@ -635,11 +684,29 @@ describe('browser live capture', () => {
             await vi.waitFor(() => expect(automation.getTimeline(view).entries.map(entry => entry.status))
                 .toEqual(['succeeded', 'succeeded', 'succeeded']));
             expect(commands).toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: {
+                    type: 'mousePressed', x: 200, y: 100, button: 'right', clickCount: 2, modifiers: 8,
+                } }),
                 expect.objectContaining({ method: 'Input.insertText', params: { text: 'hello' } }),
                 expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: {
                     type: 'mouseWheel', x: 200, y: 150, deltaX: 0, deltaY: 100,
                 } }),
             ]));
+            for (const [sequence, action, x] of [[1, 'down', 0.1], [2, 'move', 0.7], [3, 'up', 0.7]] as const) {
+                expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer', message: {
+                    kind: 'sideband_control', control: { v: 1, streamId: 'stream', sourceId, eventId: `held-${action}`,
+                        kind: 'browser_input', controlEpoch: 1,
+                        event: { kind: 'pointer', target: 'page', sequence, action, x, y: 0.5 } },
+                } })).toEqual({ ok: true });
+            }
+            await vi.waitFor(() => expect(automation.getTimeline(view).entries.map(entry => entry.status))
+                .toEqual(Array.from({ length: 6 }, () => 'succeeded')));
+            expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent').slice(-3).map(command => command.params))
+                .toEqual([
+                    { type: 'mousePressed', x: 40, y: 100, button: 'left', buttons: 1, clickCount: 1 },
+                    { type: 'mouseMoved', x: 280, y: 100, button: 'left', buttons: 1 },
+                    { type: 'mouseReleased', x: 280, y: 100, button: 'left', buttons: 0, clickCount: 1 },
+                ]);
             expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer', message: {
                 kind: 'sideband_control', control: { v: 1, streamId: 'stream', sourceId: 'another-view', eventId: 'wrong', kind: 'keyboard_text', text: 'secret' },
             } })).toEqual({ ok: false, reasonCode: 'input_lease_mismatch' });
@@ -650,7 +717,7 @@ describe('browser live capture', () => {
             await vi.waitFor(() => expect(envelopes).toEqual(expect.arrayContaining([
                 expect.objectContaining({ message: expect.objectContaining({ kind: 'receipt', receipt: expect.objectContaining({ terminal: false }) }) }),
             ])));
-            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
+            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: `cdp-page-${pageOpens}`,
                 params: { sessionId: 2, data: 'BAUG', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
             expect(envelopes).toEqual(expect.arrayContaining([
                 expect.objectContaining({ message: expect.objectContaining({ kind: 'frame', frame: expect.objectContaining({ payloadBase64: 'BAUG' }) }) }),
@@ -662,7 +729,7 @@ describe('browser live capture', () => {
             // human picture which may have been captured during a confidential hold.
             expect(envelopes.filter(envelope => envelope.message.kind === 'frame'
                 && envelope.message.frame.streamId === 'observation' && envelope.message.frame.payloadKind !== 'metadata')).toEqual([]);
-            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page',
+            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: `cdp-page-${pageOpens}`,
                 params: { sessionId: 3, data: 'BwgJ', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
             const metadataFor = (streamId: string) => envelopes.filter(envelope => envelope.message.kind === 'frame'
                 && envelope.message.frame.streamId === streamId && envelope.message.frame.payloadKind === 'metadata');
@@ -670,10 +737,64 @@ describe('browser live capture', () => {
                 && envelope.message.frame.streamId === streamId && envelope.message.frame.payloadKind !== 'metadata');
             expect(metadataFor('observation').length).toBeGreaterThan(0);
             expect(imagesFor('observation').length).toBeGreaterThan(0);
+            // An ordinary front-door open rebinds this logical view to another native page.
+            // Existing streams must retain their registry occurrence and receive that page's
+            // frames and current presence without another stream admission or consumer retry.
+            const broker = createBrowserDaemonControlBroker();
+            const unregister = broker.registerAdapter(adapter);
+            const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
+            const featureGate = createBrowserDaemonFeatureGate({ env: { NODE_ENV: 'test' }, resolveServerFeaturesSnapshot: () => ({ status: 'ready',
+                features: FeaturesResponseSchema.parse({ features: { browser: { enabled: true,
+                    viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } } } }),
+            }) });
+            await featureGate.refresh();
+            const execute = createBrowserDaemonRuntimeActionExecutor({ control: routes, featureGate });
+            const previousSource = registry.resolve({ sourceId });
+            const imageCounts = ['stream', 'late-human', 'observation'].map(id => imagesFor(id).length);
+            const startsBefore = commands.filter(command => command.method === 'Page.startScreencast').length;
+            try {
+                expect(await execute({ actionId: 'browser.view.open', context: { authority: 'present_user' },
+                    input: { kind: 'openView', commandId: 'reopen', focus: true,
+                        ...view, platform: 'web', target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } } }))
+                    .toMatchObject({ status: 'dispatched' });
+            } finally { unregister(); }
+            await vi.waitFor(() => expect(commands.filter(command => command.method === 'Page.startScreencast'))
+                .toHaveLength(startsBefore + 1));
+            expect(registry.resolve({ sourceId })).toEqual(previousSource);
+            if (!previousSource.ok) throw new Error('existing source disappeared');
+            expect(previousSource.source.retirementSignal?.aborted).toBe(false);
+            // Late frames from the retired native session must not reach any observer.
+            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: 'cdp-page-1',
+                params: { sessionId: 4, data: 'CgsM', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+            expect(['stream', 'late-human', 'observation'].map(id => imagesFor(id).length)).toEqual(imageCounts);
+            for (const listener of [...listeners]) listener({ method: 'Page.screencastFrame', sessionId: `cdp-page-${pageOpens}`,
+                params: { sessionId: 5, data: 'DQ4P', metadata: { deviceWidth: 400, deviceHeight: 200 } } });
+            expect(['stream', 'late-human', 'observation'].map(id => imagesFor(id).length))
+                .toEqual(imageCounts.map(count => count + 1));
+            const presenceBefore = browserEvents().length;
+            // The existing observer keeps its navigation record across a native-page reopen.
+            // Controller custody is view-scoped: its release must reach that real reader too.
+            expect(observerState.viewsById[view.viewId].automationController).toMatchObject({ controller: 'human', controlEpoch: 1 });
+            const metadataBeforeClose = metadataFor('late-human').length;
+            expect(relay.applyControl(MachineLiveStreamDecodedEnvelopeV1Schema.parse({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer',
+                message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'stop', reasonCode: 'viewer_closed' } },
+            }))).toEqual({ ok: true });
+            await vi.waitFor(() => expect(automation.getStatus(view)).toMatchObject({ controller: 'none', controlEpoch: 2 }));
+            const released = metadataFor('late-human').slice(metadataBeforeClose).map(envelope => {
+                if (envelope.message.kind !== 'frame') throw new Error('expected metadata frame');
+                return BrowserEventBatchV1Schema.parse(JSON.parse(Buffer.from(envelope.message.frame.payloadBase64, 'base64').toString('utf8')));
+            });
+            expect(released).toContainEqual(expect.objectContaining({ viewerInput: { controlling: false, controlEpoch: 2 },
+                events: [expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'none', controlEpoch: 2 }) })] }));
+            expect(observerState.viewsById[view.viewId].automationController).toMatchObject({ controller: 'none', controlEpoch: 2 });
+            expect(await automation.handBack({ ...view, authority: 'present_user' })).toEqual({ ok: true });
+            expect(browserEvents().slice(presenceBefore)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ kind: 'controllerChanged', state: expect.objectContaining({ controller: 'none' }) }),
+            ]));
             await automation.getInputControl(view).beginConfidentialityHold();
             const heldObservationCount = metadataFor('observation').length;
             const heldImageCount = imagesFor('observation').length;
-            for (const listener of [...listeners]) listener({ method: 'Page.frameNavigated', sessionId: 'cdp-page',
+            for (const listener of [...listeners]) listener({ method: 'Page.frameNavigated', sessionId: `cdp-page-${pageOpens}`,
                 params: { frame: { id: 'main', loaderId: 'private-document', url: 'https://example.test/private-credential' } } });
             automation.getInputControl(view).handBack();
             expect(relay.applyControl({ v: 1, sourceMachineId: 'machine', targetMachineId: 'viewer', message: {

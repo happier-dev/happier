@@ -131,12 +131,43 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
         capture.stopping = (async () => {
             try {
                 await capture.updating;
-                if (await capture.started) await dispatch({ ...capture.handle, method: 'Page.stopScreencast' });
+                if (await capture.started) {
+                    try { await dispatch({ ...capture.handle, method: 'Page.stopScreencast' }); }
+                    finally {
+                        await dispatch({ ...capture.handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } });
+                    }
+                }
             } finally {
                 if (captures.get(key) === capture) captures.delete(key);
             }
         })();
         return capture.stopping;
+    }
+
+    function rebind(capture: Capture, view: BrowserCaptureView, handle: BrowserSidecarCdpPageHandle): void {
+        clearMotion(capture);
+        capture.lastFrame = null;
+        // A logical view survives an ordinary reopen. Move its existing consumers through
+        // the same serialized CDP queue as encoding and final stop; do not retire streams.
+        capture.updating = capture.updating.then(async () => {
+            if (capture.closed || !await capture.started) return;
+            try { await dispatch({ ...capture.handle, method: 'Page.stopScreencast' }); }
+            catch { /* The replaced native target may already have disappeared. */ }
+            try { await dispatch({ ...capture.handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } }); }
+            catch { /* A retired handle must not prevent capture of the current binding. */ }
+            capture.handle = handle;
+            capture.encoding = encodingFor(capture, view);
+            try {
+                await dispatch({ ...handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } });
+                await dispatch({ ...handle, method: 'Page.startScreencast', params: capture.encoding });
+            } catch (error) {
+                try { await dispatch({ ...handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } }); }
+                catch { /* Preserve the new source's original capture failure. */ }
+                throw error;
+            }
+        }).catch((error: unknown) => {
+            for (const consumer of capture.consumers) report(consumer, error);
+        });
     }
 
     function retire(key: string, capture: Capture): Promise<void> {
@@ -151,8 +182,10 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
         const capture = captures.get(key);
         if (!capture) return;
         const handle = input.contextCapture.resolvePageHandle(event);
-        if (event.type === 'unbound' || handle?.targetId !== capture.handle.targetId || handle?.sessionId !== capture.handle.sessionId) {
+        if (event.type === 'unbound' || !handle?.sessionId) {
             void retire(key, capture).catch(() => undefined);
+        } else if (handle.targetId !== capture.handle.targetId || handle.sessionId !== capture.handle.sessionId) {
+            rebind(capture, event, handle);
         }
     });
 
@@ -184,6 +217,7 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                 captures.set(key, created);
                 created.consumers.add(consumer);
                 created.unsubscribe = subscribe((notification) => {
+                    const handle = created.handle;
                     if (created.closed || notification.method !== 'Page.screencastFrame' || notification.sessionId !== handle.sessionId) return;
                     const params = notification.params;
                     const sessionId = params?.sessionId;
@@ -215,11 +249,16 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
                 });
                 created.unsubscribe = () => { unsubscribeFrames(); unsubscribeViewport?.(); };
                 created.encoding = encodingFor(created, consumer.view);
-                created.started = dispatch({ ...handle, method: 'Page.startScreencast', params: created.encoding })
-                    .then(() => true, (error: unknown) => {
+                // Hidden pages otherwise stop painting. Rendering belongs to this shared
+                // capture lifetime, so a recording cannot turn it off beneath a live viewer.
+                created.started = dispatch({ ...handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: true } })
+                    .then(() => dispatch({ ...handle, method: 'Page.startScreencast', params: created.encoding }))
+                    .then(() => true, async (error: unknown) => {
                         created.closed = true;
                         clearMotion(created);
                         created.unsubscribe();
+                        try { await dispatch({ ...handle, method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false } }); }
+                        catch { /* Preserve the original capture failure for all subscribers. */ }
                         if (captures.get(key) === created) captures.delete(key);
                         for (const subscriber of created.consumers) report(subscriber, error);
                         return false;

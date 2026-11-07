@@ -2,7 +2,7 @@ import { BROWSER_AUTOMATION_NOT_IMPLEMENTED_ACTION_KINDS } from '@happier-dev/pr
 import { BrowserActiveTargetV1Schema } from '@happier-dev/protocol/browser/events/activeTarget';
 import type { BrowserActiveTargetV1, BrowserCommandV1, BrowserCommandDispatchResultV1, BrowserEventV1, BrowserAutomationActionKindV1, BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationControllerKindV1, BrowserAutomationControllerStateV1, BrowserAutomationErrorCodeV1, BrowserAutomationRequesterKindV1, BrowserAutomationRequesterRefV1, BrowserAutomationTimelineEntryV1, BrowserAutomationTimelineV1 } from '@happier-dev/protocol';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
-import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineEntryV1Schema, BrowserAutomationTimelineV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationActionResultV1Schema, BrowserAutomationTimelineEntryV1Schema, BrowserAutomationTimelineV1Schema, isBrowserAutomationMutatingActionKind } from '@happier-dev/protocol/browser/automation/v1';
 
 import { executeBrowserAutomationAction } from './actions';
 import type { BrowserAutomationAdapter, BrowserConfidentialFillPreparation } from './adapters/types';
@@ -19,6 +19,8 @@ import {
   type BrowserAutomationViewRef,
 } from './owners';
 
+// Recent activity, not an audit log (owner ruling 2026-10-30). This producer
+// owns retention; wire readers and UI control projections do not choose a cap.
 const TIMELINE_MAX_ENTRIES = 500;
 
 // F3/G19: the one owner of "which verbs are declared but not executed" is the protocol
@@ -50,6 +52,7 @@ function browserAdmissionError(errorCode: SurfaceInputAdmissionFailure): Browser
     case 'closed': return 'view_closed';
     case 'human_interrupted': return 'human_interrupted';
     case 'observation_required': return 'stale_navigation';
+    case 'observation_held': return 'policy_denied';
     case 'uncertain': return 'runtime_unavailable';
   }
 }
@@ -63,10 +66,7 @@ export type BrowserAutomationViewLifecycleSubscriber = (
 ) => void;
 
 /** Host policy admission retains the original caller; yielding control is not human input provenance. */
-export type BrowserControllerAuthority = Readonly<
-  | { authority: 'present_user' }
-  | { authority: 'account_automation'; bypassApprovals: true }
->;
+export type BrowserControllerAuthority = Readonly<{ authority: 'present_user' | 'account_automation' }>;
 
 export type BrowserAutomationDaemonService = Readonly<{
   getInputControl(view: BrowserAutomationViewRef): SurfaceInputControl;
@@ -77,7 +77,8 @@ export type BrowserAutomationDaemonService = Readonly<{
   ): Promise<BrowserAutomationCancelResult>;
   recordHumanInput(input: BrowserAutomationViewRef & BrowserControllerAuthority): Promise<BrowserAutomationCancelResult>;
   claimViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string; controlEpoch?: number }>): Readonly<{ ok: true } | { ok: false; reasonCode: 'stale_control' | 'viewer_not_controlling' }>;
-  releaseViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): void;
+  registerViewer(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): void;
+  releaseViewerInput(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): Promise<void>;
   isViewerControlling(input: BrowserAutomationViewRef & Readonly<{ viewerId: string }>): boolean;
   /** Control commands share the drain; only page-changing commands take input ownership. */
   executeControlCommand(view: BrowserAutomationViewRef & BrowserCommandV1, authority: 'present_user' | 'account_automation', dispatch: () => Promise<BrowserCommandDispatchResultV1>): Promise<SurfaceInputExecutionResult<BrowserCommandDispatchResultV1>>;
@@ -109,6 +110,7 @@ type ViewRuntime = {
   activeTarget: BrowserActiveTargetV1 | null;
   confidentialPreparationActive: boolean;
   humanViewerId: string | null;
+  humanViewers: Set<string>;
 };
 
 export function createBrowserAutomationDaemonService(input: Readonly<{
@@ -156,6 +158,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       activeTarget: null,
       confidentialPreparationActive: false,
       humanViewerId: null,
+      humanViewers: new Set(),
     };
     runtimes.set(key, created);
     return created;
@@ -240,22 +243,13 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     });
   }
 
-  async function execute(rawRequest: BrowserAutomationActionRequestV1, context?: Readonly<{ signal?: AbortSignal }>) {
-    const parsed = BrowserAutomationActionRequestV1Schema.safeParse(rawRequest);
-    const runtime = runtimeFor(rawRequest);
-    const engineGeneration = input.adapter.getNavigationGeneration?.(rawRequest) ?? 0;
+  async function execute(request: BrowserAutomationActionRequestV1, context?: Readonly<{ signal?: AbortSignal }>) {
+    const runtime = runtimeFor(request);
+    const engineGeneration = input.adapter.getNavigationGeneration?.(request) ?? 0;
     if (runtime.navigationGeneration !== engineGeneration) runtime.inputControl.invalidateObservation();
     runtime.navigationGeneration = engineGeneration;
-    const controlEpoch = owners.getControlEpoch(rawRequest);
-    if (!parsed.success) {
-      return failureResult(rawRequest, controlEpoch, runtime.navigationGeneration, 'unsupported_action');
-    }
-    const request = parsed.data;
-
+    const controlEpoch = owners.getControlEpoch(request);
     if (owners.isObservationHeld(request)) await owners.tryReleaseConfidentiality(request);
-    if (owners.isObservationHeld(request) && request.requestedBy !== 'user') {
-      return failureResult(request, controlEpoch, runtime.navigationGeneration, 'policy_denied');
-    }
 
     if (NOT_IMPLEMENTED_ACTIONS.has(request.actionKind)) {
       return failureResult(request, controlEpoch, runtime.navigationGeneration, 'not_implemented');
@@ -310,7 +304,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
           getNavigationGenerationAfter: () => input.adapter.getNavigationGeneration?.(request) ?? navigationGenerationBefore,
           now,
           generateTimelineEntryId,
-          executionContext: { signal, deadlineMs: now() + request.timeoutMs,
+          executionContext: { signal, ...(request.timeoutMs === undefined ? {} : { deadlineMs: now() + request.timeoutMs }),
             onActiveTarget: target => {
               if (!mutating || signal.aborted || runtime.activeAutomationRequestId !== request.automationRequestId) return;
               const parsed = BrowserActiveTargetV1Schema.safeParse(target);
@@ -391,9 +385,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     const interruption = runtime.inputControl.takeOver();
     runtime.activeTarget = null;
     emitController(cancelInput);
-    // Provenance is stored atomically with admission. The route accepts only host-stamped
-    // present-user authority or policy-admitted automation, never an input-supplied requester
-    // identity. Approval to yield control does not turn an agent into a present user.
+    // Provenance is stored atomically with admission. Routes retain the authenticated
+    // caller; approval to yield control does not turn an agent into a present user.
     if (runtime.activeAutomationRequestId && !activeRequesterRef) {
       return { ok: false, errorCode: 'owner_mismatch' };
     }
@@ -404,7 +397,6 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
   return {
     getInputControl: view => owners.getInputControl(view),
     async prepareConfidentialFill(request, context) {
-      if (context?.authority !== 'present_user') return { status: 'refused', code: 'approval_required' };
       if (!input.adapter.prepareConfidentialFill) return { status: 'refused', code: 'field_verification_unsupported' };
       const runtime = runtimeFor(request);
       if (runtime.inputControl.isClosed()) return { status: 'refused', code: 'target_unavailable' };
@@ -426,7 +418,7 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
         await hold;
       }
       catch { abandonPreparation(); return { status: 'refused', code: 'observation_unavailable' }; }
-      if (context.signal?.aborted || runtime.inputControl.isClosed()) {
+      if (context?.signal?.aborted || runtime.inputControl.isClosed()) {
         abandonPreparation(); return { status: 'refused', code: 'target_changed' };
       }
       let prepared: BrowserConfidentialFillPreparation;
@@ -436,27 +428,22 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       const target = prepared;
       let finished = false;
       owners.setConfidentialitySafetyCheck(request, () => target.isSafe?.() ?? Promise.resolve(false));
-      const current = async () => {
-        if (finished || runtime.inputControl.isClosed() || context.signal?.aborted) return false;
-        const valid = await target.recheck().catch(() => false);
-        return valid && !runtime.inputControl.isClosed() && !context.signal?.aborted;
-      };
+      const current = () => !finished && !runtime.inputControl.isClosed() && !context?.signal?.aborted;
       const submit = target.submit;
       let filled = false;
       let issued = false;
       return {
         ...(target.nativeObservation === 'not_observable' ? { nativeObservation: 'not_observable' as const } : {}),
-        recheck: current,
-        async fill(value, signal, beforeDelivery) {
+        async fill(value, signal) {
           if (issued) return { status: 'refused', code: 'approval_changed' };
-          if (signal?.aborted || context.signal?.aborted) return { status: 'canceled', code: 'canceled' };
-          if (!await current()) return { status: 'refused', code: 'target_changed' };
+          if (signal?.aborted || context?.signal?.aborted) return { status: 'canceled', code: 'canceled' };
+          if (!current()) return { status: 'refused', code: 'target_changed' };
           const result = await runtime.inputControl.execute({ requestedBy: 'human', signal,
             effect: async physicalSignal => {
-              if (physicalSignal.aborted || context.signal?.aborted) return { status: 'canceled', code: 'canceled' } satisfies SecretFillSettlementV1;
-              if (!await current()) return { status: 'refused', code: 'target_changed' } satisfies SecretFillSettlementV1;
+              if (physicalSignal.aborted || context?.signal?.aborted) return { status: 'canceled', code: 'canceled' } satisfies SecretFillSettlementV1;
+              if (!current()) return { status: 'refused', code: 'target_changed' } satisfies SecretFillSettlementV1;
               issued = true;
-              try { return SecretFillSettlementV1Schema.parse(await target.fill(value, physicalSignal, beforeDelivery)); }
+              try { return SecretFillSettlementV1Schema.parse(await target.fill(value, physicalSignal)); }
               catch { return { status: 'unknown', code: 'delivery_unknown' } satisfies SecretFillSettlementV1; }
             },
             classifyCompletion: result => result.status === 'unknown' ? 'unknown' : 'known',
@@ -465,13 +452,13 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
           filled = result.value.status === 'filled';
           return result.value;
         },
-        ...(submit && request.submit ? { async submit(signal?: AbortSignal, beforeDelivery?: () => Promise<boolean>) {
-          if (!filled || signal?.aborted || !await current()) return { status: 'refused', code: 'submit_refused' } as const;
+        ...(submit && request.submit ? { async submit(signal?: AbortSignal) {
+          if (!filled || signal?.aborted || !current()) return { status: 'refused', code: 'submit_refused' } as const;
           filled = false;
           const result = await runtime.inputControl.execute({ requestedBy: 'human', signal,
             effect: async physicalSignal => {
-              if (physicalSignal.aborted || !await current()) return { status: 'refused', code: 'submit_refused' } as const;
-              try { return await submit(physicalSignal, beforeDelivery); }
+              if (physicalSignal.aborted || !current()) return { status: 'refused', code: 'submit_refused' } as const;
+              try { return await submit(physicalSignal); }
               catch { return { status: 'unknown', code: 'submit_unknown' } as const; }
             }, classifyCompletion: value => value.status === 'unknown' ? 'unknown' : 'known',
           });
@@ -495,6 +482,8 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
     async executeControlCommand(view, authority, dispatch) {
       const runtime = runtimeFor(view);
       if (view.kind === 'focusView') {
+        const errorCode = runtime.inputControl.getObservationFailure(authority === 'present_user' ? 'human' : 'agent');
+        if (errorCode) return { ok: false, errorCode };
         const value = await runtime.inputControl.drainWhile(dispatch);
         return { ok: true, value, interrupted: false, completion: classifyBrowserCommandCompletion(value) };
       }
@@ -535,13 +524,23 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       const runtime = runtimes.get(browserViewKey(view));
       return runtime?.humanViewerId === view.viewerId && controllerState(view, runtime).controller === 'human';
     },
-    releaseViewerInput(view) {
+    registerViewer(view) {
+      runtimeFor(view).humanViewers.add(view.viewerId);
+    },
+    async releaseViewerInput(view) {
       const runtime = runtimes.get(browserViewKey(view));
-      if (runtime?.humanViewerId === view.viewerId) {
-        runtime.humanViewerId = null;
-        void releasePhysicalInput(view, runtime, runtime.inputControl.takeOver('owner_disconnected'));
-        emitController(view);
-      }
+      if (!runtime) return;
+      const wasConnected = runtime.humanViewers.delete(view.viewerId);
+      const wasControlling = runtime.humanViewerId === view.viewerId;
+      // Toolbar commands can hold human control before this viewer sends stream input.
+      // Its last stream disconnect is the same withdrawal boundary as a claimed viewer.
+      if (!wasControlling && !(wasConnected && runtime.humanViewers.size === 0 && runtime.humanViewerId === null)) return;
+      runtime.humanViewerId = null;
+      if (runtime.inputControl.getStatus().controller !== 'human') return;
+      if (!await releasePhysicalInput(view, runtime, runtime.inputControl.takeOver('owner_disconnected'))) return;
+      // A different live viewer may claim control while the old pointer is draining.
+      if (runtime.humanViewerId !== null) return;
+      if (runtime.inputControl.handBack()) emitController(view);
     },
     async handBack(view) {
       const runtime = runtimeFor(view);

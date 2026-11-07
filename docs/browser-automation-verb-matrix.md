@@ -18,34 +18,64 @@ UPDATE_AUTOMATION_VERB_MATRIX=1 ../../apps/stack/bin/hstack-exec --local -- \
   sources/sync/domains/browser/adapters/automationVerbMatrix.closure.test.ts
 ```
 
-The launch owner supplies child read fd 3 and write fd 4 (inherited handles on Windows);
-the sidecar transport carries NUL-delimited CDP JSON over those descriptors. Automation,
-screencast, diagnostics, recording and agents share that connection. No debugging port or
-`/json/version` endpoint is opened. Missing pipes or a failed readiness handshake return
-typed unavailable results without a TCP fallback. Stderr remains diagnostic input only.
-
-macOS managed launches also use `--use-mock-keychain` to avoid a login-Keychain
-lookup during cookie encryption. This includes persistent managed profiles; see
-the [at-rest protection trade-off](encryption.md#material-entrusted-to-a-shared-machine-unreleased-03).
-
 ## Controller and cancellation (development source)
+
+Browser address and navigation shortcuts use the existing keyboard command owner, including
+user rebindings. Native desktop guests, same-origin iframes and cooperative preview frames
+forward only its active Browser command signatures; composition and unrelated page keys stay
+with the guest. Hidden guests release those signatures. Native desktop delivery also focuses
+the host window so its address field can receive input. Uncooperative cross-origin iframes
+cannot forward keys through their sandbox. Iframe sandboxes allow user-activated pointer lock
+without adding same-origin privileges. Agent pointer actions restore a previously focused
+host field only when the guest stole focus; a person's newer host selection takes precedence.
+
+Original Account HTTP navigation retains the admitted UI host caller through the daemon's
+shared Action executor into the canonical approval policy. Reversible in-place controls default
+to direct execution; saved UI Require preferences and agent/MCP approval defaults still apply.
+
+The Browser automation service owns connected human viewer identities and control custody.
+A controlling viewer disconnect releases its physical input, then hands control back; the last
+human stream also releases a toolbar-only hold that has not acquired a stream-input identity.
+A passive viewer disconnect leaves agent admission unchanged. Presence consumes this controller
+fact, rather than expiring it with a separate timeout.
+
+Live-view rendering shares the [CDP capture lifetime](./browser-recording-capture-matrix.md#reference-only-invariant-brw-15)
+with recording; the shared producer keeps hidden viewed pages rendering.
+
+Managed Chromium publishes navigation readiness and history from native main-frame completion,
+including BFCache restores, page load completion and same-document history changes. A same-document
+change reuses the current document readiness query when loading; it does not imply a completed load.
+Managed Chromium also publishes its page-reference, screenshot and annotation context support in
+the discovered view capabilities. Streamed presentation preserves those producer facts; Attach page
+uses the same mounted context owner before and after refresh or reopen.
 
 `browser.view.setViewport` selects a per-view device preset or `fitViewer` through the
 existing Browser command Action. Managed Chromium's `sidecar/viewport.ts` owns the complete
-metrics, touch and UA/client-hint tuple.
+metrics, touch and UA/client-hint tuple. A fixed preset keeps its geometry when the controlling
+viewer resizes; every streamed viewer contains the effective page geometry. `fitViewer` restores
+the engine's ordinary identity and touch behavior and follows the controlling viewer again.
 The shared preset catalog is exported by `browser/control/v1`; native views return the existing
 typed `unsupported_command` result. These are development-source contracts, not physical-device
 or Safari certification.
 
-In unreleased 0.3 source, managed-browser viewport and DPR controls use the same controlling
-viewer and control epoch as human input. The admitted viewer sizes the existing page with CDP;
-unchanged geometry sends no additional CDP command. Other viewers consume that geometry and
-fit the same picture rather than applying their own device emulation.
-
 An approved first `browser.view.open` on a Machine retains the original command while managed
 Chromium is installed. Concurrent requests share the existing provisioner. Installation is
 followed by the canonical route refresh, then the original dispatch reads that refreshed control
-route and opens its view. Daemon startup does not download Chromium.
+route and opens its view. The product-source factory only resolves installed artifacts.
+The explicit sandbox installer shares managed Chromium acquisition; if it installs the binary
+after daemon startup, the dispatch provisioner refreshes the same routes without downloading
+again. Daemon startup does not download Chromium. Control refusals preserve
+`runtime_action_disabled` with distinct typed causes and phases: `browser_sidecar_disabled`
+at `browser.control.feature_decision`, or `browser_control_route_unavailable` at
+`browser.control.route_resolution`.
+Product binary resolution owns managed-source eligibility and requires locally verified
+provenance before returning a launchable binary; the factory consumes that result without
+repeating the admission. Installed-source digest verification remains with `sidecar/source.ts`.
+
+The canonical Action catalog owns Browser Action exposure. A context capture evaluates its
+owner gate once, then reuses that admission while checking content privacy again before
+publishing a page or screenshot. A newly sensitive page still suppresses its captured content,
+and another Account never gains capture access through that admission.
 
 The existing Machine Action operation owns this continuation beyond the RPC response. During
 installation, the open returns `status: in_progress`, `phase: browser_runtime_provisioning` and
@@ -59,6 +89,12 @@ The operation scope comes from the installed requester's verified Machine admiss
 daemon custodian or a caller-supplied Account id. Approval acceptance retains that private
 requester custody until the original open settles. The requester can observe its operation;
 another Account cannot read it or publish its snapshot through the custodian's channel.
+
+Protocol's `daemon/browserProjection.ts` owns contributed Browser entry identities and
+rendering-shape normalization. The daemon producer uses those shared identities and types;
+the UI consumes that normalizer through its existing projection facade. This does not widen
+Action policy or change the projection wire envelope: unknown entries remain non-rendered,
+and Browser placements still cross-check the same generation's Action catalog.
 
 Every admitted Machine `browser.view.open` uses that same operation runner, including
 already-installed opens and approved Artifact replay. Route availability decides whether
@@ -87,6 +123,9 @@ releases the subscription; local and daemon collectors keep their existing lifet
 reopening or reconnecting acquires the selected view's daemon ring (by default,
 1,000 events per view and 5,000 per Machine snapshot), with no promise of history beyond that
 ring. Agent snapshot Actions read the daemon store directly and do not require an open drawer.
+Managed Chromium views expose the same drawer using the host's explicit Machine/Home context
+and the discovered daemon Session/view identity, including human-only Sessions and empty histories.
+Opening the drawer starts snapshot/watch delivery; an unopened or hidden drawer does not read history.
 
 The current development Diagnostics data contract adds correlated request metadata, console and
 page-error text for a transport-verified person, page titles, collector availability reasons, and
@@ -114,8 +153,13 @@ the page action never ran. The mounted responder remains independent of the Diag
 
 A retained Browser page keeps its runtime owner, automation controller and exact-view reverse
 responder with it when its pane is parked or its route leaves. Presentation visibility still
-pauses presentation-only work; it does not retire the page's executor. Explicit close tears down
-the retained owner, and Home/Account retirement still refuses further Actions. This is a 0.3
+pauses presentation-only work; it does not retire the page's executor. Removing a Details tab or
+group withdraws its canonical pane membership and retires its retained entries, including a page
+already parked without a binder. Hiding Details or handing its route off preserves membership.
+Controlled Details destinations borrow the live workspace's tab membership instead; removing that
+destination also retires its retained content. Retirement is qualified by the existing rendered
+node: an old close cannot delete or unmount a newer binding of the same slot. Explicit close tears
+down the retained owner, and Home/Account retirement still refuses further Actions. This is a 0.3
 development-source lifetime contract, not evidence that a running UI export contains the change.
 
 Before a Browser view exists, `browser.workspace.open` admits a target through the same Action
@@ -178,13 +222,6 @@ marks a partial preview with an ellipsis and keeps Expand available. Console and
 read the canonical retained diagnostics and select newest evidence under the context protocol's
 output budget before presenting it chronologically. Omitted summary material is flagged truncated.
 
-The view subscription returns retained history on bootstrap or reconnect; subsequent
-responses use its existing revision cursor and contain only events added or changed
-after that cursor. Repeated equal events do not advance it.
-Admitted owner-value capture preserves injected console, body, header, and storage text
-without a separate 4,096-character cutoff. Existing batch transport bounds and destination
-redaction still apply. Reading a cloned response body does not delay the page's fetch response.
-
 The overflow menu and non-framable/slow-frame escape use `browser.view.openExternal`. Its closed
 input names the Browser Session, view and command; the runtime resolves the current page URL from
 that mounted owner and opens it in the answering client's system browser without navigating or
@@ -215,6 +252,12 @@ Daemon controller events carry the shared input owner's `interruptionSettling` a
 facts too. A fresh settled observation after human takeover clears the latter and publishes the
 new controller state; historical timeline entries do not reintroduce cleared uncertainty.
 
+The timeline is recent activity, not an audit log. `automation/service.ts` owns
+the daemon retention bound; neither the wire nor the UI control service supplies
+a second fixed cutoff. Compact timeline summaries still use their separate
+redaction/clipping projection rather than retaining complete Action results.
+Closing a view still retires its controller and timeline at the existing lifecycle owner.
+
 In development source, daemon automation Actions targeting a mounted UI view use the existing authenticated
 machine reverse RPC, addressed by `browserSessionId` and `viewId` and bound to the invoking Happier
 Session. The mounted pane's Session context is the binding authority; slot-derived Browser Session
@@ -222,7 +265,9 @@ ids need not equal Happier Session ids. Another Session on the same machine cann
 The daemon control broker's
 registered adapters decide physical ownership; UI-owned or disconnected UI targets never start
 Chromium provisioning. The UI handler delegates to the same mounted controller, preserving the
-host-stamped cancellation authority: absent or non-`present_user` authority returns `owner_mismatch`.
+host-stamped cancellation authority. Action policy decides approval once; admitted present-user
+or Account-automation cancellation reaches the same input-control owner without another approval veto.
+Missing authenticated authority still returns `owner_mismatch`.
 Plugin Actions and Session execution-run Actions consume that same daemon composition; Session
 clients retain its provider accessor so startup publication and retirement are visible per dispatch.
 Room registration follows the mounted pane and its Account lifetime; a retired view fails closed.
@@ -253,14 +298,32 @@ Action/transcript/operation flow: an out-of-band open is discovered on the next 
 matching Browser Action completion. The engine capability table below describes local automation producers;
 streamed rendering does not turn the viewer into a second automation owner.
 
+Daemon discovery includes the current opening facts for every view: semantic target support,
+adapter capabilities and Diagnostics fidelity. The UI projects capture identity for rendering while
+retaining those daemon facts. Equal refreshes preserve row identity and emit no events; changed
+binding facts hydrate the existing reducer record without resetting navigation or controller state
+or replaying retained navigation history. Stream startup, resume and keyframe metadata reuse the
+control adapter's current navigation event identity; attaching a viewer does not create a navigation.
+The Browser capture registration belongs to the logical view. An ordinary daemon open that
+rebinds that view to a new native page keeps the registered source and admitted observers. The
+shared screencast producer serializes the native source change, discards retained/late pictures
+from the old page and resumes all subscribers on the new handle. Only a real view unbind retires
+those subscriptions; no viewer retry, polling or lease timeout owns that transition.
+
 Session browser presence uses that same daemon control route for `takeControl` and `handBack`.
 The owner-scoped machine RPC stamps present-user authority; commands cannot supply their own
 authority. Hand-back preserves input drain and requires a fresh successful snapshot before the
 agent resumes mutations. In-app presence delegates to its existing UI control service.
 Agent `browser.control.takeControl` and `browser.control.handBack` Actions use the same view-addressed
-reverse route for mounted UI panes, with the existing Session binding and approval floor. The UI
+reverse route for mounted UI panes, with the existing Session binding and configurable Action approval policy. The UI
 command owner delegates to that pane's control service, not a fallback controller. Handback during
 input settlement returns a retryable `permission_denied` command result rather than claiming success.
+
+Browser control, cancellation and `browser.sandbox.install` use the canonical Action approval
+decision, including configured Allow. Their executors retain authenticated targeting and OS
+authorization without a second approval decision or a Browser-specific bypass stamp. The direct
+CLI sandbox-install command retains its existing interactive OS authorization. These are current
+0.3 development-source contracts.
 
 Browser Action admission derives input requester authority from the trusted host context:
 `present_user` is human input and every other authority is agent input. A caller-supplied
@@ -269,13 +332,19 @@ continues to enter through the human takeover owner. An uncertain stop stays vis
 human input remains possible, and a fresh settled observation after takeover clears uncertainty
 before handback. Native computer input shares this recovery owner.
 
-Selector and chooser
-uploads stage supplied bytes through the interaction owner, never a caller-selected
-Machine path. Guests upload bytes they can read through their own execution identity.
+In unreleased 0.3, the Action route validates automation input once and the daemon service
+consumes that typed request. The control broker validates external adapter results once.
+The shared input-control owner decides confidential observation refusal for both paths;
+human input remains available during the hold. Caller-selected automation deadlines have
+no browser-specific 60-second ceiling. Human stream input follows viewer cancellation and
+the input owner's lifecycle without a synthetic action deadline; key and text input have
+no separate character-count ceiling.
 
 Persistent-profile extension install/update reviews carry an active profile's restart
 consequence with any new grants. Accepting that review covers the restart in the same
 decision. Active-profile changes without a new-grant review still ask for restart confirmation.
+Browser rendering checks the actual profile identity independently of feature admission;
+its target-policy projection does not invent site-permission decisions.
 
 Live browser events travel as strict metadata batches on the watched view's existing encrypted
 frame transport. Each batch projects current engine navigation and automation controller state
@@ -286,6 +355,96 @@ loaded-runtime QA must exercise saturation and reconnect as well as ordinary wat
 Rejected metadata is coalesced to its latest snapshot in the existing capture credit lifecycle
 and replayed before recovered pixels. Resume and keyframe requests also refresh owner metadata.
 Failed viewer input returns a nonterminal typed receipt, keeping healthy capture alive.
+
+In unreleased 0.3 source, managed-browser viewport and DPR controls use the same controlling
+viewer and control epoch as human input. The admitted viewer sizes the existing page with CDP;
+unchanged geometry sends no additional CDP command. Other viewers consume that geometry and
+fit the same picture rather than applying their own device emulation. This is viewer layout,
+so it adds no agent viewport Action. The sidecar launch currently supplies no window-size
+override; its initial numeric geometry must be observed on the running managed browser.
+
+**Local managed-browser window prototype (unreleased 0.3).**
+
+Managed Chromium uses `--remote-debugging-pipe` in both headless and window presentations.
+The launch owner supplies child read fd 3 and write fd 4 (inherited handles on Windows);
+the sidecar transport carries NUL-delimited CDP JSON over those descriptors. Automation,
+screencast, diagnostics, recording and agents share that connection. No debugging port or
+`/json/version` endpoint is opened. Missing pipes or a failed readiness handshake return
+typed unavailable results without a TCP fallback. Stderr remains diagnostic input only.
+
+The private `localWindow.showAsWindow(openViewCommand)` surface on the product sidecar
+factory requests a window on the **execution Machine**, through the existing launch owner.
+Ordinary Browser Actions continue to launch headless and stream. This prototype has no
+published Action or UI control. It admits the daemon's own local graphical session once;
+absent display, a non-GUI/SSH session, an unverifiable session and an unsupported platform
+return typed unavailable reasons. It cannot open a remote Machine's window on the viewing device.
+
+A running single-view Session restarts with the same profile directory and current HTTP(S)
+URL. Multiple views, active input/commands and a conflicting profile return typed refusals.
+The restart replaces the page target and CDP connection: cookies and persistent profile
+storage remain, while page memory, form state and active capture subscriptions do not.
+An already headful view is focused. The existing CDP automation, interactions and shared
+screencast producer remain the owners; a viewer or recording must subscribe again after restart.
+CDP page capture excludes Chromium's toolbar and extension toolbar popups. Persistent-profile
+extension directories use the same launch flags in either presentation.
+
+macOS managed launches also use `--use-mock-keychain` to avoid a login-Keychain
+lookup during cookie encryption. This includes persistent managed profiles; see
+the [at-rest protection trade-off](encryption.md#material-entrusted-to-a-shared-machine-unreleased-03).
+
+The window is a separate Chromium top-level window, not a Tauri child. Windows
+[SetParent](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setparent)
+and X11 [XReparentWindow](https://www.x.org/archive/X11R7.5/doc/man/man3/XReparentWindow.3.html)
+could support platform experiments, with style/DPI or window-manager integration work.
+AppKit's [addSubview](https://developer.apple.com/documentation/appkit/nsview/addsubview(_:))
+does not establish foreign-process window embedding. Wayland's
+[xdg-shell protocol](https://raw.githubusercontent.com/wayland-mirror/wayland-protocols/main/stable/xdg-shell/xdg-shell.xml)
+does not provide arbitrary foreign-window reparenting or absolute top-level placement.
+Chromium's experimental [window-bounds CDP commands](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Browser.pdl)
+can be investigated for best-effort adjacent positioning where the window system permits it;
+there is no positioning or parenting integration in this prototype.
+
+Real-window visibility, physical-click/agent interaction and extension toolbar-popup visibility
+require GUI-host validation. Native clicks share the actual page, but do not currently produce
+Happier's explicit Take control transition; shared page state is not control-arbitration proof.
+
+The streamed human viewer consumes this same owner in 0.3 development source.
+Managed Chromium runs as the Machine custodian. Protocol's browser Action role rule is
+consumed by server admission and by Session control with the Session's private custody
+role. Extension install/update/enable/disable/remove require Manage on both paths.
+A requester without Manage can automate navigation only
+to HTTP(S) or `about:blank`; other schemes return `access_denied`. Owner and Manage
+Sessions retain their existing access. The managed source defaults to an ephemeral
+profile per Session. Its profile-selection owner denies persistent profiles to non-Manage
+requesters, including extension-page opens and reuse of an already-running persistent
+profile. Owner and Manage opens can select persistent profiles, which may contain imported
+cookies and passkeys. Session Actions cannot target another Session's managed workspace.
+Direct navigation and external targets already require HTTP(S). Selector and chooser
+uploads stage supplied bytes through the interaction owner, never a caller-selected
+Machine path. Guests upload bytes they can read through their own execution identity.
+`useBrowserStreamedSurfaceRuntime` projects interaction state and routes admitted
+viewer input through the existing stream sideband; `BrowserPageInteractions`
+presents page dialogs, file selection and download progress/Save. A page dialog
+waits for an explicit human answer. File selection uses the viewing device's
+picker, and Save transfers completed bytes to that device's existing file sink.
+The focused input layer routes wheel and Ctrl/Cmd+C/X/V rather than typing their
+letter keys; clipboard results return only to the originating viewer. Other
+viewers fit the applied viewport without resizing the page. The phone viewer
+offers Show keyboard for an editable target. Adopted popup events open workspace
+Browser tabs using the existing exact daemon Session/view identity.
+
+The Project right rail's built-in Browser destination defaults to More
+(`rightSidebarBuiltinTabs.ts`); `ProjectRightPanelBrowserView` mounts the
+workspace-scoped producer. Published usage lives in
+[Session settings](../apps/docs/content/docs/sessions/session-settings.mdx#use-a-managed-browser).
+These are current source paths, not evidence of a released or loaded build.
+
+An editable-at-point probe returns only editable state, input mode, multiline and secret-field
+hints to its originating human stream. It never returns a field value, name or label. The
+mobile keyboard hook uses a hidden editable sentinel for committed text and backspace,
+withholds IME candidates, and avoids sending the browser's final composition event twice.
+The UI composition owns mounting that input and its keyboard affordance; mobile focus and
+IME behavior still require the composed browser/device QA journey.
 
 While an element action is active, controller state carries its action kind and an
 `activeTarget`: centre `x/y` and width/height normalized to the visible page viewport. CDP and
@@ -300,9 +459,8 @@ human-readable target names. These remain development-source contracts.
 
 Full `queryElements` Action results preserve all matching CSS elements and complete accessible
 names; semantic locators retain their established first-match behavior with a complete name.
-The daemon bridge and installed collector do not apply context-snapshot budgets to these results.
-Context snapshots retain their bounded extraction/parsing owner, and timeline projections retain
-the Protocol redaction/clipping owner. Full results still pass through that owner's security
+The daemon bridge and installed collector preserve complete query results and context snapshots.
+Timeline projections retain the Protocol redaction/clipping owner. Full results still pass through that owner's security
 redaction; query completeness does not weaken confidentiality admission or field-value exclusions.
 This is a development-source contract; the composed live query journey remains to be validated.
 
@@ -312,10 +470,58 @@ Managed Chromium snapshots include current AX `value` text for editable text inp
 contenteditable elements. Password and `autocomplete="one-time-code"` fields are excluded. DOM
 metadata establishes field eligibility; values come from the accessibility tree. Missing metadata
 omits the value and marks the AX projection incomplete, while preserving the structural snapshot.
-Values use the snapshot's existing 256-character per-node text budget, with `axNodesTruncated` set
-when a value is clipped. Empty values remain explicit. `visibleText` remains the page's body text;
-agents verifying typed input should also inspect `axNodes`. Confidential-input holds and existing
-sensitive-page admission still apply. This is an unreleased 0.3 development contract.
+Valid visible text, controls, selectors, accessible names and eligible values survive capture and
+the strict snapshot reader without local count or text cutoffs. Incomplete extraction still sets
+the corresponding truncation flag; malformed shapes and secret fields remain excluded. Empty
+values remain explicit. `visibleText` remains the page's body text;
+agents verifying typed input should also inspect `axNodes`. The daemon's capture owner masks
+password, one-time-code and CSS `-webkit-text-security` values wherever they occur in visible
+text, AX names/eligible values, control labels, page metadata or console summaries. Its Chromium
+DOM/style census includes flattened shadow DOM and child documents; unreadable privacy metadata
+or a changed sensitive-value census fails closed. A selector containing a secret is omitted and
+the control list is marked incomplete rather than returning altered executable code. Snapshots
+with sensitive fields retain useful text and structure but omit screenshot media. Ordinary-page
+pixels are persisted only after the late census succeeds. Both daemon `snapshot` and
+`semanticSnapshot` use this owner; an unavailable capture owner returns typed unavailable rather
+than an unmasked text fallback. Confidential-input holds, owner authorization, sensitive-origin
+and private-mode admission still apply. This is an unreleased 0.3 development contract.
+
+Context capture checks Account ownership once at admission. The admitted finite capture
+does not replay feature or permission decisions; late page probes still exclude secrets.
+Protocol owns the text bounds: summaries contain at most 8,192 characters and selections
+at most 2,048 characters. Full snapshots have no subordinate text budget.
+
+Diagnostics apply destination policy through Protocol's egress classifier. Nonce-bound
+injected-page ingress validates and sanitizes external messages; the UI store and panels
+consume admitted events without another sanitizer or retention/detail limit. The daemon
+retains its 1,000-event per-view ring to bound long-lived memory; Protocol's existing
+batch and snapshot wire limits remain. Diagnostics continue to arrive through push.
+The view subscription returns retained history on bootstrap or reconnect; subsequent
+responses use its existing revision cursor and contain only events added or changed
+after that cursor. Repeated equal events do not advance it.
+Admitted owner-value capture preserves injected console, body, header, and storage text
+without a separate 4,096-character cutoff. Existing batch transport bounds and destination
+redaction still apply. Reading a cloned response body does not delay the page's fetch response.
+
+The unreleased 0.3 CDP mapper correlates request, response, completion and ExtraInfo
+notifications in that existing per-view store, including redirect hops. It exposes
+redacted URL structure, safe header bags, timing, encoded response bytes, cache/TLS
+metadata and first-class failure text; it does not acquire bodies or cookie values.
+Console primitive arguments, message text and structured exception source/stack
+locations remain owner-only fields in the canonical destination classifier, including
+for CDP fidelity. The same CDP transport reads the title at attachment and pushed
+DOMContentLoaded notifications. Each publication reads the control adapter's current navigation
+generation, so scoped snapshots and reconnects retain events from the current document. No second
+connection or polling interval is used.
+
+Current collector availability survives history eviction separately from content.
+Snapshots report view-scoped history eviction and snapshot omission counts; actual
+header clipping carries `redaction.truncated`. Client projections expose connection
+failure and recovery without treating zero messages as unsupported. A failed daemon
+connection marks its retained CDP data stale while independent local collectors stay
+available. Iframe capability comes from actual collector installation/readiness and
+publishes typed pending, available or unavailable reasons instead of empty panels.
+Local filter, selection and copy APIs consume only this admitted projection.
 
 Owner-initiated eval and element picking have no automatic deadline or expression,
 preview, or expansion-depth cutoff. The person can cancel an eval. CDP cancellation
@@ -363,18 +569,26 @@ browser target. CDP captures use the snapshot privacy census before reading pixe
 writing media: password, one-time-code and CSS-masked fields include shadow and child
 documents. AX value disclosure consumes the same census's node identities. Snapshot
 URLs use the context URL redactor, which removes query values and fragments.
-`sensitiveOrigin`, `sensitiveFieldsPresent`, and human private/incognito
-`ephemeralOnly` facts still block export; missing or failed CDP privacy probes fail
+`sensitiveOrigin` and human private/incognito `ephemeralOnly` facts still block export.
+`sensitiveFieldsPresent` continues to block standalone screenshot/context export; rich daemon
+agent snapshots use the masking projection above. Missing or failed CDP privacy probes fail
 closed. Linux sandbox setup and recovery are described in
 [managed browser acquisition](./binary-runtime.md#managed-browser-acquisition-03-development).
 
-For confidential fill, the daemon's existing combined snapshot may return only the verified
-focused-field descriptor on a password-bearing page. This restricted observation carries the
-tab, frame, document, navigation generation, origin and field identity, with empty text and
-element lists and no URL, title, accessibility content or media. It uses the existing isolated-world
-field verifier; unavailable proof still refuses. Feature, Session policy and runtime admission
-remain required, and an active confidential hold suppresses even this descriptor. Password
-presence continues to block content capture and export. This is development source behavior;
+Confidential Browser fill admits the person's private choice once at the Action continuation
+owner. Material delivery and Browser preparation consume that admission without rechecking
+`present_user`; the approval/current-field proof, Account and Home binding, observation hold,
+and delivery-time document, origin and focused-field verification remain required. Native
+`computer.secret.fill` is deferred beyond 0.3: its retained Protocol/catalog shape is unavailable
+on all surfaces and has no daemon route or confidential target handler.
+
+For confidential fill, the daemon's masked combined snapshot also carries the verified
+focused-field descriptor: tab, frame, document, navigation generation, origin and field identity.
+It uses the existing isolated-world field verifier; unavailable proof still refuses confidential
+admission while the masked snapshot remains useful. Feature, Session policy and runtime admission
+remain required, and an active confidential hold suppresses the whole snapshot, including this
+descriptor. The former descriptor-only password-page projection is replaced by the same masked
+snapshot used for ordinary agent observation. This is development source behavior;
 the complete SavedSecret/Remember journey still needs validation on the loaded daemon.
 
 Native desktop annotation and recording captures use the same source-owned,
@@ -559,15 +773,55 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   `files`. A page cannot read a host filesystem path, so there is no "upload this local file" verb.
   The content field is named `text` because the egress redactor reduces that key to a length —
   uploaded bytes can never reach a timeline.
-- **Daemon uploads use the same content descriptors**, materialized into request-owned temporary
-  files and supplied through CDP's native file-input operation. Temporary files are removed when
-  the request finishes. Unlike an injected `File`, Chromium infers their MIME type from the name.
+- **Daemon uploads use the same content descriptors**, materialized into view-owned temporary
+  files and supplied through CDP's native file-input operation. Temporary files remain until
+  the view closes because Chromium reads them on later form submission. Unlike an injected
+  `File`, Chromium infers their MIME type from the name.
+  In unreleased 0.3 source, an intercepted chooser can instead be answered with
+  `{ chooserId, files: [{ name, dataBase64 }] }`. The chooser must still belong to that live view;
+  callers supply bytes rather than paths on the daemon's Machine.
+- **Managed interaction Actions share the viewer's owner.** `clipboardRead` returns selected
+  non-password text; `clipboardWrite` inserts text into the focused page. In unreleased 0.3
+  source, `clipboardCut` returns the same permitted selection and deletes it only when editable,
+  through the existing mutating-Action admission. The controlling viewer routes Cmd/Ctrl+C/X/V
+  through these operations. `getInteractionState`
+  reads pending dialog/chooser and download progress. `answerDialog` answers the pending
+  `dialogId`. `download` retrieves a known completed download using explicit `downloadId`,
+  `offset` and `byteLength`; it never accepts an arbitrary host path. Clipboard reads, uploads
+  and downloads default to approval through the existing Action policy. Clipboard and download
+  bytes use typed `interactionResult` responses and stay out of timelines. Download files stay
+  private until the sidecar closes; closing a view removes its lookup and listeners, while
+  already admitted downloads may finish. Setup failures appear in `interactionState.unavailable`.
+  `browser.view.list` exposes the existing Session view list so agents can discover adopted
+  popup tabs and use the existing focus/close Actions. These are managed
+  Chromium development contracts, not support claims for injected engines or released clients.
+  The product source delegates these operations and interaction notifications to the
+  selected Session's existing sidecar interaction owner, preserving its CDP view bindings.
+  The streamed capture takes keyboard focus on pointer input. Wheel input uses the existing
+  browser-input contract with content-relative coordinates and pixel deltas; modifier chords
+  preserve their modifier set instead of inserting the shortcut's letter. At the CDP boundary,
+  letters, digits and named navigation keys also carry their virtual key code so Chromium's
+  native editor can perform selection and shortcuts.
+  Viewer Save retrieves completed download ranges into the existing web/native download sink;
+  the content codec supplies the negotiated frame budget, including encrypted-envelope overhead.
+  Startup, recovery and incremental browser metadata use that same payload allowance.
+  A metadata envelope that cannot fit ends capture with `max_frame_bytes_exceeded`;
+  download ranges page the binary content within the remaining envelope space.
+  Adopted popup discovery preserves the daemon Session/view tuple and opener relationship
+  for the existing workspace details-tab opener, including after navigation or rediscovery.
+  A terminal `capture_source_unavailable` receipt refreshes discovery once: removal of a previously discovered view
+  follows the existing workspace tab-close path, which restores the previous tab. A view
+  still listed without capture, or a failed discovery request, keeps its tab for recovery.
+- **Managed snapshots share one privacy census.** Ordinary and semantic snapshots
+  use the same CDP masking parser. Chromium's root `#document` layout row can have
+  no computed style; that row is accepted without weakening required element-style
+  data or password and CSS masking.
 - **Injected `drag` synthesises the HTML5 drag sequence** (`dragstart`/`dragenter`/`dragover`/`drop`/`dragend`)
   with a real `DataTransfer`. Drag implementations built on raw pointer events rather than HTML5
   drag-and-drop will not respond; that is the same best-effort class as synthetic `click`.
 - **Daemon `drag` uses native pointer input** between the resolved source and destination. It
   does not fabricate an HTML5 `DataTransfer` or claim identical behavior to the injected collector.
-- **JavaScript dialogs default to dismissal** while an automation action runs (`alert` → dismissed,
+- **JavaScript dialogs default to dismissal** while an agent automation action runs (`alert` → dismissed,
   `confirm` → `false`, `prompt` → `null`). In 0.3 development source, managed Chromium also accepts
   one explicit `dialogResponse` on the same Browser Action: `{ kind: 'confirm', message: 'Continue?',
   accept: true }`, or `{ kind: 'prompt', message: 'Your name?', accept: true, promptText: 'Alice' }`.
@@ -575,6 +829,13 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
   Include this response when requesting approval for the action that opens the dialog. It shares
   that action's approval and deadline, without keeping a dialog pending across Actions. Plugins
   use the same Browser Action input through `@happier-dev/plugin-ui`'s ordinary Action API.
+  Human viewer input without an explicit response leaves the managed page's dialog pending.
+  Its existing private interaction state supplies the streamed answer controls, and the human's
+  answer returns through the admitted viewer input relay and `answerDialog` owner.
+  An exact pending-dialog reply continues the admitted interaction outside the ordinary input
+  queue: Chromium cannot acknowledge the triggering click until this reply arrives. The reply
+  keeps the same view/epoch admission and pending-dialog identity validation; it does not take
+  over input or replace the active click's controller state.
   Managed results report `resultSummary.javascriptDialogs` with `count`, `kinds`, aggregate
   `handling` (`accepted`, `dismissed` or `mixed`), and `dialogs` containing each question's `kind`,
   `message` and `handling`. These messages are untrusted page content and use the existing
@@ -591,14 +852,6 @@ Only actions declared by `INJECTED_PAGE_AUTOMATION_ACTIONS` enter the installed 
 - **`evaluate`, `startElementPicker` and `cancelElementPicker` are `not_implemented`** at the daemon
   service regardless of surface. The element-picker capability that *is* live is the diagnostics
   family (`browser.diagnostics.elementPicker.start` / `.cancel`), which is wired end to end.
-
-  Adopted popup discovery preserves the daemon Session/view tuple and opener relationship
-  for the existing workspace details-tab opener, including after navigation or rediscovery.
-  A terminal `capture_source_unavailable` receipt refreshes discovery once: removal of a previously discovered view
-  follows the existing workspace tab-close path, which restores the previous tab. A view
-  still listed without capture, or a failed discovery request, keeps its tab for recovery.
-  `browser.view.list` exposes the existing Session view list so agents can discover adopted
-  popup tabs and use the existing focus/close Actions.
 
 ## Related
 

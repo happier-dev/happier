@@ -1,4 +1,4 @@
-import { BrowserAutomationActionRequestV1Schema, BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationActionRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { BrowserEventBatchV1Schema, type BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import type { BrowserAutomationActionResultV1, BrowserEditableTargetV1, BrowserEventV1, MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
@@ -23,12 +23,19 @@ export function registerBrowserLiveCapture(input: Readonly<{
         const viewportOwner = input.contextCapture.resolveViewportOwner?.(view);
         if (!input.contextCapture.resolvePageHandle(view)?.sessionId || !input.contextCapture.subscribeCdpEvents) return;
         const sourceId = browserViewKey(view);
+        // Native page replacement is handled by the shared per-view producer. Replacing
+        // this logical source would abort every already-admitted viewer's retirement signal.
+        if (registered.has(sourceId)) return;
         const adapter: MachineLiveStreamCaptureAdapter = {
             async start(startInput) {
                 const humanViewer = startInput.callerAuthority === 'present_user';
                 const canObserve = () => humanViewer || !(input.resolveInputControl?.(view)
                     ?? input.automation()?.getInputControl(view))?.isObservationHeld();
                 let latest: BrowserCdpScreencastFrame | null = null;
+                let imagePending = false;
+                let imageAwaitingAck: number | null = null;
+                let viewerWantsFrames = true;
+                let flushLatest: () => void = () => {};
                 let paused = false;
                 let stopped = false;
                 let failInput: (reasonCode: string) => void = () => undefined;
@@ -40,11 +47,15 @@ export function registerBrowserLiveCapture(input: Readonly<{
                     async start({ emitFrame, fail, reportInputFailure, getPayloadByteLimit }) {
                         failInput = reportInputFailure;
                         const emitLatest = () => {
-                            if (latest && !paused && !stopped && canObserve()) emitFrame({ codecId: 'image.mjpeg', payload: latest.dataBase64,
+                            if (!latest || !imagePending || imageAwaitingAck !== null || !viewerWantsFrames
+                                || paused || stopped || !canObserve()) return;
+                            imagePending = false;
+                            emitFrame({ codecId: 'image.mjpeg', payload: latest.dataBase64,
                                 timestampMs: latest.timestampMs, keyframe: true });
                         };
+                        flushLatest = emitLatest;
                         const subscription = await input.producer.start({ view, purpose: humanViewer ? 'humanViewer' : undefined,
-                            onFrame: frame => { latest = frame; emitLatest(); },
+                            onFrame: frame => { latest = frame; imagePending = true; emitLatest(); },
                             onError: () => fail('capture_source_unavailable'),
                         });
                         if (!subscription) throw { reasonCode: 'capture_source_unavailable' };
@@ -65,10 +76,12 @@ export function registerBrowserLiveCapture(input: Readonly<{
                         const emitSnapshot = () => {
                             const occurredAt = Date.now();
                             const controller = input.automation()?.getStatus(view);
-                            const navigation = input.contextCapture.getNavigationState?.(view);
+                            const navigation = input.contextCapture.getNavigationEvent?.(view);
+                            const privateNavigation = humanViewer ? input.contextCapture.getNavigationState?.(view) : null;
                             const events: BrowserEventV1[] = [];
-                            if (navigation) events.push({ kind: 'navigationStateChanged', ...view, ...navigation,
-                                eventId: `navigation-snapshot:${startInput.streamId}:${occurredAt}`, occurredAt });
+                            // Bootstrap/recovery reads the same engine fact as discovery and live
+                            // publication. A new stream does not create a new navigation event.
+                            if (navigation) events.push(privateNavigation ? { ...navigation, ...privateNavigation } : navigation);
                             if (controller) events.push({ kind: 'controllerChanged', ...view, state: controller,
                                 eventId: `controller-snapshot:${startInput.streamId}:${occurredAt}`, occurredAt,
                                 navigationGeneration: navigation?.navigationGeneration ?? 0 });
@@ -120,22 +133,41 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             const interactionState = input.contextCapture.interactions?.getState(view);
                             if (interactionState) emitMetadata({ events: [], interactionState });
                         }) : undefined;
+                        if (humanViewer) input.automation()?.registerViewer({ ...view, viewerId: startInput.streamId });
                         emitSnapshot();
                         return {
                             stop: async () => {
                                 stopped = true; unsubscribeEngine?.(); unsubscribeController?.(); unsubscribeInteractions?.(); unsubscribeViewport?.();
-                                input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
+                                if (humanViewer) await input.automation()?.releaseViewerInput({ ...view, viewerId: startInput.streamId });
                                 await subscription.stop();
                             },
                             pause: () => { paused = true; return { ok: true }; },
                             resume: () => { paused = false; emitSnapshot(); emitLatest(); return { ok: true }; },
-                            requestKeyframe: () => { emitSnapshot(); emitLatest(); return { ok: true }; },
+                            requestKeyframe: () => {
+                                // Explicit recovery can replace the held picture without another repaint.
+                                imagePending = true; imageAwaitingAck = null;
+                                emitSnapshot(); emitLatest(); return { ok: true };
+                            },
                         };
                     },
                 } });
-                const result = await capture.start(startInput);
+                const result = await capture.start({ ...startInput, offerFrame(frame) {
+                    // This is capture demand, not a second network-credit window. The server
+                    // still admits credit; its forwarded viewer ACK wakes only this subscriber.
+                    if (frame.payloadKind !== 'metadata') imageAwaitingAck = frame.sequence;
+                    return startInput.offerFrame(frame);
+                } });
                 if (!result.ok) return result;
                 return { ok: true, session: { ...result.session,
+                    applyControl(control) {
+                        const applied = result.session.applyControl?.(control) ?? { ok: true as const };
+                        if (applied.ok && control.kind === 'ack') {
+                            viewerWantsFrames = control.windowFrames !== 0 && control.windowBytes !== 0;
+                            if (imageAwaitingAck !== null && control.nextSequence > imageAwaitingAck) imageAwaitingAck = null;
+                            flushLatest();
+                        }
+                        return applied;
+                    },
                     applySidebandControl(control) {
                         if (control.sourceId !== sourceId || control.streamId !== startInput.streamId) return { ok: false, reasonCode: 'invalid_control' };
                         if (stopped) return { ok: false, reasonCode: 'capture_stopped' };
@@ -176,7 +208,7 @@ export function registerBrowserLiveCapture(input: Readonly<{
                             const outcome = await automation.execute(BrowserAutomationActionRequestV1Schema.parse({ v: 1, ...view, automationRequestId: control.eventId,
                                 requestedBy: 'user', requesterRef: { kind: 'streamViewer', id: startInput.streamId },
                                 navigationGeneration: input.contextCapture.getNavigationState?.(view)?.navigationGeneration ?? 0,
-                                ...action, timeoutMs: BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS }));
+                                ...action }));
                             emitInputResult(outcome);
                             if (outcome.status !== 'succeeded') failInput(outcome.errorCode ?? 'human_input_failed');
                         };
@@ -219,6 +251,9 @@ function inputAction(control: MachineLiveStreamControlSidebandV1, frame: Browser
             case 'download': return { actionKind: 'download' as const, payload: { downloadId: event.downloadId, offset: event.offset, byteLength: event.byteLength } };
             case 'key': return { actionKind: 'press' as const, payload: { key: event.key, modifiers: event.modifiers } };
             case 'text': return { actionKind: 'type' as const, payload: { text: event.text } };
+            case 'pointer': return frame?.width && frame.height ? { actionKind: 'drag' as const, payload: {
+                phase: event.action, x: event.x * frame.width, y: event.y * frame.height,
+            } } : null;
             case 'wheel': return frame?.width && frame.height ? { actionKind: 'scroll' as const, payload: {
                 x: event.x * frame.width, y: event.y * frame.height, deltaX: event.deltaX, deltaY: event.deltaY,
             } } : null;
@@ -226,9 +261,18 @@ function inputAction(control: MachineLiveStreamControlSidebandV1, frame: Browser
         }
     }
     if (control.kind === 'keyboard_text') return { actionKind: 'type' as const, payload: { text: control.text } };
-    if (control.kind === 'keyboard_key') return { actionKind: 'press' as const, payload: { key: control.key } };
+    if (control.kind === 'keyboard_key') return { actionKind: 'press' as const, payload: { key: control.key, modifiers: control.modifiers } };
     if (!frame?.width || !frame.height) return null;
-    if (control.kind === 'tap') return { actionKind: 'tap' as const, payload: { x: control.x * frame.width, y: control.y * frame.height } };
+    if (control.kind === 'move') return { actionKind: 'hover' as const, payload: { x: control.x * frame.width, y: control.y * frame.height } };
+    if (control.kind === 'tap') return { actionKind: 'tap' as const, payload: { x: control.x * frame.width, y: control.y * frame.height,
+        button: control.button, clickCount: control.clickCount, modifiers: control.modifiers } };
+    if (control.kind === 'wheel') return { actionKind: 'scroll' as const, payload: {
+        x: control.x * frame.width, y: control.y * frame.height, deltaX: control.deltaX, deltaY: control.deltaY,
+    } };
+    if (control.kind === 'drag') return { actionKind: 'drag' as const, payload: {
+        from: { x: control.fromX * frame.width, y: control.fromY * frame.height },
+        to: { x: control.toX * frame.width, y: control.toY * frame.height },
+    } };
     if (control.kind === 'swipe') return { actionKind: 'scroll' as const, payload: {
         x: control.fromX * frame.width, y: control.fromY * frame.height,
         deltaX: (control.fromX - control.toX) * frame.width, deltaY: (control.fromY - control.toY) * frame.height,
