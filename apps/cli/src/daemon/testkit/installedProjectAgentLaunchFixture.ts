@@ -37,6 +37,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   prepareProject?: boolean;
   machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
   agentIsolationEnabled?: boolean;
+  agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
   mcpCatalog?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['mcpCatalog'];
   additionalAccountCredentials?: readonly StoredCredentials[];
   accountSettings?: Readonly<Record<string, unknown>>;
@@ -170,7 +171,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     metadata: options.agentIsolationEnabled === undefined ? null : { host: 'host', platform: 'linux', homeDir: '/home/user',
       happyCliVersion: 'test', happyHomeDir: '/home/user/.happier', agentIsolation: { enabled: options.agentIsolationEnabled } },
     metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
-    undefined, { createProjectFiniteRuntime: finite,
+    undefined, { createProjectFiniteRuntime: finite, agentIsolation: options.agentIsolation,
       resolveCurrentServerIdentityId: () => homeServerIdentityId });
   const actionsSettingsProvider = options.accountActionCredentials
     ? createActionSettingsProvider({ allowEnvironmentOverride: false,

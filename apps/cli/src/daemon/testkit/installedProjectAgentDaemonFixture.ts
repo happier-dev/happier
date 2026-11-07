@@ -54,7 +54,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
       | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
-    & { requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
+    & { additionalPluginIds?: readonly string[]; requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
       /** Process-census boundary authors the runner before tracked authority is constructed. */
       runnerIdentity?: (happyHomeDir: string) => InstalledProjectAgentDaemonFixtureOwners['runner'];
     }): Promise<InstalledProjectAgentDaemonFixture> {
@@ -73,11 +73,11 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const fixture = await createInstalledProjectAgentLaunchFixture(unassociated
     ? { prepareProject: false, serverId, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
       accountSettings: requesterOptions?.accountSettings,
-      machineRpcMethods: requesterOptions?.machineRpcMethods,
+      machineRpcMethods: requesterOptions?.machineRpcMethods, agentIsolation: requesterOptions?.agentIsolation,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
       ...(requesterOptions?.ordinaryAccountSession ? { accountActionCredentials } : {}) }
     : { serverId, ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
-      accountSettings: requesterOptions?.accountSettings, machineRpcMethods: requesterOptions?.machineRpcMethods,
+      accountSettings: requesterOptions?.accountSettings, machineRpcMethods: requesterOptions?.machineRpcMethods, agentIsolation: requesterOptions?.agentIsolation,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext });
   const { f, machine } = fixture;
   const signal: AbortSignal = fixture.signal;
@@ -94,6 +94,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const plugin = bundledAgentId ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
     controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`] } })
     : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: runtimeController,
+    ...(requesterOptions?.additionalPluginIds ? { runtimeOptions: { pluginIds: ['acme.project-launch', ...requesterOptions.additionalPluginIds] } } : {}),
     plugins: [authoredPlugin ?? { manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: { agents: [{ id: 'agent', title: 'Project launch Agent',
       runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }] } }),
       files: { 'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('No Agent open at authorization'); } } }; }`,
