@@ -495,6 +495,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         lifetime,
         actions: platformLink,
         onApproval: review.request,
+        ...(props.onOpenRecoveryDestination ? { onOpenRecoveryDestination: props.onOpenRecoveryDestination } : {}),
       });
     } : null;
     openPlatformRef.current = openPlatform;

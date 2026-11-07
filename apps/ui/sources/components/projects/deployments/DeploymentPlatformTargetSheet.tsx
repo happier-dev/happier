@@ -6,6 +6,7 @@ import {
   type EffectiveActionInputField,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
   ActionInputFields,
@@ -73,6 +74,8 @@ export type DeploymentPlatformTargetSheetInput = Readonly<{
   onApproval: (artifactId: string) => void;
   /** The platform already chosen in the draft, so the person never picks it twice. */
   initialTargetKey?: string | null;
+  /** The page's recovery router, for a refusal's next step (Source details, Settings, …). */
+  onOpenRecoveryDestination?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>;
 
 type PlatformTargetsState =
@@ -562,7 +565,11 @@ function DeploymentPlatformTargetSheet(
               />
             ) : null}
             {/* One cause, one message: a failed choices read is the sheet's message, not a stale Check result too. */}
-            {drawn.failure ? null : <DeploymentPlatformInspectState outcome={outcome} />}
+            {drawn.failure ? null : <DeploymentPlatformInspectState outcome={outcome}
+              {...(props.onOpenRecoveryDestination ? { onOpenRecovery: (destination: DeploymentFailureRecoveryDestinationV1) => {
+                onClose();
+                props.onOpenRecoveryDestination?.(destination);
+              } } : {})} />}
             {linkRefused ? (
               <SurfaceStateCard
                 testID="project-deployments.platform.linkRefused"
