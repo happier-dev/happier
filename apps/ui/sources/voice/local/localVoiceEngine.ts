@@ -901,15 +901,21 @@ async function runVoiceTurnWithSendFailureHandling(
     }
     await runAbortableVoiceTurn(sessionId, runner);
     beginAutomaticCurrentUiContextUpdates(sessionId);
-    if (admission
-      && isCaptureAdmissionCurrent(admission)
+    if (admission && captureAttempt
+      && isCaptureAttemptCurrent(admission, captureAttempt)
       && getCurrentLocalRuntimeCompatState().status === 'idle'
-      && !voiceConversationRuntimeMachine.getSnapshot().error
-      && localVoiceCaptureOwner.isCaptureActive(sessionId)) {
-      // Duplex capture may already contain the next utterance, even when its
-      // first recognizer partial arrives after playback ends. Keep that same
-      // producer listening: manual input waits for Send, hands-free for endpoint.
-      voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
+      && !voiceConversationRuntimeMachine.getSnapshot().error) {
+      if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
+        // Keep duplex input which may already contain the next utterance.
+        voiceConversationRuntimeMachine.transitionToListening({ controlSessionId: sessionId });
+      } else if (binding?.transcriptMode === 'native_session') {
+        // A native turn, including its spoken permission response, consumed
+        // capture. The connected conversation must accept its next utterance.
+        await voiceConversationRuntimeMachine.rearmListening({
+          controlSessionId: sessionId,
+          startListening: signal => startCaptureForAdmission(admission, captureAttempt, signal),
+        });
+      }
     }
   } catch (error) {
     if (isAbortedVoiceTurnError(error)) {

@@ -4,6 +4,7 @@ import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import {
   getStorage, localVoiceHomeId, localVoiceSpeechTranscription, expoSpeechSpeak,
+  setRecorderUri,
   registerLocalVoiceEngineHarnessHooks, sessionRpcWithServerScope,
   waitForLocalVoiceBoundaryEvent, warmLocalVoiceEngineHarnessGraph,
 } from './localVoiceEngine.testHarness';
@@ -17,12 +18,13 @@ describe('native Voice permission input', () => {
   it.each([
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
+    { label: 'an ordinary turn', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'approval opt-out', enabled: false, answer: 'Yes.', approved: null, end: false, replaceRequest: false },
     { label: 'an unclear answer', enabled: true, answer: 'Yes, but no.', approved: null, end: false, replaceRequest: false },
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native self-permission aloud and respects $label', async ({ enabled, answer, approved, end, replaceRequest }) => {
+  ])('reads a native self-permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -37,10 +39,13 @@ describe('native Voice permission input', () => {
     } } });
     const asrStarted = createDeferred<void>();
     const asrHeld = createDeferred<string>();
-    localVoiceSpeechTranscription.mockResolvedValueOnce('Write the requested file.').mockImplementationOnce(async () => {
-      asrStarted.resolve();
-      return replaceRequest ? asrHeld.promise : answer;
-    });
+    localVoiceSpeechTranscription.mockResolvedValueOnce('Write the requested file.');
+    if (label !== 'an ordinary turn') {
+      localVoiceSpeechTranscription.mockImplementationOnce(async () => {
+        asrStarted.resolve();
+        return replaceRequest ? asrHeld.promise : answer;
+      });
+    }
     const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
     const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
     const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
@@ -53,6 +58,17 @@ describe('native Voice permission input', () => {
     sessionRpcWithServerScope.mockImplementation(async request => {
       if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) await waiting.promise;
       if (request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND) {
+        // Publish the daemon's answered-request update as well as its RPC result.
+        const carrier = storage.getState().sessions[request.sessionId]!;
+        const pending = carrier.agentState!.requests!['native-write'];
+        storage.getState().applySessions([{
+          ...carrier, agentStateVersion: (carrier.agentStateVersion ?? 0) + 1,
+          updatedAt: Math.max(Date.now(), carrier.updatedAt + 1),
+          agentState: { ...carrier.agentState, requests: {}, completedRequests: {
+            ...carrier.agentState?.completedRequests,
+            'native-write': { ...pending, status: approved ? 'approved' : 'denied', completedAt: Date.now() },
+          } },
+        }]);
         waiting.resolve();
         return { ok: true };
       }
@@ -71,6 +87,19 @@ describe('native Voice permission input', () => {
       await lifecycle.toggle(target);
       expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
       const expectedAttempt = getVoiceSessionPresentedAttemptId();
+      const expectNextCommitAccepted = async () => {
+        expect(lifecycle.getSnapshot(), JSON.stringify(lifecycle.getSnapshot())).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+        // Native recorders produce a fresh file; the preceding turn deleted its artifact.
+        const { File } = await import('expo-file-system');
+        const nextRecordingUri = 'file:///tmp/native-voice-followup.m4a';
+        new File(nextRecordingUri).write(new Uint8Array([1, 2, 3]));
+        setRecorderUri(nextRecordingUri);
+        localVoiceSpeechTranscription.mockResolvedValueOnce('Continue the conversation.');
+        expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
+          .toMatchObject({ status: 'completed' });
+        await expect(localVoiceSpeechTranscription.mock.results.at(-1)?.value).resolves.toBe('Continue the conversation.');
+        expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+      };
       submitted = executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} });
       await Promise.race([waitForLocalVoiceBoundaryEvent('stream-start'), submitted.then(result => {
         throw new Error(`Expected waiting native turn, received ${JSON.stringify(result)}`);
@@ -81,6 +110,12 @@ describe('native Voice permission input', () => {
       expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'thinking' });
       expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
         .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
+      if (label === 'an ordinary turn') {
+        waiting.resolve();
+        await submitted;
+        await expectNextCommitAccepted();
+        return;
+      }
       const carrierId = binding.conversationSessionAddress.sessionId;
       const carrier = storage.getState().sessions[carrierId]!;
       storage.getState().applySessions([{
@@ -102,6 +137,11 @@ describe('native Voice permission input', () => {
         expect(await executeVoiceConversationAction('ui.voice_global.end', { expectedAttempt }, { navigate() {} }))
           .toMatchObject({ status: 'completed' });
         expect(lifecycle.getSnapshot().status).toBe('disconnected');
+        waiting.resolve();
+        await submitted;
+        expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
+          .toMatchObject({ status: 'unavailable' });
+        expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected' });
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         return;
       }
@@ -141,6 +181,7 @@ describe('native Voice permission input', () => {
       }));
       expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL)).toBe(false);
       expect(expoSpeechSpeak.mock.calls.some(([text]) => text === 'Daemon reply')).toBe(true);
+      await expectNextCommitAccepted();
     } finally {
       asrHeld.resolve(answer);
       waiting.resolve();
