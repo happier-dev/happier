@@ -29,6 +29,8 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { readProjectRepositoryIdentityV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
+import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
+import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
@@ -40,6 +42,9 @@ import {
   DeploymentBackupControls,
   DeploymentBackupDestinationRow,
   DeploymentBackupRetentionRows,
+  DeploymentBackupSetup,
+  DeploymentBackupCredentialRows,
+  DeploymentBackupScheduleRow,
 } from './DeploymentBackupControls';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
@@ -121,23 +126,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       { id: 'recreate', label: t('projects.deployments.settingsSections.rolloutRecreateShort') },
       { id: 'startFirst', label: t('projects.deployments.settingsSections.rolloutStartFirstShort') },
     ];
-    const projectSourceId = detail.environment.projectSourceId;
     const checkLifetime = editing ? props.lifetime ?? null : null;
-    const checkActions = React.useMemo(() => checkLifetime ? createDeploymentActions(checkLifetime, projectSourceId) : null,
-      [checkLifetime, projectSourceId]);
+    const checkAnchor = React.useRef<View>(null);
     const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
-    const [checkSetupRefused, setCheckSetupRefused] = React.useState(false);
-    const openCheckSetup = async () => {
-      if (!checkActions || openingCheckSetup) return;
-      setOpeningCheckSetup(true);
-      let opened = false;
-      try {
-        opened = await checkActions.openHealthCheckSetup({ environmentId: detail.environment.id,
-          monitoringMachineId: detail.environment.controllerMachineId }) === 'opened';
-      } catch { opened = false; }
-      setCheckSetupRefused(!opened);
-      setOpeningCheckSetup(false);
-    };
 
     return (
       <>
@@ -380,19 +371,17 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         <ItemGroup
           testID={section('checks-alerts')}
           title={t('projects.deployments.sectionChecks')}
-          description={checkSetupRefused
-            ? t('projects.deployments.settingsSections.addCheckUnavailable')
-            : t('projects.deployments.sectionChecksDescription')}
-          // Every kind (HTTP, TCP, DNS, certificate, heartbeat), the outside vantage and the alert threshold are the
-          // machine-services setup form's; it runs from the controller, as an agent's `health/open-setup` would.
-          action={checkActions ? (
-            <SectionActionButton
-              testID={`${section('checks-alerts')}.add`}
-              title={t('projects.deployments.settingsSections.addCheck')}
-              icon="plus"
-              disabled={openingCheckSetup}
-              onPress={openCheckSetup}
-            />
+          description={t('projects.deployments.sectionChecksDescription')}
+          action={checkLifetime ? (
+            <View ref={checkAnchor} collapsable={false}>
+              <SectionActionButton
+                testID={`${section('checks-alerts')}.add`}
+                title={t('projects.deployments.settingsSections.addCheck')}
+                icon="plus"
+                expanded={openingCheckSetup}
+                onPress={() => setOpeningCheckSetup(true)}
+              />
+            </View>
           ) : undefined}
         >
           {/* Health is what deployed services report; where nothing runs there is nothing to read yet. */}
@@ -406,6 +395,19 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           )}
         </ItemGroup>
+        {openingCheckSetup && checkLifetime ? (
+          <NewAccountTriggerPopover
+            anchorRef={checkAnchor}
+            onRequestClose={() => setOpeningCheckSetup(false)}
+            accountLifetime={checkLifetime}
+            initialProject={{ machineId: detail.environment.controllerMachineId, directory: '~' }}
+            eventSeed={guidedStarterEventSeed('healthFailed', {
+              subject: { kind: 'environment', environmentId: detail.environment.id,
+                machineId: detail.environment.controllerMachineId },
+              controllerMachineId: detail.environment.controllerMachineId,
+            })}
+          />
+        ) : null}
         <ItemGroup
           testID={section('backups')}
           title={t('projects.deployments.sectionBackups')}
@@ -536,6 +538,27 @@ function BackupRows(props: SectionProps) {
       editing.actions.updateEnvironment(props.detail.environment,
         { backupRetention: { configRevision: backup.configRevision, retention } }))
     : null, [editing, backup, retentionChange.press, props.detail.environment]);
+  if (!backup && backups.result.status === 'empty' && editing && actions) {
+    return (
+      <>
+        <DeploymentBackupSetup
+          detail={props.detail}
+          testID={props.testID}
+          onSave={(configuration) => retentionChange.press(() =>
+            editing.actions.updateEnvironment(props.detail.environment, { backup: configuration }))}
+        />
+        {retentionChange.outcome ? (
+          <DeployOutcomeBanner
+            outcome={retentionChange.outcome}
+            pending={retentionChange.outcome.kind === 'approval' && editing.review.pendingId === retentionChange.outcome.artifactId}
+            machine={props.machineName(props.detail.environment.controllerMachineId)}
+            onOpenReview={editing.review.open}
+            copy="setting"
+          />
+        ) : null}
+      </>
+    );
+  }
   if (!backup || backups.result.status !== 'ready') {
     return (
       <DeploymentTabState
@@ -559,6 +582,12 @@ function BackupRows(props: SectionProps) {
   return (
     <>
       <DeploymentBackupDestinationRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
+      <DeploymentBackupCredentialRows
+        detail={props.detail} configuration={backup} lifetime={actions ? props.lifetime ?? null : null}
+        actions={actions} review={props.review ?? null} onChanged={editing?.onChanged ?? noop}
+        machineName={props.machineName} testID={props.testID}
+      />
+      <DeploymentBackupScheduleRow detail={props.detail} configuration={backup} actions={actions} testID={props.testID} />
       <Item
         testID={`${props.testID}.sources`}
         title={t('projects.deployments.backupSources')}

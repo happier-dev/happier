@@ -32,6 +32,10 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+// Portal measurement and native menu SDKs are browser boundaries; the trigger editor stays real.
+vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
+vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover'))
+  .createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   return createExpoRouterMock();
@@ -920,8 +924,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).toContain('staging/');
       expect(effects).toEqual([]); // Opening Settings performs no native backup read or write.
       await screen.pressByTestIdAsync(`${id}.verify`);
-      const unknownSnapshot = await settle(`${id}.snapshot.${'e'.repeat(64)}`);
-      expect(unknownSnapshot, JSON.stringify({ text: screen.getTextContent(), effects })).not.toBeNull();
+      expect(await settle(`${id}.snapshot.${'e'.repeat(64)}`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.snapshot.${'e'.repeat(64)}.manifestReadBack`)).toBeNull();
       expect(effects[0]).toMatchObject({ actionId: 'deployments.backups.inventory' });
       await screen.pressByTestIdAsync(`${id}.verify`);
@@ -971,20 +974,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('opens the health check setup for this Environment from its controller, through the Action an agent invokes', async () => {
-    const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } =
-      await import('@happier-dev/protocol/actions/externalActionApi');
+  it('opens the health-check trigger editor for this Environment on its controller without creating a trigger', async () => {
+    const { TriggerPopover } = await import('@/components/workflows/triggers/TriggerPopover');
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Checks', serverUrl: 'https://checks.test',
       serverIdentityId: 'srv_checks', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
-    const invoked: unknown[] = [];
-    homes.answer(serverId, '/v1/actions/action.invoke', { select: body => {
-      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
-      invoked.push(envelope.input);
-      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'action.invoke',
-        requestId: envelope.requestId, execution: { ok: true, result: { status: 'unavailable' } } }) };
-    } });
     const detail = createDeploymentEnvironmentDetailV1();
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
       environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
@@ -992,11 +987,17 @@ describe('Environment → Settings: checks, backups, previews', () => {
     try {
       expect(await settle(`${id}.add`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.add`);
-      // No machine-services renderer is mounted in this harness, so the Action settles unavailable before any transport;
-      // the page then says where checks are set up instead.
-      expect(await settle(`${id}`)).not.toBeNull();
-      expect(screen.getTextContent()).toContain("Checks can't be set up from here");
-      expect(invoked).toEqual([]);
+      const editor = screen.findByType(TriggerPopover);
+      expect(editor.props).toMatchObject({ serverId: account.accountLifetime.scope.serverId, machineId: detail.environment.controllerMachineId,
+        initialWhen: { kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' } },
+        initialEventSeed: { monitoringMachineId: detail.environment.controllerMachineId,
+          setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id } } } });
+      expect(await settle('automation-plugin-event-cancel')).not.toBeNull();
+      expect(homes.requestsFor('/v1/actions/workflow.trigger.add')).toEqual([]);
+      await screen.pressByTestIdAsync('automation-plugin-event-cancel');
+      expect(await settle(`${editor.props.testID}-cancel`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${editor.props.testID}-cancel`);
+      expect(screen.findAllByType(TriggerPopover)).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -1096,6 +1097,72 @@ describe('Environment → Settings: checks, backups, previews', () => {
     try {
       expect(await settle(`${id}.needsRepository`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.setup`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('sets up backups from Settings: S3 destination, what to back up and keep counts, saved once through environments.update', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const detail = createDeploymentEnvironmentDetailV1();
+    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment } });
+    const id = 'project-deployments.environment.settings.backups.setup';
+    try {
+      expect(await settle(id)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.start`);
+      const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+      const field = (name: string) => screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.${name}`)!;
+      await act(async () => {
+        field('endpoint').props.onDraftChange('https://s3.eu-central-1.amazonaws.com');
+        field('bucket').props.onDraftChange('acme-backups');
+        field('prefix').props.onDraftChange('shop/');
+        field('region').props.onDraftChange('eu-central-1');
+        field('service').props.onDraftChange('postgres');
+      });
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(detail.environment, { backup: expect.objectContaining({
+        destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
+        config: { endpoint: 'https://s3.eu-central-1.amazonaws.com', bucket: 'acme-backups', prefix: 'shop/', region: 'eu-central-1' },
+        credentialBindings: expect.arrayContaining([
+          { purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
+          { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' },
+          { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }]),
+        sources: [{ kind: 'dump', sourceId: 'postgres', service: 'postgres', consistency: 'logical' }],
+        ownership: { environmentId: detail.environment.id, prefix: 'shop/' },
+        retention: { kind: 'keep', daily: 7, weekly: 4 } }) });
+      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+      // An agent sends the same Action and patch.
+      expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: 'srv', environmentId: detail.environment.id,
+        expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
+        contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+        patch: updateEnvironment.mock.calls[0]![1] }).success).toBe(true);
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  });
+
+  it('names the credentials a saved S3 destination still needs and offers its nightly schedule', async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Backup credentials', serverUrl: 'https://backup-credentials.test',
+      accountId: 'account-owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = createDeploymentEnvironmentDetailV1({ content: { ...base.content, backup: { ...backup,
+      destinationRef: { pluginId: 'happier.backup.destinations', localId: 's3' },
+      config: { endpoint: 'https://s3.example.com', bucket: 'acme-backups', prefix: 'shop/' },
+      credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'accessKeyId' },
+        { purpose: 'backupDestination', configKey: 'destination', role: 'secretAccessKey' },
+        { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }] } } });
+    const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
+      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+    const id = 'project-deployments.environment.settings.backups';
+    try {
+      expect(await settle(`${id}.credential.accessKeyId`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.credential.secretAccessKey`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.credential.repositoryPassword`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.schedule`)).not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 

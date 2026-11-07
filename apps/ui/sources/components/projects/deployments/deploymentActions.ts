@@ -5,6 +5,7 @@ import type { DeploymentPromoteIntentInputV1 } from '@happier-dev/protocol/deplo
 import { type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { WorkflowTriggerListResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { DeploymentTemplateInstantiateResultV1Schema, type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildDeploymentBackupActionInputV1, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupInventoryInputV1, type DeploymentBackupPruneInputV1, type DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
@@ -123,6 +124,34 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 'deployments.backups.test', buildDeploymentBackupActionInputV1('deployments.backups.test', {
                     ...input, serverId: lifetime.scope.serverId,
                 })));
+        },
+        /** Saved Workflows whose real `deployments.backups.run` step targets this exact capture (the trigger owner's match). */
+        async backupScheduleSets(input: Omit<DeploymentBackupInventoryInputV1, 'serverId' | 'expectedRevision'>) {
+            assertCurrent();
+            const result = WorkflowTriggerListResultV1Schema.parse(await execute('workflow.trigger.list', {
+                deploymentBackup: { ...input, serverId: lifetime.scope.serverId },
+            }));
+            return result.sets.length;
+        },
+        /**
+         * Schedules the built-in Nightly backups Workflow for this capture target from the controller Machine: back up,
+         * verify each new snapshot, then keep the saved counts. The same `workflow.trigger.add` an agent would send.
+         */
+        async addBackupSchedule(input: Readonly<{ target: Omit<DeploymentBackupInventoryInputV1, 'serverId'>;
+            retention: DeploymentBackupPruneInputV1['retention']; controllerMachineId: string }>) {
+            assertCurrent();
+            // The starter owns its Workflow and default schedule; turning it on is the person's choice here.
+            const starter = getWorkflowStarterExamplesV1().find((example) => example.key === 'nightly-backups');
+            if (!starter || starter.triggerSeed?.kind !== 'schedule') throw new HappyError('workflow_starter_unavailable', false);
+            return execute('workflow.trigger.add', {
+                target: { kind: 'inline', definition: starter.definition },
+                project: { machineId: input.controllerMachineId, directory: '~' },
+                executionTarget: { kind: 'detached_run' },
+                inputs: { backupTarget: { ...input.target, serverId: lifetime.scope.serverId },
+                    verificationLevel: 'manifestReadBack', retention: input.retention },
+                trigger: { ...starter.triggerSeed, enabled: true },
+                actionApproval: 'automatic',
+            });
         },
         /** Forgets the snapshots past the saved counts now, instead of after the next backup. */
         async pruneBackups(input: Omit<DeploymentBackupPruneInputV1, 'serverId'>) {

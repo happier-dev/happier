@@ -17,6 +17,7 @@ import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
@@ -309,6 +310,225 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
         pending={prune.outcome.kind === 'approval' && props.review.pendingId === prune.outcome.artifactId}
         machine={props.machineName(target.machineId)} onOpenReview={props.review.open} copy="setting" /> : null}
     </>
+  );
+}
+
+/**
+ * The S3 destination the backup-destinations plugin contributes (`packages/plugins/backup-destinations/src/manifest.ts`:
+ * id `happier.backup.destinations`, destination `s3`, roles repositoryPassword/accessKeyId/secretAccessKey, sessionToken
+ * optional). The host resolves the installed descriptor and refuses a mismatch with `destination_changed`.
+ */
+const S3_DESTINATION = { pluginId: 'happier.backup.destinations', localId: 's3' } as const;
+const S3_REQUIRED_ROLES = ['accessKeyId', 'secretAccessKey', 'repositoryPassword'] as const;
+type CredentialRole = DeploymentBackupConfigurationV1['credentialBindings'][number]['role'];
+const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'credentialSecretAccessKey'
+  | 'credentialRepositoryPassword' | 'credentialSessionToken'>> = {
+  accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
+  repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken',
+};
+const SETUP_FIELDS = ['endpoint', 'bucket', 'prefix', 'region', 'service'] as const;
+type SetupField = typeof SETUP_FIELDS[number];
+const SETUP_LABEL: Readonly<Record<SetupField, 'setupEndpoint' | 'setupBucket' | 'setupPrefix' | 'setupRegion' | 'setupService'>> = {
+  endpoint: 'setupEndpoint', bucket: 'setupBucket', prefix: 'setupPrefix', region: 'setupRegion', service: 'setupService',
+};
+
+/**
+ * Settings › Backups before anything is set up (JOURNEY-OPUS-85 F1): the S3 destination, the database service to dump
+ * and the keep counts, saved once as `environments.update` patch.backup (T2-DATA's configuration owner). Credentials
+ * and the nightly schedule follow on the saved setup, through their own Actions.
+ */
+export function DeploymentBackupSetup(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  onSave: (configuration: DeploymentBackupConfigurationV1) => Promise<boolean>;
+  testID: string;
+}>) {
+  const [fields, setFields] = React.useState<Record<SetupField, string> | null>(null);
+  const [keep, setKeep] = React.useState<Record<KeepField, string>>({ last: '', daily: '7', weekly: '4', monthly: '' });
+  const [saving, setSaving] = React.useState(false);
+  const id = `${props.testID}.setup`;
+  const retention = retentionFromDraft(keep);
+  const complete = fields !== null && retention !== null
+    && fields.endpoint.trim() !== '' && fields.bucket.trim() !== '' && fields.service.trim() !== '';
+  const start = () => setFields({ endpoint: '', bucket: '', prefix: '', region: '',
+    service: props.detail.content.template?.data?.service ?? '' });
+  const save = async () => {
+    if (!fields || !retention || !complete || saving) return;
+    const value = (field: SetupField) => fields[field].trim();
+    const service = value('service');
+    setSaving(true);
+    const saved = await props.onSave({
+      configRevision: 1, destinationRef: S3_DESTINATION, occurrenceId: S3_DESTINATION.localId,
+      config: { endpoint: value('endpoint'), bucket: value('bucket'), prefix: value('prefix'),
+        ...(value('region') ? { region: value('region') } : {}) },
+      credentialBindings: S3_REQUIRED_ROLES.map((role) => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
+      sources: [{ kind: 'dump', sourceId: service, service, consistency: 'logical' }],
+      ownership: { environmentId: props.detail.environment.id, prefix: value('prefix') },
+      retention,
+    });
+    setSaving(false);
+    if (saved) setFields(null);
+  };
+  const setField = (field: SetupField) => (text: string) => setFields((current) => current ? { ...current, [field]: text } : current);
+  const setKeepField = (field: KeepField) => (text: string) => setKeep((current) => ({ ...current, [field]: text }));
+  return (
+    <>
+      <Item
+        testID={id}
+        title={t('projects.deployments.settingsSections.setupTitle')}
+        subtitle={fields && !complete
+          ? t('projects.deployments.settingsSections.setupIncomplete')
+          : t('projects.deployments.settingsSections.setupBody')}
+        mode="info"
+        rightElement={fields ? (
+          <View style={styles.checks}>
+            <SectionActionButton testID={`${id}.cancel`} title={t('projects.deployments.settingsSections.setupCancel')}
+              disabled={saving} onPress={() => setFields(null)} />
+            <SectionActionButton testID={`${id}.save`} title={t('projects.deployments.settingsSections.setupSave')}
+              disabled={saving || !complete} onPress={save} />
+          </View>
+        ) : (
+          <SectionActionButton testID={`${id}.start`} title={t('projects.deployments.settingsSections.setupStart')}
+            icon="plus" onPress={start} />
+        )}
+      />
+      {fields ? SETUP_FIELDS.map((field) => (
+        <FieldValueItem
+          key={field}
+          testID={`${id}.${field}`}
+          fieldTestID={`${id}.${field}.input`}
+          title={t(`projects.deployments.settingsSections.${SETUP_LABEL[field]}`)}
+          accessoryLayout="stacked"
+          autoCapitalize="none"
+          monospace={field !== 'service'}
+          value={fields[field]}
+          allowEmpty
+          disabled={saving}
+          onDraftChange={setField(field)}
+          onCommit={(text) => { setField(field)(text); return text; }}
+        />
+      )) : null}
+      {fields ? (['daily', 'weekly'] as const).map((field) => (
+        <FieldValueItem
+          key={field}
+          testID={`${id}.keep.${field}`}
+          fieldTestID={`${id}.keep.${field}.input`}
+          title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)}
+          kind="integer"
+          allowEmpty
+          value={keep[field]}
+          stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }}
+          compactStepper
+          disabled={saving}
+          onDraftChange={setKeepField(field)}
+          onCommit={(text) => { setKeepField(field)(text); return text; }}
+        />
+      )) : null}
+    </>
+  );
+}
+
+/**
+ * The credential roles a saved destination names, each bound to a Saved Secret through the existing
+ * `deployments.bindings.set` backupDestination path. Values never enter the backup configuration.
+ */
+export function DeploymentBackupCredentialRows(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  configuration: DeploymentBackupConfigurationV1;
+  lifetime: ServerAccountScopeLifetime | null;
+  actions: ActionsFactory | null;
+  review: DeploymentReviewHandle | null;
+  onChanged: () => void;
+  machineName: (machineId: string) => string;
+  testID: string;
+}>) {
+  const change = useDeploymentChangePress(props.review, props.onChanged);
+  const { actions, lifetime } = props;
+  const bound = (role: CredentialRole) => props.detail.content.bindings.some((binding) =>
+    binding.purpose === 'backupDestination' && binding.configKey === 'destination' && binding.role === role);
+  const choose = async (role: CredentialRole) => {
+    if (!actions || !lifetime) return;
+    const controller = new AbortController();
+    const selection = await presentSavedSecretReferencePicker({ accountLifetime: lifetime, signal: controller.signal,
+      isCurrent: () => lifetime.isCurrent() });
+    if (!selection) return;
+    await change.press(() => actions.setBindings({ environmentId: props.detail.environment.id,
+      expectedRevision: props.detail.environment.revision, remove: [],
+      set: [{ purpose: 'backupDestination', configKey: 'destination', role,
+        source: { kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision } }] }));
+  };
+  return (
+    <>
+      {props.configuration.credentialBindings.map(({ role }) => (
+        <Item
+          key={role}
+          testID={`${props.testID}.credential.${role}`}
+          title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+          subtitle={bound(role)
+            ? t('projects.deployments.settingsSections.credentialSet')
+            : t('projects.deployments.settingsSections.credentialMissing')}
+          mode="info"
+          rightElement={actions && lifetime ? (
+            <SectionActionButton testID={`${props.testID}.credential.${role}.choose`}
+              title={t('projects.deployments.settingsSections.credentialChoose')}
+              disabled={change.running} onPress={() => { void choose(role); }} />
+          ) : undefined}
+        />
+      ))}
+      {change.outcome && props.review ? <DeployOutcomeBanner outcome={change.outcome}
+        pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
+        machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.review.open}
+        copy="setting" /> : null}
+    </>
+  );
+}
+
+/**
+ * The nightly schedule: the built-in Nightly backups Workflow for this exact capture target, read and added through the
+ * trigger owner (`workflow.trigger.list` deploymentBackup, `workflow.trigger.add`).
+ */
+export function DeploymentBackupScheduleRow(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  configuration: DeploymentBackupConfigurationV1;
+  actions: ActionsFactory | null;
+  testID: string;
+}>) {
+  const target = useBackupTarget(props.detail, props.configuration);
+  const { actions } = props;
+  const [scheduled, setScheduled] = React.useState<boolean | null>(null);
+  const [adding, setAdding] = React.useState(false);
+  const targetKey = target ? JSON.stringify(target) : null;
+  React.useEffect(() => {
+    if (!actions || !target) return;
+    let live = true;
+    const { expectedRevision: _expectedRevision, ...identity } = target;
+    actions.backupScheduleSets(identity).then((count) => { if (live) setScheduled(count > 0); }, () => {});
+    return () => { live = false; };
+    // The target key carries every identity field the read uses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actions, targetKey]);
+  const turnOn = async () => {
+    if (!actions || !target || adding) return;
+    setAdding(true);
+    try {
+      await actions.addBackupSchedule({ target, retention: props.configuration.retention,
+        controllerMachineId: props.detail.environment.controllerMachineId });
+      setScheduled(true);
+    } catch { /* The trigger owner's refusal leaves the row as it was; pressing again retries. */ }
+    setAdding(false);
+  };
+  return (
+    <Item
+      testID={`${props.testID}.schedule`}
+      title={t('projects.deployments.settingsSections.scheduleTitle')}
+      subtitle={scheduled
+        ? t('projects.deployments.settingsSections.scheduleOn')
+        : t('projects.deployments.settingsSections.scheduleOff')}
+      mode="info"
+      rightElement={actions && target && scheduled === false ? (
+        <SectionActionButton testID={`${props.testID}.schedule.on`}
+          title={t('projects.deployments.settingsSections.scheduleTurnOn')} disabled={adding} onPress={turnOn} />
+      ) : undefined}
+    />
   );
 }
 
