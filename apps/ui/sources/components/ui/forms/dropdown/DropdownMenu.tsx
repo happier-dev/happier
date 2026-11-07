@@ -15,6 +15,7 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { TextInput } from '@/components/ui/text/Text';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { useHasHardwareKeyboard } from '@/hooks/ui/useHasHardwareKeyboard';
 import { useScrollRectIntoViewRegistry } from '@/components/ui/scroll/useScrollRectIntoView';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
@@ -247,6 +248,8 @@ function isEditableKeyTarget(target: unknown): boolean {
 
 export function DropdownMenu(props: DropdownMenuProps) {
     const { theme } = useUnistyles();
+    // Keycaps name a key: with no hardware keyboard they only take width from the row.
+    const hasHardwareKeyboard = useHasHardwareKeyboard();
     const anchorRef = React.useRef<View>(null);
     const resolvedAnchorRef = props.popoverAnchorRef ?? anchorRef;
     const submenuAnchorsRef = React.useRef(new Map<string, React.RefObject<unknown>>());
@@ -297,13 +300,13 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     ? item.rightElement
                     : hasSubmenu
                         ? <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
-                        : item.shortcut
+                        : item.shortcut && hasHardwareKeyboard
                             ? <KeyHint label={item.shortcut} />
                             : null,
                 hasSubmenu,
             };
         });
-    }, [props.items, theme.colors.text.secondary]);
+    }, [hasHardwareKeyboard, props.items, theme.colors.text.secondary]);
 
     const closeOnSelect = props.closeOnSelect !== false;
     const onRequestClose = React.useCallback(() => props.onOpenChange(false), [props]);
