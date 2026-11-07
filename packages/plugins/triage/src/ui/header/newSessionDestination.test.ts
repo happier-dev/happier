@@ -13,6 +13,7 @@ import {
     testkitConfiguredInstance,
 } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 import { testkitEntryRef, testkitLocator } from '../../corpus/testkit/observations.test-support.js';
+import { requestTriageNewSessionSeed } from './newSessionSeedCommand.js';
 
 /**
  * The one projection from the host's own settled new-Session draft to the
@@ -39,6 +40,25 @@ const SETTLED = Object.freeze({
 });
 
 describe('projecting the settled new-Session draft', () => {
+    it('requires an actual authoring capability before handing a seed to the host', async () => {
+        const version = () => ({ methods: ['openNewSession'] });
+        const seed = { prompt: 'Inspect the selected evidence.' };
+        expect(await requestTriageNewSessionSeed({ version }, seed)).toEqual({ status: 'unsupported' });
+        const opened: unknown[] = [];
+        expect(await requestTriageNewSessionSeed({ version,
+            openNewSession: async request => { opened.push(request); },
+        }, seed)).toEqual({ status: 'seeded' });
+        expect(opened).toEqual([seed]);
+    });
+    it('keeps managed scratch allocation at the Session owner for reference-only diagnosis', () => {
+        const selected = SessionServerStartSpawnDraftV1Schema.parse({ ...SETTLED, directory: { kind: 'managed' } });
+        expect(projectTriageNewSessionDestinationV1({ workspaceMode: 'reference_only',
+            creationKey: 'managed-diagnosis', settlement: selected })).toMatchObject({ status: 'settled',
+            destination: { kind: 'new', spawn: { executionTarget: SETTLED.executionTarget },
+                materialization: { kind: 'referenceOnly', directory: { kind: 'managed' } } } });
+        expect(projectTriageNewSessionDestinationV1({ workspaceMode: 'repository',
+            creationKey: 'managed-diagnosis', settlement: selected })).toEqual({ status: 'refused', reason: 'draftUnusable' });
+    });
     it('carries a reference-only action onto the directory the reader chose', () => {
         expect(projectTriageNewSessionDestinationV1({
             workspaceMode: 'reference_only',
@@ -221,7 +241,6 @@ describe('projecting the settled new-Session draft', () => {
 
     it('refuses directories that cannot supply the exact chosen working path', () => {
         for (const directory of [
-            { kind: 'managed' },
             { kind: 'path', path: '' },
             { kind: 'path', path: '/workspaces/example', managed: true },
             '/workspaces/example',

@@ -651,177 +651,10 @@ afterEach(async () => {
 const PREPARATION_UNSUPPORTED_COPY = 'This source cannot prepare a review workspace, so actions that need one cannot start here.';
 
 describe('the entry action controls on the mounted detail header', () => {
-    it.each([true, false])('keeps the recipe owner when the host pane relocates (opened beside page=%s)', async (openedBeside) => {
-        let beside = openedBeside;
-        let finishRecipe!: (draft: PluginUiSessionServerStartDraftV1 | null) => void;
-        let chooserSignal!: AbortSignal;
-        const harness = createHarness({ comparisonRead: async () => ({
-            kind: 'present',
-            localRef: { kindId: ENTRY_REF.kindId, collisionScope: ENTRY_REF.collisionScope, entryId: ENTRY_REF.entryId },
-            locator: testkitLocator(), snapshot: testkitSnapshot({ title: ENTRY_TITLE }), viewer: testkitViewer(),
-            comparisonSource: PR_COMPARISON,
-        }) });
-        harness.setStartResults([{ v: 1, type: 'linked', sessionId: 'session-a',
-            disposition: 'created', delivery: 'none', finalOpen: 'deferred' } satisfies TriageStartEntrySessionResultV1]);
-        const shell = await mountShell(harness, { get available() { return beside; } }, (signal) => {
-            chooserSignal = signal;
-            return new Promise((resolve) => { finishRecipe = resolve; });
-        });
-        await openTheRow(shell);
-        await pressAction(shell, 'More actions');
-        await pressMenuItem(shell, 'Walk through');
-        expect(draftsOpened).toBe(1);
-        for (const next of [!openedBeside, openedBeside]) {
-            beside = next;
-            await act(async () => { await shell.updateSurface(shell.context.surface); });
-            await settle();
-            expect(chooserSignal.aborted).toBe(false);
-            expect(document.querySelector(`[data-testid="${TRIAGE_DETAIL_FOOTER_TEST_ID_V1}"]`) === null)
-                .toBe(openedBeside && next);
-        }
-        await act(async () => { finishRecipe(SETTLED_DRAFT); });
-        await settle();
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
-            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
-        expect(draftsOpened).toBe(1);
-    }, 60_000);
-
-    it('withdraws the pending chooser when its entry owner retires', async () => {
-        let chooserSignal!: AbortSignal;
-        let finishRecipe!: (draft: PluginUiSessionServerStartDraftV1 | null) => void;
-        const harness = createHarness({ includeSecondEntry: true, comparisonRead: async () => ({
-            kind: 'present',
-            localRef: { kindId: ENTRY_REF.kindId, collisionScope: ENTRY_REF.collisionScope, entryId: ENTRY_REF.entryId },
-            locator: testkitLocator(), snapshot: testkitSnapshot({ title: ENTRY_TITLE }), viewer: testkitViewer(),
-            comparisonSource: PR_COMPARISON,
-        }) });
-        const shell = await mountShell(harness, true, (signal) => {
-            chooserSignal = signal;
-            return new Promise((resolve) => { finishRecipe = resolve; });
-        });
-        await openTheRow(shell);
-        await pressAction(shell, 'More actions');
-        await pressMenuItem(shell, 'Walk through');
-        await act(async () => { await shell.updatePageLocation(buildTriageRouteSubPathV1({
-            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: SECOND_ENTRY_REF,
-        })); });
-        await settle();
-        expect(chooserSignal.aborted).toBe(true);
-        // Even a late submit cannot become a creation for the replacement entry.
-        await act(async () => { finishRecipe(SETTLED_DRAFT); });
-        await settle();
-        expect(harness.startRequests).toEqual([]);
-        expect(harness.comparisonOpens).toEqual([]);
-    }, 60_000);
-
-    it.each([
-        { hosted: false, openFails: false, confirmed: false },
-        { hosted: true, openFails: false, confirmed: false },
-        { hosted: false, openFails: true, confirmed: false },
-        { hosted: true, openFails: true, confirmed: false },
-        { hosted: true, openFails: false, confirmed: true },
-        { hosted: true, openFails: true, confirmed: true },
-    ])('settles a pinned recipe when a source refresh removes its selected entry: %j', async ({ hosted, openFails, confirmed }) => {
-        let finishRecipe!: (draft: PluginUiSessionServerStartDraftV1 | null) => void;
-        let finishStart!: (result: TriageStartEntrySessionResultV1) => void;
-        let reads = 0;
-        const harness = createHarness({ comparisonRead: async () => {
-            reads += 1;
-            return {
-                kind: 'present',
-                localRef: { kindId: ENTRY_REF.kindId, collisionScope: ENTRY_REF.collisionScope, entryId: ENTRY_REF.entryId },
-                locator: testkitLocator(), snapshot: testkitSnapshot({ title: ENTRY_TITLE }), viewer: testkitViewer(),
-                comparisonSource: PR_COMPARISON,
-            };
-        }, ...(openFails ? { comparisonOpen: async () => { throw new Error('Navigation unavailable'); } } : {}) });
-        const startResult = { v: 1, type: 'linked', sessionId: 'session-a',
-            disposition: 'created', delivery: 'none', finalOpen: 'deferred' } satisfies TriageStartEntrySessionResultV1;
-        harness.setStartResults([confirmed ? () => new Promise<TriageStartEntrySessionResultV1>((resolve) => { finishStart = resolve; }) : startResult]);
-        const shell = await mountShell(harness, hosted, () => new Promise((resolve) => { finishRecipe = resolve; }));
-        await openTheRow(shell);
-        await pressAction(shell, 'More actions');
-        await pressMenuItem(shell, 'Walk through');
-        expect(draftsOpened).toBe(1);
-        if (confirmed) {
-            await act(async () => { finishRecipe(SETTLED_DRAFT); });
-            await settle();
-            expect(harness.startRequests).toHaveLength(1);
-        }
-        // A new source walk drops the row without changing the reader's selection or pinned refs.
-        harness.setEntryListed(false);
-        await act(async () => { await refreshMountedShell.get(shell)!('manual'); });
-        await settle();
-        await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
-        await act(async () => {
-            if (confirmed) finishStart(startResult);
-            else finishRecipe(SETTLED_DRAFT);
-        });
-        await settle();
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
-            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
-        expect(reads).toBe(1);
-        expect(draftsOpened).toBe(1);
-        if (openFails) {
-            await expect(shell.getByText('The session was created and linked, but Happier could not open it.')).resolves.toBeDefined();
-        }
-    }, 60_000);
-
-    it.each([false, true].flatMap((hosted) => ['opened', 'open failed', 'cancelled', 'entry retired'].map((outcome) => ({ hosted, outcome }))))(
-        'settles the Walk through recipe after a wide-phone-wide resize while the chooser is pending: %j', async ({ hosted, outcome }) => {
-        let finishRecipe!: (draft: PluginUiSessionServerStartDraftV1 | null) => void;
-        const harness = createHarness({ includeSecondEntry: outcome === 'entry retired', comparisonRead: async () => ({
-            kind: 'present',
-            localRef: { kindId: ENTRY_REF.kindId, collisionScope: ENTRY_REF.collisionScope, entryId: ENTRY_REF.entryId },
-            locator: testkitLocator(), snapshot: testkitSnapshot({ title: ENTRY_TITLE }), viewer: testkitViewer(),
-            comparisonSource: PR_COMPARISON,
-        }), ...(outcome === 'open failed' ? { comparisonOpen: async () => { throw new Error('Navigation unavailable'); } } : {}) });
-        harness.setStartResults([{ v: 1, type: 'linked', sessionId: 'session-a',
-            disposition: 'created', delivery: 'none', finalOpen: 'deferred' } satisfies TriageStartEntrySessionResultV1]);
-        const shell = await mountShell(harness, hosted, () => new Promise((resolve) => { finishRecipe = resolve; }));
-        const resize = async (width: number) => {
-            const stage = document.querySelector(`[data-testid="${TRIAGE_SHELL_FILL_TEST_ID_V1}:stage"]`)!;
-            const onLayout = (stage as unknown as { __reactLayoutHandler: (event: unknown) => void }).__reactLayoutHandler;
-            await act(async () => { onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 940 } } }); });
-            await settle();
-        };
-        await resize(1440);
-        await openTheRow(shell);
-        await pressAction(shell, 'More actions');
-        await pressMenuItem(shell, 'Walk through');
-        expect(draftsOpened).toBe(1);
-        expect(harness.startRequests).toHaveLength(0);
-        await resize(390);
-        if (!hosted) expect(document.querySelector(`[data-testid="${TRIAGE_DETAIL_FOOTER_TEST_ID_V1}"]`)).not.toBeNull();
-        await resize(1440);
-        expect(document.querySelector(`[data-testid="${TRIAGE_DETAIL_FOOTER_TEST_ID_V1}"]`)).toBeNull();
-        if (outcome === 'entry retired') {
-            await act(async () => { await shell.updatePageLocation(buildTriageRouteSubPathV1({
-                ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: SECOND_ENTRY_REF,
-            })); });
-            await settle();
-        }
-        await act(async () => { finishRecipe(outcome === 'cancelled' ? null : SETTLED_DRAFT); });
-        await settle();
-        if (outcome === 'cancelled' || outcome === 'entry retired') {
-            expect(harness.startRequests).toEqual([]);
-            expect(harness.comparisonOpens).toEqual([]);
-            if (outcome === 'entry retired') {
-                expect([...document.querySelectorAll('[role="heading"]')].some(node => node.textContent === SECOND_ENTRY_TITLE)).toBe(true);
-            }
-            return;
-        }
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
-            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
-        expect(draftsOpened).toBe(1);
-        if (outcome === 'open failed') {
-            await expect(shell.getByText('The session was created and linked, but Happier could not open it.')).resolves.toBeDefined();
-        }
-    }, 60_000);
-
-    it.each([false, true])('hands off Walk through after the detail refreshes during its comparison read (hosted=%s)', async (hosted) => {
+    // Walk through without a reachable linked Session opens the prefilled composer (owner ruling 16:50Z), so the
+    // former draft-chooser lifecycle cases (pane relocation, entry retirement, refresh, resize) have no pending
+    // chooser left to exercise; composer withdrawal on retirement is covered in useEntrySessionStart.rnw.test.tsx.
+    it.each([false, true])('hands Walk through to the prefilled composer after the detail refreshes during its comparison read (hosted=%s)', async (hosted) => {
         let finishRead!: (result: unknown) => void;
         let reads = 0;
         const harness = createHarness({ comparisonRead: async () => {
@@ -848,11 +681,11 @@ describe('the entry action controls on the mounted detail header', () => {
             comparisonSource: PR_COMPARISON,
         }); });
         await settle();
-        expect(draftsOpened).toBe(1);
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.startRequests[0]?.finalOpen).toBe('deferred');
-        expect(harness.comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
-            destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
+        // No reachable linked Session: the prefilled composer opens and nothing starts until the person sends.
+        expect(draftsOpened).toBe(0);
+        expect(harness.startRequests).toEqual([]);
+        expect(harness.comparisonOpens).toEqual([]);
+        expect(newSessionSeeds).toHaveLength(1);
         expect(reads).toBe(1);
     }, 60_000);
 
@@ -981,7 +814,7 @@ describe('the entry action controls on the mounted detail header', () => {
     }, 15_000);
 
     it.each([undefined, 'Plan only the migration; leave the UI unchanged.'])
-    ('edits the issue orchestration prompt before canonical start (%s)', async (replacement) => {
+    ('edits the issue orchestration prompt before opening the prefilled composer (%s)', async (replacement) => {
         const harness = createHarness({ issue: true });
         const shell = await mountShell(harness);
         await openTheRow(shell);
@@ -1003,14 +836,11 @@ describe('the entry action controls on the mounted detail header', () => {
             });
         }
         await pressAction(shell, 'Start orchestration');
-        expect(harness.startRequests).toHaveLength(1);
-        expect(harness.startRequests[0]).toMatchObject({
-            orchestrate: true,
-            workspaceMode: 'repository',
-            destination: { kind: 'new' },
-            delivery: { kind: 'send', text: prompt, attachments: [{ entryRef: ENTRY_REF, sourceInstanceId: INSTANCE }] },
-        });
-        expect(newSessionSeeds).toEqual([]);
+        // Unresolved placement (owner ruling 16:50Z): the prefilled composer carries the edited prompt and the issue.
+        expect(harness.startRequests).toEqual([]);
+        expect(draftsOpened).toBe(0);
+        expect(newSessionSeeds).toEqual([expect.objectContaining({ prompt,
+            attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })] })]);
     }, 60_000);
 
     it('cancels the issue prompt without starting or choosing a Session', async () => {
@@ -1023,26 +853,6 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.startRequests).toEqual([]);
         expect(draftsOpened).toBe(0);
         await expect(shell.queryByRole('textbox', { name: 'Orchestration prompt' })).resolves.toBeUndefined();
-    }, 60_000);
-
-    it('resumes pending issue orchestration with the retained prompt, attachment and creation identity', async () => {
-        const harness = createHarness({ issue: true });
-        harness.setStartResults([
-            { v: 1, type: 'creationPending', outcome: 'accepted' },
-            { v: 1, type: 'opened', sessionId: 'session-a', disposition: 'rejoined', delivery: 'accepted' },
-        ]);
-        const shell = await mountShell(harness);
-        await openTheRow(shell);
-        await pressAction(shell, 'More actions');
-        await pressMenuItem(shell, 'Orchestrate this');
-        await pressAction(shell, 'Start orchestration');
-        const field = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Orchestration prompt"]');
-        expect(field?.disabled).toBe(true);
-        await pressAction(shell, 'Resume orchestration');
-        const [first, retry] = harness.startRequests;
-        expect(harness.startRequests).toHaveLength(2);
-        expect(retry).toMatchObject({ ...first, resume: { phase: 'creationPending' } });
-        expect(draftsOpened).toBe(1);
     }, 60_000);
 
     it('renders the actions this entry subject is offered', async () => {
@@ -1748,21 +1558,19 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.startRequests[0]?.workspaceMode).toBe('repository');
     });
 
-    it('carries an admitted selected-PR preparation into the mounted review chooser', async () => {
+    it('starts a resolved formal review directly and carries its admitted selected-PR preparation into the review chooser', async () => {
         const harness = createHarness({ formalReviewReady: true });
         harness.setActions([{
             actionId: 'formal-review',
             label: 'Formal review',
             enabled: true,
             appliesTo: ['pullRequest'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
         }]);
-        harness.setRegistry({
-            items: [projectRow({ rootPath: '/workspaces/example' })],
-            truncated: false,
-        });
+        // A complete start: the Profile's Agent and one reachable checkout (no draft modal).
+        resolveDirectStart(harness, '/workspaces/example');
         harness.setStartResults([(input: TriageStartEntrySessionInputV1) => {
             if (input.destination.kind !== 'new'
                 || input.destination.materialization.kind !== 'reviewWorkspace'
@@ -1840,6 +1648,7 @@ describe('the entry action controls on the mounted detail header', () => {
             },
         });
         expect(harness.reviewEngineListRequests).toEqual([{ sessionId: 'session-review' }]);
+        expect(draftsOpened).toBe(0);
     }, 60_000);
 
     it('opens the prepared-review composer for a custom ordinary-agent action keyed only by workspaceMode', async () => {
@@ -1906,14 +1715,12 @@ describe('the entry action controls on the mounted detail header', () => {
             label: 'Formal review',
             enabled: true,
             appliesTo: ['pullRequest'],
-            profileId: null,
+            profileId: 'profile-1',
             workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
         }]);
-        harness.setRegistry({
-            items: [projectRow({ rootPath: '/workspaces/example' })],
-            truncated: false,
-        });
+        // A complete start: the Profile's Agent and one reachable checkout (no draft modal).
+        resolveDirectStart(harness, '/workspaces/example');
         harness.setStartResults([
             {
                 v: 1,
@@ -1975,6 +1782,7 @@ describe('the entry action controls on the mounted detail header', () => {
             },
         });
         expect('prepareReviewWorkspaceSelection' in (harness.startRequests[1] ?? {})).toBe(false);
+        expect(draftsOpened).toBe(0);
         await expect.poll(
             () => harness.reviewEngineListRequests.length,
             { timeout: 60_000 },

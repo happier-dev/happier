@@ -24,6 +24,7 @@ import { TriagePullRequestReviewChooser } from './PullRequestReviewChooser.js';
 import { readTriageActionsForSurface } from '../../actions/actionsCatalog.js';
 import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../settings/actions.js';
 import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
+import { testkitTriageActionId } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -136,7 +137,7 @@ catalog = createReviewCatalog()): Promise<Readonly<{
       },
     }),
     handlers: {
-      executeAction: async ({ action, input }) => action === 'actions/read-v1'
+      executeAction: async ({ action, input }) => testkitTriageActionId(action) === 'actions/read-v1'
         ? await readTriageActionsForSurface({ v: 1 }, { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })
         : await executeAction(String(action), input),
       selectActionInput: async ({ request }) => await selectActionInput(request),

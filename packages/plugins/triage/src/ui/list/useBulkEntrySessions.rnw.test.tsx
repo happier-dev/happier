@@ -15,7 +15,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '@happier-dev/triage-protocol/v1';
-import { TESTKIT_OBSERVED_REVISION, testkitConfiguredInstance } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
+import { TESTKIT_OBSERVED_REVISION, testkitConfiguredInstance, testkitTriageActionId } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageStartEntrySessionInputV1 } from '../../actions/entrySessionProtocol.js';
 import { readTriageActionsForSurface } from '../../actions/actionsCatalog.js';
@@ -177,9 +177,9 @@ async function mount(host: BoundaryHost, targetedContributions?: ReturnType<type
             } }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             handlers: {
-                executeAction: async ({ action, input, signal, selectedActionInput }) => action === 'actions/read-v1'
+                executeAction: async ({ action, input, signal, selectedActionInput }) => testkitTriageActionId(action) === 'actions/read-v1'
                     ? await readTriageActionsForSurface({ v: 1 }, { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })
-                    : await host.executeAction(action, input, { signal, selectedActionInput }) as JsonValue,
+                    : await host.executeAction(testkitTriageActionId(action), input, { signal, selectedActionInput }) as JsonValue,
                 ...(host.selectActionInput === undefined ? {} : {
                     selectActionInput: async ({ request }) => (
                         await host.selectActionInput!(request) as SelectActionInputResult
@@ -224,10 +224,13 @@ describe('bulk cancellation ownership', () => {
         await mount({
             executeAction: async (id) => {
                 reads.push(id);
-                if (id === 'projects.list') return { items: [], truncated: false };
+                if (id === 'projects.list') return { items: [{
+                    projectKey: { id: 'project-a' }, serverId: 'server-a', machineId: 'machine-a', rootPath: '/workspace',
+                    forge: REPOSITORY_A, worktrees: [], reachable: true,
+                }], truncated: false };
                 if (id === 'entries/reobserve-v1') return { kind: 'observed', entryRef: ENTRY.entryRef, observation: {
                     sourceInstanceId: ENTRY.sourceInstance.sourceInstanceId, observedAtMs: 4_000,
-                    outcome: { kind: 'present', locator: testkitLocator(), snapshot: testkitSnapshot({
+                    outcome: { kind: 'present', repository: REPOSITORY_A, locator: testkitLocator(), snapshot: testkitSnapshot({
                         reviewRevision: { baseSha: 'base', headSha: 'head', nativeRevision: 'rev' },
                     }), viewer: testkitViewer() },
                 } };

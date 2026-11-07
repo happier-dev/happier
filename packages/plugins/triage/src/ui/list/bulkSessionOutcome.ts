@@ -1,18 +1,12 @@
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
 
-export type TriageBulkEntryOutcomeV1 = Readonly<{
-    entryRef: TriageEntryRefV1;
-    session: 'created' | 'rejoined' | 'existing' | 'notCreated' | 'uncertain';
-    attachment: 'carried' | 'refused' | 'uncertain' | 'notRequested';
-    link: 'created' | 'conflictedOrUnavailable' | 'notAttempted';
-    newSessionSeed: 'applied' | 'refused' | 'notRequested';
-    directSend: 'applied' | 'refused' | 'uncertain' | 'notRequested';
-}>;
+export type TriageBulkEntryOutcomeV1 = ReturnType<
+    typeof import('../../actions/configuredActionRunProtocol.js').TriageBulkEntryOutcomeV1Schema.parse
+>;
 
-export type TriageBulkLinkOutcomeV1 = 'created' | 'conflictedOrUnavailable';
-export type TriageBulkComposeOutcomeV1 = 'applied' | 'refused' | 'notRequested';
+export type TriageBulkLinkOutcomeV1 = Exclude<TriageBulkEntryOutcomeV1['link'], 'notAttempted'>;
+export type TriageBulkComposeOutcomeV1 = TriageBulkEntryOutcomeV1['newSessionSeed'];
 
 type TriageBulkSettlementResultV1 =
     | Readonly<{

@@ -6,6 +6,10 @@ import { buildTriageEntryAttachmentPresentation } from '../composer/mutationPlan
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
 import type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
 import type { TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
+import { buildTriageForgeEvidenceAttachmentDraftV1 } from '../composer/mutationPlan.js';
+import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+import { isPluginError, readUnexpectedActionErrorDiagnosticV1, ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
+import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
 
 /**
  * Delivering a `send` action's structured input, INSIDE the start and before
@@ -67,6 +71,9 @@ export type TriageEntrySessionDeliveryRequestV1 = Readonly<{
      * THIS press re-sends this key unchanged and rejoins its own input.
      */
     idempotencyKey: string;
+    forgeEvidence?: SessionInputForgeEvidenceV1;
+    /** The new handoff carries the canonical answer; legacy callers retain their status projection. */
+    returnResult?: true;
 }>;
 
 /**
@@ -107,6 +114,7 @@ export function planEntrySessionInput(
             }),
             lastKnownLocator: entry.display.locator,
         })),
+        attachments: delivery.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(delivery.forgeEvidence)],
     });
     if (plan.kind !== 'send') return { kind: 'none' };
     // The planner exposes an immutable projection. The generated Action input
@@ -118,16 +126,21 @@ export function planEntrySessionInput(
 export async function deliverEntrySessionInput(input: Readonly<{
     execute: TriageSessionActionInvokerV1;
     sessionId: SessionId;
+    serverId?: string;
     delivery: TriageEntrySessionDeliveryRequestV1;
     signal?: AbortSignal;
+    onResult?: (result: PluginActionResultById['session.message.send']) => void;
+    onFailure?: (detail: TriageSessionDeliveryFailureDetailV1) => void;
 }>): Promise<TriageEntrySessionDeliveryOutcomeV1> {
-    const plan = planEntrySessionInput(input.delivery);
-    // Nothing to say. The Session still exists, is linked and will open — that
-    // is the press's real outcome, and a blank Message announcing it would be a
-    // Message the reader never wrote.
-    if (plan.kind === 'none') return 'none';
-
+    let step: TriageSessionDeliveryFailureDetailV1['step'] = 'buildInput';
     try {
+        const plan = planEntrySessionInput(input.delivery);
+        // Nothing to say. The Session still exists, is linked and will open — that
+        // is the press's real outcome, and a blank Message announcing it would be a
+        // Message the reader never wrote.
+        if (plan.kind === 'none') return 'none';
+
+        step = 'dispatch';
         const result = await input.execute(
             'session.message.send',
             {
@@ -135,21 +148,34 @@ export async function deliverEntrySessionInput(input: Readonly<{
                 message: plan.text,
                 idempotencyKey: input.delivery.idempotencyKey,
                 ...(plan.attachments.length === 0 ? {} : { attachments: plan.attachments }),
-            } as SessionMessageSendInput,
-            input.signal ? { signal: input.signal } : undefined,
+            },
+            {
+                ...(input.signal === undefined ? {} : { signal: input.signal }),
+                ...(input.serverId === undefined ? {} : {
+                    sessionAddress: { serverId: input.serverId, sessionId: input.sessionId },
+                }),
+            },
         );
+        input.onResult?.(result);
+        if ('status' in result && result.status === 'outcomeUnknown') {
+            input.onFailure?.({ step: 'awaitAck', errorClass: null, errorCode: result.code ?? null });
+        }
         // The Message-send owner's own verdict, carried out unchanged. Collapsing
         // `rejected` into success is the defect this whole phase exists to fix,
         // so there is deliberately no default arm to collapse it into.
         // This invocation addresses one exact Session. A fanout answer cannot
         // establish what happened to that input, so retain its retry identity.
         return 'status' in result ? result.status : 'outcomeUnknown';
-    } catch {
-        // The call crossed the host boundary and never answered, so whether the
-        // input was admitted is genuinely unknown. Saying so is the honest
-        // answer, and the retained idempotency key is what makes pressing again
-        // safe: a resend rejoins the same durable input rather than queueing a
-        // second Message.
+    } catch (error) {
+        const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+        const pluginError = isPluginError(error) ? error : null;
+        const cause = ActionFailureCauseV1Schema.safeParse(pluginError?.data.failureCause ?? pluginError?.details);
+        input.onFailure?.({ step, errorClass: cause.success ? cause.data.errorClass
+            : pluginError ? 'PluginError' : diagnostic.errorClass,
+            errorCode: cause.success ? cause.data.errorCode : pluginError?.code ?? diagnostic.errorCode });
+        // Retain the failing boundary, never the exception's message, stack or
+        // opaque details. A dispatch exception cannot establish admission; the
+        // existing idempotency key remains the recovery identity.
         return 'outcomeUnknown';
     }
 }

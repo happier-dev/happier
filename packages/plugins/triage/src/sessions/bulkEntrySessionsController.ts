@@ -1,7 +1,7 @@
 import type { PluginUiHostApi, PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
 
 import type { TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
-import type { TriageConfiguredStartRecoveryV1, TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
+import type { TriageConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 import { triageEntryRowKey } from '../projection/listWindow.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { resolvesTriageUnknownSessionStartV1 } from '../ui/header/sessionStartOutcome.js';
@@ -810,6 +810,7 @@ export function createTriageBulkEntrySessionsController(
                         profileId: action.profileId,
                         checkoutIntent,
                         placement,
+                        candidates: registry.status === 'read' ? registry.projects.map(projectTriageSessionPlacementCandidateV1) : [],
                         signal: controller.signal,
                     });
                     if (retired.current) return;
@@ -1090,12 +1091,12 @@ async function seedNewSession(input: Readonly<{
      * candidates instead of becoming the first path in the array.
      */
     placement: TriageBulkSeedPlacementV1;
+    candidates: Parameters<typeof requestTriageNewSessionAuthoringV1>[1]['candidates'];
     signal: AbortSignal;
 }>): ReturnType<typeof requestTriageNewSessionAuthoringV1> {
-    const placementCandidates = input.placement.kind === 'none' ? [] : input.placement.candidates.map(projectTriageSessionPlacementCandidateV1);
     return await requestTriageNewSessionAuthoringV1(input.host, {
         entries: input.entries, promptText: input.promptText, profileId: input.profileId,
-        checkoutIntent: input.checkoutIntent, candidates: placementCandidates,
+        checkoutIntent: input.checkoutIntent, candidates: input.candidates,
         placement: input.placement.kind === 'exact' ? input.placement.placement : null,
         signal: input.signal,
     });

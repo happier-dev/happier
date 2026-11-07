@@ -91,6 +91,8 @@ export function planTriageActionDeliveryV1(input: Readonly<{
      * connection is a different failure from the one being prevented.
      */
     entries: readonly TriageActionDeliveryEntryV1[];
+    /** Ordinary admitted attachment values, shared by compose and send. */
+    attachments?: readonly TriageEntryAttachmentDraftV1[];
 }>): TriageActionDeliveryPlanV1 {
     const attachments = input.entries.flatMap((entry) => {
         const draft = buildTriageEntryAttachmentDraftV1({
@@ -103,6 +105,7 @@ export function planTriageActionDeliveryV1(input: Readonly<{
         });
         return draft === null ? [] : [draft];
     });
+    attachments.push(...(input.attachments ?? []));
     // The Prompt Library renderer owns these bytes. Use trimming only to apply
     // the canonical "whitespace alone is no text" rule; when content exists,
     // preserve it exactly so indentation and trailing Markdown/newlines do not

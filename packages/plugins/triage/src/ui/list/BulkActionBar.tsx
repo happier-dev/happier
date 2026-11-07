@@ -152,7 +152,7 @@ function useTriageBulkOfferedActions(
 
 /**
  * Which configured action a bulk press applies: one compact menu ("Action · Ask") in the list toolbar beside
- * "Done selecting". The selection keeps the list's space; the destinations stay in the floating bar.
+ * "Done". The selection keeps the list's space; the destinations stay in the floating bar.
  */
 export function TriageBulkActionPicker(props: Readonly<{
   actions: readonly TriageActionV1[];

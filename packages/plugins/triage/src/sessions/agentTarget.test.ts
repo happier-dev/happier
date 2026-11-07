@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     readTriageAgentExecutionTargetV1,
+    readTriageInvestigationAgentV1,
     TRIAGE_AGENTS_BACKENDS_LIST_ACTION_ID_V1,
 } from './agentTarget.js';
 
@@ -18,6 +19,26 @@ const CLAUDE = {
 };
 
 describe('the profile’s preferred agent, resolved through the host inventory', () => {
+    it('reports the actual inventory default label, and keeps a profile preference authoritative', async () => {
+        const host = hostReturning({ defaultTargetKey: 'backend:claude', items: [
+            { ...CLAUDE, targetKey: 'backend:codex', label: 'Codex' }, CLAUDE,
+        ] });
+        expect((await readTriageInvestigationAgentV1(host)).selected)
+            .toEqual({ targetKey: 'backend:claude', label: 'Claude Code' });
+        expect((await readTriageInvestigationAgentV1(host, 'backend:codex')).selected)
+            .toEqual({ targetKey: 'backend:codex', label: 'Codex' });
+        expect((await readTriageInvestigationAgentV1(host, 'missing')).selected).toBeUndefined();
+    });
+    it('preserves the exact configured Agent definition published by the inventory', async () => {
+        const identity = { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' };
+        const agentTarget = { kind: 'agent', identity, definitionId: 'definition-b' };
+        const host = hostReturning({ items: [
+            { targetKey: 'first-definition', label: 'First', enabled: true,
+                agentTarget: { kind: 'agent', identity, definitionId: 'definition-a' } },
+            { targetKey: 'selected-definition', label: 'Selected', enabled: true, agentTarget },
+        ] });
+        expect(await readTriageAgentExecutionTargetV1(host, 'selected-definition')).toEqual({ status: 'resolved', agentTarget });
+    });
     /**
      * The whole point of the resolution: Triage never parses the backend-target
      * key. It hands the profile's stored key to the inventory that minted it and

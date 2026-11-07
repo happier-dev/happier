@@ -1,15 +1,14 @@
 import type {
     PluginActionInputById,
+    PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
+import { SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
+import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
 
-import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import { sameTriageEntryReference } from '../corpus/identity/components.js';
-import {
-    linkEntryToSession,
-    type TriageEntrySessionLinkDisplayV1,
-} from './entrySessionLinks.js';
+import type { TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
 import {
     deliverEntrySessionInput,
     type TriageEntrySessionDeliveryOutcomeV1,
@@ -71,10 +70,9 @@ const PROHIBITED_SPAWN_MEMBERS = [
     'checkoutCreationDraft',
 ] as const;
 
-export type TriageSessionSpawnRequestV1 = Omit<
-    SessionSpawnInput,
-    'creationKey' | 'directory' | (typeof PROHIBITED_SPAWN_MEMBERS)[number]
->;
+export type TriageSessionSpawnRequestV1 = Extract<
+    TriageStartEntrySessionInputV1['destination'], { kind: 'new' }
+>['spawn'];
 
 /**
  * Strips the prohibited members even when a caller carried them in an
@@ -84,14 +82,18 @@ export type TriageSessionSpawnRequestV1 = Omit<
  */
 function withoutProhibitedSpawnMembers(
     spawn: TriageSessionSpawnRequestV1,
-): TriageSessionSpawnRequestV1 {
+): Record<string, unknown> {
     const candidate: Record<string, unknown> = { ...spawn };
     for (const member of PROHIBITED_SPAWN_MEMBERS) delete candidate[member];
-    return candidate as TriageSessionSpawnRequestV1;
+    return candidate;
 }
 
 export type TriageEntrySessionDestinationV1 =
-    | Readonly<{ kind: 'existing'; sessionId: SessionId }>
+    | Readonly<{ kind: 'existing'; sessionId: SessionId; serverId?: string;
+        /** Internal accepted-Session projection; never a caller-supplied path choice. */
+        workspace?: TriageEntrySessionWorkspaceFactsV1;
+        /** Set only after the selected source's native read-only checkout verification. */
+        verifiedReviewWorkspace?: true }>
     | Readonly<{
         kind: 'new';
         creationKey: string;
@@ -106,13 +108,13 @@ export type TriageEntrySessionDestinationV1 =
  */
 export type TriageEntrySessionFinalOpenV1 = 'deferred' | 'suppressed';
 
-export type TriageEntrySessionStartRequestV1 = Readonly<{
-    entryRef: TriageEntryRefV1;
+export type TriageSessionStartRequestV1 = Readonly<{
+    entryRef?: TriageEntryRefV1;
     /**
      * The entry as the caller's device-local projection rendered it. The link
      * freezes a display path from it; nothing durable holds one to read.
      */
-    display: TriageEntrySessionLinkDisplayV1;
+    display?: TriageEntrySessionLinkDisplayV1;
     /**
      * What the pressed action declared it needs on disk. It is the gate's ONE
      * input: the entry's workflow subject decided which actions were offered at
@@ -140,17 +142,21 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
     finalOpen?: TriageEntrySessionFinalOpenV1;
 }>;
 
-export type TriageEntrySessionRejectionReasonV1 =
-    | 'existingSessionRequiresReferenceOnlyMode'
-    | 'referenceOnlyModeRequiresReferenceOnlyWorkspace'
-    | 'pullRequestModeRequiresPreparedWorkspace'
-    | 'pullRequestWorkspaceEntryMismatch'
-    | 'repositoryModeRequiresSelectedProject'
-    | 'orchestrationRequiresNewSessionWithEntryInput';
+/** Legacy entry callers keep their required identity; repository handoffs have none. */
+export type TriageEntrySessionStartRequestV1 = TriageSessionStartRequestV1 & Readonly<{
+    entryRef: TriageEntryRefV1;
+    display: TriageEntrySessionLinkDisplayV1;
+}>;
 
-export type TriageEntrySessionDispositionV1 = 'created' | 'rejoined' | 'existing';
+export type TriageEntrySessionRejectionReasonV1 = Extract<
+    import('../actions/entrySessionProtocol.js').TriageStartEntrySessionResultV1, { type: 'rejected' }
+>['reason'];
 
-export type TriageEntrySessionStartResultV1 =
+export type TriageEntrySessionDispositionV1 = ReturnType<
+    typeof import('../actions/entrySessionProtocol.js').TriageEntrySessionDispositionV1Schema.parse
+>;
+
+export type TriageEntrySessionStartResultV1 = (
     | Readonly<{
         type: 'opened';
         sessionId: SessionId;
@@ -190,6 +196,8 @@ export type TriageEntrySessionStartResultV1 =
     }>
     | Readonly<{
         type: 'creationFailed';
+        failureCode: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>['code'];
+        failureCause?: string;
         creationKey: string;
         workspace: TriageEntrySessionWorkspaceFactsV1;
     }>
@@ -198,16 +206,17 @@ export type TriageEntrySessionStartResultV1 =
         reason: TriageWorkspacePreparationFailureV1['reason'];
         retryable: boolean;
     }>
-    | Readonly<{ type: 'rejected'; reason: TriageEntrySessionRejectionReasonV1 }>;
+    | Readonly<{ type: 'rejected'; reason: TriageEntrySessionRejectionReasonV1 }>
+) & Readonly<{ deliveryResult?: PluginActionResultById['session.message.send'] }>;
 
 export type TriageEntrySessionDepsV1 = Readonly<{
-    collections: Pick<CorpusCollectionsV1, 'sessionLinks'>;
-    /** Source-neutral relationship owner; absent only for direct external-owner callers. */
-    linkSession?: (input: Readonly<{
+    /** The composed source/corpus relationship owner supplied by the invocation. */
+    linkSession: (input: Readonly<{
         entryRef: TriageEntryRefV1; display: TriageEntrySessionLinkDisplayV1;
         sessionId: string; sourceInstanceId?: string;
     }>) => Promise<Readonly<{ status: 'linked' | 'failed' }>>;
     execute: TriageSessionActionInvokerV1;
+    onDeliveryFailure?: (detail: TriageSessionDeliveryFailureDetailV1) => void;
     /**
      * The selected source contribution's admitted preparation operation and the
      * host execution for it. Absent when nothing about the current selection can
@@ -215,7 +224,6 @@ export type TriageEntrySessionDepsV1 = Readonly<{
      * reaching for another route.
      */
     prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1;
-    nowMs: number;
     signal?: AbortSignal;
 }>;
 
@@ -233,23 +241,27 @@ export type TriageEntrySessionDepsV1 = Readonly<{
  * by side so a reader is never told the start failed because their prompt was
  * refused, nor told everything worked when it was.
  */
+type LinkedSessionDeliveryInput = Readonly<{
+    sessionId: SessionId;
+    serverId?: string;
+    disposition: TriageEntrySessionDispositionV1;
+    workspace: TriageEntrySessionWorkspaceFactsV1;
+    delivery?: TriageEntrySessionDeliveryRequestV1;
+    settledDelivery?: TriageEntrySessionDeliveryOutcomeV1;
+    finalOpen?: TriageEntrySessionFinalOpenV1;
+}>;
+
 async function linkDeliverThenOpen(
     deps: TriageEntrySessionDepsV1,
-    input: Readonly<{
-        entryRef: TriageEntryRefV1;
-        display: TriageEntrySessionLinkDisplayV1;
-        sessionId: SessionId;
-        disposition: TriageEntrySessionDispositionV1;
-        workspace: TriageEntrySessionWorkspaceFactsV1;
-        delivery?: TriageEntrySessionDeliveryRequestV1;
-        settledDelivery?: TriageEntrySessionDeliveryOutcomeV1;
-        finalOpen?: TriageEntrySessionFinalOpenV1;
+    input: LinkedSessionDeliveryInput & Readonly<{
+        entryRef?: TriageEntryRefV1;
+        display?: TriageEntrySessionLinkDisplayV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
     const requiredLinks: Readonly<{
         entryRef: TriageEntryRefV1;
         display: TriageEntrySessionLinkDisplayV1;
-    }>[] = [{
+    }>[] = input.entryRef === undefined || input.display === undefined ? [] : [{
         entryRef: input.entryRef,
         display: input.display,
     }];
@@ -260,20 +272,14 @@ async function linkDeliverThenOpen(
         requiredLinks.push(candidate);
     }
     for (const requiredLink of requiredLinks) {
+        const sourceInstanceId = input.delivery?.attachments.find((attachment) =>
+            sameTriageEntryReference(attachment.entryRef, requiredLink.entryRef))?.sourceInstanceId;
         const linkInput = {
             ...requiredLink,
             sessionId: input.sessionId,
-            sourceInstanceId: input.delivery?.attachments.find((attachment) =>
-                sameTriageEntryReference(attachment.entryRef, requiredLink.entryRef))?.sourceInstanceId,
+            ...(sourceInstanceId === undefined ? {} : { sourceInstanceId }),
         };
-        const link = deps.linkSession ? await deps.linkSession(linkInput) : await linkEntryToSession({
-            collections: deps.collections,
-            entryRef: requiredLink.entryRef,
-            display: requiredLink.display,
-            sessionId: input.sessionId,
-            nowMs: deps.nowMs,
-            ...(deps.signal ? { signal: deps.signal } : {}),
-        });
+        const link = deps.linkSession === undefined ? { status: 'failed' } : await deps.linkSession(linkInput);
         if (link.status !== 'linked') {
             // No structured input is admitted until every relationship its
             // attachments require is durable. Retrying starts this idempotent
@@ -287,13 +293,25 @@ async function linkDeliverThenOpen(
             };
         }
     }
+    return await deliverThenOpen(deps, input);
+}
+
+/** Every linked start/retry shares the same delivery and final-navigation decision. */
+async function deliverThenOpen(
+    deps: TriageEntrySessionDepsV1,
+    input: LinkedSessionDeliveryInput,
+): Promise<TriageEntrySessionStartResultV1> {
+    let deliveryResult: PluginActionResultById['session.message.send'] | undefined;
     const delivery: TriageEntrySessionDeliveryOutcomeV1 = input.settledDelivery
         ?? (input.delivery === undefined
             ? 'notRequested'
             : await deliverEntrySessionInput({
                 execute: deps.execute,
                 sessionId: input.sessionId,
+                serverId: input.serverId,
                 delivery: input.delivery,
+                onResult: (result) => { if (input.delivery?.returnResult === true) deliveryResult = result; },
+                ...(deps.onDeliveryFailure === undefined ? {} : { onFailure: deps.onDeliveryFailure }),
                 ...(deps.signal ? { signal: deps.signal } : {}),
             }));
     if (input.finalOpen !== undefined) {
@@ -307,12 +325,14 @@ async function linkDeliverThenOpen(
             disposition: input.disposition,
             workspace: input.workspace,
             delivery,
+            ...(deliveryResult === undefined ? {} : { deliveryResult }),
             finalOpen: input.finalOpen,
         };
     }
     const opened = await openLinkedSession({
         execute: deps.execute,
         sessionId: input.sessionId,
+        ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return {
@@ -321,6 +341,7 @@ async function linkDeliverThenOpen(
         disposition: input.disposition,
         workspace: input.workspace,
         delivery,
+        ...(deliveryResult === undefined ? {} : { deliveryResult }),
     };
 }
 
@@ -337,7 +358,7 @@ export type TriageEntrySessionPendingPhaseV1 =
         type: 'creationPending';
         creationKey: string;
         spawn: TriageSessionSpawnRequestV1;
-        directory: string;
+        directory: string | Readonly<{ kind: 'managed' }>;
         workspace: TriageEntrySessionWorkspaceFactsV1;
     }>
     | Readonly<{
@@ -368,9 +389,10 @@ export type TriageEntrySessionPendingPhaseV1 =
 export async function resumeEntrySessionStart(
     deps: TriageEntrySessionDepsV1,
     input: Readonly<{
-        entryRef: TriageEntryRefV1;
-        display: TriageEntrySessionLinkDisplayV1;
+        entryRef?: TriageEntryRefV1;
+        display?: TriageEntrySessionLinkDisplayV1;
         pending: TriageEntrySessionPendingPhaseV1;
+        serverId?: string;
         delivery?: TriageEntrySessionDeliveryRequestV1;
         orchestrate?: true;
         finalOpen?: TriageEntrySessionFinalOpenV1;
@@ -385,8 +407,7 @@ export async function resumeEntrySessionStart(
         const result = await deps.execute(
             'session.spawn_new',
             {
-                ...entrySpawnSelection(pending.spawn, input.orchestrate, delivery),
-                directory: { kind: 'path', path: pending.directory },
+                ...entrySpawnSelection(pending.spawn, pending.directory, input.orchestrate, delivery),
                 creationKey: pending.creationKey,
             },
             deps.signal ? { signal: deps.signal } : undefined,
@@ -402,6 +423,8 @@ export async function resumeEntrySessionStart(
         if (result.type !== 'success') {
             return {
                 type: 'creationFailed',
+                failureCode: result.code,
+                ...('launchError' in result && result.launchError ? { failureCause: result.launchError.code } : {}),
                 creationKey: pending.creationKey,
                 workspace: pending.workspace,
             };
@@ -410,6 +433,7 @@ export async function resumeEntrySessionStart(
             entryRef: input.entryRef,
             display: input.display,
             sessionId: result.sessionId,
+            serverId: pending.spawn.executionTarget.serverId,
             disposition: result.disposition,
             workspace: pending.workspace,
             ...(delivery === undefined ? {} : { delivery }),
@@ -421,6 +445,7 @@ export async function resumeEntrySessionStart(
             entryRef: input.entryRef,
             display: input.display,
             sessionId: pending.sessionId,
+            serverId: input.serverId,
             disposition: pending.disposition,
             workspace: pending.workspace,
             ...(pending.settledDelivery === undefined
@@ -429,27 +454,15 @@ export async function resumeEntrySessionStart(
             ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
         });
     }
-    const delivered: TriageEntrySessionDeliveryOutcomeV1 = pending.settledDelivery
-        ?? (delivery === undefined
-            ? 'notRequested'
-            : await deliverEntrySessionInput({
-                execute: deps.execute,
-                sessionId: pending.sessionId,
-                delivery,
-                ...(deps.signal ? { signal: deps.signal } : {}),
-            }));
-    const opened = await openLinkedSession({
-        execute: deps.execute,
+    return await deliverThenOpen(deps, {
         sessionId: pending.sessionId,
-        ...(deps.signal ? { signal: deps.signal } : {}),
-    });
-    return {
-        type: opened.status === 'opened' ? 'opened' : 'openPending',
-        sessionId: pending.sessionId,
+        serverId: input.serverId,
         disposition: pending.disposition,
         workspace: pending.workspace,
-        delivery: delivered,
-    };
+        ...(delivery === undefined ? {} : { delivery }),
+        ...(pending.settledDelivery === undefined ? {} : { settledDelivery: pending.settledDelivery }),
+        ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
+    });
 }
 
 /** The one refusal each mode produces when it was sent another mode's workspace. */
@@ -472,14 +485,11 @@ const MODE_MISMATCH_REJECTION_V1 = Object.freeze({
  * selected — but they are now stated once instead of derived here from an
  * intent label and the entry's workflow subject.
  *
- * Reusing an EXISTING Session stays a reference-only affair: a start that
- * carries a workspace has a directory to create, and an existing Session
- * already has one. So there is still no existing-workspace comparison, no path
- * normalization and no mutate-before-agreement path, and an error entry still
- * cannot turn a stack frame, URL or source identity into a checkout.
+ * An existing Session may satisfy the requirement through its canonical
+ * accepted workspace projection. This never chooses or changes its directory.
  */
 function rejectionFor(
-    request: TriageEntrySessionStartRequestV1,
+    request: TriageSessionStartRequestV1,
 ): TriageEntrySessionRejectionReasonV1 | null {
     const destination = request.destination;
     if (request.orchestrate === true && (destination.kind !== 'new'
@@ -487,39 +497,47 @@ function rejectionFor(
         return 'orchestrationRequiresNewSessionWithEntryInput';
     }
     if (destination.kind === 'existing') {
-        return request.workspaceMode === 'reference_only'
-            ? null
-            : 'existingSessionRequiresReferenceOnlyMode';
+        if (request.workspaceMode === 'reference_only') return null;
+        return (destination.workspace?.kind === 'selectedProject'
+            && (request.workspaceMode === 'repository' || destination.verifiedReviewWorkspace === true))
+            || destination.workspace?.kind === 'preparedReviewWorkspace'
+            ? null : 'existingSessionRequiresReferenceOnlyMode';
     }
     const required = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[request.workspaceMode];
     if (destination.materialization.kind !== required) {
         return MODE_MISMATCH_REJECTION_V1[request.workspaceMode];
     }
     if (destination.materialization.kind === 'reviewWorkspace'
-        && !sameTriageEntryReference(
+        && (request.entryRef === undefined || !sameTriageEntryReference(
             request.entryRef,
             destination.materialization.request.entryRef,
-        )) {
+        ))) {
         return 'pullRequestWorkspaceEntryMismatch';
     }
     return null;
 }
 
 function hasOrchestrationEntryInput(
-    entryRef: TriageEntryRefV1,
+    entryRef: TriageEntryRefV1 | undefined,
     delivery: TriageEntrySessionDeliveryRequestV1 | undefined,
 ): boolean {
-    return delivery !== undefined && Boolean(delivery.text?.trim())
+    return entryRef !== undefined && delivery !== undefined && Boolean(delivery.text?.trim())
         && delivery.attachments.some((attachment) => sameTriageEntryReference(entryRef, attachment.entryRef));
 }
 
 /** The single spawn selection for initial creation and same-key creation retries. */
 function entrySpawnSelection(
     spawn: TriageSessionSpawnRequestV1,
+    directory: string | Readonly<{ kind: 'managed' }>,
     orchestrate: true | undefined,
     delivery: TriageEntrySessionDeliveryRequestV1 | undefined,
-): TriageSessionSpawnRequestV1 {
-    const selection = withoutProhibitedSpawnMembers(spawn);
+): SessionSpawnInput {
+    // The retained carrier is a New Session recipe, not an Action operand.
+    // Materialization supplies the real path before canonical admission and
+    // the Session owner's Section projection run for both create and rejoin.
+    const selection = projectSessionSpawnNewActionInputV2(SessionServerStartSpawnDraftV1Schema.parse({
+        ...withoutProhibitedSpawnMembers(spawn), directory: typeof directory === 'string' ? { kind: 'path', path: directory } : directory,
+    }));
     if (orchestrate !== true) return selection;
     return {
         ...selection,
@@ -569,7 +587,7 @@ async function resolveMaterialization(
 
 export async function startEntrySession(
     deps: TriageEntrySessionDepsV1,
-    request: TriageEntrySessionStartRequestV1,
+    request: TriageSessionStartRequestV1,
 ): Promise<TriageEntrySessionStartResultV1> {
     const rejection = rejectionFor(request);
     if (rejection) return { type: 'rejected', reason: rejection };
@@ -580,8 +598,9 @@ export async function startEntrySession(
             entryRef: request.entryRef,
             display: request.display,
             sessionId: destination.sessionId,
+            serverId: destination.serverId,
             disposition: 'existing',
-            workspace: { kind: 'referenceOnly' },
+            workspace: destination.workspace ?? { kind: 'referenceOnly' },
             ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
             ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),
         });
@@ -601,8 +620,7 @@ export async function startEntrySession(
 
     const workspace = materializationWorkspaceFacts(resolved.materialization);
     const spawnInput: SessionSpawnInput = {
-        ...entrySpawnSelection(destination.spawn, request.orchestrate, request.delivery),
-        directory: { kind: 'path', path: materializationDirectory(resolved.materialization) },
+        ...entrySpawnSelection(destination.spawn, materializationDirectory(resolved.materialization), request.orchestrate, request.delivery),
         creationKey: destination.creationKey,
     };
     const result = await deps.execute(
@@ -629,12 +647,15 @@ export async function startEntrySession(
         // is opaque: no Session id is disclosed, so none is fabricated,
         // relabelled `rejoined`, linked or opened. A new visible user action
         // receives a new key.
-        return { type: 'creationFailed', creationKey: destination.creationKey, workspace };
+        return { type: 'creationFailed', failureCode: result.code,
+            ...('launchError' in result && result.launchError ? { failureCause: result.launchError.code } : {}),
+            creationKey: destination.creationKey, workspace };
     }
     return await linkDeliverThenOpen(deps, {
         entryRef: request.entryRef,
         display: request.display,
         sessionId: result.sessionId,
+        serverId: destination.spawn.executionTarget.serverId,
         disposition: result.disposition,
         workspace,
         ...(request.delivery === undefined ? {} : { delivery: request.delivery }),

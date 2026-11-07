@@ -1,6 +1,6 @@
 import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationPlan.js';
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
-import type { TriageEntrySessionStartRequestV1 } from '../header/useEntrySessionStart.js';
+import type { TriageEntrySessionStartRequestV1 } from '../../sessions/entrySessionStartController.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import type { TriageReviewWorkspacePreparationV1 } from '../header/newSessionDestination.js';
 

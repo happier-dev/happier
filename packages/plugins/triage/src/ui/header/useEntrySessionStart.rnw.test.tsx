@@ -430,17 +430,17 @@ describe('read-only PR Walk placement', () => {
         expect(actionCalls).not.toContain('sessions.spawn.profiles.list');
     });
 
-    it('uses incumbent New Session placement without preparation or prompt delivery when no link is reachable', async () => {
+    it('starts a settled placement without preparation or prompt delivery when no link is reachable', async () => {
         const { fixture } = await mountProbe({
             request: { ...START_REQUEST, comparisonDestination: {
                 kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
-            }, linkedSessionIds: ['sleeping-session'] },
+            }, linkedSessionIds: ['sleeping-session'], settlement: SETTLED_DESTINATION },
             startResults: [{ v: 1, type: 'linked', sessionId: 'session-a', disposition: 'created',
                 delivery: 'none', finalOpen: 'deferred' }],
         });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
         await settle();
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         expect(startInputs).toHaveLength(1);
         expect(startInputs[0]).toMatchObject({ workspaceMode: 'reference_only', finalOpen: 'deferred',
             destination: { kind: 'new', materialization: { kind: 'referenceOnly', directory: '/workspaces/example' } } });
@@ -455,7 +455,7 @@ describe('read-only PR Walk placement', () => {
         const { fixture } = await mountProbe({
             request: { ...START_REQUEST, comparisonDestination: {
                 kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
-            }, linkedSessionIds: ['linked-session'] },
+            }, linkedSessionIds: ['linked-session'], settlement: SETTLED_DESTINATION },
             linkedSession: { sessionId: 'linked-session', serverId: 'server-b', machineId: 'machine-a', path: '/workspaces/example' },
             projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a',
                 machineId: 'machine-a', rootPath: '/workspaces/example', worktrees: [], reachable: true }],
@@ -464,7 +464,7 @@ describe('read-only PR Walk placement', () => {
         });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
         await settle();
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
             destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
     });
@@ -473,7 +473,7 @@ describe('read-only PR Walk placement', () => {
         const { fixture } = await mountProbe({
             request: { ...START_REQUEST, comparisonDestination: {
                 kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough',
-            }, linkedSessionIds: ['linked-session'] },
+            }, linkedSessionIds: ['linked-session'], settlement: SETTLED_DESTINATION },
             linkedSession: { sessionId: 'linked-session', machineId: 'machine-a', path: '/workspaces/example' },
             projects: [{ projectKey: { id: 'workspace-a' }, serverId: 'server-a',
                 machineId: 'machine-a', rootPath: '/workspaces/example', worktrees: [], reachable: true }],
@@ -482,7 +482,7 @@ describe('read-only PR Walk placement', () => {
         });
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
         await settle();
-        expect(draftRequests).toHaveLength(1);
+        expect(draftRequests).toEqual([]);
         expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
             destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
     });
@@ -662,6 +662,26 @@ describe('an unresolved Start now', () => {
             attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })],
         })]);
         expect(openedPreparations).toHaveLength(checkoutIntent === 'preparedReviewWorkspace' ? 1 : 0);
+        expect(phase).toEqual({ kind: 'idle' });
+    });
+
+    /** Owner ruling 16:50Z: no draft modal for any agent action; only bulk keeps its per-unit settlement. */
+    it.each([
+        ['Walk through', { ...START_REQUEST, comparisonDestination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' },
+            linkedSessionIds: ['sleeping-session'] }, 'none'],
+        ['formal review', { ...PREPARED_REVIEW_START_REQUEST, action: { ...PREPARED_REVIEW_START_REQUEST.action, actionId: 'formal-review',
+            target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review the selected pull request.' } } },
+        'preparedReviewWorkspace'],
+        ['issue orchestration', { ...SEND_START_REQUEST, orchestrationPrompt: 'Plan only the migration.' }, 'createWorktree'],
+    ] as const)('opens the prefilled composer for an unresolved %s', async (_kind, request, checkoutIntent) => {
+        const { fixture } = await mountProbe({ request: request as TriageEntrySessionStartRequestV1 });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+        await settle();
+        expect(draftRequests.filter((asked) => (asked as { hostAction?: { projection?: string } })
+            .hostAction?.projection === 'serverStartDraft')).toEqual([]);
+        expect(startInputs).toEqual([]);
+        expect(comparisonOpens).toEqual([]);
+        expect(seeds).toEqual([expect.objectContaining({ checkoutIntent })]);
         expect(phase).toEqual({ kind: 'idle' });
     });
 });

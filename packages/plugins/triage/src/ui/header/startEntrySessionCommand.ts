@@ -1,4 +1,4 @@
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import type { PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 
 import {
@@ -30,7 +30,7 @@ import {
  */
 export type TriageSessionStartHostV1 = Readonly<{
     executeAction(
-        action: string,
+        action: string | PluginContributionRef,
         input: JsonValue,
         options?: PluginUiActionExecutionOptions,
     ): Promise<unknown>;
@@ -42,7 +42,7 @@ export async function submitTriageEntrySessionStart(
     options?: PluginUiActionExecutionOptions,
 ): Promise<TriageStartEntrySessionResultV1> {
     const result = await host.executeAction(
-        TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+        { pluginId: 'happier.triage', localId: TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 },
         // Passed through as the caller settled it. The entry reference in
         // particular is never rebuilt here: the link's address is derived from
         // it, and a reshaped one would address a second row for one

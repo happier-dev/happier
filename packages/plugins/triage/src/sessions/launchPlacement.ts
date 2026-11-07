@@ -70,6 +70,7 @@ export type TriageProjectWorktreeV1 = Readonly<{
  * silently not matched rather than probed.
  */
 export type TriageProjectCandidateV1 = Readonly<{
+    sourceId?: string;
     projectKey: ProjectKeyV1;
     serverId: string;
     machineId: string;

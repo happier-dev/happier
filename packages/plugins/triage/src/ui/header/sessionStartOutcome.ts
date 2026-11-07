@@ -1,5 +1,5 @@
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
-import type { TriageEntrySessionStartPhaseV1 } from './useEntrySessionStart.js';
+import type { TriageEntrySessionStartPhaseV1 } from '../../sessions/entrySessionStartController.js';
 
 /**
  * A Session id or canonical pending creation answers for the logical start.
@@ -168,6 +168,50 @@ export function describeTriageEntrySessionPhaseV1(
         'plugins.triage.surface.session.starting',
         'Starting a session for this entry…',
       );
+    case 'handoffSettled': {
+      const result = phase.result.handoff;
+      switch (result.kind) {
+        case 'cancelled': return null;
+        case 'composed':
+          return notice('muted', 'plugins.triage.surface.session.handoffComposed', 'Added this entry to the Session draft.');
+        case 'sendResult':
+          if (typeof result.result !== 'object' || result.result === null || !('status' in result.result)) {
+            return notice('warning', 'plugins.triage.surface.session.handoffReceipt', 'Check the selected Session for this action’s delivery result.');
+          }
+          switch (result.result.status) {
+            case 'rejected':
+            case 'failed':
+            case 'cancelled':
+              return notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.');
+            case 'held':
+              return notice('muted', 'plugins.triage.surface.session.handoffHeld', 'This action’s input is held in the selected Session.');
+            default:
+              return notice('muted', 'plugins.triage.surface.session.handoffSent', 'Sent this action’s input to the selected Session.');
+          }
+        case 'uncertain':
+          return notice('warning', 'plugins.triage.surface.session.handoffUncertain',
+            result.phase === 'link' ? 'The Session link could not be confirmed. Press again to resume the same request.'
+              : 'Happier could not confirm this action’s input. Press again to resume the same request.');
+        case 'unavailable': {
+          const labels: Record<typeof result.reason, string> = {
+            configuredActionUnavailable: 'This configured action is no longer available.',
+            evidenceInvalid: 'The entry could not be read for this action.',
+            repositoryMismatch: 'The selected Session belongs to a different repository.',
+            scopeMismatch: 'This action does not match the selected Session’s scope.',
+            sessionUnavailable: 'The selected Session is unavailable.',
+            agentMismatch: 'The selected Session uses a different Agent than this action requires.',
+            composerUnavailable: 'The selected Session’s draft is unavailable.',
+            targetUnavailable: 'The selected Session’s workspace cannot run this action.',
+          };
+          return notice('warning', `plugins.triage.surface.session.handoffUnavailable.${result.reason}`, labels[result.reason]);
+        }
+        case 'selectionRequired':
+        case 'placement_choice_required':
+          return notice('warning', 'plugins.triage.surface.session.handoffSelection', 'This action needs another Session or workspace choice.');
+        case 'entryExecution':
+          return notice('warning', 'plugins.triage.surface.session.handoffUnavailable', 'This action did not settle in the selected Session.');
+      }
+    }
     case 'settled': {
       // The start's own verdict comes first: whether the Session exists is a
       // bigger fact than what happened to the prompt afterwards. A delivery
@@ -211,6 +255,9 @@ export function describeTriageEntrySessionPhaseV1(
     }
     case 'unavailable':
       switch (phase.reason) {
+        case 'handoffOutcomeUnknown':
+          return notice('warning', 'plugins.triage.surface.session.handoffOutcomeUnknown',
+            'Happier could not confirm this action’s outcome. Check the selected Session before trying again.');
         case 'newSessionUnsupported':
           return notice(
             'warning',
@@ -218,6 +265,13 @@ export function describeTriageEntrySessionPhaseV1(
             'This screen cannot open the New Session surface, so nothing was started.',
           );
         case 'newSessionUnavailable':
+          if (phase.failure?.codes.includes('workspaceMismatch')) {
+            return notice(
+              'warning',
+              'plugins.triage.surface.session.workspaceMismatch',
+              'This project cannot prepare the source’s checkout. Choose a project on the source’s Machine with a matching repository.',
+            );
+          }
           return notice(
             'warning',
             'plugins.triage.surface.session.newSessionUnavailable',

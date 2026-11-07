@@ -9,6 +9,7 @@ import {
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/plugin-sdk/ui';
+import type { TriageProjectCandidateV1 } from '../../sessions/launchPlacement.js';
 import type {
     TriageActionCheckoutResolutionV1,
     TriageActionExecutionPlacementV1,
@@ -99,9 +100,11 @@ export function projectTriageSessionPlacementCandidateV1(
 
 /** Choice and saved-project evidence travel separately, including Ask and fixed placement. */
 export function projectTriageActionPlacementCandidatesV1(
-    placement: TriageActionPlacementV1,
+    placement: TriageActionPlacementV1 & Readonly<{ availableCandidates?: readonly TriageProjectCandidateV1[] }>,
 ): readonly PluginUiSessionPlacementCandidateV1[] {
-    return (placement.kind === 'launch' ? [placement.candidate] : placement.candidates)
+    // Automatic matching remains the placement owner's answer. Saved projects
+    // are also available as an explicit override when the person is asked.
+    return (placement.availableCandidates ?? (placement.kind === 'launch' ? [placement.candidate] : placement.candidates))
         .map(projectTriageSessionPlacementCandidateV1);
 }
 
@@ -222,34 +225,32 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
 }>): TriageNewSessionDestinationV1 {
     const kind = TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1[input.workspaceMode];
 
-    // Consume the host's current draft before projecting its selected path into
-    // the incumbent Triage materialization grammar. Managed placement has no
-    // explicit path for this flow and must not be guessed by the plugin.
+    // Keep managed scratch as an intent. Only the target Session owner may
+    // allocate its path; repository and review materialization need a checkout.
     const selected = SessionServerStartSpawnDraftV1Schema.safeParse(input.settlement);
-    if (!selected.success || selected.data.directory.kind !== 'path') {
+    if (!selected.success || (selected.data.directory.kind !== 'path' && kind !== 'referenceOnly')) {
         return { status: 'refused', reason: 'draftUnusable' };
     }
     const draft = TriageStartEntrySessionSettledDraftV1Schema.safeParse(selected.data);
     if (!draft.success) return { status: 'refused', reason: 'draftUnusable' };
-    const directory = draft.data.directory.path;
+    const directory = draft.data.directory.kind === 'path' ? draft.data.directory.path : draft.data.directory;
 
     if (kind === 'reviewWorkspace' && input.reviewWorkspace === undefined) {
         return { status: 'refused', reason: 'preparedWorkspaceUnsupported' };
     }
 
-    const materialization = kind === 'reviewWorkspace'
-        ? {
+    let materialization: Extract<TriageStartEntrySessionInputV1['destination'], { kind: 'new' }>['materialization'];
+    if (kind === 'referenceOnly') materialization = { kind, directory };
+    else {
+        if (typeof directory !== 'string') return { status: 'refused', reason: 'draftUnusable' };
+        materialization = kind === 'reviewWorkspace' ? {
             kind,
             request: {
-                ...input.reviewWorkspace!,
-                workflowSubject: 'pullRequest' as const,
-                workspace: selectedWorkspaceScope({
-                    executionTarget: draft.data.executionTarget,
-                    directory,
-                }, input.placementCandidates ?? []),
+                ...input.reviewWorkspace!, workflowSubject: 'pullRequest',
+                workspace: selectedWorkspaceScope({ executionTarget: draft.data.executionTarget, directory }, input.placementCandidates ?? []),
             },
-        }
-        : { kind, directory };
+        } : { kind, directory };
+    }
 
     const { directory: _directory, ...settledSpawn } = draft.data;
     const spawn = {

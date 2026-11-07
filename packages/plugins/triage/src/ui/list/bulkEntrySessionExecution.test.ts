@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 import { createTestkitCorpusCollections } from '../../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitEntrySessionLinkWriter, testkitTriageActionId } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 
 import { startTriageEntrySession } from '../../actions/entrySession.js';
 import {
@@ -92,7 +94,8 @@ function executionHarness(input: Readonly<{
     const sends = [...(input.sendResults ?? [])];
     let linkAttempt = 0;
     let retired = false;
-    const { sessionLinks: storedLinks } = createTestkitCorpusCollections().collections;
+    const { collections } = createTestkitCorpusCollections();
+    const storedLinks = collections.sessionLinks;
     const sessionLinks = {
         ...storedLinks,
         batch: async (...args: Parameters<typeof storedLinks.batch>) => {
@@ -107,6 +110,7 @@ function executionHarness(input: Readonly<{
     const execute = (async (actionId: string, actionInput: Readonly<{ initialInput?: unknown }>) => {
         if (retired) throw new Error('triage:test:mountRetired');
         if (actionId === 'session.spawn_new') {
+            PLUGIN_ACTION_INPUT_SCHEMAS['session.spawn_new'].parse(actionInput);
             lifecycle.push('spawn');
             const sessionId = sessions.shift();
             if (sessionId === undefined) throw new Error('triage:test:missingSpawn');
@@ -115,7 +119,7 @@ function executionHarness(input: Readonly<{
                 disposition: 'created',
                 sessionId,
                 executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
-                organizationPlacement: { folderId: null, tagIds: [] },
+                organizationPlacement: { sectionId: null, tagIds: [] },
                 initialInput: { status: 'notRequested' },
             };
         }
@@ -133,16 +137,16 @@ function executionHarness(input: Readonly<{
         throw new Error(`triage:test:unexpectedGenericAction:${actionId}`);
     }) as unknown as TriageSessionActionInvokerV1;
     const host = {
-        executeAction: async (actionId: string, actionInput: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+        executeAction: async (actionRef: unknown, actionInput: unknown, options?: Readonly<{ signal?: AbortSignal }>) => {
+            const actionId = testkitTriageActionId(actionRef);
             if (retired) throw new Error('triage:test:mountRetired');
             if (actionId === TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
                 startInputs.push(TriageStartEntrySessionInputV1Schema.parse(actionInput));
                 return await startTriageEntrySession(
                     TriageStartEntrySessionInputV1Schema.parse(actionInput),
                     {
-                        collections: { sessionLinks },
+                        linkSession: createTestkitEntrySessionLinkWriter({ ...collections, sessionLinks }),
                         execute,
-                        nowMs: () => 1_760_000_900_000,
                     },
                 );
             }
@@ -294,7 +298,8 @@ describe('bulk Session execution lifecycle', () => {
         const entry = selectedEntry('17');
         const submitted: TriageStartEntrySessionInputV1[] = [];
         const host = {
-            executeAction: async (actionId: string, actionInput: unknown) => {
+            executeAction: async (actionRef: unknown, actionInput: unknown) => {
+                const actionId = testkitTriageActionId(actionRef);
                 if (actionId !== TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
                     throw new Error(`triage:test:unexpectedAction:${actionId}`);
                 }
@@ -344,7 +349,8 @@ describe('bulk Session execution lifecycle', () => {
         const units = [unit('bulk-17', [entry])];
         const submitted: TriageStartEntrySessionInputV1[] = [];
         const host = {
-            executeAction: async (actionId: string, actionInput: unknown) => {
+            executeAction: async (actionRef: unknown, actionInput: unknown) => {
+                const actionId = testkitTriageActionId(actionRef);
                 if (actionId !== TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
                     throw new Error(`triage:test:unexpectedAction:${actionId}`);
                 }

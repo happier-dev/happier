@@ -9,9 +9,13 @@ import { fromCorpusStoredRow, toCorpusStoredValue } from '../corpus/collections/
 import type { CorpusSessionLinkRowV1 } from '../corpus/collections/rows.js';
 import { deriveSessionLinkEntryTag } from '../corpus/identity/tags.js';
 import { findTriageEntrySessionLinkV1 } from './readEntrySessionLinks.js';
+import { sameTriageEntryReference } from '../corpus/identity/components.js';
+import type { createTriageSourceSessionRelations } from './sourceSessionRelations.js';
 
 /**
- * The one durable effect an authoritative `merged(successor)` observation has.
+ * The continuity effect of an authoritative `merged(successor)` observation.
+ * The composed relation owner first admits both endpoints as corpus-owned.
+ * Source-owned moves are explicitly unsupported and preserve existing links.
  *
  * A Session link is a user commitment, and a provider merge must not strand it
  * on a predecessor nobody will open again. So when a source answers that the
@@ -44,6 +48,7 @@ import { findTriageEntrySessionLinkV1 } from './readEntrySessionLinks.js';
 
 export type CorpusReconcileMergedSuccessorInputV1 = Readonly<{
     collections: Pick<CorpusCollectionsV1, 'sessionLinks'>;
+    sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'ownership'>;
     /** The entry the source was asked about and reported as merged away. */
     entryRef: TriageEntryRefV1;
     /** The qualified direct successor that same authoritative observation named. */
@@ -60,7 +65,9 @@ export type CorpusReconcileMergedSuccessorResultV1 =
      * observation will find them; nothing is retried here, and nothing is
      * half-moved — each row moves whole or not at all.
      */
-    | Readonly<{ status: 'incomplete' }>;
+    | Readonly<{ status: 'incomplete' }>
+    /** The source owns either endpoint; no corpus link may be moved or deleted. */
+    | Readonly<{ status: 'unsupported' }>;
 
 const RECONCILED: CorpusReconcileMergedSuccessorResultV1 = Object.freeze({ status: 'reconciled' });
 const INCOMPLETE: CorpusReconcileMergedSuccessorResultV1 = Object.freeze({ status: 'incomplete' });
@@ -68,6 +75,13 @@ const INCOMPLETE: CorpusReconcileMergedSuccessorResultV1 = Object.freeze({ statu
 export async function reconcileMergedSuccessor(
     input: CorpusReconcileMergedSuccessorInputV1,
 ): Promise<CorpusReconcileMergedSuccessorResultV1> {
+    if (sameTriageEntryReference(input.entryRef, input.successorEntryRef)) return RECONCILED;
+    const [predecessorOwner, successorOwner] = await Promise.all([
+        input.sourceRelations.ownership(input.entryRef),
+        input.sourceRelations.ownership(input.successorEntryRef),
+    ]);
+    if (predecessorOwner === 'unavailable' || successorOwner === 'unavailable') return INCOMPLETE;
+    if (predecessorOwner === 'source' || successorOwner === 'source') return { status: 'unsupported' };
     const sessionLinks = input.collections.sessionLinks;
     const options: PluginCancellationOptions | undefined = input.signal
         ? { signal: input.signal }

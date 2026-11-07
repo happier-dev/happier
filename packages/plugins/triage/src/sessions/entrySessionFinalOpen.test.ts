@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { PLUGIN_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol';
 
 import {
     startEntrySession,
+    resumeEntrySessionStart,
     type TriageEntrySessionDepsV1,
 } from './entrySessionOrchestrator.js';
 import type { TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
+import { createTestkitEntrySessionLinkWriter, TESTKIT_SPAWN_REQUEST } from './testkit/entrySessionTestkit.test-support.js';
 
 /**
  * The Account Collection and generic Session Actions are the two real process
@@ -14,6 +17,7 @@ import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollecti
  */
 function ownerBoundary() {
     const calls: string[] = [];
+    const openInputs: unknown[] = [];
     const execute = (async (actionId: string, input: Readonly<{ initialInput?: unknown }>) => {
         calls.push(actionId);
         if (actionId === 'session.spawn_new') {
@@ -29,21 +33,55 @@ function ownerBoundary() {
             };
         }
         if (actionId === 'session.message.send') return { status: 'accepted', localId: 'local-a' };
-        if (actionId === 'session.open') return null;
+        if (actionId === 'session.open') {
+            openInputs.push(PLUGIN_ACTION_INPUT_SCHEMAS['session.open'].parse(input));
+            return null;
+        }
         throw new Error(`unexpected generic action: ${actionId}`);
     }) as unknown as TriageSessionActionInvokerV1;
     const { collections } = createTestkitCorpusCollections();
     return {
         calls,
+        openInputs,
         deps: {
-            collections,
+            linkSession: createTestkitEntrySessionLinkWriter(collections),
             execute,
-            nowMs: 1_760_000_900_000,
         } satisfies TriageEntrySessionDepsV1,
     };
 }
 
 describe('entry Session final-open ownership', () => {
+    it.each(['start', 'retry'] as const)('opens the exact accepted Home after %s through the canonical navigation schema', async (phase) => {
+        const boundary = ownerBoundary();
+        const result = phase === 'start'
+            ? await startEntrySession(boundary.deps, {
+                workspaceMode: 'reference_only', destination: {
+                    kind: 'new', creationKey: 'creation-key-exact-home', spawn: TESTKIT_SPAWN_REQUEST,
+                    materialization: { kind: 'referenceOnly', directory: '/projects/example' },
+                },
+            })
+            : await resumeEntrySessionStart(boundary.deps, {
+                pending: { type: 'openPending', sessionId: 'session-a', disposition: 'created', workspace: { kind: 'referenceOnly' } },
+                serverId: 'server-a',
+            });
+        expect(result.type).toBe('opened');
+        expect(boundary.openInputs).toEqual([{ sessionId: 'session-a', serverId: 'server-a' }]);
+    });
+
+    it.each(['deferred', 'suppressed'] as const)('keeps final navigation %s after retrying uncertain input on the known Session', async (finalOpen) => {
+        const boundary = ownerBoundary();
+        const result = await resumeEntrySessionStart(boundary.deps, {
+            pending: { type: 'openPending', sessionId: 'session-a', disposition: 'created', workspace: { kind: 'referenceOnly' } },
+            serverId: 'server-a',
+            delivery: { text: 'Repair the failing parser test.', attachments: [], idempotencyKey: 'delivery-key-a' },
+            finalOpen,
+        });
+
+        expect(result).toEqual({ type: 'linked', sessionId: 'session-a', disposition: 'created',
+            workspace: { kind: 'referenceOnly' }, delivery: 'accepted', finalOpen });
+        expect(boundary.calls).toEqual(['session.message.send']);
+    });
+
     it('retains final navigation after linking and delivery when a batch explicitly owns it', async () => {
         const boundary = ownerBoundary();
 

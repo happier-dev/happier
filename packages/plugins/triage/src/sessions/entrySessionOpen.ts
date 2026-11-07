@@ -1,4 +1,4 @@
-import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import type { ActionExecutionOptions, PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 
 /**
@@ -32,7 +32,7 @@ export type TriageSessionActionIdV1 =
 export type TriageSessionActionInvokerV1 = <TActionId extends TriageSessionActionIdV1>(
     actionId: TActionId,
     input: PluginActionInputById[TActionId],
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: ActionExecutionOptions,
 ) => Promise<PluginActionResultById[TActionId]>;
 
 /** The narrow host boundary needed by a read-only linked-Session opener. */

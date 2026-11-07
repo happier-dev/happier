@@ -19,7 +19,7 @@ import {
 import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
 import { linkEntryToSession } from './entrySessionLinks.js';
 import { reconcileMergedSuccessor } from './reconcileMergedSuccessor.js';
-import { TESTKIT_LINK_DISPLAY } from './testkit/entrySessionTestkit.test-support.js';
+import { TESTKIT_LINK_DISPLAY, createTestkitSourceSessionRelations, testkitReadOnlySourceSnapshot } from './testkit/entrySessionTestkit.test-support.js';
 
 const NOW_MS = 1_760_000_900_000;
 
@@ -84,6 +84,32 @@ function racingSessionLinks(
 }
 
 describe('reconcileMergedSuccessor', () => {
+    it.each(['owned', 'unavailable'] as const)('preserves predecessor links without corpus reads when their owner is %s', async (state) => {
+        const fixture = createTestkitCorpusCollections();
+        const linkTag = await link(fixture, { entryRef: PREDECESSOR, sessionId: 'session-a', nowMs: NOW_MS });
+        const before = fixture.control.sessionLinks.inspect(linkTag);
+        let reads = 0;
+        let writes = 0;
+        const collections = { ...fixture.collections, sessionLinks: { ...fixture.collections.sessionLinks,
+            query: async (...args: Parameters<typeof fixture.collections.sessionLinks.query>) => {
+                reads++; return await fixture.collections.sessionLinks.query(...args);
+            },
+            batch: async (...args: Parameters<typeof fixture.collections.sessionLinks.batch>) => {
+                writes++; return await fixture.collections.sessionLinks.batch(...args);
+            },
+        } };
+        const original = testkitReadOnlySourceSnapshot().contributions[0]!;
+        const sourceRelations = createTestkitSourceSessionRelations(collections, { contributions: state === 'unavailable' ? [] : [{
+            ...original, descriptor: { ...original.descriptor, sessionRelations: { kindIds: ['pull-request'] } },
+            // Declared ownership survives unavailable paired executable roles.
+            operations: {},
+        }] });
+        expect(await reconcileMergedSuccessor({ collections, sourceRelations,
+            entryRef: PREDECESSOR, successorEntryRef: SUCCESSOR }))
+            .toEqual({ status: state === 'owned' ? 'unsupported' : 'incomplete' });
+        expect({ reads, writes }).toEqual({ reads: 0, writes: 0 });
+        expect(fixture.control.sessionLinks.inspect(linkTag)).toEqual(before);
+    });
     it('retargets merged Session links once and leaves the predecessor pin untouched', async () => {
         const fixture = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
         const { sessionLinks, userMarks } = fixture.collections;
@@ -111,6 +137,7 @@ describe('reconcileMergedSuccessor', () => {
 
         const first = await reconcileMergedSuccessor({
             collections: fixture.collections,
+            sourceRelations: createTestkitSourceSessionRelations(fixture.collections),
             entryRef: PREDECESSOR,
             successorEntryRef: SUCCESSOR,
         });
@@ -119,6 +146,7 @@ describe('reconcileMergedSuccessor', () => {
         // The same authoritative merge, applied a second time.
         const second = await reconcileMergedSuccessor({
             collections: fixture.collections,
+            sourceRelations: createTestkitSourceSessionRelations(fixture.collections),
             entryRef: PREDECESSOR,
             successorEntryRef: SUCCESSOR,
         });
@@ -174,6 +202,7 @@ describe('reconcileMergedSuccessor', () => {
 
         const result = await reconcileMergedSuccessor({
             collections: fixture.collections,
+            sourceRelations: createTestkitSourceSessionRelations(fixture.collections),
             entryRef: PREDECESSOR,
             // Structurally equal, independently constructed.
             successorEntryRef: testkitEntryRef({ entryId: '17' }),
@@ -202,6 +231,7 @@ describe('reconcileMergedSuccessor', () => {
 
         const result = await reconcileMergedSuccessor({
             collections: { sessionLinks: contended },
+            sourceRelations: createTestkitSourceSessionRelations(fixture.collections),
             entryRef: PREDECESSOR,
             successorEntryRef: SUCCESSOR,
         });
@@ -234,6 +264,7 @@ describe('reconcileMergedSuccessor', () => {
 
         await expect(reconcileMergedSuccessor({
             collections: { sessionLinks: cancelling },
+            sourceRelations: createTestkitSourceSessionRelations(fixture.collections),
             entryRef: PREDECESSOR,
             successorEntryRef: SUCCESSOR,
             signal: controller.signal,

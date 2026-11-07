@@ -58,14 +58,9 @@ import {
 import {
     projectTriageActionPlacementCandidatesV1,
     projectTriageNewSessionDestinationV1,
-    triageNewSessionDraftSeedV1,
     type TriageNewSessionPreferenceV1,
     type TriageReviewWorkspacePreparationV1,
 } from '../ui/header/newSessionDestination.js';
-import {
-    requestTriageNewSessionDraft,
-    type TriageNewSessionDraftHostV1,
-} from '../ui/header/newSessionDraftCommand.js';
 import {
     type TriageNewSessionSeedHostV1,
     type TriageNewSessionFailureV1,
@@ -352,7 +347,6 @@ export type TriageEntrySessionStartOptionsV1 = Readonly<{
 }>;
 
 export type TriageStartHostV1 = TriageSessionStartHostV1
-    & TriageNewSessionDraftHostV1
     & TriageNewSessionSeedHostV1
     & TriageProjectRegistryHostV1
     & TriageAgentInventoryHostV1
@@ -964,8 +958,10 @@ export function createTriageEntrySessionStartController(
                 //    That degradation is the feature, not a failure path.
                 //
                 //    The profile's CHECKOUT preference is part of "complete".
-                //    A one-click launch reuses the resolved checkout, so it can
-                //    only answer `reuseWorkspace` and `none`; `createWorktree`
+                //    A one-click launch reuses the resolved checkout (or the
+                //    source-prepared review checkout its start Action carries),
+                //    so it can only answer `reuseWorkspace`, `none` and
+                //    `preparedReviewWorkspace`; `createWorktree`
                 //    and `ask` are answers this wire cannot give — it carries no
                 //    worktree creation (`actions/entrySessionProtocol.ts`) and
                 //    `ask` asked for the screen. Launching anyway would do
@@ -989,10 +985,14 @@ export function createTriageEntrySessionStartController(
 
                 // A complete start: an explicit settlement, or the profile's Agent
                 // plus a resolved directory with a checkout this wire can launch.
-                const authoring = request.comparisonDestination === undefined && action.target.kind === 'agent';
-                const checkoutIsDirectlyLaunchable = checkout === 'none' || checkout === 'reuseWorkspace';
+                // A prepared review checkout is launchable: the start Action
+                // carries its source preparation.
+                const composes = request.comparisonDestination === undefined
+                    && action.target.kind === 'agent' && action.target.delivery === 'compose';
+                const checkoutIsDirectlyLaunchable = checkout === 'none' || checkout === 'reuseWorkspace'
+                    || checkout === 'preparedReviewWorkspace';
                 const preferredAgentTargetKey = references.profile?.preferredAgentTargetKey;
-                const agent = authoring && action.target.delivery === 'compose' ? explicitAgent
+                const agent = composes ? explicitAgent
                     : explicitAgent ?? (checkoutIsDirectlyLaunchable
                         && executionPlacement?.directory !== undefined
                         && preferredAgentTargetKey !== undefined
@@ -1006,17 +1006,16 @@ export function createTriageEntrySessionStartController(
                         directory: { kind: 'path', path: executionPlacement.directory },
                     } : undefined);
 
-                // Compose is authoring, not Session creation, and so is a send
-                // whose start is not complete (owner ruling "Agent actions: one
-                // shared flow", 2026-11-07): hand the resolved profile, prompt,
-                // placement and entry attachment to the host's incumbent New
-                // Session composer and stop. That screen owns all subsequent
-                // edits and the eventual send; closing it therefore creates no
-                // Session, link or Message and spends no creation key.
-                // An orchestration start stays a Triage start: its spawn carries the
-                // orchestrator role and workflow trigger the composer cannot.
-                if (authoring && (action.target.delivery === 'compose'
-                    || (directSettlement === undefined && request.orchestrationPrompt === undefined))) {
+                // Compose is authoring, not Session creation, and so is every
+                // agent action whose start is not complete — send, formal
+                // review, Walk through and orchestration alike (owner rulings
+                // "Agent actions: one shared flow", 2026-11-07, and 16:50Z):
+                // hand the resolved profile, prompt, placement and entry
+                // attachment to the host's incumbent New Session composer and
+                // stop. That screen owns all subsequent edits and the eventual
+                // send; closing it creates no Session, link or Message and
+                // spends no creation key.
+                if (composes || directSettlement === undefined) {
                     const placementCandidates = placement === null ? [] : projectTriageActionPlacementCandidatesV1(placement);
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
@@ -1037,39 +1036,9 @@ export function createTriageEntrySessionStartController(
                     return;
                 }
 
-                // Both routes settle the SAME three facts and are admitted by
-                // the same grammar below, so a direct launch cannot carry a
-                // start shape the host's own settlement could not. Only a
-                // review-engine start, an orchestration or a read-only Walk
-                // reaches the host's no-invoke settlement: the composer cannot
-                // carry any of them.
-                let settlement: unknown = directSettlement;
-                if (settlement === undefined) {
-                    const seed = triageNewSessionDraftSeedV1(
-                        preference,
-                        ...(placement === null ? [] : [{
-                            ...(action.profileId === null ? {} : { profileId: action.profileId }),
-                            checkoutIntent: checkout,
-                            placement,
-                        }]),
-                    );
-                    setPhase(CHOOSING);
-                    const draft = await requestTriageNewSessionDraft(host, seed, { signal: selectionLifetime.signal });
-                    if (retired.current) return;
-                    if (draft.status === 'cancelled') {
-                        // The reader closed the surface. Nothing was chosen,
-                        // nothing failed, and no creation key was spent.
-                        setPhase(IDLE);
-                        return;
-                    }
-                    if (draft.status !== 'settled') {
-                        setPhase(unavailable(
-                            draft.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable',
-                        ));
-                        return;
-                    }
-                    settlement = draft.settlement;
-                }
+                // A direct start is admitted by the same destination grammar as
+                // the host's own settlement.
+                const settlement = directSettlement;
                 const placementCandidates = placement === null
                     ? undefined
                     : projectTriageActionPlacementCandidatesV1(placement);

@@ -126,12 +126,14 @@ function readProject(value: unknown): TriageProjectCandidateV1 | null {
         return null;
     }
     const label = readNonEmptyString(value.label);
+    const sourceId = readNonEmptyString(value.sourceId);
     const forge = readForge(value.forge);
     return {
         projectKey: projectKey.data,
         serverId,
         machineId,
         rootPath,
+        ...(sourceId === null ? {} : { sourceId }),
         ...(label === null ? {} : { label }),
         ...(forge === undefined ? {} : { forge }),
         worktrees: readWorktrees(value.worktrees),
