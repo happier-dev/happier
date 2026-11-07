@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { brokerAddress } from './admission_socket.mjs';
+import { resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
 
 const brokerPath = fileURLToPath(new URL('./admission_broker.mjs', import.meta.url));
 const brokerDisconnected = error => ['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ENOENT'].includes(error.code);
@@ -176,7 +177,9 @@ export async function runAdmissionCommand({ root, className, floorKiB, machine, 
         floorKiB: resolveHeavyweightMemoryFloorKiB(className, { machine: 'worker', workers: index + 1 }) }));
     }
     // Reuse the first arrival when this same waiter reconnects after broker loss.
-    const request = { kind: 'acquire', className, floorKiB, pid: process.pid, arrivedAt: Date.now(),
+    // The broker uses the class only for its disk shape; see resolveAdmissionDiskClass.
+    const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), floorKiB,
+      pid: process.pid, arrivedAt: Date.now(),
       repoDir, cacheBaseDir, noWait, locks, ...(floorOptions ? { floorOptions } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');

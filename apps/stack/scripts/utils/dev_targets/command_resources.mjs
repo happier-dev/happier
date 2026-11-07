@@ -66,6 +66,14 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, diskClass: 'compilation' },
 });
 
+// A host broker outlives catalog edits, so the client resolves the disk shape
+// from its current catalog and sends that on the wire; the broker's own
+// catalog then only has to know the stable disk shapes.
+export function resolveAdmissionDiskClass(className) {
+  return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.diskClass
+    ?? (LEGACY_VALIDATION_ADMISSION_CLASSES.includes(className) ? 'validation' : className);
+}
+
 // Consume the compiler resolver's decision, never infer it from flags or host.
 export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
   if (admissionClass === 'compilation-ui' || admissionClass === 'compilation-ui-tsrs') {

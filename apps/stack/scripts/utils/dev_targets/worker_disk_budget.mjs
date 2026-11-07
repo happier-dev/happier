@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { reapHistoricalTempRoots } from './historical_temp_roots.mjs';
 import { measureReplicaSourceBytes } from './replica_source_bytes.mjs';
 import { measureColdDependencyBytes } from './dependency_materialization.mjs';
-import { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES } from './command_resources.mjs';
+import { resolveAdmissionDiskClass } from './command_resources.mjs';
 import { getHappierTempRootForUid, prepareHappierTempDirOwnerCleanup, readHappierTempDirOwnerForDirectory,
   readHappierTempDirOwnerLiveness } from '../../../../../packages/cli-common/tempDirOwnership.mjs';
 
@@ -100,10 +100,8 @@ export async function inspectWorkerDiskBudget({ repoDir, cacheBaseDir, commandCl
   if (!Number.isSafeInteger(requiredAdditionalBytes) || requiredAdditionalBytes < 0) {
     throw new Error('worker additional-write measurement must be a nonnegative safe integer');
   }
-  // The same catalog owns memory and disk demand. Keep only historical
-  // transport labels here; new admission classes declare their disk shape once.
-  commandClass = HEAVYWEIGHT_COMMAND_RESOURCES[commandClass]?.diskClass
-    ?? (LEGACY_VALIDATION_ADMISSION_CLASSES.includes(commandClass) ? 'validation' : commandClass);
+  // The same catalog owns memory and disk demand.
+  commandClass = resolveAdmissionDiskClass(commandClass);
   if (commandClass === 'validation') requiredAdditionalBytes = Math.max(requiredAdditionalBytes, measuredValidationScratchBytes);
   if (!Object.hasOwn(writeRootsByClass, commandClass)) throw new Error(`unknown worker disk class: ${commandClass}`);
   const observations = new Map();

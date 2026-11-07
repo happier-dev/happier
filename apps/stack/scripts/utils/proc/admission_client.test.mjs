@@ -38,9 +38,9 @@ async function restartFixture(t) {
     children.set(child, closed);
     return { child, closed };
   };
-  const start = (payload, options = []) => {
+  const start = (payload, options = [], { className = 'validation' } = {}) => {
     const client = own(spawn(process.execPath, [native.admissionClientPath, '--run',
-      `--root=${native.admissionRoot}`, '--class=validation', '--floor-kib=1', '--machine=fixture',
+      `--root=${native.admissionRoot}`, `--class=${className}`, '--floor-kib=1', '--machine=fixture',
       `--repo=${fixture.root}`, '--failure-id=restart-client', ...options, '--', process.execPath, '-e', payload],
     { env: { ...buildNativeAdmissionFixtureEnv(), HAPPIER_STACK_PM_CACHE_BASE_DIR: '' }, stdio: ['pipe', 'pipe', 'pipe'] }));
     let stdout = '', stderr = '';
@@ -169,6 +169,27 @@ test('admission reports one waiting line with enqueue facts only when capacity q
         else assert.match(waiting[0], /\bposition=1, ahead=0\b/);
       }
     });
+  });
+
+test('a broker started before a newer admission class admits it through the client-resolved disk class',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    // A long-lived worker broker keeps the catalog it loaded at startup; this
+    // one knows only disk shapes, as any broker predating a new class does.
+    const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+      oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }),
+      admitDisk: request => {
+        if (!['compilation', 'validation'].includes(request.className)) {
+          throw new Error(`unknown worker disk class: ${request.className}`);
+        }
+        return { admitted: true };
+      } });
+    await broker.start();
+    t.after(() => broker.close());
+    const client = fixture.start('process.stdout.write("compiled");', [], { className: 'compilation-ui-tsrs' });
+    assert.deepEqual(await client.closed, [0, null], client.stderr());
+    assert.equal(client.stdout(), 'compiled');
   });
 
 test('a transient admission observation failure retains the client until the next successful pass',
