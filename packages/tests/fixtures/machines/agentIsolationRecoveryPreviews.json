@@ -1,0 +1,28 @@
+{
+  "qualificationPending": {
+    "kind": "ready",
+    "policy": { "enabled": true },
+    "metadataVersion": 5,
+    "status": { "kind": "unavailable", "code": "provisioning_unavailable" },
+    "plan": {
+      "roots": [{ "rootId": "checkout", "path": "/srv/happier/checkout", "changes": [] }],
+      "ancestorAcls": [{ "path": "/srv/happier", "add": "x" }],
+      "sessionsToReplace": 0,
+      "requiresAdmin": false,
+      "planDigest": "native-check-digest-redacted"
+    }
+  },
+  "effective": {
+    "kind": "ready",
+    "policy": { "enabled": true },
+    "metadataVersion": 5,
+    "status": { "kind": "effective", "platform": "linux", "agentUser": "happier-agent" },
+    "plan": {
+      "roots": [{ "rootId": "checkout", "path": "/srv/happier/checkout", "changes": [] }],
+      "ancestorAcls": [{ "path": "/srv/happier", "add": "x" }],
+      "sessionsToReplace": 0,
+      "requiresAdmin": false,
+      "planDigest": "native-check-digest-redacted"
+    }
+  }
+}

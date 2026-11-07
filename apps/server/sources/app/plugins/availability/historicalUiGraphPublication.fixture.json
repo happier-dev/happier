@@ -1,0 +1,333 @@
+{
+  "provenance": {
+    "historicalCliCommit": "356185ddb1bead82b312477cd0da8a965fb7ee2d",
+    "graphPublicationIntroducedBy": "6b7a6252bf9bbdda88a9768c753bf572e158e0ac",
+    "producerPath": "apps/cli/src/plugins/availability/releaseFacts.ts",
+    "capture": "Both real archive staging implementations admitted these same bytes; actual historical/current projectVerifiedPluginUiReleaseSlotsV2 emitted the captured facts."
+  },
+  "archiveBase64": "H4sIAAAAAAAAA+1XXW+bMBTtT4nu0yYR4tjYJKn2sMdJU1Wt2vYwZZIxl8QtMQhM1wzx3ydD0y7sI9VapVPFecBgX/sa2+fe41yqK7nCSd6V/mWZmZMnBiGEiCBoS0JIvyQ0EHfvbf10Khg5GZGnnsjvUJVWFifkKL7+Q9Rg5AZhAWuZ5xqLcZ5WK23GeUpm4ME1FqXODCxg6hOfgAdXuP2WFXEJiy+9PrD0djWwqGEjjU6wtLAAf99w0hXtWYPGg0Sn2I7XswMPYl1aWDbPvUovF7e8n/xlix7t4xD/WRj2+B/wgA78PwZqKNUaN/LTjujUAx3DAlS28aXaoP/HSBDrMk/l9qyLH+fvWzM0K20cm+vGg6IyVrvWGmSu71xMG2dni22eaWOdLcQSN+3g/sRR/v74ufigMmMLHVW2HRcq7Z4FmhgLLFzgqLsp59Jg6kKUNu6zQKnsmbT6GsEDWVidSGXv7Jpl0wyBZcf//VV/Wh+H+E8Y7/GfThkf+H8M4E2eFXaUVEZZnZmRVFZfS4uvXo/qgR0vH3v872nASk8qPd4FzvKfxcAh/ocB7fE/nDI28P8YqO8TO+2yssYupe72/d3PqdW24r6XWttcvqsdm7Z60vaYtE2+uiz9qDJx6qx3at+l8LS1PZd2/eDusV51l4pyLSkXC4wShZJyqsRUBXOSBDgXMYmCGGPJGZvJGSNMRFyIKQtmUSRozCVHFvFASOmETLS1eKG/Iyw4a5a/uphHFLkUc8ESkTDFIjmfiShSJA4iPuMqDFWoAjkLGbKQzWiScD7niCxIkiBk1LmodGo/a/efNXT/4tYRS9cQ78kr4tPQp0734A2qysoobRVUF6nbe1KnfS6qIpEKYdl4sM5K+1G/zfUHaVZOjn3tVFpz6O50gP8P2JPDZ+xg/he9/E9pwMTA/2Pg9lT5e0dq9OZeEDghMCrQVoUZmSpNT0fN6XNPesCAAQMGPBo/ADF6SnEAGAAA",
+  "historicalFacts": {
+    "ref": {
+      "pluginId": "com.acme.pl08",
+      "version": "1.0.0"
+    },
+    "archiveDigestSha256": "sha256:483ceeb91f3b143bed8c17b8def57028040a6f2499424f8c8348187c8b0d4901",
+    "normalizedManifest": {
+      "schemaVersion": 2,
+      "id": "com.acme.pl08",
+      "version": "1.0.0",
+      "displayName": "PL08",
+      "engines": {},
+      "runtime": {
+        "apiVersion": 1
+      },
+      "entrypoints": {
+        "daemon": "./dist/plugin.js"
+      },
+      "hostAccess": {
+        "required": [],
+        "optional": []
+      },
+      "secrets": [],
+      "contributes": {
+        "agents": [],
+        "providers": [],
+        "machineProvisioners": [],
+        "actions": [],
+        "commands": [],
+        "tools": [],
+        "resources": [],
+        "inputTypes": [],
+        "atmospherePictures": [],
+        "registrySources": [],
+        "languageServers": [],
+        "skills": [],
+        "dragSources": [],
+        "workItems": [],
+        "dropTargets": [],
+        "transcriptActivities": [],
+        "sessionInfoSections": [],
+        "sessionHeaderActions": [],
+        "browserTargets": [],
+        "browserActions": [],
+        "settings": [],
+        "events": [],
+        "executionRunProfiles": [],
+        "roles": [],
+        "workflows": [],
+        "notifications": [],
+        "notificationChannels": [],
+        "scmHostingProviders": [],
+        "scmBackends": [],
+        "connectedAccountDescriptors": [],
+        "managedDependencies": [],
+        "systemTools": [],
+        "promptAssets": [],
+        "hooks": [],
+        "requestInterceptors": [],
+        "voiceModelPacks": [],
+        "voiceProviders": [],
+        "backgroundServices": [],
+        "captureSources": [],
+        "projectNativeAdapters": [],
+        "daemonDatabases": [],
+        "composerReferences": [],
+        "searchProviders": [],
+        "composerAttachments": [],
+        "composerControls": [],
+        "composerRegions": [],
+        "openableContentViewers": [],
+        "accountCollections": [],
+        "webhooks": [],
+        "pluginContributionPoints": [],
+        "targetedPluginContributions": [],
+        "mcp": {
+          "servers": [],
+          "discoverySources": []
+        },
+        "ui": {
+          "views": [],
+          "renderers": [
+            {
+              "id": "panel",
+              "kind": "reactNative",
+              "artifact": "panel"
+            }
+          ],
+          "settingsGroups": [],
+          "settingsPages": [],
+          "translations": []
+        }
+      }
+    },
+    "collectionContracts": [],
+    "uiSlots": [
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "web",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0"
+      },
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "ios",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0"
+      },
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "android",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0"
+      }
+    ],
+    "packageAssetArchive": {
+      "archiveDigestSha256": "sha256:d1edeec528e448cc74338e4a2928afda9b3279ef6cc711754f4e5925d5f5bf0c",
+      "resources": []
+    }
+  },
+  "currentFacts": {
+    "ref": {
+      "pluginId": "com.acme.pl08",
+      "version": "1.0.0"
+    },
+    "archiveDigestSha256": "sha256:483ceeb91f3b143bed8c17b8def57028040a6f2499424f8c8348187c8b0d4901",
+    "normalizedManifest": {
+      "schemaVersion": 2,
+      "id": "com.acme.pl08",
+      "version": "1.0.0",
+      "displayName": "PL08",
+      "engines": {},
+      "runtime": {
+        "apiVersion": 1
+      },
+      "entrypoints": {
+        "daemon": "./dist/plugin.js"
+      },
+      "hostAccess": {
+        "required": [],
+        "optional": []
+      },
+      "secrets": [],
+      "contributes": {
+        "agents": [],
+        "providers": [],
+        "machineProvisioners": [],
+        "deploymentTargets": [],
+        "healthCheckKinds": [],
+        "machineRecipes": [],
+        "machineSetupPresets": [],
+        "actions": [],
+        "resources": [],
+        "inputTypes": [],
+        "atmospherePictures": [],
+        "registrySources": [],
+        "backupDestinations": [],
+        "languageServers": [],
+        "skills": [],
+        "dragSources": [],
+        "workItems": [],
+        "dropTargets": [],
+        "transcriptActivities": [],
+        "sessionInfoSections": [],
+        "sessionHeaderActions": [],
+        "browserTargets": [],
+        "browserActions": [],
+        "settings": [],
+        "events": [],
+        "executionRunProfiles": [],
+        "roles": [],
+        "workflows": [],
+        "notifications": [],
+        "notificationChannels": [],
+        "scmHostingProviders": [],
+        "scmBackends": [],
+        "connectedAccountDescriptors": [],
+        "managedDependencies": [],
+        "systemTools": [],
+        "promptAssets": [],
+        "hooks": [],
+        "requestInterceptors": [],
+        "voiceModelPacks": [],
+        "voiceProviders": [],
+        "backgroundServices": [],
+        "captureSources": [],
+        "projectNativeAdapters": [],
+        "daemonDatabases": [],
+        "composerReferences": [],
+        "searchProviders": [],
+        "composerAttachments": [],
+        "composerControls": [],
+        "composerRegions": [],
+        "openableContentViewers": [],
+        "accountCollections": [],
+        "webhooks": [],
+        "pluginContributionPoints": [],
+        "targetedPluginContributions": [],
+        "mcp": {
+          "servers": [],
+          "discoverySources": []
+        },
+        "ui": {
+          "views": [],
+          "renderers": [
+            {
+              "id": "panel",
+              "kind": "reactNative",
+              "artifact": "panel"
+            }
+          ],
+          "settingsGroups": [],
+          "settingsPages": [],
+          "translations": []
+        }
+      }
+    },
+    "collectionContracts": [],
+    "uiSlots": [
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "web",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0",
+        "artifactGraph": {
+          "artifactId": "panel",
+          "tier": "reactNative",
+          "entry": "react-native/panel/entry.cjs.bundle",
+          "files": [
+            {
+              "relativePath": "react-native/panel/entry.cjs.bundle",
+              "digest": "sha256:ebfcea252c61c490f4e96d0b4deda5338a83036b5661348bb62d5a5e3b546aa0",
+              "byteSize": 53
+            }
+          ],
+          "digest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+          "builtWith": {
+            "bundler": "esbuild",
+            "version": "0.27.2"
+          },
+          "executable": {
+            "exports": [
+              "renderSurface"
+            ]
+          },
+          "hostUiApiRange": "^1.0.0"
+        }
+      },
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "ios",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0",
+        "artifactGraph": {
+          "artifactId": "panel",
+          "tier": "reactNative",
+          "entry": "react-native/panel/entry.cjs.bundle",
+          "files": [
+            {
+              "relativePath": "react-native/panel/entry.cjs.bundle",
+              "digest": "sha256:ebfcea252c61c490f4e96d0b4deda5338a83036b5661348bb62d5a5e3b546aa0",
+              "byteSize": 53
+            }
+          ],
+          "digest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+          "builtWith": {
+            "bundler": "esbuild",
+            "version": "0.27.2"
+          },
+          "executable": {
+            "exports": [
+              "renderSurface"
+            ]
+          },
+          "hostUiApiRange": "^1.0.0"
+        }
+      },
+      {
+        "contributionId": "panel",
+        "artifactId": "panel",
+        "tier": "reactNative",
+        "platform": "android",
+        "artifactDigest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+        "hostUiApiRange": "^1.0.0",
+        "artifactGraph": {
+          "artifactId": "panel",
+          "tier": "reactNative",
+          "entry": "react-native/panel/entry.cjs.bundle",
+          "files": [
+            {
+              "relativePath": "react-native/panel/entry.cjs.bundle",
+              "digest": "sha256:ebfcea252c61c490f4e96d0b4deda5338a83036b5661348bb62d5a5e3b546aa0",
+              "byteSize": 53
+            }
+          ],
+          "digest": "sha256:9b2e5a6963f6f3c3ba986bbc0d4b585c77c7c4a873e37382ff5595ee34ff4732",
+          "builtWith": {
+            "bundler": "esbuild",
+            "version": "0.27.2"
+          },
+          "executable": {
+            "exports": [
+              "renderSurface"
+            ]
+          },
+          "hostUiApiRange": "^1.0.0"
+        }
+      }
+    ],
+    "packageAssetArchive": {
+      "archiveDigestSha256": "sha256:d1edeec528e448cc74338e4a2928afda9b3279ef6cc711754f4e5925d5f5bf0c",
+      "resources": []
+    }
+  }
+}
