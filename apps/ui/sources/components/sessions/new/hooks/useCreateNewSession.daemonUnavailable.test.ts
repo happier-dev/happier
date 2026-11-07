@@ -1,3 +1,4 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import 'fake-indexeddb/auto';
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import React from 'react';
@@ -7,16 +8,17 @@ import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { SessionSpawnNewInputV2Schema, createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1, type AccountEncryptionCurrentnessResponse, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { type AccountEncryptionCurrentnessResponse} from '@happier-dev/protocol/account/encryptionMode';
+import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { createDeferred, createPlainAccountEncryptionCurrentnessFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -44,6 +46,7 @@ const resolveSavedSecretReference = (ref: string): SavedSecretReferenceResolutio
 
 const socketRpcBoundary = vi.hoisted(() => ({
   respond: null as ((method: string, input: unknown) => Promise<unknown>) | null,
+  cipher: null as import('@/sync/encryption/machineEncryption').MachineEncryption | null,
 }));
 vi.mock('socket.io-client', () => ({ io: () => {
   const boundary = createSocketIoBoundaryStub();
@@ -51,7 +54,19 @@ vi.mock('socket.io-client', () => ({ io: () => {
     if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
     if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string') throw new Error('Invalid test RPC payload');
     if (!socketRpcBoundary.respond) throw new Error('Test RPC boundary is not prepared');
-    return { ok: true, result: await socketRpcBoundary.respond(payload.method.slice(payload.method.indexOf(':') + 1), 'params' in payload ? payload.params : undefined) };
+    const raw = 'params' in payload ? payload.params : undefined;
+    const encrypted = typeof raw === 'string' && socketRpcBoundary.cipher !== null;
+    const { socketRpcCodec } = await import('@happier-dev/sync-client');
+    const content = encrypted ? { mode: 'e2ee' as const, cipher: socketRpcBoundary.cipher! } : { mode: 'plain' as const };
+    const method = payload.method.slice(payload.method.indexOf(':') + 1);
+    const decoded = await socketRpcCodec.decodeRequestParams(content, raw, payload.method).catch(async error => {
+      if (!encrypted) throw error;
+      const opened: unknown = await socketRpcBoundary.cipher!.decryptRaw(raw);
+      const sealedMethod = opened && typeof opened === 'object' && 'm' in opened ? opened.m : null;
+      throw new Error(`Synthetic RPC binding mismatch: carrier=${payload.method}, sealed=${String(sealedMethod)}`, { cause: error });
+    });
+    const result = await socketRpcBoundary.respond(method, decoded.params);
+    return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
   });
   return boundary.socket;
 } }));
@@ -101,6 +116,8 @@ async function expectSubmittedDraftRetired(scope: import('@/sync/domains/scope/s
 }
 
 async function createHarness() {
+  let machineRow = createPlainMachineRowFixture({ id: 'm1', accountId: 'account-a' });
+  let serveMachineInventory = false;
   const additionalBoundary = {
     http: null as ((url: URL, init?: RequestInit) => Promise<Response | null>) | null,
     rpc: null as ((method: string, input: unknown) => Promise<unknown | undefined>) | null,
@@ -127,6 +144,7 @@ async function createHarness() {
           if (key === 'time.minutesAgo') return `time.minutesAgo:${String(params?.count ?? '')}`;
           if (key === 'time.hoursAgo') return `time.hoursAgo:${String(params?.count ?? '')}`;
           if (key === 'errors.errorWithCode') return `${key}:${String(params?.code ?? '')}:${String(params?.message ?? '')}`;
+          if (key === 'session.startFailure.requestId') return `${key}:${String(params?.id ?? '')}`;
           return key;
         },
       }),
@@ -177,6 +195,8 @@ async function createHarness() {
   const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
   let authProjection: Awaited<ReturnType<typeof renderScreen>> | null = null;
   const authoringMemoryHttp = createAuthoringMemoryHttpBoundary();
+  const { createAccountKvHttpFixture } = await import('@/dev/testkit/fixtures/accountKvHttpFixture');
+  const todoKvHttp = createAccountKvHttpFixture({ rows: todoKv.items });
   const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
   const fetchBoundary = createSessionReadBatchFetchBoundary(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const memory = await authoringMemoryHttp.handle(input, init);
@@ -184,13 +204,7 @@ async function createHarness() {
     const url = String(input instanceof Request ? input.url : input);
     const additional = await additionalBoundary.http?.(new URL(url), init);
     if (additional) return additional;
-    const bootstrap = createEmptyAccountBootstrapHttpResponse(new URL(url).pathname, init);
-    if (bootstrap) return bootstrap;
-    if (url.includes('/v1/kv/')) {
-      const key = decodeURIComponent(url.split('/v1/kv/')[1]!);
-      const row = todoKv.items.get(key);
-      return row ? Response.json(row) : Response.json({ error: 'not_found' }, { status: 404 });
-    }
+    if (serveMachineInventory && new URL(url).pathname === '/v1/machines') return Response.json([machineRow]);
     if (url.endsWith('/v1/kv') && init?.method === 'POST') {
       const { mutations } = JSON.parse(String(init.body)) as { mutations: typeof todoKv.writes };
       todoKv.writes.push(...mutations);
@@ -205,27 +219,20 @@ async function createHarness() {
         row.value = encodeBase64StoredJsonContentEnvelope({ t: 'plain', v: { ...item, linkedSessions: { ...(item.linkedSessions as object), concurrent: { title: 'Another session', linkedAt: 2 } } } });
         row.version += 1;
       }
-      const errors = mutations.flatMap((mutation) => {
-        const row = todoKv.items.get(mutation.key);
-        return row?.version === mutation.version ? [] : [{ key: mutation.key, error: 'version-mismatch', version: row?.version ?? -1, value: row?.value ?? null }];
-      });
-      if (errors.length > 0) return Response.json({ success: false, errors }, { status: 409 });
-      const results = mutations.map((mutation) => {
-        const version = mutation.version + 1;
-        if (mutation.value === null) todoKv.items.delete(mutation.key);
-        else todoKv.items.set(mutation.key, { key: mutation.key, value: mutation.value, version });
-        return { key: mutation.key, version };
-      });
-      return Response.json({ success: true, results });
     }
+    const kvResponse = await todoKvHttp.handleFetch(input, init);
+    if (kvResponse) return kvResponse;
+    const bootstrap = createEmptyAccountBootstrapHttpResponse(new URL(url).pathname, init);
+    if (bootstrap) return bootstrap;
     if (url.endsWith('/v1/account/encryption/currentness')) return Response.json(todoKv.currentness);
     if (url.endsWith('/v1/account/encryption')) return Response.json({ mode: todoKv.currentness.mode, updatedAt: 1 });
-    if (url.endsWith('/v2/account/settings')) return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+    if (url.endsWith('/v2/account/settings')) return Response.json(todoKv.currentness.mode === 'e2ee'
+      ? { content: null, version: 0 } : { content: { t: 'plain', v: {} }, version: 1 });
     if (new URL(url).pathname === '/v1/machines/read-batch' && init?.method === 'POST') {
-      return createMachineReadBatchResponseFixture(init.body, id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
+      return createMachineReadBatchResponseFixture(init.body, id => id === 'm1' ? machineRow : createPlainMachineRowFixture({ id, accountId: 'account-a' }));
     }
     const machineId = new URL(url).pathname.match(/^\/v1\/machines\/([^/]+)(?:\/access)?$/)?.[1];
-    if (machineId && !url.endsWith('/access')) return Response.json({ machine: createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }) });
+    if (machineId && !url.endsWith('/access')) return Response.json({ machine: machineId === 'm1' ? machineRow : createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }) });
     // Session creation reads current Machine custody through the real HTTP owner.
     if (machineId && url.endsWith('/access')) return Response.json(MachineAccessGrantsListResponseV1Schema.parse({
       machineId, custodian: { accountId: 'account-a', displayName: 'Test Account' },
@@ -261,7 +268,7 @@ async function createHarness() {
   });
   const initialStore = storage.getState();
   return {
-    async reset() {
+    async reset(currentAccount = false, e2ee = false, originAtBirth = false) {
       await authProjection?.unmount();
       authProjection = null;
       todoKv.currentness = plainCurrentness;
@@ -285,13 +292,44 @@ async function createHarness() {
       // credentials through its real owner before Account-scoped Action reads.
       const { TokenStorage } = await import('@/auth/storage/tokenStorage');
       const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-      await TokenStorage.setCredentialsForServerUrl('https://server-a', { serverId: getActiveServerSnapshot().serverId }, { token });
-      await sync.switchServer({ token });
+      const accountToken = currentAccount
+        ? (await import('@/dev/testkit/harness/homeGovernanceHarness')).createAccountTokenForTests('account-a', { currentAccount: true })
+        : token;
+      const secret = new Uint8Array(32).fill(17);
+      const machine = createMachineFixture({ id: 'm1', ...(originAtBirth ? {
+        operationProtocolCapabilities: { sessionSpawnAuthoringOrigin: { protocolVersions: [1] } },
+        operationProtocolCapabilitiesRevision: 1,
+      } : {}) });
+      machineRow = createPlainMachineRowFixture({ id: 'm1', accountId: 'account-a', machine });
+      serveMachineInventory = e2ee;
+      socketRpcBoundary.cipher = null;
+      if (e2ee) {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { createMachineDataEncryptionKeyV1 } = await import('@happier-dev/protocol/machines/machineStoredContent');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const writer = await Encryption.create(secret);
+        const key = createMachineDataEncryptionKeyV1({ material: { type: 'legacy', secret },
+          randomBytes: length => new Uint8Array(length).fill(5) });
+        await writer.initializeMachines(new Map([['m1', key.encryptionKey]]));
+        const cipher = writer.getMachineEncryption('m1');
+        if (!cipher) throw new Error('Expected encrypted Machine boundary cipher');
+        socketRpcBoundary.cipher = cipher;
+        machineRow = { ...machineRow, metadata: await cipher.encryptMetadata(machine.metadata!),
+          dataEncryptionKey: encodeBase64(key.dataEncryptionKey),
+          access: {
+            custodian: { accountId: 'account-a', displayName: 'Test Account' },
+            role: 'manage', resourceMode: 'e2ee', accessState: 'ready',
+          } };
+      }
+      if (e2ee) todoKv.currentness = (await import('@/dev/testkit/fixtures/accountEncryptionCurrentness')).createLegacyAccountEncryptionCurrentnessFixture({ secret });
+      const credentials = { token: accountToken, ...(e2ee ? { secret: (await import('@/encryption/base64')).encodeBase64(secret) } : {}) };
+      await TokenStorage.setCredentialsForServerUrl('https://server-a', { serverId: getActiveServerSnapshot().serverId }, credentials);
+      await sync.switchServer(credentials);
       // Sync credentials alone do not authenticate the rendered UI. Let the
       // real auth projection supply the Action owner's credential provenance.
-      authProjection = await renderScreen(React.createElement(InjectedAuthProvider, { credentials: { token }, children: null }));
+      authProjection = await renderScreen(React.createElement(InjectedAuthProvider, { credentials, children: null }));
       storage.getState().applySettings(storage.getState().settings, 1);
-      storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: 'server-a' });
+      storage.getState().applyMachines([machine], true, { sourceServerId: 'server-a' });
     },
     useCreateNewSession,
     modalAlertSpy,
@@ -322,17 +360,17 @@ const approvalAttachmentModules = await Promise.all([
 let actionHomesBoundary: Awaited<ReturnType<typeof serveActionHomes>>;
 let browserStorageBoundary: ReturnType<typeof installLocalStorageMock>;
 let approvalAttachmentCase = 0;
-async function setupHarness() {
-  await harness.reset();
+async function setupHarness(currentAccount = false, e2ee = false, originAtBirth = false) {
+  await harness.reset(currentAccount, e2ee, originAtBirth);
   return harness;
 }
 
-async function setupTaskHarness(options: Readonly<{ httpsHome?: boolean }> = {}) {
+async function setupTaskHarness(options: Readonly<{ httpsHome?: boolean; currentAccount?: boolean; e2ee?: boolean; originAtBirth?: boolean }> = {}) {
   // The real cold connection owner awaits its initial-sync budget. Frozen timers
   // cannot settle that budget when unrelated bootstrap endpoints are unavailable.
   vi.useRealTimers();
-  const result = await setupHarness();
-  let homeConnectionDescriptor: import('@happier-dev/protocol').HomeConnectionDescriptorV1 | undefined;
+  const result = await setupHarness(options.currentAccount, options.e2ee, options.originAtBirth);
+  let homeConnectionDescriptor: import('@happier-dev/protocol/auth/accountDirectory').HomeConnectionDescriptorV1 | undefined;
   if (options.httpsHome) {
     const { HomeConnectionDescriptorV1Schema } = await import('@happier-dev/protocol/auth/accountDirectory');
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -357,7 +395,11 @@ async function setupTaskHarness(options: Readonly<{ httpsHome?: boolean }> = {})
     expect(await resolveServerCredentialAccountScope(scope.serverId)).toMatchObject({ kind: 'bound', scope });
   }
   storage.getState().applySettings(storage.getState().settings, 1);
-  storage.getState().applyMachines([createMachineFixture({ id: 'm1' })], true, { sourceServerId: scope.serverId });
+  // Match the already-hydrated projection to the Machine content served by HTTP.
+  storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: options.e2ee ? 'e2ee' : 'plain', ...(options.originAtBirth ? {
+    operationProtocolCapabilities: { sessionSpawnAuthoringOrigin: { protocolVersions: [1] } },
+    operationProtocolCapabilitiesRevision: 1,
+  } : {}) })], true, { sourceServerId: scope.serverId });
   // Accepted creation also hydrates the destination through the real request
   // owner. Keep its propagation/recovery timers running through completion.
   return { ...result, scope, homeConnectionDescriptor, get storageState() { return storage.getState(); } };
@@ -463,7 +505,7 @@ async function setupApprovalAttachmentLaunch() {
   const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
   const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
   const { encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
-  const { buildApprovalRequestArtifactHeaderV1, ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+  const [{ buildApprovalRequestArtifactHeaderV1}, { ApprovalRequestV2Schema}] = await Promise.all([import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1'), import('@happier-dev/protocol/approvals/approvalRequestV1')]);
   const { PreparedTransferRpcRequestV1Schema } = await import('@happier-dev/protocol/machines/transfer/preparedTransferRpcV1');
   const { writeNewSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
   const { writeNewSessionAttachmentDrafts, readNewSessionAttachmentDrafts } = await import('@/components/sessions/new/attachments/newSessionAttachmentDraftStore');
@@ -506,7 +548,7 @@ async function setupApprovalAttachmentLaunch() {
     if (url.pathname === '/v1/machines/m1') return Response.json({ machine: machineRow });
     // /active is a list resource, not a Session id. The generic detail fixture
     // would otherwise answer 503 and mark this healthy synthetic Home offline.
-    if (url.pathname === '/v2/sessions/active') return Response.json(V2SessionListResponseSchema.parse({
+    if (url.pathname === '/v2/sessions/active') return Response.json(createSessionListSourceFixture({
       sessions: storage.getState().sessions['approved-note-session'] ? [approvedSessionRecord()] : [],
       nextCursor: null, hasNext: false,
     }));
@@ -550,7 +592,7 @@ async function setupApprovalAttachmentLaunch() {
   const settlement = vi.fn();
   const router = { push: vi.fn(), replace: vi.fn() };
   const disableDraftPersistence = vi.fn();
-  const emptyAttachments: readonly import('@happier-dev/protocol').ComposerAttachmentDraftV1[] = [];
+  const emptyAttachments: readonly import('@happier-dev/protocol/runtime/input/composerAttachmentV1').ComposerAttachmentDraftV1[] = [];
   const emptyEntries = {};
   const canSubmitRef = { current: true };
   let creationSettled = false;
@@ -879,6 +921,9 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await act(async () => { await settlements[0]!.complete('temporary-session', []); });
     expect(todoKv.writes).toEqual([]);
     expect(afterCreated).toHaveBeenCalledTimes(2);
+    expect(afterCreated).toHaveBeenLastCalledWith(expect.objectContaining({
+      sessionId: 'temporary-session', sessionTarget: { ...scope, sessionId: 'temporary-session' },
+    }));
     expect(settlements).toHaveLength(1);
     expect(sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
     // No successor edits exist, so acceptance retires the submitted authoring draft.
@@ -911,17 +956,11 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
   });
 
   it('links E2EE tasks with real Account crypto and rejects mode mismatches before writing', async () => {
-    const { todoKv, scope } = await setupTaskHarness();
+    const { todoKv, scope } = await setupTaskHarness({ e2ee: true });
     const { sync } = await import('@/sync/syncEngine');
     const { storage } = await import('@/sync/domains/state/storageStore');
-    const { encodeBase64 } = await import('@/encryption/base64');
-    const { resolveAccountScopedCryptoMaterialFromCredentials } = await import('@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials');
     const { encodeBase64StoredJsonContentEnvelope } = await import('@/sync/encryption/base64StoredJsonContent');
     const { linkTaskToSession, getSessionsForTask } = await import('@/sync/domains/todos/taskSessionLink');
-    const credentials = { token: sync.getCredentials()!.token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
-    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: resolveAccountScopedCryptoMaterialFromCredentials(credentials) });
-    todoKv.currentness = { mode: 'e2ee', version: 2, signingKeyFingerprint: 'signing-2', contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint), updatedAt: 2 };
-    await sync.switchServer(credentials);
     const source = { taskId: 'e2ee-task', scope, title: 'Private task' } as const;
     const todo = { id: source.taskId, title: source.title, done: false, createdAt: 1, updatedAt: 1 };
     storage.getState().applyTodos({ todos: { [todo.id]: todo }, undoneOrder: [todo.id], doneOrder: [], versions: {} });
@@ -952,6 +991,114 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     expect(sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0])
       .toEqual(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0]);
     await hook.unmount();
+  });
+
+  it('retains Provider launch errors and their explicit retry alongside Profile refusal presentation', async () => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, storageState, scope } = await setupTaskHarness({ httpsHome: true });
+    const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
+    const providerError = createProviderErrorV1('provider_not_enabled_on_machine');
+    sessionSpawnNewActionBoundarySpy.mockResolvedValue({ type: 'error', code: 'spawn_failed', retryable: false, providerError });
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, { draftScope: scope,
+      targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId] })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(sessionSpawnNewActionBoundarySpy.mock.calls, JSON.stringify(modalAlertSpy.mock.calls)).not.toHaveLength(0);
+      await vi.waitFor(() => expect(hook.getCurrent().providerLaunchError).toEqual(providerError));
+      await act(async () => { hook.getCurrent().retryProviderLaunch(); });
+      await vi.waitFor(() => expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(hook.getCurrent().providerLaunchError).toEqual(providerError));
+    } finally { await hook.unmount(); }
+  });
+
+  it('retains a refused remembered Profile on its draft until the Profile or target changes', async () => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, additionalBoundary, storageState, scope } = await setupTaskHarness({ httpsHome: true });
+    const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { sync } = await import('@/sync/sync');
+    const { AIBackendProfileSchema } = await import('@/sync/domains/profiles/profileCompatibility');
+    const profileId = 'remembered-refused-profile';
+    const profile = AIBackendProfileSchema.parse({ id: profileId, name: 'Remembered Profile',
+      compatibility: { codex: true }, createdAt: 1, updatedAt: 1 });
+    const profileMap = new Map([[profileId, profile]]);
+    const { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRowsListResponseV1Schema,
+      ProfileReferenceGuardReadResponseV1Schema } = await import('@happier-dev/protocol/profiles/profileRecordV1');
+    const { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } = await import('@happier-dev/protocol/profiles/profileTransferV1');
+    const transferControl = ProfileTransferRowReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: {
+      v: 1, phase: 'active', sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [],
+    } } });
+    const { createArtifactStoreBoundary } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+    // Real Profile admission reads the Account catalog before sending to the daemon.
+    additionalBoundary.http = async (url, init) => {
+      const artifactResponse = await artifacts.handle(`${url.pathname}${url.search}`, init);
+      if (artifactResponse) return artifactResponse;
+      if (url.pathname === PROFILE_TRANSFER_ROUTE_V1) return Response.json(transferControl);
+      if (url.pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json(ProfileReferenceGuardReadResponseV1Schema.parse({ status: 'ready', revision: 'absent' }));
+      if (url.pathname !== PROFILE_ROWS_ROUTE_V1) return null;
+      return Response.json(ProfileRowsListResponseV1Schema.parse({ status: 'listed', rows: [{ id: profileId, revision: 1,
+        content: { t: 'plain', v: { v: 1, id: profileId, enabled: true, promptStack: [], skillSeeds: [], secretBindings: {},
+          definition: { kind: 'legacy', profile } } } }], nextCursor: null, complete: true,
+        referenceGuardRevision: 'absent', transferControl, diagnostics: [] }));
+    };
+    await sync.applyAuthoringMemoryDelta({ lastUsedProfile: profileId }, {
+      expectedSettingsScope: scope,
+    });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { createUiProfileActionExecuteV1 } = await import('@/sync/ops/actions/profileActionDeps');
+    const { parseProfileActionRequestV1 } = await import('@happier-dev/protocol/profiles/profileActionsV1');
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    try {
+      const profileRead = await createUiProfileActionExecuteV1(account)(parseProfileActionRequestV1('launch_profiles.read', { id: profileId }), {});
+      expect(profileRead, JSON.stringify(profileRead))
+        .toMatchObject({ ok: true, result: { status: 'present' } });
+    } finally { account.dispose(); }
+    const refusal = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'profile_launch_unavailable', message: 'The selected Profile changed.',
+        profileRefusal: { profileId, reason: 'profile_overlay_mismatch' } },
+    });
+    if (refusal.type !== 'error') throw new Error('Expected Profile refusal fixture');
+    sessionSpawnNewActionBoundarySpy.mockResolvedValue(refusal);
+    let selectedProfileId: string | null = profileId;
+    let selectedMachineId = 'm1';
+    let modelMode: ModelMode = 'default';
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, {
+      useProfiles: true, selectedProfileId, selectedMachineId, modelMode, profileMap, draftScope: scope,
+      targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(sessionSpawnNewActionBoundarySpy.mock.calls, JSON.stringify(modalAlertSpy.mock.calls)).not.toHaveLength(0);
+      await vi.waitFor(() => expect(hook.getCurrent().profileLaunchFailure?.profileId).toBe(profileId));
+      expect(hook.getCurrent().profileLaunchFailure?.message).toContain('profile_overlay_mismatch');
+      expect(storage.getState().authoringMemory.lastUsedProfile).toBe(profileId);
+      const refusedSpawnCount = sessionSpawnNewActionBoundarySpy.mock.calls.length;
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(refusedSpawnCount);
+      expect(hook.getCurrent().profileLaunchFailure?.profileId).toBe(profileId);
+
+      modelMode = 'haiku';
+      await hook.rerender();
+      expect(hook.getCurrent().profileLaunchFailure?.profileId).toBe(profileId);
+
+      profileMap.set(profileId, { ...profile, updatedAt: 2 });
+      await hook.rerender();
+      expect(hook.getCurrent().profileLaunchFailure).toBeNull();
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      await vi.waitFor(() => expect(hook.getCurrent().profileLaunchFailure?.profileId).toBe(profileId));
+
+      await act(async () => { selectedProfileId = null; });
+      await hook.rerender();
+      expect(hook.getCurrent().profileLaunchFailure).toBeNull();
+      expect(storage.getState().authoringMemory.lastUsedProfile).toBe(profileId);
+
+      await act(async () => { selectedProfileId = profileId; });
+      await hook.rerender();
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      await vi.waitFor(() => expect(hook.getCurrent().profileLaunchFailure?.profileId).toBe(profileId));
+      await act(async () => { selectedMachineId = 'm2'; });
+      await hook.rerender();
+      expect(hook.getCurrent().profileLaunchFailure).toBeNull();
+    } finally { await hook.unmount(); }
   });
 
   it('creates a no-folder session: managed directory, no checkout, no recent folder written', async () => {
@@ -1502,6 +1649,212 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.unmount();
   });
 
+  it.each(['stable', 'newer-Session-push', 'e2ee-Codex-pool', 'e2ee-Codex-pool-birth'] as const)('L12-DEL-SMALL composes Project authoring through Send and cold created-Session hydration (%s)', async publication => {
+    const e2ee = publication.startsWith('e2ee');
+    const originAtBirth = publication === 'e2ee-Codex-pool-birth';
+    const context = await setupTaskHarness({ httpsHome: true, currentAccount: true, e2ee, originAtBirth });
+    spawnActionObservation.mockClear();
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    const hydration = vi.spyOn(sync, 'ensureSessionVisibleForMessageRoute');
+    const rpcObservation = vi.spyOn(await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc'), 'machineRpcWithServerScope');
+    const { createProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+    const { WorkspaceRefV1WriteSchema } = await import('@happier-dev/protocol/workspaces/workspaceRefV1');
+    const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+    const { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } = await import('@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1');
+    const { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { ProjectDefinitionInspectOutputSchema } = await import('@happier-dev/protocol/actions/projectDefinitionActionFamily');
+    const { SessionAuthoringOpenResultV1Schema } = await import('@happier-dev/protocol/plugins/ui');
+    const { openProjectSetupAuthoring } = await import('@/components/projects/projectSetup/projectSetupAuthoring');
+    const { readNewSessionDraftProjectionFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+    const ref = WorkspaceRefV1WriteSchema.parse({ id: 'L12-DEL-SMALL-setup', serverId: context.scope.serverId,
+      machineId: 'm1', rootPath: '/tmp/L12-DEL-SMALL-setup', createdAtMs: 1 });
+    const workspace = { serverId: ref.serverId, workspaceId: ref.id, machineId: ref.machineId, rootPath: ref.rootPath };
+    const projectRows = createPlainProjectAccountRowListFixture({ workspaceRefs: [ref] });
+    if (e2ee) {
+      const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+      const cipher = createProjectAccountRowCipherV1({ mode: 'e2ee', material: { type: 'legacy', secret: new Uint8Array(32).fill(17) },
+        randomBytes: length => new Uint8Array(length).fill(9) });
+      for (const row of projectRows.rows) {
+        if (row.content?.t !== 'plain') throw new Error('Expected plain fixture payload before sealing');
+        row.content = cipher.seal(row.content.v);
+      }
+    }
+    let created: ReturnType<typeof createPlainSessionCurrentProjectionRecordFixture> | null = null;
+    let draftOrigin: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedOriginV1 | undefined;
+    let displayConflicts = 0;
+    let racedPublication = false;
+    context.additionalBoundary.http = async (url, init) => {
+      if (url.pathname === '/v1/actions/projects.inspect') {
+        const execution = { ok: true as const, result: ProjectDefinitionInspectOutputSchema.parse({
+          definition: { basis: { kind: 'absent' }, document: null },
+          detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+        }) };
+        if (e2ee) {
+          const { ExternalActionRequestEnvelopeV2Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+          const { openExternalActionRequestV2, prepareExternalActionResponseV2 } = await import('@happier-dev/protocol/actions/externalActionEncryption');
+          const { Encryption } = await import('@/sync/encryption/encryption');
+          const request = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(String(init?.body)));
+          const writer = await Encryption.create(new Uint8Array(32).fill(17));
+          const material = { type: 'dataKey' as const, machineKey: writer.getContentPrivateKey() };
+          const binding = { serverIdentityId: context.homeConnectionDescriptor!.homeServerIdentityId,
+            accountId: context.scope.accountId, authentication: { kind: 'account' as const, tokenEpoch: 0 },
+            actionId: 'projects.inspect' as const, requestId: request.requestId, target: request.target };
+          expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope: request, binding, material })).not.toBeNull();
+          return Response.json(prepareExternalActionResponseV2({ binding, material, request, execution, executedMachineId: 'm1',
+            randomBytes: length => new Uint8Array(length).fill(13) }).response);
+        }
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+        return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.inspect', requestId: request.requestId, execution }));
+      }
+      if (url.pathname === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) {
+        const value = { enabled: true, destination: { kind: 'machine', machineId: 'm1' }, unavailable: 'fail',
+          allowAdHoc: false, scriptOverrides: {}, services: {} };
+        if (!e2ee) return Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: value } });
+        const { buildWorkspaceExecutionConfigRowIdV1, WORKSPACE_EXECUTION_CONFIG_ACCOUNT_SCOPED_BLOB_KIND_V1 } =
+          await import('@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1');
+        const { sealAccountScopedBlobCiphertext } = await import('@happier-dev/protocol/crypto/accountScopedCipher');
+        return Response.json({ status: 'present', revision: 1, content: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+          kind: WORKSPACE_EXECUTION_CONFIG_ACCOUNT_SCOPED_BLOB_KIND_V1,
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(17) },
+          payload: { rowId: buildWorkspaceExecutionConfigRowIdV1({ serverId: workspace.serverId, refId: workspace.workspaceId }), value },
+          randomBytes: length => new Uint8Array(length).fill(11),
+        }) } });
+      }
+      if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(projectRows);
+      if (url.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/authoring-session`) return Response.json({ status: 'recorded',
+        row: { ...projectRows.rows[0],
+          authoringSession: { serverId: context.homeConnectionDescriptor!.homeServerIdentityId, sessionId: 'L12-DEL-SMALL-created' } } });
+      if (url.pathname === '/v2/sessions/L12-DEL-SMALL-created' && created) {
+        if (init?.method === 'PATCH') {
+          if (e2ee) {
+            const { SessionMetadataTuplePatchV1Schema } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
+            const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+            if (patch.mode !== 'owner') throw new Error('Expected owner metadata write');
+            created = { ...created, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+              metadataVersion: created.metadataVersion + 1, agentState: patch.agentState.ciphertext,
+              agentStateVersion: created.agentStateVersion + 1,
+              ...(patch.displayProjectionV1 ? { displayProjectionV1: patch.displayProjectionV1 } : {}) };
+            return Response.json({ success: true, metadataLayoutVersion: 1,
+              sharedMetadata: { version: created.metadataVersion }, agentState: { version: created.agentStateVersion } });
+          }
+          displayConflicts++;
+          return Response.json({ code: 'session_active' }, { status: 409 });
+        }
+        const response = Response.json({ session: created });
+        if (publication === 'newer-Session-push' && hydration.mock.calls.length > 0 && !racedPublication) {
+          racedPublication = true;
+          // A real push may publish the native first turn's newer Session while
+          // the already-issued route read is returning its older full snapshot.
+          const metadata = { path: ref.rootPath, machineId: ref.machineId, host: 'worker',
+            work: { authoringOriginV1: draftOrigin }, summary: { text: 'First turn completed', updatedAt: 2 } };
+          created = createPlainSessionCurrentProjectionRecordFixture({ id: created.id, seq: created.seq + 1,
+            updatedAt: created.updatedAt + 1, metadataVersion: created.metadataVersion + 1,
+            active: true, metadata });
+          storage.getState().applySessions([createSessionFixture({ id: created.id, serverId: context.scope.serverId,
+            seq: created.seq, updatedAt: created.updatedAt, metadataVersion: created.metadataVersion,
+            metadataLayoutVersion: 1, metadata: JSON.parse(created.metadata), ownerMetadataView: metadata })]);
+        }
+        return response;
+      }
+      return null;
+    };
+    context.additionalBoundary.rpc = async method => method === 'projects.worker.status'
+      ? { eligible: true, candidate: { serverId: ref.serverId, machineId: ref.machineId }, load: { kind: 'unknown' }, explanation: 'load_unknown' }
+      : undefined;
+    storage.getState().activateProjectAccountRowsScope(context.scope);
+    storage.getState().applyProjectAccountRowsForScope(context.scope, createProjectAccountRowsFixture(context.scope, { workspaceRefs: [ref] }));
+    const opened = await openProjectSetupAuthoring({ workspace });
+    if (!opened.ok) throw new Error(`${opened.errorCode}: ${opened.error}`);
+    const acknowledgement = SessionAuthoringOpenResultV1Schema.parse(opened.result);
+    if (acknowledgement.kind !== 'opened') throw new Error('Expected authoring draft');
+    const draft = readNewSessionDraftProjectionFromRepository({ scope: context.scope, draftId: acknowledgement.draftId })?.draft;
+    if (!draft) throw new Error('Expected real authoring draft');
+    draftOrigin = draft.authoringOrigin;
+    expect(context.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+    let committed = createPlainSessionCurrentProjectionRecordFixture({ id: 'L12-DEL-SMALL-created', active: true,
+      metadata: { path: ref.rootPath, machineId: ref.machineId, host: 'worker', work: { authoringOriginV1: draft.authoringOrigin } } });
+    if (e2ee) {
+      const { Encryption } = await import('@/sync/encryption/encryption');
+      const { encodeBase64 } = await import('@/encryption/base64');
+      const { sealEncryptedDataKeyEnvelopeV1 } = await import('@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1');
+      const { sealSessionOwnerMetadataEnvelopeV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+      const { createSessionOwnerMetadataV1 } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
+      const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
+      const secret = new Uint8Array(32).fill(17);
+      const dataKey = new Uint8Array(32).fill(8);
+      const writer = await Encryption.create(secret);
+      await writer.initializeSessions(new Map([[committed.id, dataKey]]));
+      const cipher = writer.getSessionEncryption(committed.id)!;
+      const owner = createSessionOwnerMetadataV1({ metadata: { path: ref.rootPath, machineId: ref.machineId,
+        host: 'worker', work: { authoringOriginV1: draft.authoringOrigin } } });
+      if (!owner.ok) throw new Error('Expected authoring owner metadata');
+      committed = SessionCurrentProjectionRecordV1Schema.parse({ ...committed, encryptionMode: 'e2ee',
+        dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: writer.contentDataKey,
+          randomBytes: length => new Uint8Array(length).fill(3) })),
+        metadata: await cipher.encryptRaw(JSON.parse(committed.metadata)),
+        ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret },
+          ownerMetadata: owner.ownerMetadata, randomBytes: length => new Uint8Array(length).fill(7) }),
+      });
+    }
+    context.sessionSpawnNewActionBoundarySpy.mockImplementationOnce(async input => {
+      created = committed;
+      return { ...spawnSuccess(created.id), executionTarget: input.executionTarget };
+    });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const promptStore = createNewSessionPromptStore(draft.input);
+    const hook = await renderHook(() => context.useCreateNewSession(createRetryParams(context.storageState.settings, {
+      router, promptStore, draftId: acknowledgement.draftId, authoringOrigin: draft.authoringOrigin,
+      selectedMachineId: ref.machineId, selectedPath: ref.rootPath,
+      ...(originAtBirth ? { selectedMachine: createMachineFixture({ id: ref.machineId,
+        operationProtocolCapabilities: { sessionSpawnAuthoringOrigin: { protocolVersions: [1] } },
+        operationProtocolCapabilitiesRevision: 1,
+      }) } : {}),
+      backendTarget: { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex },
+      ...(e2ee ? { modelMode: 'gpt-6-luna', agentNewSessionOptions: { connectedServices: {
+        v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+          source: 'connected', selection: 'group', groupId: 'codex-pool',
+        } },
+      } } } : {}),
+      draftScope: context.scope, targetServerId: context.scope.serverId, targetAccountScope: context.scope,
+      allowedTargetServerIds: [context.scope.serverId],
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(context.sessionSpawnNewActionBoundarySpy, JSON.stringify({ alerts: context.modalAlertSpy.mock.calls,
+        scope: storage.getState().profileScope, expectedScope: context.scope,
+        spawn: await Promise.all(spawnActionObservation.mock.results.map(async result => {
+          const value = await result.value;
+          return value.ok ? { ok: true, result: value.result } : { code: value.errorCode };
+        })),
+        rpcMethods: context.machineRpcSpy.mock.calls.map(call => call[1]),
+        machineCapabilities: Object.fromEntries(Object.entries(storage.getState().machineListByServerId).map(([serverId, machines]) =>
+          [serverId, machines.map(machine => ({ id: machine.id, capabilities: machine.operationProtocolCapabilities }))])),
+        scopedRpc: await Promise.all(rpcObservation.mock.results.map(async result => {
+          try { await result.value; return { ok: true }; }
+          catch (error) { return error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { type: typeof error }; }
+        })),
+      })).toHaveBeenCalledTimes(1);
+      expect(context.modalAlertSpy.mock.calls, JSON.stringify(await Promise.all(hydration.mock.results.map(result => result.value)))).toEqual([]);
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      const visible = storage.getState().sessions['L12-DEL-SMALL-created'];
+      expect(visible).toMatchObject({ id: 'L12-DEL-SMALL-created', encryptionMode: e2ee ? 'e2ee' : 'plain' });
+      const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+      expect(readSessionOwnerMetadataView(visible!)).toMatchObject({ path: ref.rootPath,
+        work: { authoringOriginV1: draft.authoringOrigin } });
+      if (e2ee) expect(context.sessionSpawnNewActionBoundarySpy.mock.calls[0]![0]).toMatchObject({
+        agentTarget: { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex },
+        connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+          source: 'connected', selection: 'group', groupId: 'codex-pool',
+        } } },
+      });
+      expect(context.sessionSpawnNewActionBoundarySpy.mock.calls[0]![0].authoringOrigin).toEqual(originAtBirth ? draft.authoringOrigin : undefined);
+      if (e2ee) expect(displayConflicts).toBe(0);
+      if (!e2ee) expect(displayConflicts).toBeGreaterThan(0);
+      expect(racedPublication).toBe(publication === 'newer-Session-push');
+    } finally { rpcObservation.mockRestore(); hydration.mockRestore(); await hook.unmount(); }
+  });
+
   it('publishes the first prompt as a launch attempt while spawn is unresolved', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState } = await setupHarness();
     const spawnDeferred = createDeferred<SessionSpawnNewResultV1>();
@@ -1576,6 +1929,180 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       await act(async () => {
         await createPromise;
       });
+      await hook.unmount();
+    }
+  });
+
+  it('shows a default-account launch refusal with the submitted Action request identity', async () => {
+    const context = await setupTaskHarness({ httpsHome: true });
+    const { buildManualSessionCreationKey } = await import('@/sync/domains/session/spawn/manualSessionSpawnOperation');
+    spawnActionObservation.mockClear();
+    const requestId = 'default-account-launch-request';
+    const code = 'connected_account_purpose_catalog_unavailable';
+    context.sessionSpawnNewActionBoundarySpy.mockResolvedValue({
+      type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { kind: 'launch_error', code, message: code, failureCause: {
+        code, phase: 'authentication', failureReason: 'unknown', connectedServicesDefault: {
+          v: 1, source: 'account_default', reason: code, phase: 'purpose_binding', catalogReason: 'unreachable',
+        },
+      } },
+    });
+    const hook = await renderHook(() => context.useCreateNewSession(createRetryParams(context.storageState.settings, {
+      draftScope: context.scope, targetAccountScope: context.scope, targetServerId: context.scope.serverId,
+      allowedTargetServerIds: [context.scope.serverId], launchUserAttemptId: requestId,
+    })));
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(context.sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(context.sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0].creationKey).toBe(buildManualSessionCreationKey(requestId));
+      expect(spawnActionObservation.mock.calls[0]?.[1]?.actionRequestId).toBe(requestId);
+      expect(context.modalAlertSpy).toHaveBeenCalledTimes(1);
+      const message = context.modalAlertSpy.mock.calls[0]?.[1];
+      expect(message).toContain(code);
+      expect(message).toContain('purpose_binding');
+      expect(message).toContain('unreachable');
+      expect(message).toContain(requestId);
+    } finally { await hook.unmount(); }
+  });
+
+  it('settles a terminal directory preflight refusal without waiting for a spawn operation', async () => {
+    const context = await setupTaskHarness();
+    const { writeNewSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { awaitManualSessionSpawnOperation } = await import('@/sync/domains/session/spawn/manualSessionSpawnOperation');
+    const draftId = 'directory-refusal-draft';
+    const userAttemptId = 'directory-refusal-attempt';
+    const prompt = 'Keep my first input';
+    writeNewSessionDraft({ scope: context.scope, draftId, patch: { text: prompt }, materializationIntent: 'userEdit' });
+    const methods: string[] = [];
+    context.additionalBoundary.rpc = async method => {
+      methods.push(method);
+      if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) return {
+        error: 'filesystem_identity_custody_unavailable', errorCode: 'filesystem_identity_custody_unavailable',
+        details: { reason: 'requester_identity_unavailable' },
+      };
+      return undefined;
+    };
+    const settlement = vi.fn();
+    const attempts = vi.fn();
+    const promptStore = createNewSessionPromptStore(prompt);
+    const hook = await renderHook(() => {
+      const [isCreating, setIsCreating] = React.useState(false);
+      const launch = context.useCreateNewSession(createRetryParams(context.storageState.settings, {
+        draftScope: context.scope, targetAccountScope: context.scope, targetServerId: context.scope.serverId,
+        allowedTargetServerIds: [context.scope.serverId], draftId, launchUserAttemptId: userAttemptId,
+        promptStore, onLaunchAttemptChange: attempts, setIsCreating,
+      }));
+      return { ...launch, isCreating };
+    });
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession({ onAfterCreatedSettled: settlement }); });
+      expect(hook.getCurrent().isCreating).toBe(false);
+      expect(settlement).toHaveBeenCalledWith({ status: 'rejected' });
+      expect(context.modalAlertSpy).toHaveBeenCalledTimes(1);
+      expect(attempts.mock.calls.at(-1)?.[0]).toBeNull();
+      expect(context.sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
+      await expect(awaitManualSessionSpawnOperation(context.scope, userAttemptId,
+        new AbortController().signal, 'm1')).resolves.toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false,
+          launchError: { code: 'filesystem_identity_custody_unavailable' } });
+      expect(methods.filter(method => method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT)).toHaveLength(1);
+      expect(methods).not.toContain(ACTION_OPERATION_RPC_METHODS_V2.list);
+      expect(methods).not.toContain(ACTION_OPERATION_RPC_METHODS_V2.get);
+      const retained = getSessionDraftSnapshot(context.scope, { kind: 'newSession', draftId });
+      expect(readDraftComposerText(retained)).toBe(prompt);
+      expect(retained?.localSupplement.launchUserAttemptId).toBeUndefined();
+    } finally { await hook.unmount(); }
+  });
+
+  it.each(['accepted', 'refused'] as const)('presents the committed Session at commit with a launch-owned first message, then settles it %s on the destination', async outcome => {
+    const context = await setupTaskHarness();
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { writeNewSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { projectSessionSpawnNewActionResultV1 } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+    const { resolveSessionSpawnNewResultFailureMessage } = await import('@/sync/ops/actions/sessionSpawnFailurePresentation');
+    const sessionId = 'spawnui-committed-session';
+    const draftId = 'spawnui-draft';
+    const prompt = 'Start here';
+    writeNewSessionDraft({ scope: context.scope, draftId, patch: { text: prompt }, materializationIntent: 'userEdit' });
+    context.storageState.applySessions([createSessionFixture({ id: sessionId, serverId: context.scope.serverId, encryptionMode: 'plain' })]);
+    const address = { serverId: context.scope.serverId, machineId: 'm1', operationId: 'spawnui-operation' };
+    const terminal = createDeferred<unknown>();
+    let heldGets = 0;
+    context.additionalBoundary.rpc = async (method) => {
+      if (method !== ACTION_OPERATION_RPC_METHODS_V2.get) return undefined;
+      heldGets += 1;
+      return await terminal.promise;
+    };
+    context.sessionSpawnNewActionBoundarySpy.mockImplementation(async (input) => input.observeSessionCommit === true
+      ? { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId, operation: address }
+      : { type: 'error', code: 'machine_offline', retryable: true });
+    const machine = createMachineFixture({ id: 'm1',
+      operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3] } }, operationProtocolCapabilitiesRevision: 1 });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const setIsCreating = vi.fn();
+    const hook = await renderHook(() => context.useCreateNewSession(createRetryParams(context.storageState.settings, {
+      draftScope: context.scope, targetAccountScope: context.scope, targetServerId: context.scope.serverId, setIsCreating,
+      allowedTargetServerIds: [context.scope.serverId], draftId, launchUserAttemptId: 'spawnui-attempt', selectedMachine: machine,
+      promptStore: createNewSessionPromptStore(prompt), router,
+    })));
+    const firstMessage = () => storage.getState().sessionPending[sessionId]?.messages.find(message => message.text === prompt);
+    const httpSeen: string[] = [];
+    context.additionalBoundary.http = async (url, init) => { httpSeen.push(`${init?.method ?? 'GET'} ${url.pathname}`); return null; };
+    const capture = vi.spyOn(await import('@/utils/system/sentry'), 'captureExceptionIfEnabled');
+    onTestFailed(() => console.error('SPAWNUI-DIAG', JSON.stringify({ httpSeen: httpSeen.slice(-25),
+      captured: capture.mock.calls.map(([error]) => String(error instanceof Error ? error.stack?.split('\n').slice(0, 5).join(' | ') : error)),
+      alerts: context.modalAlertSpy.mock.calls.map(call => call.slice(0, 2)) })));
+    let createPromise: Promise<void> | undefined;
+    try {
+      await act(async () => {
+        createPromise = hook.getCurrent().handleCreateSession();
+        await flushHookEffects({ cycles: 8, turns: 4 });
+      });
+      // Presented at commit, while the launch is still held on its one exact-operation read.
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1), { timeout: 20_000 });
+      await vi.waitFor(() => expect(heldGets).toBe(1), { timeout: 20_000 });
+      expect(router.replace).toHaveBeenCalledWith(expect.stringContaining(`/session/${sessionId}`), expect.anything());
+      expect(firstMessage()).toMatchObject({ source: 'local_outbound', pendingLaunch: { state: 'starting' } });
+      expect(firstMessage()?.deliveryStatus).toBeUndefined();
+      expect(storage.getState().markSessionOptimisticThinking).not.toHaveBeenCalled();
+      const firstTurnLocalId = firstMessage()!.localId!;
+      // The destination replaces the New Session screen: the launch completes without its launcher.
+      await hook.unmount();
+
+      const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+        launchError: { kind: 'launch_error' as const, code: 'provider_model_not_found', message: 'provider_model_not_found' } };
+      const settled = outcome === 'accepted'
+        ? { ...spawnSuccess(sessionId), executionTarget: { serverId: context.scope.serverId, machineId: 'm1' },
+          initialInput: { status: 'accepted' as const, localId: firstTurnLocalId } }
+        : refusal;
+      terminal.resolve({ kind: 'found', operation: { version: 1, operationId: address.operationId, revision: 3,
+        actionId: 'session.spawn_new', state: 'succeeded', scope: { accountId: context.scope.accountId, machineId: 'm1' },
+        requestId: 'spawnui-request', title: 'Create session', createdAt: 1, startedAt: 2, settledAt: 3,
+        cancellation: 'supported', result: projectSessionSpawnNewActionResultV1(settled) } });
+      await act(async () => { await createPromise; });
+
+      expect(context.sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(heldGets).toBe(1);
+      expect(router.replace).toHaveBeenCalledTimes(1);
+      const { sync } = await import('@/sync/sync');
+      expect(sync.sendMessage).not.toHaveBeenCalled();
+      if (outcome === 'accepted') {
+        expect(firstMessage()).toMatchObject({ localId: firstTurnLocalId, deliveryStatus: 'accepted' });
+        expect(firstMessage()?.pendingLaunch).toBeUndefined();
+        expect(storage.getState().markSessionOptimisticThinking).toHaveBeenCalledWith(sessionId);
+        expect(context.modalAlertSpy).not.toHaveBeenCalled();
+      } else {
+        expect(firstMessage()).toMatchObject({ localId: firstTurnLocalId, text: prompt,
+          pendingLaunch: { state: 'failed', message: resolveSessionSpawnNewResultFailureMessage(refusal), draftId } });
+        expect(storage.getState().markSessionOptimisticThinking).not.toHaveBeenCalled();
+        // The row carries the typed reason; a non-retryable refusal offers no Retry anywhere.
+        expect(context.modalAlertSpy).not.toHaveBeenCalled();
+        expect(getSessionDraftSnapshot(context.scope, { kind: 'newSession', draftId })).toBeTruthy();
+      }
+    } finally {
+      terminal.resolve({ kind: 'not_found' });
+      await createPromise?.catch(() => undefined);
       await hook.unmount();
     }
   });
@@ -2727,6 +3254,7 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
       launchAttempt: expect.objectContaining({
         createdSessionId: 'session-created',
       }),
+      sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'session-created' },
     }));
     expect(router.replace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
 

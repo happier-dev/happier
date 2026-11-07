@@ -20,6 +20,13 @@ import { ApiClient } from '@/api/api';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
 import { executeSpawnSessionRequest } from './executeSpawnSessionRequest';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { logger } from '@/ui/logger';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol/account/authoringMemory';
+import { PROFILE_ROWS_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 
 const credentials = { token: 'default-binding-owner', encryption: null } as const;
 const serverHttpBaseUrl = 'https://spawn-defaults.example';
@@ -52,6 +59,11 @@ function installHome(purposeTarget: 'account' | 'group' | 'empty' | 'unavailable
     if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: {} } } };
     if (path === '/v1/account/encryption/currentness') return { status: 200,
       data: createAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) };
+    if (path === '/v1/account/encryption') return { status: 200,
+      data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 0 }) };
+    if (path === `${AUTHORING_MEMORY_ROUTE_V1}/lastUsedProfile`) return { status: 200,
+      data: { status: 'present', revision: 1, content: { t: 'plain', v: null } } };
+    if (path.startsWith(PROFILE_ROWS_ROUTE_V1)) return { status: 503, data: { error: 'unavailable' } };
     if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) {
       if (purposeTarget === 'unavailable') throw new Error('Home unavailable');
       return { status: 200, data: ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1461,
@@ -72,6 +84,18 @@ function prepare(connectedServices?: unknown, operationContext?: SavedSecretOper
     ...(connectedServices === undefined ? {} : { connectedServices }) });
   return runWithServerHttpBaseUrl(serverHttpBaseUrl, () => prepareExecuteSpawnSessionRequest({
     request: { options, credentials, ...(operationContext ? { operationContext } : {}) }, validateEnvVarRecordStrict,
+  }));
+}
+
+function execute(options: SpawnSessionOptions) {
+  return runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => executeSpawnSessionRequest({
+    options, credentials, api: await ApiClient.create(credentials),
+    connectedServicesMaterializationBaseDir: configuration.happyHomeDir,
+    connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
+    connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
+    pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
+    pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {},
   }));
 }
 
@@ -136,18 +160,37 @@ describe('fresh daemon spawn Account purpose defaults', () => {
   it('carries default-admission refusal through the real daemon spawn composition before launch', async () => {
     installHome('unavailable');
     const beforeSessionRunnerLaunch = vi.fn(async () => false);
-    const result = await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => executeSpawnSessionRequest({
-      options: { directory: configuration.happyHomeDir, agentTarget, beforeSessionRunnerLaunch },
-      credentials, api: await ApiClient.create(credentials),
-      connectedServicesMaterializationBaseDir: configuration.happyHomeDir,
-      connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
-      connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
-      pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-      resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {},
-    }));
+    const result = await execute({ directory: configuration.happyHomeDir, agentTarget, beforeSessionRunnerLaunch });
     expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
       errorMessage: 'connected_account_purpose_catalog_unavailable' });
+    if (result.type !== 'error') throw new Error('Expected default-admission refusal');
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure(result))).toMatchObject({
+      type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { code: 'connected_account_purpose_catalog_unavailable', failureCause: {
+        code: 'connected_account_purpose_catalog_unavailable', phase: 'authentication',
+        connectedServicesDefault: { v: 1, source: 'account_default',
+          reason: 'connected_account_purpose_catalog_unavailable', phase: 'purpose_binding', catalogReason: 'unreachable' },
+      } },
+    });
     expect(beforeSessionRunnerLaunch).not.toHaveBeenCalled();
+  });
+
+  it('retains and logs the selected Profile when catalog admission refuses the real daemon spawn', async () => {
+    installHome('empty');
+    const profileId = 'foreign-default-profile';
+    const info = vi.spyOn(logger, 'infoFile');
+    const result = await execute({ directory: configuration.happyHomeDir, agentTarget, profileId,
+      connectedServices: { v: 2, bindingsByServiceId: {} } });
+    expect(result).toMatchObject({ type: 'error', errorCode: 'INVALID_REQUEST' });
+    if (result.type !== 'error') throw new Error('Expected Profile refusal');
+    expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure(result))).toMatchObject({
+      type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { code: 'profile_launch_unavailable', profileRefusal: {
+        profileId, reason: 'profile_catalog_unavailable', catalogStatus: 'unavailable',
+      } },
+    });
+    expect(info).toHaveBeenCalledWith('[DAEMON RUN] Profile launch refused', expect.objectContaining({
+      profileId, reason: 'profile_catalog_unavailable', catalogStatus: 'unavailable',
+    }));
   });
 });

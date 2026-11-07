@@ -1,7 +1,5 @@
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
-import { logger } from '@/ui/logger';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { once } from 'node:events';
@@ -71,6 +69,14 @@ import { buildTerminalMetadataFromHostHandle } from '@/terminal/runtime/terminal
 import { resolveDaemonSessionTerminalPresentation } from '../sessions/resolveTrackedSessionTerminalPresentation';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExitCode';
+import { ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
+import { isSessionSpawnBrokerUnavailable } from '@happier-dev/protocol/spawnSession';
+import { activatePendingInactiveSession } from '@/daemon/sessions/activatePendingInactiveSession';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { logger } from '@/ui/logger';
 
 const mocks = vi.hoisted(() => ({
   spawnHappyCLI: vi.fn(),
@@ -176,47 +182,6 @@ function withCanonicalChildExitOwner(
 }
 
 describe('spawnRegularProcessAndWaitForWebhook', () => {
-  it.each([
-    { identity: 'member B', code: 'agent_startup_failed', failureReason: 'unclassified_provider_error' },
-    { identity: 'shared happier-agent', code: 'EACCES', failureReason: 'permission_denied' },
-  ] as const)('retains the runner failure cause through the public spawn result for $identity', async ({ identity, code, failureReason }) => {
-    const child = createFakeChildProcess(5154);
-    mocks.spawnHappyCLI.mockReturnValueOnce(child);
-    const params = withCanonicalChildExitOwner(createParams());
-    const pending = spawnRegularProcessAndWaitForWebhook(params);
-    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5154)).toBe(true));
-    child.stderr.emit('data', 'startup warning\n'.repeat(5000));
-    const failureCause = { code, phase: 'client_start' as const, failureReason };
-    const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
-      // The OS stream is the only replaced boundary: run the real runner
-      // failure producer, daemon capture/custody and strict public projections.
-      const record = `${values.join(' ')}\n`;
-      const split = Math.floor(record.length / 2);
-      child.stderr.emit('data', record.slice(0, split));
-      child.stderr.emit('data', record.slice(split));
-    });
-    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
-    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
-    try {
-      expect(reportSessionRunnerFailure(new PluginError({ code: 'agent_startup_failed',
-        message: `PRIVATE_${identity}_BODY`, details: { failureCause, path: '/PRIVATE_HOME', token: 'PRIVATE_TOKEN' } }))).toBe(1);
-    } finally {
-      output.mockRestore(); log.mockRestore(); fatal.mockRestore();
-    }
-    // The final failure record must survive a traceback filling the tail.
-    child.stderr.emit('data', 'stack frame\n'.repeat(5000));
-    child.emit('exit', 1, null);
-    const failure = await pending;
-    if (failure.type !== 'error') throw new Error('Expected runner startup failure');
-    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
-    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
-      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
-    }));
-    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
-    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|member B|shared happier-agent/);
-    expect(params.pidToSpawnResultResolver.size).toBe(0);
-  });
-
   let routeRegistryGeneration = 0;
   let pendingCapturedCase: Promise<void> | undefined;
   let currentTestSignal: AbortSignal | undefined;
@@ -256,6 +221,30 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       errorMessage: expect.stringContaining("can't open more files") });
     expect(params.cleanupSpawnResources).toHaveBeenCalled();
     expect(params.spawnLifecycleCallbacks.cleanupPendingSessionAttach).toHaveBeenCalled();
+  });
+
+  it.each([false, true])('preserves the native refusal at the strict Action sink (cleanup failure: %s)', async cleanupFails => {
+    mocks.spawnHappyCLI.mockImplementationOnce(() => {
+      throw Object.assign(new Error('Native process file limit'), { code: 'EMFILE', syscall: 'spawn' });
+    });
+    const params = createParams();
+    // The launch resource's cleanup invokes an external OS/file boundary.
+    if (cleanupFails) params.cleanupSpawnResources.mockRejectedValueOnce(new Error('private cleanup failure'));
+    const failure = await spawnRegularProcessAndWaitForWebhook(params);
+    expect(failure).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorDetail: { kind: 'spawn_failure', reason: 'too_many_open_files', errno: 'EMFILE' } });
+    if (failure.type !== 'error') throw new Error('Native refusal unexpectedly succeeded');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', launchError: {
+      code: 'EMFILE',
+      message: expect.stringContaining("can't open more files"),
+    } });
+    expect(JSON.stringify(result)).not.toContain('private cleanup failure');
+    expect(params.spawnLifecycleCallbacks.cleanupPendingSessionAttach).toHaveBeenCalled();
+    if (cleanupFails) expect(params.logDebug).toHaveBeenCalledWith(expect.stringContaining('cleanup'), expect.anything());
   });
 
   it.skipIf(originalPlatform === 'win32').each([
@@ -487,7 +476,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   response.setHeader('Content-Type', 'application/json');
                   if (request.method === 'GET' && request.url === ACCOUNT_SECURITY_PATH_V1) {
                     response.end(JSON.stringify(AccountSecurityGetResponseV1Schema.parse({ v: 1,
-                      encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+                      encryptionMode: 'plain', nativeEmail: null,
                       password: { status: 'not_enrolled', revision: null } })));
                   } else if (request.method === 'GET' && request.url === '/v2/sessions/session-1') {
                     response.end(JSON.stringify({ session: rawSession }));
@@ -1761,6 +1750,222 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(JSON.stringify(params.logDebug.mock.calls)).toContain('[REDACTED]');
   });
 
+  it.each([false, true])('retains typed redacted child exit diagnostics through startup custody and Action results (early=%s)', async (early) => {
+    const child = createFakeChildProcess(5150);
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    let releaseMarker!: () => void;
+    const markerHeld = new Promise<void>((resolve) => { releaseMarker = resolve; });
+    if (early) params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(() => markerHeld);
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledOnce());
+    if (!early) await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5150)).toBe(true));
+    expect(child.stderr.listenerCount('data')).toBe(1);
+    const privateValue = randomUUID();
+    const missingBasename = early ? '缺少.js' : 'nacl-fast.js';
+    const privatePath = early
+      ? String.raw`C:\Users\person\project\node_modules\tweetnacl` + '\\' + missingBasename
+      : '/private/person/project/node_modules/tweetnacl/nacl-fast.js';
+    child.stderr.emit('data', `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '${privatePath}' imported from /private/person/project/main.mjs\npassword=${privateValue}\n${'stack frame\n'.repeat(5000)}`);
+    child.emit('exit', 1, null);
+    releaseMarker();
+    const failure = await pending;
+    expect(failure.type).toBe('error');
+    if (failure.type !== 'error') throw new Error('Expected startup failure');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true, launchError: {
+      code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      childExit: { code: 1, signal: null, stderrHead: expect.stringContaining('ERR_MODULE_NOT_FOUND'),
+        cause: { kind: 'module_not_found', specifierBasename: missingBasename } },
+    } });
+    const serialized = JSON.stringify(result);
+    expect(serialized.includes(privateValue)).toBe(false);
+    expect(serialized.includes(privatePath)).toBe(false);
+    expect(serialized.includes('/private/person')).toBe(false);
+    expect(serialized.includes(String.raw`C:\Users\person`)).toBe(false);
+    expect(serialized).toContain('[REDACTED]');
+    if (result.type !== 'error' || !('launchError' in result) || !result.launchError?.childExit?.stderrHead) throw new Error('Expected launch detail');
+    expect(Buffer.byteLength(result.launchError.childExit.stderrHead, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(params.pidToSpawnResultResolver.size).toBe(0);
+  });
+
+  it.each([
+    { identity: 'member B', code: 'agent_startup_failed', failureReason: 'unclassified_provider_error' },
+    { identity: 'shared happier-agent', code: 'EACCES', failureReason: 'permission_denied' },
+  ] as const)('retains the runner failure cause through the public spawn result for $identity', async ({ identity, code, failureReason }) => {
+    const child = createFakeChildProcess(5154);
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5154)).toBe(true));
+    child.stderr.emit('data', 'startup warning\n'.repeat(5000));
+    const failureCause = { code, phase: 'client_start' as const, failureReason };
+    const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+      // The OS stream is the only replaced boundary: run the real runner
+      // failure producer, daemon capture/custody and strict public projections.
+      const record = `${values.join(' ')}\n`;
+      const split = Math.floor(record.length / 2);
+      child.stderr.emit('data', record.slice(0, split));
+      child.stderr.emit('data', record.slice(split));
+    });
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    try {
+      expect(reportSessionRunnerFailure(new PluginError({ code: 'agent_startup_failed',
+        message: `PRIVATE_${identity}_BODY`, details: { failureCause, path: '/PRIVATE_HOME', token: 'PRIVATE_TOKEN' } }))).toBe(1);
+    } finally {
+      output.mockRestore(); log.mockRestore(); fatal.mockRestore();
+    }
+    // The final failure record must survive a traceback filling the tail.
+    child.stderr.emit('data', 'stack frame\n'.repeat(5000));
+    child.emit('exit', 1, null);
+    const failure = await pending;
+    if (failure.type !== 'error') throw new Error('Expected runner startup failure');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|member B|shared happier-agent/);
+    expect(params.pidToSpawnResultResolver.size).toBe(0);
+  });
+
+  it.each([
+    'connected_account_purpose_catalog_unavailable',
+    'connected_services_default_settings_invalid',
+    'provider_catalog_unavailable',
+  ] as const)('retains default launch refusal %s from runner through spawn custody to the Action', async reason => {
+    const child = createFakeChildProcess(5155);
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5155)).toBe(true));
+    const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+      const record = `${values.join(' ')}\n`;
+      const split = Math.floor(record.length / 2);
+      child.stderr.emit('data', record.slice(0, split));
+      child.stderr.emit('data', record.slice(split));
+    });
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    try {
+      reportSessionRunnerFailure(new ConnectedServicesDefaultUnavailableError(reason, 'purpose_binding', 'unreachable'));
+    } finally {
+      output.mockRestore(); log.mockRestore(); fatal.mockRestore();
+    }
+    child.stderr.emit('data', 'stack frame\n'.repeat(5000));
+    child.emit('exit', 1, null);
+    const failure = await pending;
+    if (failure.type !== 'error') throw new Error('Expected default launch refusal');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { code: reason, failureCause: { code: reason,
+        ...(reason === 'provider_catalog_unavailable' ? {} : { phase: 'authentication', connectedServicesDefault: {
+          v: 1, source: 'account_default', reason, phase: 'purpose_binding', catalogReason: 'unreachable',
+        } }),
+      } },
+    });
+    expect(params.pidToSpawnResultResolver.size).toBe(0);
+  });
+
+  it.each(['broker_unavailable', 'resource_forbidden'] as const)('preserves %s from runner construction through pre-webhook exit classification', async code => {
+    const child = createFakeChildProcess(5156);
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    const pending = spawnRegularProcessAndWaitForWebhook(params);
+    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5156)).toBe(true));
+    const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+      const record = `${values.join(' ')}\n`;
+      const split = Math.floor(record.length / 2);
+      child.stderr.emit('data', record.slice(0, split));
+      child.stderr.emit('data', record.slice(split));
+    });
+    const log = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const fatal = vi.spyOn(logger, 'fatal').mockImplementation(() => {});
+    try {
+      expect(reportSessionRunnerFailure(new SessionTeamCredentialLaunchUnavailableError(code))).toBe(1);
+    } finally {
+      output.mockRestore(); log.mockRestore(); fatal.mockRestore();
+    }
+    child.stderr.emit('data', 'private unrelated traceback\n'.repeat(5000));
+    child.emit('exit', 1, null);
+    const failure = await pending;
+    if (failure.type !== 'error') throw new Error('Expected runner construction failure');
+    const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+    const result = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+      errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+    }));
+    const requestId = 'original-broker-input';
+    const queue = [{ localId: requestId, messageRole: 'user', requestedAction: { v: 1, kind: 'enqueue' },
+      deliveryStatus: { status: 'queued' }, content: { t: 'plain', v: 'original input' } }];
+    const rawSession = createSessionRecordFixture({ id: 'session-1', encryptionMode: 'plain',
+      metadataLayoutVersion: 0, metadata: JSON.stringify({ machineId: 'machine-1', path: params.directory,
+        flavor: 'codex', codexSessionId: 'native-1' }), pendingCount: 1, pendingVersion: 1,
+      pendingActivationAuthorization: { requestId, requestedAt: 10, status: 'waiting' } });
+    const writes: string[] = [];
+    const home = createServer((request, response) => {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.method !== 'GET') writes.push(request.url ?? '');
+      if (request.method === 'GET' && request.url === '/v2/sessions/session-1') {
+        response.end(JSON.stringify({ session: rawSession }));
+      } else if (request.method === 'GET' && request.url === '/v2/sessions/session-1/pending') {
+        response.end(JSON.stringify({ pending: queue }));
+      } else if (request.method === 'GET' && request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+      } else if (request.method === 'POST' && request.url?.startsWith('/v2/sessions/session-1/pending/activation/fail')) {
+        response.end(JSON.stringify({ ok: true, didFail: true }));
+      } else { response.statusCode = 404; response.end('{}'); }
+    });
+    await new Promise<void>(resolve => home.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = home.address();
+      if (!address || typeof address === 'string') throw new Error('Expected the fixture Home listener');
+      const activation = await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => activatePendingInactiveSession({
+        credentials: { token: `broker-construction-${code}`, encryption: null }, machineId: 'machine-1',
+        sessionId: 'session-1', requestId, pendingVersion: 1, spawnSessionForInternalResume: async () => failure,
+      }));
+      expect(activation).toMatchObject(code === 'broker_unavailable'
+        ? { status: 'not-needed', reason: 'spawn-retryable' } : { status: 'rejected', reason: 'spawn-rejected' });
+      expect(writes).toHaveLength(code === 'broker_unavailable' ? 0 : 1);
+      expect(queue[0]).toMatchObject({ localId: requestId, deliveryStatus: { status: 'queued' } });
+    } finally { await new Promise<void>((resolve, reject) => home.close(error => error ? reject(error) : resolve())); }
+    expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { code } });
+    expect(isSessionSpawnBrokerUnavailable(response)).toBe(code === 'broker_unavailable');
+    expect(params.pidToSpawnResultResolver.size).toBe(0);
+  });
+
+  it('observes a real child exit through stderr capture and strict daemon-to-Action projection', async () => {
+    const child = spawn(process.execPath, ['-e', "process.stdin.once('data', () => { process.stderr.write('startup runtime unavailable\\n'); process.exit(23); });"], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const closed = once(child, 'close');
+    mocks.spawnHappyCLI.mockReturnValueOnce(child);
+    const params = withCanonicalChildExitOwner(createParams());
+    try {
+      const pending = spawnRegularProcessAndWaitForWebhook(params);
+      await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(child.pid!)).toBe(true));
+      child.stdin!.end('go\n');
+      const failure = await pending;
+      if (failure.type !== 'error') throw new Error('Expected real child startup failure');
+      const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
+      expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
+        errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+      }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
+        launchError: { childExit: { code: 23, signal: null, stderrHead: 'startup runtime unavailable' } },
+      });
+      expect(params.pidToSpawnResultResolver.size).toBe(0);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await closed;
+    }
+  });
+
   it('captures a redacted stderr tail when a child exits before the session webhook', async () => {
     const child = createFakeChildProcess(5151);
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
@@ -1818,14 +2023,14 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     params.onChildExited.mockImplementation(async (pid) => {
       params.pidToTrackedSession.delete(pid);
     });
+    let tracked: TrackedSession | undefined;
+    params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(async (session) => {
+      tracked = session;
+    });
 
     const pending = spawnRegularProcessAndWaitForWebhook({
       ...params,
     });
-    await vi.waitFor(() => {
-      expect(params.pidToTrackedSession.has(6262)).toBe(true);
-    });
-    const tracked = params.pidToTrackedSession.get(6262);
     const result = await pending;
 
     expect(result).toEqual({

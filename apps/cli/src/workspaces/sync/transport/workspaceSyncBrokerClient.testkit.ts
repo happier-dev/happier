@@ -36,6 +36,26 @@ export type WorkspaceSyncBrokerCommandHandler = (
   signal: AbortSignal,
 ) => Promise<unknown> | unknown;
 
+/** Native Manager.List index boundary: zero reads, retained indices park, abort detaches. */
+export function createMutagenChangeWaitBoundary() {
+  let index = 1n;
+  const waiters = new Set<() => void>();
+  return {
+    change() { index += 1n; for (const wake of [...waiters]) wake(); },
+    async waitForChange(previousStateIndex: string, signal: AbortSignal): Promise<string> {
+      signal.throwIfAborted();
+      if (previousStateIndex !== String(index)) return String(index);
+      return await new Promise<string>((resolve, reject) => {
+        const cleanup = () => { waiters.delete(changed); signal.removeEventListener('abort', aborted); };
+        const changed = () => { cleanup(); resolve(String(index)); };
+        const aborted = () => { cleanup(); reject(Object.assign(new Error('Native wait cancelled'), { name: 'AbortError' })); };
+        waiters.add(changed);
+        signal.addEventListener('abort', aborted, { once: true });
+      });
+    },
+  };
+}
+
 type FrameWaiter = {
   predicate: (frame: BrokerControlV1) => boolean;
   resolve: (frame: BrokerControlV1) => void;

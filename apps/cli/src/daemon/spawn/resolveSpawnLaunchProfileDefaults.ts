@@ -1,24 +1,31 @@
+import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
+import { isProfileCompatibleWithBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV2, ArtifactSharingResourceV1 } from '@happier-dev/protocol';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resolveCanonicalSpawnProfile } from '@/settings/profiles/validateSpawnProfile';
 import type { AccountSettingsProfilesSnapshot } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { logger } from '@/ui/logger';
 
 export type ResolveSpawnLaunchProfileDefaultsResult =
   | Readonly<{ ok: true; options: SpawnSessionOptions }>
   | Readonly<{ ok: false; result: SpawnSessionResult }>;
 
-function refuseProfile(message: string): ResolveSpawnLaunchProfileDefaultsResult {
+/** One diagnostic projection for selected-Profile refusals at daemon admission. */
+export function refuseSpawnLaunchProfile(
+  profileRefusal: NonNullable<SessionSpawnLaunchErrorV1['profileRefusal']>,
+  message: string,
+): SpawnSessionResult {
+  logger.infoFile('[DAEMON RUN] Profile launch refused', { ...profileRefusal, message });
   return {
-    ok: false,
-    result: {
-      type: 'error',
-      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-      errorMessage: message,
-    },
+    type: 'error',
+    errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+    errorMessage: message,
+    errorDetail: { kind: 'launch_error', code: 'profile_launch_unavailable', message, profileRefusal },
   };
 }
 
@@ -48,22 +55,33 @@ export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
     profileCatalog: input.profileCatalog,
     profilesSnapshot: input.profilesSnapshot,
   });
-  if (!resolved.ok) return refuseProfile(resolved.message);
-  // Legacy profiles retain their existing caller-projected compatibility path.
-  // V2 is the canonical stable-id contract used by Action callers.
-  if (resolved.kind !== 'slim') return { ok: true, options: input.options };
-  const { profile } = resolved;
+  if (!resolved.ok) return { ok: false,
+    result: refuseSpawnLaunchProfile({ profileId, reason: resolved.reason }, resolved.message) };
+  // Fresh legacy launches retain their caller-projected compatibility path.
+  // Resume callers have only the stored identity, so restore its admitted row.
+  if (resolved.kind !== 'slim' && !input.options.existingSessionId) return { ok: true, options: input.options };
+  const profile = resolved.kind === 'slim' ? resolved.profile
+    : input.profilesSnapshot?.visibleProfiles.find(candidate => candidate.id === profileId);
+  if (!profile) return { ok: false, result: refuseSpawnLaunchProfile({ profileId, reason: 'profile_resume_unavailable' },
+    `Launch profile '${profileId}' is unavailable for resume`) };
 
   const targetKey = buildBackendTargetKeyV2(input.effectiveBackendTarget);
   const readTargetDefault = <T>(values: Readonly<Record<string, T>>): T | undefined => (
     values[targetKey]
   );
-  const compatibility = readTargetDefault(profile.compatibilityByTargetKey);
-  if (
-    compatibility === false
-    || (Object.keys(profile.compatibilityByTargetKey).length > 0 && compatibility !== true)
-  ) {
-    return refuseProfile(`Launch profile '${profileId}' is not compatible with '${targetKey}'`);
+  if (!isProfileCompatibleWithBackendTarget(profile, input.effectiveBackendTarget)) {
+    return { ok: false, result: refuseSpawnLaunchProfile({ profileId, reason: 'profile_target_incompatible' },
+      `Launch profile '${profileId}' is not compatible with '${targetKey}'`) };
+  }
+
+  if (!isLaunchProfileV2(profile)) {
+    return { ok: true, options: {
+      ...input.options,
+      environmentVariables: {
+        ...Object.fromEntries(profile.environmentVariables.map(entry => [entry.name, entry.value])),
+        ...input.options.environmentVariables,
+      },
+    } };
   }
 
   const permissionMode = readTargetDefault(profile.defaultPermissionModeByTargetKey);

@@ -6824,8 +6824,6 @@ export const ru: TranslationStructure = {
     avatarStyle: "Стиль аватара",
     homeBotFaces: "Лица ботов на главной",
     homeBotFacesDescription: "На телефоне — ряд лиц ваших ботов вверху главной. Нажмите, чтобы открыть.",
-    homeBotFaces: "Лица ботов на главной",
-    homeBotFacesDescription: "На телефоне — ряд лиц ваших ботов вверху главной. Нажмите, чтобы открыть.",
     avatarStyleDescription: "Выберите внешний вид аватара сессии",
     botFaceStyle: "Боты",
     botFaceStyleDescription: "Выберите стиль лица ботов по умолчанию",

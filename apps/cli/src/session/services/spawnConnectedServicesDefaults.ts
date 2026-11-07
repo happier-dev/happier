@@ -1,14 +1,11 @@
-import { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
-import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
-export { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import {
   resolveConnectedServiceSessionSelection,
 } from '@happier-dev/agents';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedAccountCatalogSnapshotV1, ConnectedAccountCatalogUnavailableReasonV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import type { ConnectedServicesDefaultUnavailableDetailsV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import type { TeamCredentialLaunchFailurePhase } from './sessionTeamCredentialLaunchError';
-import { TeamCredentialResourceEntitledPageV1Schema, resolveTeamResourceConnectedServiceSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { resolveTeamResourceConnectedServiceSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ActionExecutorDeps, AgentConnectedAccountPurposeDefault, QualifiedConnectedAccountPurposeV1, ConnectedServiceBindingSelectionV1, ConnectedServiceBindingSelectionV2, ConnectedServiceBindingsV2, ProviderBrokerApplicationBindingV1, TeamCredentialResourceCatalogEntryV1, TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/protocol';
@@ -26,7 +23,14 @@ import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/r
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
+import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
+import { readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCode,
+  type TeamCredentialLaunchFailurePhase, SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
+
+export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
+export { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 
 export function agentSupportsSpawnConnectedServicesDefaults(agentId: string): boolean {
   return resolveCatalogAgentConnectedAccountServiceIds(agentId).length > 0;
@@ -41,7 +45,8 @@ export type SpawnConnectedServicesDefaultDisposition =
       reason:
         | 'connected_services_default_settings_invalid'
         | 'connected_account_purpose_catalog_unavailable'
-        | 'connected_services_team_default_requires_current_resource';
+        | 'connected_services_team_default_requires_current_resource'
+        | NonNullable<ReturnType<typeof readTeamCredentialLaunchReadinessRefusal>>;
     }>;
 
 export type SpawnConnectedServicesTeamResourceCatalog = Readonly<{
@@ -56,11 +61,6 @@ export type ResolveSpawnConnectedServicesTeamResourceCatalog = (params: Readonly
   signal?: AbortSignal;
 }>) => Promise<SpawnConnectedServicesTeamResourceCatalog | null>;
 
-function readRecipientCatalogNextCursor(page: object): string | null {
-  if (!('nextCursor' in page)) return null;
-  return typeof page.nextCursor === 'string' ? page.nextCursor : null;
-}
-
 export function createSpawnConnectedServicesTeamResourceCatalogResolver(params: Readonly<{
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   serverId: string;
@@ -71,8 +71,6 @@ export function createSpawnConnectedServicesTeamResourceCatalogResolver(params: 
     return resources ? { serverId: params.serverId, accountId: params.accountId, resources } : null;
   };
 }
-
-export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
 
 /**
  * The Team catalog read for a daemon/runner component that holds only the
@@ -97,19 +95,27 @@ export function createCredentialsSpawnConnectedServicesTeamResourceCatalogResolv
 }
 
 export class ConnectedServicesDefaultUnavailableError extends Error {
-  readonly code = 'connected_services_default_unavailable';
-  readonly details?: ConnectedServicesDefaultUnavailableDetailsV1;
+  readonly code: 'connected_services_default_unavailable' | TeamCredentialLaunchFailureCode;
+  readonly details: Readonly<{ v: 1; source: 'team_credential' }> | ConnectedServicesDefaultUnavailableDetailsV1;
+  readonly failureCause: NonNullable<SessionRuntimeIssueV1['failureCause']> & Readonly<{ code: string }>;
 
-  constructor(readonly reason:
-    | 'connected_services_default_settings_invalid'
-    | 'connected_account_purpose_catalog_unavailable'
-    | 'connected_services_team_default_requires_current_resource',
+  constructor(readonly reason: Extract<SpawnConnectedServicesDefaultDisposition, { kind: 'unavailable' }>['reason'] | TeamCredentialLaunchFailureCode,
     readonly phase: TeamCredentialLaunchFailurePhase = 'purpose_binding',
     readonly catalogReason?: ConnectedAccountCatalogUnavailableReasonV1) {
     super(reason);
-    if (reason !== 'connected_services_team_default_requires_current_resource') {
-      this.details = { v: 1, source: 'account_default', reason, phase: 'purpose_binding', ...(catalogReason ? { catalogReason } : {}) };
-    }
+    this.code = reason === 'connected_services_team_default_requires_current_resource'
+      ? 'resource_unavailable'
+      : reason === 'connected_services_default_settings_invalid' || reason === 'connected_account_purpose_catalog_unavailable'
+        ? 'connected_services_default_unavailable'
+        : readTeamCredentialLaunchFailureCode(reason) ?? 'connected_services_default_unavailable';
+    this.details = reason === 'connected_services_default_settings_invalid' || reason === 'connected_account_purpose_catalog_unavailable'
+      ? { v: 1, source: 'account_default', reason, phase: 'purpose_binding', ...(catalogReason ? { catalogReason } : {}) }
+      : { v: 1, source: 'team_credential' };
+    this.failureCause = {
+      code: this.code === 'connected_services_default_unavailable' ? reason : this.code,
+      phase: 'authentication', failureReason: 'unknown',
+      ...(this.details.source === 'account_default' ? { connectedServicesDefault: this.details } : {}),
+    };
   }
 }
 
@@ -185,9 +191,11 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
     if (teamIds.length > 0) {
       try {
         teamCredentialResourceCatalog = await params.resolveTeamCredentialResourceCatalog?.({ teamIds, signal: params.signal }) ?? undefined;
-      } catch {
+      } catch (error) {
+        params.signal?.throwIfAborted();
         throw new ConnectedServicesDefaultUnavailableError(
-          'connected_services_team_default_requires_current_resource',
+          readTeamCredentialLaunchFailureCode(error) ?? 'provider_catalog_unavailable',
+          error instanceof SessionTeamCredentialLaunchUnavailableError ? error.phase : 'resource_catalog',
         );
       }
       if (!teamCredentialResourceCatalog) {
@@ -295,15 +303,6 @@ function normalizeBindingForSpawn(
  * while the settings' own Home still offers that exact selection from the
  * named Team. The catalog is read from the same Home the settings came from.
  */
-function resolveCurrentTeamResourceDefaultBinding(params: Readonly<{
-  serviceId: string;
-  teamId: string;
-  selection: TeamResourceConnectedServiceSelectionV2;
-  catalog: SpawnConnectedServicesTeamResourceCatalog | undefined;
-}>): TeamResourceConnectedServiceSelectionV2 | null {
-  return resolveCurrentTeamResourceDefault(params)?.selection ?? null;
-}
-
 function resolveCurrentTeamResourceDefault(params: Readonly<{
   serviceId: string | readonly string[];
   teamId: string;
@@ -319,7 +318,8 @@ function resolveCurrentTeamResourceDefault(params: Readonly<{
 
   const services = serviceIds.map(parseQualifiedPluginContributionKey).filter(service => service !== null);
   for (const resource of catalog.resources) {
-    if (resource.readiness.kind !== 'available') continue;
+    if (resource.readiness.kind !== 'available'
+      && !readTeamCredentialLaunchReadinessRefusal(resource, selection.deliveryMode)) continue;
     const offeredSelection = resolveTeamResourceConnectedServiceSelectionV1({ resource, teamId: params.teamId, selection, services });
     if (offeredSelection) return { resource, selection: offeredSelection };
   }
@@ -363,6 +363,8 @@ export function resolvePurposeTeamCredentialBindingIntents(params: Readonly<{
         'connected_services_team_default_requires_current_resource',
       );
     }
+    const refusal = readTeamCredentialLaunchReadinessRefusal(resolved.resource, resolved.selection.deliveryMode);
+    if (refusal) throw new ConnectedServicesDefaultUnavailableError(refusal);
     intents.push({
       v: 1,
       slot: { kind: 'connected_service_purpose', purpose: entry.purpose },
@@ -408,8 +410,12 @@ export async function resolvePurposeTeamCredentialBindingIntentsFromHome(params:
   let catalog: SpawnConnectedServicesTeamResourceCatalog | null = null;
   try {
     catalog = await params.resolveTeamCredentialResourceCatalog?.({ teamIds, signal: params.signal }) ?? null;
-  } catch {
-    catalog = null;
+  } catch (error) {
+    params.signal?.throwIfAborted();
+    throw new ConnectedServicesDefaultUnavailableError(
+      readTeamCredentialLaunchFailureCode(error) ?? 'provider_catalog_unavailable',
+      error instanceof SessionTeamCredentialLaunchUnavailableError ? error.phase : 'resource_catalog',
+    );
   }
   return resolvePurposeTeamCredentialBindingIntents({
     teamResourceSelections: params.teamResourceSelections,
@@ -450,7 +456,7 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
     if (configuredBinding?.source === 'team_resource') {
       const teamId = teamIdByServiceId.get(serviceId);
       const resolved = teamId
-        ? resolveCurrentTeamResourceDefaultBinding({
+        ? resolveCurrentTeamResourceDefault({
             serviceId,
             teamId,
             selection: configuredBinding,
@@ -463,7 +469,9 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
           reason: 'connected_services_team_default_requires_current_resource',
         };
       }
-      bindingsByServiceId[serviceId] = resolved;
+      const refusal = readTeamCredentialLaunchReadinessRefusal(resolved.resource, resolved.selection.deliveryMode);
+      if (refusal) return { kind: 'unavailable', reason: refusal };
+      bindingsByServiceId[serviceId] = resolved.selection;
       hasNonNativeBinding = true;
       continue;
     }

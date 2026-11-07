@@ -11,7 +11,7 @@ import {
 import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { LaunchSecretReferenceOverlayError, materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
-export { LaunchSecretReferenceOverlayError, readLaunchSecretReferenceOverlayProviderErrorCodeV1, resolveSecretReferenceOverlayEnvironment, resolveProjectSecretReferenceEnvironment } from '@/settings/secrets/secretReferenceOverlay';
+export { LaunchSecretReferenceOverlayError, createLaunchSecretReferenceOverlayProviderErrorV1, resolveSecretReferenceOverlayEnvironment, resolveProjectSecretReferenceEnvironment } from '@/settings/secrets/secretReferenceOverlay';
 export type { LaunchSecretReferenceOverlayFailureReasonV1 } from '@/settings/secrets/secretReferenceOverlay';
 
 export class ForegroundProfileSecretRecoveryRequiredError extends Error {

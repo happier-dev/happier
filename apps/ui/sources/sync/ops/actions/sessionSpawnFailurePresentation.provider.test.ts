@@ -10,6 +10,38 @@ const { resolveSessionSpawnNewResultFailureMessage } = await import('./sessionSp
 const { createPresentedFirstTurnSettlement } = await import('@/components/sessions/new/modules/presentedFirstTurnSettlement');
 
 describe('Provider causes in Session-start failures', () => {
+    it('presents the refused launch Profile and its typed reason with the Action request', async () => {
+        await preloadTranslations('en');
+        const profileId = 'foreign-default-profile';
+        const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'profile_launch_unavailable',
+                message: `Launch profile '${profileId}' is not present in canonical account settings`,
+                profileRefusal: { profileId, reason: 'profile_overlay_mismatch' },
+            },
+        });
+        if (result.type !== 'error') throw new Error('Expected Profile refusal');
+        const message = resolveSessionSpawnNewResultFailureMessage(result, 'profile-launch-request');
+        expect(message).toContain(profileId);
+        expect(message).toContain('profile_overlay_mismatch');
+        expect(message).toContain('profile-launch-request');
+        expect(message).not.toContain('invalid_input');
+    });
+
+    it.each(['connected_account_purpose_catalog_unavailable', 'connected_services_default_settings_invalid'] as const)(
+        'presents the default-account refusal %s with its request identity', async code => {
+            await preloadTranslations('en');
+            const result = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: true,
+                launchError: { kind: 'launch_error', code, message: code },
+            });
+            if (result.type !== 'error') throw new Error('Expected default-account refusal');
+            const requestId = 'spawn-default-request';
+            const message = resolveSessionSpawnNewResultFailureMessage(result, requestId);
+            expect(message).toContain(code);
+            expect(message).toContain(t('session.startFailure.requestId', { id: requestId }));
+            expect(message).not.toContain('spawn_failed');
+        },
+    );
+
     it.each(['provider_authorization_changed', 'provider_secret_missing'] as const)(
         'retains %s through the strict spawn result and canonical Provider presenter', async code => {
             await preloadTranslations('en');

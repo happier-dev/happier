@@ -27,6 +27,7 @@ import {
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { configuration } from '@/configuration';
+import { createMutagenChangeWaitBoundary } from '@/workspaces/sync/transport/workspaceSyncBrokerClient.testkit';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
@@ -44,6 +45,10 @@ import type { DirectSpawnedSessionTransport } from '@/session/services/createSpa
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import * as sessionSocketTransport from '@/session/transport/socket/sessionSocketAgentState';
 
 const {
   createSpawnedSession,
@@ -238,9 +243,13 @@ describe('workspace sync read Action transport', () => {
       machineId: 'machine-a', method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT,
     }));
     callMachineRpc.mockResolvedValueOnce(conflictPage).mockResolvedValueOnce(relationshipsResult);
-    await expect(createActionToolExecutorBridge({ surface: 'mcp', executor }).executeActionByToolName(
-      'workspace_sync_conflicts_list',
-      { controllerMachineId: 'machine-a', relationshipId: 'rel-ab', limit: 50 },
+    const mcpBridge = createActionToolExecutorBridge({ surface: 'mcp', executor });
+    await expect(mcpBridge.executeActionByToolName(
+      'action_spec_get', { id: 'workspace.sync.conflicts.list' }, 'session-c',
+    )).resolves.toMatchObject({ ok: true, result: { actionSpec: { id: 'workspace.sync.conflicts.list' } } });
+    await expect(mcpBridge.executeActionByToolName(
+      'action_execute',
+      { actionId: 'workspace.sync.conflicts.list', input: { controllerMachineId: 'machine-a', relationshipId: 'rel-ab', limit: 50 } },
       'session-c',
     )).resolves.toEqual({ ok: true, result: conflictPage });
     await expect(createActionToolExecutorBridge({ surface: 'cli', executor }).executeActionByToolName(
@@ -295,6 +304,7 @@ describe('workspace sync resolution Action transport', () => {
     const approvals = new Map<string, Record<string, unknown>>();
     const applied: string[] = [];
     const adapter = {
+      waitForChange: createMutagenChangeWaitBoundary().waitForChange,
       discoverCopyOnceRecoveries: vi.fn(async () => []),
       rehydrate: vi.fn(async () => []),
       ensure: vi.fn(async (definition: { relationshipId: string }) => status(definition.relationshipId)),
@@ -989,7 +999,7 @@ describe('createCliActionDeps hook dispatch', () => {
     const executor = createActionExecutor(deps);
     const result = await executor.execute('session.spawn_new', {
       creationKey: `root-${roleId}`, executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-1' },
-      directory: { kind: 'path', path: '/repo' }, organizationPlacement: { folderId: null, tagIds: [] },
+      directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       connectedServices: { v: 2, bindingsByServiceId: {} }, roleId,
     }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
@@ -1004,7 +1014,81 @@ describe('createCliActionDeps hook dispatch', () => {
     resetActiveAccountSettingsSnapshotForTests();
   });
 
-  it.each(['agent_cli_missing', 'agent_signed_out', 'SPAWN_VALIDATION_FAILED'] as const)(
+  it('creates a Role-selected Session after resolving a legacy unhinted Role under partial classification', async () => {
+    const accountId = 'legacy-role-owner';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null } as const;
+    const accountSettings = AccountSettingsSchema.parse({});
+    resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
+      settings: accountSettings, rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: 1,
+      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+    const realCreation = await vi.importActual<typeof import('@/session/services/createSpawnedSession')>('@/session/services/createSpawnedSession');
+    createSpawnedSession.mockImplementation(realCreation.createSpawnedSession);
+    lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [], sessions: [] });
+    validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid', httpStatus: 200 });
+    const roleId = 'legacy-payments-reviewer';
+    const role = { ...BUILT_IN_ROLES_V1.reviewer, name: 'Legacy payments reviewer', instructions: 'Review payment retry safety.' };
+    const stored = { id: roleId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      header: encodePlainArtifactStoredContent({ kind: 'role.v1', title: role.name }),
+      body: encodePlainArtifactStoredContent({ body: JSON.stringify(role) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+    const { body: _body, ...legacyHeader } = stored;
+    const classification = { status: 'partial', unclassifiedCount: 1, reason: 'unclassified_legacy_rows' };
+    const headerQueries: string[] = [];
+    const bodyReads: string[][] = [];
+    // HTTP and the native launch/socket are the replaced system boundaries.
+    // Artifact selection, Role resolution, Action and creation settlement stay real.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const url = new URL(String(input));
+      if (url.pathname === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (url.pathname === '/v1/artifacts') {
+        headerQueries.push(url.searchParams.get('unclassified') ?? 'indexed');
+        return { status: 200, data: { items: url.searchParams.has('unclassified') ? [legacyHeader] : [],
+          hasUnclassified: true, coverage: classification } };
+      }
+      if (url.pathname === '/v2/sessions/legacy-role-session') throw new Error('Session visibility is not available yet');
+      throw new Error(`Unexpected legacy Role GET ${url.pathname}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (input, body) => {
+      const url = new URL(String(input));
+      if (url.pathname !== '/v1/artifacts/read') throw new Error(`Unexpected legacy Role POST ${url.pathname}`);
+      const ids = ArtifactReadBatchInputV1Schema.parse(body).artifactIds;
+      bodyReads.push(ids);
+      return { status: 200, data: ArtifactReadBatchResponseV1Schema.parse({ items: [
+        { artifactId: roleId, ok: true, artifact: stored, recipientCensus: null },
+      ] }) };
+    });
+    const socket = vi.spyOn(sessionSocketTransport, 'openSessionEventSource').mockReturnValue({
+      currentRevision: () => 0, waitForChange: async () => false, close: async () => {},
+    });
+    const spawn = vi.fn<DirectSpawnedSessionTransport['spawn']>(async () => ({ type: 'success', sessionId: 'legacy-role-session',
+      sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }));
+    try {
+      const settingsProvider = createActionSettingsProvider({ accountSettings });
+      const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+        readRoleSources: createRoleSourceReaderV1({ accountId, artifactStore: createCredentialedAccountArtifactStore(credentials) }),
+        actionsSettingsProvider: { ...settingsProvider, getAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }) },
+        sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
+          prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+          spawnedSession: { spawn, resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } } });
+      const result = await createActionExecutor(deps).execute('session.spawn_new', {
+        creationKey: 'legacy-role-spawn', executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-1' },
+        directory: { kind: 'path', path: '/repo' }, organizationPlacement: { sectionId: null, tagIds: [] },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        connectedServices: { v: 2, bindingsByServiceId: {} }, roleId,
+      }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', disposition: 'created', sessionId: 'legacy-role-session' } });
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(spawn.mock.calls[0]?.[0]).toMatchObject({ initialSessionRolesV1: { roleId, sessionRoles: {
+        [roleId]: { roleId, instructions: role.instructions },
+      } } });
+      expect(headerQueries).toEqual(['indexed', 'true']);
+      expect(bodyReads).toEqual([[roleId]]);
+      expect(post).toHaveBeenCalledTimes(1);
+    } finally { get.mockRestore(); post.mockRestore(); socket.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
+  });
+
+  it.each(['agent_cli_missing', 'agent_signed_out', 'SPAWN_VALIDATION_FAILED', 'SPAWN_FAILED', 'INVALID_REQUEST'] as const)(
     'preserves %s from the daemon through real creation settlement', async (errorCode) => {
       const realCatalog = await vi.importActual<typeof import('@/agent/catalog/snapshot')>('@/agent/catalog/snapshot');
       readAgentCatalogSnapshot.mockImplementation(realCatalog.readAgentCatalogSnapshot);
@@ -1012,14 +1096,27 @@ describe('createCliActionDeps hook dispatch', () => {
       createSpawnedSession.mockImplementation(realCreation.createSpawnedSession);
       lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [], sessions: [] });
       validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid', httpStatus: 200 });
-      const spawn = async () => ({ type: 'error' as const, errorCode, errorMessage: 'Agent setup is required.', ...(errorCode === 'SPAWN_VALIDATION_FAILED' ? {} : { agentId: 'codex' }) });
+      const { AccountEncryptionCurrentnessUnavailableError } = await import('@/api/client/accountEncryptionCurrentness');
+      const { readSessionCreationTerminalSpawnErrorDetail } = await import('@/api/session/sessionCreationTerminalSpawnErrorDetail');
+      const { buildSessionCreationTerminalSpawnErrorResult } = await import('@/daemon/sessions/onHappySessionWebhook');
+      const currentnessDetail = readSessionCreationTerminalSpawnErrorDetail(new AccountEncryptionCurrentnessUnavailableError());
+      if (!currentnessDetail) throw new Error('Expected typed currentness failure');
+      const resolveSpawnSessionByNonce = vi.fn(async () => ({ status: 'not_found' as const }));
+      const spawn = vi.fn(async () => errorCode === 'SPAWN_FAILED'
+        ? buildSessionCreationTerminalSpawnErrorResult(currentnessDetail)
+        : errorCode === 'INVALID_REQUEST' ? ({ type: 'error' as const, errorCode,
+            errorMessage: "Launch profile 'foreign-default-profile' is not present in canonical account settings",
+            errorDetail: { kind: 'launch_error' as const, code: 'profile_launch_unavailable',
+              message: "Launch profile 'foreign-default-profile' is not present in canonical account settings",
+              profileRefusal: { profileId: 'foreign-default-profile', reason: 'profile_overlay_mismatch' as const } } })
+        : ({ type: 'error' as const, errorCode, errorMessage: 'Agent setup is required.', ...(errorCode === 'SPAWN_VALIDATION_FAILED' ? {} : { agentId: 'codex' }) }));
       const deps = createCliActionDeps({
         token: 'token', credentials: { token: 'token', encryption: null },
         sessionId: 'sess-parent', mode: 'plain', ctx: null,
         sessionSpawnDirectTargetTransport: {
           machineId: 'machine-1',
           prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path' as const, directoryCreationRequired: false, checkout: null }),
-          spawnedSession: { spawn, resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) },
+          spawnedSession: { spawn, resolveSpawnSessionByNonce },
         },
       });
       const result = await deps.sessionSpawnNew({
@@ -1029,13 +1126,26 @@ describe('createCliActionDeps hook dispatch', () => {
         directory: { kind: 'path' as const, path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         connectedServices: { v: 2, bindingsByServiceId: {} }, actionCaller: { kind: 'host' },
       });
-      expect(result).toEqual(errorCode === 'SPAWN_VALIDATION_FAILED'
+      expect(result).toEqual(errorCode === 'SPAWN_FAILED'
+        ? { type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'currentness_unavailable',
+              message: expect.any(String), currentnessFailure: { reason: 'invalid_response', retryable: false } } }
+        : errorCode === 'INVALID_REQUEST'
+        ? { type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'profile_launch_unavailable',
+              message: "Launch profile 'foreign-default-profile' is not present in canonical account settings",
+              profileRefusal: { profileId: 'foreign-default-profile', reason: 'profile_overlay_mismatch' } } }
+        : errorCode === 'SPAWN_VALIDATION_FAILED'
         ? { type: 'error', code: 'spawn_failed', retryable: true,
             launchError: { kind: 'launch_error', code: errorCode, message: 'Agent setup is required.' } }
         : { type: 'error', code: errorCode, agentId: 'codex', retryable: false,
             ...(errorCode === 'agent_signed_out' ? { launchError: { kind: 'launch_error', code: errorCode,
               message: expect.stringMatching(/select.*connected account profile.*configure.*default profile/i) } } : {}) });
       expect(SessionSpawnNewResultV1Schema.safeParse(result)).toMatchObject({ success: true, data: result });
+      if (errorCode === 'SPAWN_FAILED') {
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(resolveSpawnSessionByNonce).not.toHaveBeenCalled();
+      }
     },
   );
 
@@ -1424,12 +1534,24 @@ describe('createCliActionDeps hook dispatch', () => {
     });
   });
 
-  it('settles canonical session.spawn_new with exact placement and an atomic structured initial input handoff', async () => {
+  it.each(['own', 'delegated'] as const)('settles canonical session.spawn_new with exact placement and an atomic %s attachment handoff', async (kind) => {
+    const declaringPluginId = kind === 'delegated' ? 'happier.triage' : 'acme.plugin';
+    const { createTargetComposerAttachmentRegistry } = await import('@/plugins/runtime/lifecycle/contributions/targetComposerAttachments');
+    const attachmentRegistry = createTargetComposerAttachmentRegistry({
+      declaredAttachments: [{ attachment: { pluginId: declaringPluginId, localId: 'entry' },
+        title: { key: 'entry.title', fallback: 'Entry' }, cardinality: 'many',
+        valueSchema: { type: 'object', properties: { v: { const: 1 }, entryId: { type: 'string' } },
+          required: ['v', 'entryId'], additionalProperties: false } }],
+      targetRegistrations: [], activateAttachmentOnDemand: async () => {},
+      resolveOccurrenceLifecycle: () => ({ isCurrent: () => true, retirementSignal: new AbortController().signal }),
+      createInvocationContext: () => { throw new Error('Draft qualification cannot invoke a plugin callback'); },
+    });
     const sessionCreationTag = deriveSessionCreationTagV1({
       callerCreationNamespace: 'plugin:acme.plugin',
       creationKey: 'create-1',
     });
     const creationKey = SessionCreationKeyV1Schema.parse('create-1');
+    let capturedInitialInputHandoff: unknown;
     const machineAdmissionTransport = vi.fn(async () => ({
       status: 'accepted' as const,
       localId: 'plugin-input-v1:spawn-transport',
@@ -1442,7 +1564,8 @@ describe('createCliActionDeps hook dispatch', () => {
     });
     createSpawnedSession.mockImplementation(async (input) => {
       const initialInputHandoff = input.buildInitialInputHandoff?.('plugin-input-v1:spawn-transport');
-      expect(initialInputHandoff).toEqual({
+      capturedInitialInputHandoff = initialInputHandoff;
+      expect(initialInputHandoff).toMatchObject({
         localId: 'plugin-input-v1:spawn-transport',
         inputAdmission: {
           provenance: {
@@ -1470,7 +1593,7 @@ describe('createCliActionDeps hook dispatch', () => {
             composerAttachments: [{
               v: 1,
               instanceId: 'plugin-input-v1:spawn-transport#0',
-              attachment: { pluginId: 'acme.plugin', localId: 'entry' },
+              attachment: { localId: 'entry' },
               key: 'forge/items:pull-request:origin:42',
               value: { v: 1, entryId: '42' },
               presentation: {
@@ -1507,6 +1630,7 @@ describe('createCliActionDeps hook dispatch', () => {
       ctx: null,
       happyHomeDir: '/tmp/happier-home',
       machineAdmissionTransport,
+      resolveComposerAttachmentSendPreparation: () => attachmentRegistry,
     });
 
     await expect(deps.sessionSpawnNew({
@@ -1560,6 +1684,7 @@ describe('createCliActionDeps hook dispatch', () => {
         kind: 'plugin',
         pluginId: 'acme.plugin',
         contributionLocalId: 'spawn',
+        ...(kind === 'delegated' ? { initiatingCaller: { kind: 'plugin' as const, pluginId: declaringPluginId } } : {}),
       },
       callerSurface: 'plugin',
     })).resolves.toEqual({
@@ -1580,6 +1705,9 @@ describe('createCliActionDeps hook dispatch', () => {
       },
     });
 
+    expect(capturedInitialInputHandoff).toMatchObject({ meta: { happierStructuredInputV1: {
+      composerAttachments: [{ attachment: { pluginId: declaringPluginId, localId: 'entry' } }],
+    } } });
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo/exact',
       machineId: 'machine-exact',
@@ -1872,6 +2000,9 @@ describe('createCliActionDeps hook dispatch', () => {
         backendId: 'codex',
         sourceKind: 'built_in',
       }),
+      getCurrentAppliedChildSelection: () => ({ status: 'applied',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        modelId: null, connectedServices: null }),
       mode: 'plain',
       ctx: null,
     });
@@ -1902,7 +2033,7 @@ describe('createCliActionDeps hook dispatch', () => {
 
     const context = await deps.resolveAgentStartContext?.({ defaultSessionId: 'parent-session', callerPermissionMode: 'default' });
     expect(context).not.toBeNull();
-    if (!context) throw new Error('parent snapshot unavailable');
+    if (!context || 'ok' in context) throw new Error('parent snapshot unavailable');
     const facts = { machineId: baseInput.executionTarget.machineId, directory: baseInput.directory.path, agentTarget: baseInput.agentTarget };
     expect(admitAgentStartV1(policy, { kind: 'spawn_new', facts }, context)).toMatchObject({ ok: true });
     expect(admitAgentStartV1(policy, { kind: 'spawn_new', facts: { ...facts, machineId: 'machine-other' } }, context))
@@ -3414,6 +3545,7 @@ describe('createCliActionDeps hook dispatch', () => {
 
     expect(sendSessionMessage).toHaveBeenCalledWith({
       credentials: expect.objectContaining({ token: 'token' }),
+      serverId: configuration.activeServerId,
       idOrPrefix: 'sess-1',
       message: 'Hello world',
       requestedAction: { v: 1, kind: 'steer_if_active' },
@@ -3733,6 +3865,7 @@ describe('createCliActionDeps hook dispatch', () => {
 
     expect(sendSessionMessage).toHaveBeenCalledWith({
       credentials: expect.objectContaining({ token: 'token' }),
+      serverId: configuration.activeServerId,
       idOrPrefix: 'sess',
       message: 'Hello world',
       requestedAction: { v: 1, kind: 'steer_if_active' },
@@ -4024,14 +4157,32 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('fails remote permission actions closed without creating an unauthenticated Session RPC path', async () => {
+  it('stamps remote permission mediation from the host invocation context', async () => {
+    const sessionId = 'c123456789012345678901234';
+    const home = 'https://mediation.example.test';
+    const transport = await vi.importActual<typeof import('@/session/services/resolveSessionTransportContext')>(
+      '@/session/services/resolveSessionTransportContext');
+    resolveSessionTransportContext.mockImplementation(transport.resolveSessionTransportContext);
+    // Only HTTP and Session RPC are substituted; routing and codecs stay real.
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url === `${home}/v1/account/encryption/currentness`) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      if (url === `${home}/v2/sessions/${sessionId}`) {
+        return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
+          encryptionMode: 'plain', metadata: '{}', metadataLayoutVersion: 0 }) } };
+      }
+      throw new Error(`Unexpected mediation GET ${url}`);
+    });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
         token: 'token',
-        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+        encryption: null,
       },
-      sessionId: 'sess-1',
+      sessionId,
+      serverId: configuration.activeServerId,
+      serverHttpBaseUrl: home,
       mode: 'plain',
       ctx: null,
       rawSession: { metadata: {} },
@@ -4042,7 +4193,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(remoteAction!({
       actionId: 'session.permission.remote.pending.list',
       input: {
-        sessionId: 'sess-1',
+        sessionId,
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
       },
@@ -4057,11 +4208,13 @@ describe('createCliActionDeps hook dispatch', () => {
       error: 'ownerMachineUnavailable',
     });
 
+    const projection = { requests: [], truncated: false, nextCursor: null };
+    callSessionRpc.mockResolvedValueOnce(projection);
     const executor = createActionExecutor(deps);
     await expect(executor.execute(
       'session.permission.remote.pending.list',
       {
-        sessionId: 'sess-1',
+        sessionId,
         sourceRef: 'binding:ops',
         sourceRevisionOrEpoch: '42',
       },
@@ -4073,12 +4226,33 @@ describe('createCliActionDeps hook dispatch', () => {
           contributionLocalId: 'discord',
         },
       },
-    )).resolves.toEqual({
-      ok: false,
-      errorCode: 'ownerMachineUnavailable',
-      error: 'ownerMachineUnavailable',
-    });
+    )).resolves.toEqual({ ok: true, result: projection });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      method: `${sessionId}:session.permission.remote.pending.list`,
+      authorityCeiling: 'account_automation',
+      request: {
+        v: 1,
+        kind: 'targeted_action_rpc',
+        target: { kind: 'session', sessionId },
+        pluginCaller: { pluginId: 'happier.channels', contributionLocalId: 'discord' },
+        input: { sessionId, sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42' },
+      },
+    }));
 
+    for (const [code, expected] of [
+      ['target_unavailable', 'ownerMachineUnavailable'],
+      [RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN],
+    ] as const) {
+      callSessionRpc.mockRejectedValueOnce(createRpcCallError({ error: code, errorCode: code }));
+      await expect(executor.execute('session.permission.remote.pending.list', {
+        sessionId, sourceRef: 'binding:ops', sourceRevisionOrEpoch: '42',
+      }, {
+        surface: 'plugin',
+        actionCaller: { kind: 'plugin', pluginId: 'happier.channels', contributionLocalId: 'discord' },
+      })).resolves.toMatchObject({ ok: false, errorCode: expected });
+    }
+
+    callSessionRpc.mockClear();
     const aborted = new AbortController();
     aborted.abort();
     await expect(remoteAction!({
@@ -5428,7 +5602,7 @@ describe('Session initial-access spawn settlement', () => {
     });
   });
 
-  it.each(['initial_access', 'terminal_host'] as const)('carries %s through the real spawn dependency result', async (failure) => {
+  it.each(['initial_access', 'initial_access_account_owned', 'terminal_host'] as const)('carries %s through the real spawn dependency result', async (failure) => {
     const realApprovals = await vi.importActual<typeof import('@/session/actions/approvals/artifactStore')>('@/session/actions/approvals/artifactStore');
     createCliApprovalsArtifactStore.mockReturnValue(realApprovals.createCliApprovalsArtifactStore({ credentials: {
       token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
@@ -5444,7 +5618,7 @@ describe('Session initial-access spawn settlement', () => {
     const spawn = vi.fn(async () => ({
       success: false as const,
       error: 'Failed to spawn session',
-      errorCode: failure === 'initial_access' ? 'session_access_invalid_recipient_envelope' : 'SPAWN_FAILED',
+      errorCode: failure.startsWith('initial_access') ? 'session_access_invalid_recipient_envelope' : 'SPAWN_FAILED',
       ...(failure === 'terminal_host' ? { errorDetail: {
         kind: 'terminal_host_unavailable' as const, host: 'herdr' as const, reason: 'installation_unavailable' as const,
       } } : {}),
@@ -5477,7 +5651,8 @@ describe('Session initial-access spawn settlement', () => {
     const creationKey = SessionCreationKeyV1Schema.parse('initial-access-repair');
     const identity = { bot: { kind: 'bot' as const }, createdAsBot: true as const };
     const managedCreation = { homeId: 'managed-home', managedId: 'managed-resource',
-      controller: { machineId: 'controller', installationId: 'installation' } };
+      controller: failure === 'initial_access_account_owned' ? undefined
+        : { machineId: 'controller', installationId: 'installation' } };
     const managedProvider = { pluginId: 'custom.compute', localId: 'native' };
     vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: {
       id: managedCreation.managedId, homeId: managedCreation.homeId, custodianAccountId: 'owner',
@@ -5517,10 +5692,7 @@ describe('Session initial-access spawn settlement', () => {
       },
       actionCaller: { kind: 'host' },
     });
-    await expect(createSpawnedSession.mock.results.at(-1)?.value).rejects.toMatchObject({
-      code: failure === 'initial_access' ? 'session_access_invalid_recipient_envelope' : 'SPAWN_FAILED',
-    });
-    expect(result).toEqual(failure === 'initial_access' ? {
+    expect(result).toEqual(failure.startsWith('initial_access') ? {
       type: 'error',
       code: 'session_access_invalid_recipient_envelope',
       retryable: false,
@@ -5528,6 +5700,9 @@ describe('Session initial-access spawn settlement', () => {
       type: 'error', code: 'incompatible_target', retryable: false,
       incompatibleTarget: { reason: 'terminal_host_unavailable' },
       terminalHostError: { kind: 'terminal_host_unavailable', host: 'herdr', reason: 'installation_unavailable' },
+    });
+    await expect(createSpawnedSession.mock.results.at(-1)?.value).rejects.toMatchObject({
+      code: failure.startsWith('initial_access') ? 'session_access_invalid_recipient_envelope' : 'SPAWN_FAILED',
     });
     expect(spawn).toHaveBeenCalledOnce();
     expect(spawn.mock.lastCall?.at(0)).toMatchObject({
@@ -5543,7 +5718,7 @@ describe('Session initial-access spawn settlement', () => {
       executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-1' },
       directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent',
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, actionCaller: { kind: 'host' },
-      managedCreation: { ...managedCreation, controller: { ...managedCreation.controller, installationId: 'claimed-installation' } },
+      managedCreation: { ...managedCreation, controller: { machineId: 'controller', installationId: 'claimed-installation' } },
     });
     expect(wrongSource).toMatchObject({ type: 'error', code: 'invalid_input', retryable: false });
     expect(spawn).toHaveBeenCalledOnce();

@@ -5,6 +5,7 @@ import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/ag
 import { isSessionResumeSupported } from '@/session/runtime/resumeSupport';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { logger } from '@/ui/logger';
+import type { TeamCredentialLaunchFailureCode, TeamCredentialLaunchFailurePhase } from '@/session/services/sessionTeamCredentialLaunchError';
 
 import type {
     SpawnSessionOptions,
@@ -27,7 +28,6 @@ import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorR
 import { AcpCatalogUnavailableError, resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirectory';
-import { resolveRequesterLaunchAdmissionFailure } from '../lifecycle/requesterWorkAttribution';
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
 import { resolveSessionRuntimeSnapshot } from '../sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -77,6 +77,7 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
     | 'sessionCreationTag'
     | 'sessionId'
     | 'existingSessionId'
+    | 'profileId'
     | 'permissionMode'
     | 'permissionModeUpdatedAt'
     | 'agentModeId'
@@ -104,6 +105,9 @@ export type PrepareExecuteSpawnSessionRequestInput = Readonly<{
 export async function prepareExecuteSpawnSessionRequest(
     params: Readonly<{
         request: PrepareExecuteSpawnSessionRequestInput;
+        onTeamCredentialRefusal?: (refusal: Readonly<{
+            code: TeamCredentialLaunchFailureCode; phase: TeamCredentialLaunchFailurePhase;
+        }>) => void;
         validateEnvVarRecordStrict: (value: unknown) => Readonly<
             | {
                 ok: true;
@@ -117,8 +121,6 @@ export async function prepareExecuteSpawnSessionRequest(
     }>,
 ): Promise<PreparedExecuteSpawnSessionRequest | SpawnSessionResult> {
     const { options } = params.request;
-    const requesterAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
-    if (requesterAdmissionFailure) return requesterAdmissionFailure;
     const environmentVariableCount = options.environmentVariables && typeof options.environmentVariables === 'object'
         ? Object.keys(options.environmentVariables as Record<string, unknown>).length
         : 0;
@@ -347,8 +349,11 @@ export async function prepareExecuteSpawnSessionRequest(
             });
         } catch (error) {
             if (!(error instanceof ConnectedServicesDefaultUnavailableError)) throw error;
+            if (error.code !== 'connected_services_default_unavailable') params.onTeamCredentialRefusal?.({ code: error.code, phase: error.phase });
             return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: error.reason };
+                errorMessage: error.code === 'connected_services_default_unavailable' ? error.reason : error.code,
+                errorDetail: { kind: 'launch_error', code: error.failureCause.code,
+                    message: error.message, failureCause: error.failureCause } };
         }
     }
     const connectedServices = runtimeOptions.connectedServices ?? connectedServicesDefaults?.connectedServices;
@@ -367,6 +372,7 @@ export async function prepareExecuteSpawnSessionRequest(
         ...(sessionCreationTag ? { sessionCreationTag } : {}),
         sessionId,
         existingSessionId,
+        profileId: runtimeOptions.profileId,
         permissionMode: runtimeOptions.permissionMode,
         permissionModeUpdatedAt: runtimeOptions.permissionModeUpdatedAt,
         agentModeId: runtimeOptions.agentModeId,
