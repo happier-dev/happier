@@ -52,6 +52,7 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
 export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
   readCapabilities: 'triage/read-github-capabilities',
   readOverview: 'triage/read-github-overview',
+  readPreview: 'github/pull-request/preview',
   listTimeline: 'triage/list-github-timeline',
   listChangedFiles: 'triage/list-github-changed-files',
   readFeedback: 'triage/read-github-feedback',

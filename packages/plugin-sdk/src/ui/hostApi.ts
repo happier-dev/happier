@@ -15,6 +15,8 @@ export type DownloadFileRequest = import('@happier-dev/protocol/plugins/ui/clien
 import type { PluginUiOpenAutomationEventRequestV1 } from './publicContract.js';
 export type OpenAutomationEventRequest = PluginUiOpenAutomationEventRequestV1;
 export type OpenManagedMachineConfigurationRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenManagedMachineConfigurationRequestV1>;
+/** Navigation only: a deployment Environment, optionally one receipt, tab or Settings section. */
+export type OpenDeploymentRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiOpenDeploymentRequestV1>;
 export type RevealSessionInputRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiRevealSessionInputRequestV1>;
 export type ReadMachineDisplayNameRequest = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameRequestV1>;
 export type ReadMachineDisplayNameResult = Readonly<import('@happier-dev/protocol/plugins/ui/client').PluginUiReadMachineDisplayNameResultV1>;
@@ -611,6 +613,13 @@ export interface PluginUiHostApi {
         request: OpenManagedMachineConfigurationRequest,
         options?: PluginCancellationOptions,
     ): Promise<void>;
+    /**
+     * Open a deployment Environment in Happier's Deployments page: its Overview, one of its receipts
+     * (`receiptId`), a tab or a Settings section. Navigation only: it grants nothing, and the page reads
+     * the Environment with the viewer's own access. Available on mounts with an active Account; the Home
+     * defaults to the mount's. Older hosts do not advertise it.
+     */
+    openDeployment(request: OpenDeploymentRequest, options?: PluginCancellationOptions): Promise<void>;
     /**
      * Open Happier's canonical Connected Accounts UI, optionally focused on an
      * exact service or qualified account. The host owns routing and admission;

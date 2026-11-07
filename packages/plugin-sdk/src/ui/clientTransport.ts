@@ -13,6 +13,7 @@ import { PluginError } from '../errors.js';
 import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiDownloadFileRequestV1Schema, FilesystemDownloadOutputSchema } from '@happier-dev/protocol/plugins/ui/client';
@@ -1318,6 +1319,11 @@ export async function createPluginUiHostApiClientFromTransport(
             const payload = PluginUiOpenManagedMachineConfigurationRequestV1Schema.safeParse(openRequest);
             if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload');
             await request('openManagedMachineConfiguration', payload.data, requestOptions?.signal);
+        },
+        openDeployment: async (openRequest, requestOptions) => {
+            const payload = PluginUiOpenDeploymentRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) throw new PluginUiHostApiClientError('invalid_payload');
+            await request('openDeployment', payload.data, requestOptions?.signal);
         },
         openConnectedAccounts: async (openRequest = {}, requestOptions) => {
             const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(openRequest);

@@ -525,6 +525,21 @@ export type PluginUiOpenManagedMachineConfigurationRequestV1 =
   z.infer<typeof PluginUiOpenManagedMachineConfigurationRequestV1Schema>;
 
 /**
+ * Navigation only: open a deployment Environment in Happier's Deployments page, optionally one of its
+ * receipts, tabs or Settings sections. It grants nothing; the page reads the Environment with the
+ * viewer's own access. `serverId` defaults to the mount's active Home; `tab` and `section` are the
+ * Environment page's canonical ids, and an unknown one opens Overview or the Settings landing.
+ */
+export const PluginUiOpenDeploymentRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  environmentId: z.string().check(z.trim(), z.minLength(1)),
+  serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  receiptId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  tab: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  section: z.optional(z.string().check(z.trim(), z.minLength(1))),
+}));
+export type PluginUiOpenDeploymentRequestV1 = z.infer<typeof PluginUiOpenDeploymentRequestV1Schema>;
+
+/**
  * Open Happier's canonical Connected Accounts experience.
  *
  * The request names semantic identity only. It cannot carry an app route,

@@ -1,4 +1,5 @@
-export type { OpenAutomationEventRequest } from './hostApi.js';
+export { formatUsageDurationCompact } from '../usage.js';
+export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from './publicContract.js';
 export {
     compileEntityListFilterV1,
     combineEntityFilterMatchesV1,
@@ -37,10 +38,22 @@ export type {
 export { getWidgetSizeFootprintV1, WIDGET_SIZE_POLICY_V1 } from './widgetSizes.js';
 export type { WidgetGroupWidthV1, WidgetSurfaceRefV1 } from './widgetSizes.js';
 export { PluginDeclarativeNodeV2Schema, readPluginDeclarativeDataFieldV1, readPluginDeclarativeDataRowsV1 } from './declarativeData.js';
+export type { PluginDeclarativeDataFieldV1 } from './declarativeData.js';
+export type { PluginCollectionListExtensionInputV1 } from './contributions.js';
+export type {
+    PluginUiDownloadFileRequestV1,
+    PluginUiOpenManagedMachineConfigurationRequestV1,
+    PluginUiRevealSessionInputRequestV1,
+    PluginUiReadMachineDisplayNameRequestV1,
+    PluginUiReadMachineDisplayNameResultV1,
+    PluginUiReadAuthorityReferenceV1,
+} from './hostApi.js';
 export type { HostedWebBridgeEnvelopeV1 } from '../ui.js';
 export { PluginUiLaunchInputV1Schema } from './hostApi.js';
 export type { PluginRightSidebarDefaultPlacement } from '../ui.js';
+export type { PluginCollectionListExtensionV1 } from './contributions.js';
 export type { PluginDefaultPlacement } from '../ui.js';
+export type { ProtocolPluginSurfaceTargetV1 } from '../ui.js';
 export { PluginRightSidebarCountV1Schema } from '../ui.js';
 export type { PluginRightSidebarCountV1 } from '../ui.js';
 export { artifactHtmlBundleFromBodyV1 } from './hostedWeb.js';
@@ -105,7 +118,11 @@ export type {
     PluginDeclarativeDocumentV1,
 } from './declarativeDocument.js';
 export type { OpenSurfaceOptions } from './hostApi.js';
+export type { OpenAutomationEventRequest } from './hostApi.js';
+export type { UiAuthoringInput } from './surface.js';
 export type { OpenConnectedAccountsRequest, OpenConnectedAccountsResult } from './hostApi.js';
+export type { OpenManagedMachineConfigurationRequest } from './hostApi.js';
+export type { OpenDeploymentRequest } from './hostApi.js';
 export type { OpenableContentBody } from './hostApi.js';
 export type { OpenableContentReadRequest } from './hostApi.js';
 export type { OpenableContentReadResult } from './hostApi.js';
@@ -147,7 +164,24 @@ export type { InboxItemAttentionTypeV1 } from '../ui.js';
 export type { PluginUiToneV1 } from '../ui.js';
 export type { PluginUiAttachmentToneV1 } from '../ui.js';
 export type { PluginUiHostApi } from './hostApi.js';
+export type {
+    PluginUiActionControlEventV1,
+    PluginUiActionControlRequestV1,
+    PluginUiActionControlExecutionV1,
+    PluginUiActionControlPreparationV1,
+    PluginUiActionControlPresentationV1,
+} from './publicContract.js';
+export type {
+    PluginUiActionControl,
+    PluginUiActionControlController,
+    PluginUiActionControlExecution,
+    PluginUiActionControlPreparation,
+    PluginUiActionControlPresentation,
+} from './hostApi.js';
+export type { ReadMachineDisplayNameRequest, ReadMachineDisplayNameResult } from './hostApi.js';
+export type { DownloadFileRequest } from './hostApi.js';
 export type { PluginUiResourceReference } from './hostApi.js';
+export type { PluginUiReadAuthorityReference, PluginUiResourceWatchReference } from './hostApi.js';
 export type { PluginUiHostReadReference } from './hostApi.js';
 export type { StoredImageRefV1, PluginUiReadStoredImageResultV1, PluginLiveStreamReferenceV1 } from './hostApi.js';
 export type { WorkBoardPreviewLayoutV1 } from './publicContract.js';
@@ -199,6 +233,7 @@ export type { PluginUiActionResultFor } from './hostApi.js';
 export type { SelectActionInputRequest } from './hostApi.js';
 export type { SelectActionInputResult } from './hostApi.js';
 export type { OpenNewSessionRequest } from './hostApi.js';
+export type { RevealSessionInputRequest } from './hostApi.js';
 export type { PreparedReviewWorkspaceResult } from './hostApi.js';
 export { PreparedReviewWorkspaceResultSchema } from './hostApi.js';
 export type { OpenNewSessionOptions } from './hostApi.js';
@@ -231,22 +266,3 @@ export type { UiTranslationBundle } from '../ui.js';
 export type { UiView } from '../ui.js';
 export { defineHostedWebBridgeMessage } from './hostedWeb.js';
 export type { PluginUiWatchEntityDragDropRequestV1, PluginUiEntityDragDropStateV1 } from './hostApi.js';
-
-export type { PluginDeclarativeDataFieldV1 } from './declarativeData.js';
-
-export type {
-    PluginUiActionControlEventV1,
-    PluginUiActionControlRequestV1,
-    PluginUiActionControlExecutionV1,
-    PluginUiActionControlPreparationV1,
-    PluginUiActionControlPresentationV1,
-} from './publicContract.js';
-export type {
-    PluginUiActionControl,
-    PluginUiActionControlController,
-    PluginUiActionControlExecution,
-    PluginUiActionControlPreparation,
-    PluginUiActionControlPresentation,
-} from './hostApi.js';
-
-export type { PluginUiRevealSessionInputRequestV1, PluginUiReadMachineDisplayNameRequestV1, PluginUiReadMachineDisplayNameResultV1, ReadMachineDisplayNameRequest, ReadMachineDisplayNameResult, RevealSessionInputRequest } from './hostApi.js';

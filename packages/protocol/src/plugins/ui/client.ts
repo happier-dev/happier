@@ -17,7 +17,11 @@ export {
 } from './hostApiDefinition.js';
 export { resolvePluginUiHostApiVersionV1 } from './hostApi.js';
 export { projectPluginUiRenderContextForHostApiVersionV1 } from './hostApiPresentation.js';
+export { PluginUiSetPageNavigationRequestV1Schema } from './pageNavigation.js';
+export type { PluginUiPageNavigationV1, PluginUiPageNavigationItemV1, PluginUiPageNavigationProjectionV1 } from './pageNavigation.js';
 export * from './storedImage.js';
+export { PluginUiSetUnsavedChangesRequestV1Schema } from './hostApiRequests.js';
+export type { PluginUiOpenSurfaceRequestV1 } from './hostApiRequests.js';
 export * from './entityDragDrop.js';
 export * from './entityDragDropHost.js';
 export * from './actionControl.js';
@@ -53,6 +57,8 @@ export type {
   PluginUiContextEnrichmentV1,
 } from './currentUiContext.js';
 export { PluginUiActionAdmissionResultV1Schema } from './hostApiRequests.js';
+export { PluginUiDownloadFileRequestV1Schema, type PluginUiDownloadFileRequestV1 } from './hostApiRequests.js';
+export { FilesystemDownloadOutputSchema } from '../../actions/filesystemActionFamily.js';
 export {
   PluginUiDisposeHostResourceRequestV1Schema,
   PluginUiResourceSubscriptionEventV1Schema,
@@ -60,6 +66,9 @@ export {
   PluginUiHostReadReferenceV1Schema,
   PluginUiReadAuthorityReferenceV1Schema,
   type PluginUiReadAuthorityReferenceV1,
+  PluginUiActionOperationHostReadResultV1Schema,
+  PluginUiActionOperationHostReadResultV1ProtocolSchema,
+  type PluginUiActionOperationHostReadResultV1,
   type PluginUiHostReadReferenceV1,
   type PluginUiDisposeHostResourceRequestV1,
   type PluginUiResourceSubscriptionEventV1,
@@ -183,6 +192,10 @@ export {
   type PluginUiOpenAutomationEventRequestV1,
   PluginUiOpenConnectedAccountsRequestV1Schema,
   PluginUiOpenConnectedAccountsResultV1Schema,
+  PluginUiOpenManagedMachineConfigurationRequestV1Schema,
+  type PluginUiOpenManagedMachineConfigurationRequestV1,
+  PluginUiOpenDeploymentRequestV1Schema,
+  type PluginUiOpenDeploymentRequestV1,
   PluginUiPreparedReviewWorkspaceResultV1Schema,
   PluginUiPickComposerMediaRequestV1Schema,
   PluginUiPickComposerMediaResultV1Schema,
@@ -355,9 +368,3 @@ export type {
 } from './surfaceContext.js';
 export * from './liveStream.js';
 export * from './widgetArea.js';
-
-export {
-  PluginUiActionOperationHostReadResultV1Schema,
-  PluginUiActionOperationHostReadResultV1ProtocolSchema,
-  type PluginUiActionOperationHostReadResultV1,
-} from './subscriptions.js';

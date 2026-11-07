@@ -1,3 +1,4 @@
+import { createCompactSessionListFetchBoundary, createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import * as React from 'react';
@@ -11,7 +12,9 @@ import {
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
-import { ApprovalRequestSchema, DEFAULT_SESSION_CAPABILITIES, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { DEFAULT_SESSION_CAPABILITIES} from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { SessionMessageV1Schema, SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { RawRecordSchema } from '@happier-dev/session-core/raw';
@@ -47,10 +50,8 @@ import { currentPendingEnqueueAck } from '@/sync/engine/pending/pendingQueueV2.t
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createStandaloneVoicePolicyHarness, prepareStandaloneVoicePolicyHarness } from '@/dev/testkit/harness/standaloneVoicePolicyHarness';
 import { createRetainedVoiceAgentRpcBoundary } from '@/dev/testkit/harness/voiceAgentRpcBoundary';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
-import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { createExistingSessionDirectoryPreflightResult, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -120,8 +121,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
   const { useCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
   const { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
   const { usePluginUiProjectionCurrentness } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
-  const { PluginProjectionV2Schema, PluginProjectedActionV2Schema, formatQualifiedPluginActionId,
-    DaemonPluginActionSchemasReadResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema } = await import('@happier-dev/protocol');
+  const [{ PluginProjectionV2Schema, PluginProjectedActionV2Schema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema}, { formatQualifiedPluginActionId}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/actions/qualifiedActionId')]);
   // These are daemon-authored declarations, consumed by the real normalizer,
   // origin union and effect dispatcher, not fabricated AppShell decisions.
   const sourceCustody = { kind: 'development' as const, registeredRootId: 'voice-tools-current-ui' };
@@ -139,7 +139,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
         id: 'refresh-issues', pluginId: 'acme.triage', occurrenceId: 'voice-tools-current-ui', title: 'Refresh issues',
         executionOrigin,
         scopes: ['global'], surfaces: ['voice'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
-      }) },   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] });
+      }) }, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] });
   const previous = daemonRpc.getMockImplementation();
   daemonRpc.mockImplementation(async request => {
     if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };
@@ -387,6 +387,18 @@ function createBaseState(): any {
 
 let state: any = createBaseState();
 
+function sessionHttpRecord(sessionId: string, serverId: string,
+  fixture: ReturnType<typeof createSessionFixture> | ReturnType<typeof createSessionListRenderableSessionFixture>) {
+  const { summaryText, ...ownerMetadata } = fixture.metadata ?? {};
+  const metadata = typeof summaryText === 'string'
+    ? { ...createSessionFixture().metadata, ...ownerMetadata, summary: { text: summaryText, updatedAt: fixture.updatedAt } }
+    : { ...createSessionFixture().metadata, ...ownerMetadata };
+  return createPlainSessionByIdResponseFixture(createSessionFixture({
+    ...(serverId === homeA ? state.sessions[sessionId] : undefined), ...fixture,
+    id: sessionId, serverId, metadata, activeAt: fixture.presence === 'online' ? Date.now() : fixture.activeAt,
+  })).session;
+}
+
 async function createElevenLabsToolHarness() {
   const { createBundledConversationRuntimeHostLease } = await import('@/voice/registry/bundledConversationRuntimeHost');
   // UI interactions leave the runtime under test and are not part of tool custody.
@@ -438,6 +450,7 @@ async function createElevenLabsToolHarness() {
       context: async () => unavailableUi(), watchContext: unavailableUi,
       widgetArea: async () => unavailableUi(),
       actionControl: async () => unavailableUi(),
+      downloadFile: async () => unavailableUi(),
       readEntityDragItem: async () => unavailableUi(),
       updateEntityDragDrop: async () => unavailableUi(),
       watchEntityDragDrop: async () => unavailableUi(),
@@ -452,14 +465,17 @@ async function createElevenLabsToolHarness() {
       readMachineDisplayName: async () => ({ status: 'unavailable' }),
       respondToSessionPermission: async () => unavailableUi(), executeAction: async () => unavailableUi(),
       admitAction: async () => unavailableUi(),
-      openAutomationEvent: async () => unavailableUi(),
       selectActionInput: async () => unavailableUi(), openNewSession: async () => unavailableUi(),
+      openAutomationEvent: async () => unavailableUi(),
+      openManagedMachineConfiguration: async () => unavailableUi(),
+      openDeployment: async () => unavailableUi(),
       revealSessionInput: async () => unavailableUi(),
       openConnectedAccounts: async () => unavailableUi(), settleEphemeralInput: async () => unavailableUi(),
       readResource: async () => unavailableUi(), statOpenableContent: async () => unavailableUi(),
       readOpenableContent: async () => unavailableUi(), watchResource: async () => unavailableUi(),
       readStoredImage: async () => unavailableUi(), watchLiveStream: async () => unavailableUi(),
       openSurface: async () => unavailableUi(), replacePageLocation: async () => unavailableUi(),
+      setUnsavedChanges: async () => unavailableUi(),
       notify: async () => unavailableUi(), confirm: async () => unavailableUi(), diagnostic: unavailableUi,
       readClipboard: async () => unavailableUi(), writeClipboard: async () => unavailableUi(),
       openExternalLink: async () => unavailableUi(),
@@ -479,7 +495,7 @@ async function createElevenLabsToolHarness() {
   const barrierInput = {
     adapterId, controlSessionId,
     resolveSessionId: () => 's1', effectCalls: 'stable_ids',
-    async submitResults(_responseId: string, results: readonly import('@happier-dev/protocol').VoiceRealtimeToolResultV1[]) {
+    async submitResults(_responseId: string, results: readonly import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeToolResultV1[]) {
       for (const event of runtime.encodeToolResults(results)) await connection.sendControl(event);
     },
     async continueResponse(responseId: string) {
@@ -546,6 +562,7 @@ function retainVoiceSessionReferenceCorpus(input: Readonly<{
         attentionHasNext: false,
         phase: input.complete ? 'ready' as const : 'loading' as const,
         freshnessAt: 1,
+        homeObservation: { phase: input.complete ? 'ready' as const : 'loading' as const, lastSuccessAt: 1 },
         failureReason: null,
         failureCode: null,
         appliedSourceKind: input.complete ? 'query' as const : null,
@@ -561,6 +578,7 @@ function retainVoiceSessionReferenceCorpus(input: Readonly<{
       visibleSessionListIndex: [],
       hasHiddenInactiveSessions: false,
       folderFeatureEnabledServerIds: [],
+      
       showLoading: false,
       showEmptyState: false,
       query: {
@@ -594,6 +612,7 @@ function retainOrdinaryVoiceSessionReferenceCorpus(input: Readonly<{
       visibleSessionListIndex: [],
       hasHiddenInactiveSessions: false,
       folderFeatureEnabledServerIds: [],
+      
       showLoading: false,
       showEmptyState: false,
       query: {
@@ -801,9 +820,10 @@ describe('voice tool handlers', () => {
       execute: () => ({ items: [{ engineId: 'claude', value: 'claude', label: 'Claude', backendId: 'claude',
         enabled: true, capabilities: { structuredNarration: true } }] }),
     })));
-    account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+    account.request.mockImplementation(createCompactSessionListFetchBoundary(async (input, init) => {
       const url = new URL(String(input));
       const pathname = url.pathname;
+      if (pathname === '/v2/sessions/read-batch' && init.method === 'POST') return undefined;
       if (pathname === '/health' || pathname === '/v1/auth/ping') return Response.json({});
       for (const boundary of reviewInventoryBoundaries) {
         const reply = await boundary.handle(url, init);
@@ -827,19 +847,12 @@ describe('voice tool handlers', () => {
           const fixture = currentState.sessionListRowsByServerId[serverId]?.[entry.sessionId]
             ?? (serverId === homeA ? currentState.sessions[entry.sessionId] : undefined);
           if (!fixture) return [];
-          const { summaryText, ...ownerMetadata } = fixture.metadata ?? {};
-          const metadata = summaryText
-            ? { ...createSessionFixture().metadata, ...ownerMetadata, summary: { text: summaryText, updatedAt: fixture.updatedAt } }
-            : { ...createSessionFixture().metadata, ...ownerMetadata };
-          return [createPlainSessionCurrentProjectionRecordFixture({
-            id: entry.sessionId, seq: fixture.seq, createdAt: fixture.createdAt, updatedAt: fixture.updatedAt,
-            active: fixture.active, activeAt: fixture.presence === 'online' ? Date.now() : fixture.activeAt, metadata,
-          })];
+          return [sessionHttpRecord(entry.sessionId, serverId, fixture)];
         }).sort((left: { updatedAt: number }, right: { updatedAt: number }) => right.updatedAt - left.updatedAt);
         const offset = Number(url.searchParams.get('cursor') ?? 0);
         const limit = Number(url.searchParams.get('limit') ?? records.length);
         const nextOffset = offset + limit;
-        return Response.json(V2SessionListResponseSchema.parse({ sessions: records.slice(offset, nextOffset),
+        return Response.json(createSessionListSourceFixture({ sessions: records.slice(offset, nextOffset),
           hasNext: nextOffset < records.length, nextCursor: nextOffset < records.length ? String(nextOffset) : null }));
       }
       const pending = /^\/v2\/sessions\/([^/]+)(?:\/execution-runs\/([^/]+))?\/pending$/.exec(pathname);
@@ -866,14 +879,10 @@ describe('voice tool handlers', () => {
       if (session) {
         const id = decodeURIComponent(session[1]);
         sessionDetailReads.push(id);
-        const fixture = sessionDetailReplies.get(id) ?? state.sessions[id] ?? createSessionFixture({ id, serverId: homeA });
-        return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
-          ...fixture, metadataLayoutVersion: 0, metadata: JSON.stringify(fixture.metadata),
-          agentState: fixture.agentState === null ? null : JSON.stringify(fixture.agentState),
-          effectiveAccess: { v: 1, level: fixture.access.level, sources: [{ kind: 'owner' }], capabilities: fixture.access.capabilities },
-          responsibleAccountId: null, responsibleAccount: null, share: null, archivedAt: null,
-          dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
-        }) });
+        const serverId = url.origin === homeUrlA ? homeA : homeB;
+        const fixture = sessionDetailReplies.get(id) ?? state.sessionListRowsByServerId[serverId]?.[id]
+          ?? state.sessions[id] ?? createSessionFixture({ id, serverId });
+        return Response.json({ session: sessionHttpRecord(id, serverId, fixture) });
       }
       if (pathname === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
         id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
@@ -900,7 +909,7 @@ describe('voice tool handlers', () => {
         return Response.json({ changed: true, sessionIds: request.sessionIds });
       }
       return accountHttp(input, init);
-    }));
+    }, { preferExactSnapshot: true }));
     setRuntimeFetch(account.request);
     // Complete the Account bootstrap before publishing test-owned current rows.
     // Otherwise its legitimate HTTP census can replace them during an assertion.
@@ -1167,7 +1176,7 @@ describe('voice tool handlers', () => {
     const current = await mountCurrentUiContext();
     account.replaceVoice({ ...storage.getState().settings.voice,
       privacy: { ...storage.getState().settings.voice.privacy, currentUiContextMode: 'off' } });
-    const { getActionSpec } = await import('@happier-dev/protocol');
+    const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({
       resolveSessionId: () => 's1',
@@ -1471,7 +1480,7 @@ describe('voice tool handlers', () => {
         machineId: 'm1',
       },
       organizationPlacement: {
-        folderId: null,
+        sectionId: null,
         tagIds: [],
       },
       initialInput: {
@@ -1489,7 +1498,7 @@ describe('voice tool handlers', () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
-    const { getActionSpec } = await import('@happier-dev/protocol');
+    const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
     expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
     const response = JSON.parse(await tools.spawnSession(spawnInput, {
@@ -2739,7 +2748,7 @@ describe('voice tool reset Account authority', () => {
       }] }) });
       const { createVoiceToolHandlers } = await import('./handlers');
       const tools = createVoiceToolHandlers({ resolveSessionId: () => null });
-      const { getActionSpec, isVoicePromptHotPathSpec } = await import('@happier-dev/protocol');
+      const { getActionSpec, isVoicePromptHotPathSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
       const { readHappierActionToolResultCandidates } = await import('@happier-dev/protocol/actions/happierActionToolResult');
       expect(isVoicePromptHotPathSpec(getActionSpec('ui.voice_global.reset'))).toBe(false);
       const searched = JSON.parse(await tools.searchActionSpecs({ query: 'ui.voice_global.reset' }));
@@ -2748,7 +2757,7 @@ describe('voice tool reset Account authority', () => {
       expect(discovered.ok).toBe(true);
       pendingReset = tools.action_execute({ actionId: 'ui.voice_global.reset', input: {} },
         { serverId: account.scope.serverId, effectId: 'voice-reset-test', signal: controller.signal });
-      const { ApprovalRequestSchema } = await import('@happier-dev/protocol');
+      const { ApprovalRequestSchema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
       await approvalCreated.promise;
       const approval = (() => {
         const row = artifacts.list().find((candidate) => {

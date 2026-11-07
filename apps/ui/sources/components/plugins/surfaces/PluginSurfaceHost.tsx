@@ -190,6 +190,7 @@ import {
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginSurfaceHostApiV1 } from './createPluginSurfaceHostApi';
 import { createPluginSurfaceManagedMachineConfigurationHandler } from './pluginSurfaceManagedMachineConfiguration';
+import { createPluginSurfaceOpenDeploymentHandler } from './pluginSurfaceOpenDeployment';
 import {
     readRequiredPluginSurfaceHostMethods,
     useBoundPluginSurfaceController,
@@ -3004,6 +3005,9 @@ function PluginSurfaceHostMount(props: Readonly<(
         const openManagedMachineConfiguration = accountLifetime && configurationTarget
             ? createPluginSurfaceManagedMachineConfigurationHandler({ target: configurationTarget,
                 accountLifetime, isCurrent: input.isCurrent, navigate: route => router.push(route as never) }) : null;
+        // Navigation only, for any mount with an active Account: the page reads the Environment with the viewer's access.
+        const openDeployment = accountLifetime ? createPluginSurfaceOpenDeploymentHandler({
+            accountLifetime, isCurrent: input.isCurrent, navigate: route => router.push(route) }) : null;
         const entityBinding = accountLifetime ? createPluginEntityDragDropBinding({
             runtime: entityDragRuntime, pluginId: mountedPluginId, mountKey: entityDragMountKey,
             scope: accountLifetime.scope, isCurrent: () => input.isCurrent() && accountLifetime.isCurrent(),
@@ -3110,7 +3114,8 @@ function PluginSurfaceHostMount(props: Readonly<(
             : undefined;
         return Object.freeze({
             handlers: { ...mountedBundle?.handlers, ...hostedEntity?.handlers,
-                ...(openManagedMachineConfiguration ? { openManagedMachineConfiguration } : {}) },
+                ...(openManagedMachineConfiguration ? { openManagedMachineConfiguration } : {}),
+                ...(openDeployment ? { openDeployment } : {}) },
             ...(currentUiContext ? { currentUiContext } : {}),
             ...(activate ? { activate } : {}),
             ...(setCurrentUiContextEligibility ? { setCurrentUiContextEligibility } : {}),

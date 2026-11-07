@@ -10,6 +10,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { ActionHandler, PluginAccountActionContext, PluginAccountActionHandler, PluginActionDeclaration, PluginActionReadObserver } from '@happier-dev/plugin-sdk/actions';
 import { readInputPath } from '@happier-dev/plugin-sdk/actions';
 import type { GithubTriageInvocationContext, GithubTriageObservationContext } from './invocation.js';
+import { GithubPreviewInputV1Schema, GithubPreviewResultV1Schema } from './detail/contracts.js';
 
 export const GITHUB_ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'github-account-runtime', exportName: 'activate' } } as const;
 export const TRIAGE_READ_HOST_ACCESS = ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE];
@@ -26,6 +27,14 @@ type ReadDefinition = Omit<AccountReadDeclaration, 'execution'> & Readonly<{
   nativeObserveRead?: PluginActionReadObserver;
 }>;
 const definitions = {
+[GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readPreview]: {
+      title: 'Read the pull request preview',
+      description: 'Reads the exact pull request preview and its current receipt and serving address.',
+      surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+      inputSchema: GithubPreviewInputV1Schema.jsonSchema, resultSchema: GithubPreviewResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS, connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: async (input, context) => (await import('./previewRead.js')).readGithubPreview(input, context),
+    },
 [GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits]: {
       title: 'List GitHub repositories',
       description: 'Lists selectable repositories or the retained configured selection.',

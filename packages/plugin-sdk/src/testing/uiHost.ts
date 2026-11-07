@@ -1,22 +1,30 @@
-import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1 } from '@happier-dev/protocol/plugins/ui';
-import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 /** @moduleRealm daemon */
 import { z } from 'zod/mini';
+import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiResourceIntentV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import { PluginUiWidgetAreaRequestV1Schema, PluginUiWidgetAreaResultV1Schema, PluginUiWatchEntityDragDropRequestV1Schema, PluginUiEntityDragDropStateV1Schema, PluginUiReadEntityDragItemRequestV1Schema, PluginUiReadEntityDragItemResultV1Schema, PluginUiUpdateEntityDragDropRequestV1Schema, PluginUiUpdateEntityDragDropResultV1Schema, PluginUiWatchLiveStreamRequestV1Schema, PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1, PLUGIN_UI_HOST_METHODS_V1, PluginUiAcquireComposerInputLockRequestV1Schema, PluginUiActiveComposerResultV1Schema, PluginUiApplyComposerRequestV1Schema, PluginUiApplyComposerResultV1Schema, PluginUiInspectComposerContentRequestV1Schema, PluginUiInspectComposerContentResultV1Schema, PluginUiExecuteActionRequestV1Schema, PluginUiMountedActionReferenceV1Schema, PluginUiEphemeralInputSettlementV1Schema, PluginUiFocusComposerRequestV1Schema, PluginUiFocusComposerResultV1Schema, PluginUiHostApiDiagnosticV1Schema, PluginUiHostApiOpenExternalLinkRequestV1Schema, PluginUiHostApiWriteClipboardRequestV1Schema, PluginUiHostApiWireEnvelopeV1Schema, PluginUiHostApiWireIdentityV1Schema, PluginUiJsonValueV1Schema, PluginUiOpenNewSessionRequestV1Schema, PluginUiOpenConnectedAccountsRequestV1Schema, PluginUiOpenSurfaceRequestV1Schema, PluginUiReplacePageLocationRequestV1Schema, PluginUiPickComposerMediaRequestV1Schema, PluginUiPickComposerMediaResultV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema, PluginUiReadComposerRequestV1Schema, PluginUiReadComposerResultV1Schema, PluginUiReleaseComposerContentRequestV1Schema, PluginUiSelectActionInputRequestV1Schema, PluginUiSelectActionInputResultV1Schema, PluginUiSetComposerDecorationsRequestV1Schema, PluginUiSetComposerDecorationsResultV1Schema, PluginUiInstanceKeyV1Schema, PluginUiLaunchInputV1Schema, PluginUiResourceSubscriptionTargetV1Schema, PluginUiSelectedActionInputCarrierV1Schema, pluginUiSelectedActionInputsEqual, pluginUiTargetedContributionOperationKey, PluginUiSubPathV1Schema, PluginUiWatchComposerRequestV1Schema, PluginUiReadSessionRequestV1Schema, PluginUiReadSessionResultV1Schema, PluginUiReadStoredImageRequestV1Schema, PluginUiReadStoredImageResultV1Schema, PluginUiRespondToSessionPermissionRequestV1Schema, PluginUiRespondToSessionPermissionResultV1Schema, PluginUiWatchSessionRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { PluginUiActionControlRequestV1Schema, PluginUiActionControlEventV1Schema,
     type PluginUiActionControlRequestV1, type PluginUiActionControlEventV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiReadAuthorityReferenceV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiOpenDeploymentRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { PluginUiSetUnsavedChangesRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiSetPageNavigationRequestV1Schema, type PluginUiPageNavigationV1 } from '@happier-dev/protocol/plugins/ui/pageNavigation';
 import type { PluginUiHostApiWireEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginUiTargetedSurfaceMountsV1Schema, DaemonPluginUiTargetedSurfaceRendererAvailabilityV1Schema, readDaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { OpenableContentReadRequestV1Schema, OpenableContentRefV1Schema } from '@happier-dev/protocol/plugins/openableContent';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginSourceCustodyV1 } from '@happier-dev/protocol';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { derivePluginUiTargetedSurfaceMountInstanceKeyV1, PluginUiTargetedContributionSurfaceV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiRevealSessionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { PluginUiReadMachineDisplayNameRequestV1Schema, PluginUiReadMachineDisplayNameResultV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiDownloadFileRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { FilesystemDownloadOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 
 import type { PluginDiagnosticData } from '../diagnostics.js';
 import { isPluginError, PluginError } from '../errors.js';
@@ -47,6 +55,8 @@ import type {
     ComposerTransactionV1,
     PluginUiContextEnrichmentV1,
     PluginUiResourceReference,
+    PluginUiResourceWatchReference,
+    PluginUiReadAuthorityReference,
     RenderContext,
     ResourceContent,
     SurfaceContext,
@@ -427,7 +437,7 @@ export type PluginUiTestkitReadOpenableContentInput = Readonly<{
 }>;
 
 export type PluginUiTestkitWatchResourceInput = Readonly<{
-    resource: PluginUiResourceReference;
+    resource: PluginUiResourceWatchReference;
     signal: AbortSignal;
 }>;
 
@@ -487,6 +497,8 @@ export type PluginUiTestkitReleaseComposerContentInput = Readonly<{
 export type PluginUiTestkitOpenSurfaceInput = Readonly<{
     view: PluginReference;
     input?: JsonValue;
+    /** `window`: the author asked for a desktop window destination (`OpenSurfaceOptions.presentation`). */
+    presentation?: NonNullable<import('../ui/hostApi.js').OpenSurfaceOptions['presentation']>;
     subPath?: string;
     instanceKey?: string;
     signal: AbortSignal;
@@ -500,6 +512,8 @@ export type PluginUiTestkitOpenSurfaceInput = Readonly<{
 export type PluginUiTestkitReplacePageLocationInput = Readonly<{
     subPath: string;
     backLocation?: string;
+    preserveUnsavedChanges?: boolean;
+    view?: string;
     signal: AbortSignal;
 }>;
 
@@ -553,18 +567,26 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: Readonly<{ enrichment: PluginUiContextEnrichmentV1 | null; signal: AbortSignal }>,
     ) => void | Promise<void>;
     executeAction?: (input: PluginUiTestkitExecuteActionInput) => JsonValue | Promise<JsonValue>;
+    downloadFile?: (input: Readonly<{ request: import('../ui/hostApi.js').DownloadFileRequest; signal: AbortSignal }>) =>
+        import('../protocol/index.js').FileDownloadResultV1 | Promise<import('../protocol/index.js').FileDownloadResultV1>;
     admitAction?: (input: Readonly<{ action: PluginReference; input?: JsonValue; signal: AbortSignal }>) => boolean | Promise<boolean>;
     selectActionInput?: (
         input: PluginUiTestkitSelectActionInputInput,
     ) => SelectActionInputResult | Promise<SelectActionInputResult>;
-    openAutomationEvent?: (input: Readonly<{ request: import('../ui/hostApi.js').OpenAutomationEventRequest; signal: AbortSignal }>) => void | Promise<void>;
     openNewSession?: (
         input: PluginUiTestkitOpenNewSessionInput,
     ) => void | Promise<void>;
+    openAutomationEvent?: (input: Readonly<{ request: import('../ui/hostApi.js').OpenAutomationEventRequest; signal: AbortSignal }>) => void | Promise<void>;
     revealSessionInput?: (input: Readonly<{ request: import('../ui/hostApi.js').RevealSessionInputRequest; signal: AbortSignal }>) => void | Promise<void>;
     openConnectedAccounts?: (
         input: PluginUiTestkitOpenConnectedAccountsInput,
     ) => import('../ui/hostApi.js').OpenConnectedAccountsResult | void | Promise<import('../ui/hostApi.js').OpenConnectedAccountsResult | void>;
+    openManagedMachineConfiguration?: (
+        input: Readonly<{ request: import('../ui/hostApi.js').OpenManagedMachineConfigurationRequest; signal: AbortSignal }>,
+    ) => void | Promise<void>;
+    openDeployment?: (
+        input: Readonly<{ request: import('../ui/hostApi.js').OpenDeploymentRequest; signal: AbortSignal }>,
+    ) => void | Promise<void>;
     settleEphemeralInput?: (
         input: PluginUiTestkitSettleEphemeralInputInput,
     ) => void | Promise<void>;
@@ -583,7 +605,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
      */
     watchResource?: (
         input: PluginUiTestkitWatchResourceInput,
-    ) => Readonly<{ digest: string }> | Promise<Readonly<{ digest: string }>>;
+    ) => Readonly<{ digest?: string }> | Promise<Readonly<{ digest?: string }>>;
     /** Presence truthfully advertises a focused Composer lookup for this fixture mount. */
     activeComposer?: (input: PluginUiTestkitActiveComposerInput) => ComposerRefV1 | null | Promise<ComposerRefV1 | null>;
     readComposer?: (input: PluginUiTestkitReadComposerInput) => ComposerReadResultV1 | Promise<ComposerReadResultV1>;
@@ -639,9 +661,12 @@ export type PluginUiTestkitHostHandlers = Readonly<{
         input: PluginUiTestkitRespondToSessionPermissionInput,
     ) => SessionPermissionResponseV1 | Promise<SessionPermissionResponseV1>;
     openSurface?: (input: PluginUiTestkitOpenSurfaceInput) => void | Promise<void>;
+    openResource?: (input: Readonly<{ resource: import('../protocol/resourceIntent.js').PluginUiResourceIntentV1; signal: AbortSignal }>) => void | Promise<void>;
     replacePageLocation?: (
         input: PluginUiTestkitReplacePageLocationInput,
     ) => string | Promise<string>;
+    setUnsavedChanges?: (input: Readonly<{ isDirty: boolean; signal: AbortSignal }>) => void | Promise<void>;
+    setPageNavigation?: (input: Readonly<{ navigation: PluginUiPageNavigationV1 | null; signal: AbortSignal }>) => void | Promise<void>;
     notify?: (input: Readonly<{ message: string; severity?: InteractionSeverity; signal: AbortSignal }>) => void | Promise<void>;
     confirm?: (input: Readonly<{ message: string; title?: string; action?: import('../identity.js').PluginReference; signal: AbortSignal }>) => boolean | Promise<boolean>;
     diagnostic?: (input: Readonly<{ data: PluginDiagnosticData; signal: AbortSignal }>) => void | Promise<void>;
@@ -663,14 +688,20 @@ const hostMethodPolicies = {
     watchContext: 'fixture',
     executeAction: 'executeAction',
     actionControl: 'actionControl',
+    downloadFile: 'downloadFile',
     admitAction: 'admitAction',
     readResource: 'readResource',
     statOpenableContent: 'statOpenableContent',
     readOpenableContent: 'readOpenableContent',
     watchResource: 'watchResource',
     openSurface: 'openSurface',
+    openResource: 'openResource',
     openConnectedAccounts: 'openConnectedAccounts',
+    openManagedMachineConfiguration: 'openManagedMachineConfiguration',
+    openDeployment: 'openDeployment',
     replacePageLocation: 'replacePageLocation',
+    setUnsavedChanges: 'setUnsavedChanges',
+    setPageNavigation: 'setPageNavigation',
     notify: 'notify',
     confirm: 'confirm',
     diagnostic: 'diagnostic',
@@ -770,6 +801,8 @@ export interface PluginUiTestkit {
     updatePageLocation(subPath: string): Promise<void>;
     /** Emit only the canonical invalidation signal; consumers re-read through `hostApi.readResource`. */
     invalidateResource(resource: PluginUiResourceReference, digest: string): void;
+    /** Withdraw an exact admitted read authority through the real subscription transport. */
+    retireReadAuthority(resource: PluginUiReadAuthorityReference): void;
     /** Emit the canonical invalidation signal to every watch of this Session; consumers re-read through `hostApi.readSession`. */
     invalidateSession(sessionId: string, digest: string): void;
     /** Emit one schema-checked observation through exact active Composer watches. */
@@ -791,7 +824,7 @@ export interface PluginUiTestkit {
 }
 
 type ActiveRequest = Readonly<{ controller: AbortController }>;
-type ResourceSubscription = Readonly<{ resource: PluginUiResourceReference; controller: AbortController }>;
+type ResourceSubscription = Readonly<{ resource: PluginUiResourceWatchReference; controller: AbortController }>;
 type ComposerHostResource = Readonly<{
     method: 'watchComposer' | 'acquireComposerInputLock' | 'watchEntityDragDrop' | 'actionControl';
     ref?: ComposerRefV1;
@@ -984,7 +1017,11 @@ function sleepForSemanticQuery(milliseconds: number): Promise<void> {
     return new Promise((resolve) => { setTimeout(resolve, milliseconds); });
 }
 
-function sameReference(left: PluginUiResourceReference, right: PluginUiResourceReference, pluginId: string): boolean {
+function sameReference(left: PluginUiResourceWatchReference, right: PluginUiResourceWatchReference, pluginId: string): boolean {
+    if (typeof left !== 'string' && 'readAuthority' in left) {
+        return typeof right !== 'string' && 'readAuthority' in right && pluginJsonValuesEqual(left, right);
+    }
+    if (typeof right !== 'string' && 'readAuthority' in right) return false;
     if (typeof left !== 'string' && 'hostRead' in left) {
         return typeof right !== 'string' && 'hostRead' in right
             && left.hostRead === right.hostRead && pluginJsonValuesEqual(left.input, right.input);
@@ -1148,6 +1185,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 code: failure.code,
                 message: failure.message,
                 ...(failure.retryable ? { retryable: true } : {}),
+                ...(failure.details === undefined ? {} : { details: failure.details }),
                 ...(failure.diagnostics === undefined ? {} : { diagnostics: [...failure.diagnostics] }),
             },
         });
@@ -1303,6 +1341,14 @@ async function createPluginUiTestkitInternal<TSurface>(
                         : { consumeSelectedActionInput: message.consumeSelectedActionInput }),
                     signal,
                 });
+            }
+            case 'downloadFile': {
+                if (!handlers.downloadFile) throw fixtureError('unsupported_method', 'downloadFile is not installed.');
+                const payload = PluginUiDownloadFileRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'Download request is invalid.');
+                const result = FilesystemDownloadOutputSchema.safeParse(await handlers.downloadFile({ request: payload.data, signal }));
+                if (!result.success) throw fixtureError('invalid_payload', 'Download result is invalid.');
+                return projectNativeJsonValueForTransport(result.data);
             }
             case 'selectActionInput': {
                 if (!handlers.selectActionInput) {
@@ -1554,6 +1600,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 await handlers.openSurface({
                     view: payload.data.destination,
                     ...(payload.data.input === undefined ? {} : { input: payload.data.input }),
+                    ...(payload.data.presentation === undefined ? {} : { presentation: payload.data.presentation }),
                     ...(payload.data.subPath === undefined ? {} : { subPath: payload.data.subPath }),
                     ...(payload.data.instanceKey === undefined ? {} : { instanceKey: payload.data.instanceKey }),
                     signal,
@@ -1597,6 +1644,24 @@ async function createPluginUiTestkitInternal<TSurface>(
                 }
                 const response = await handlers.respondToSessionPermission({ request: payload.data, signal });
                 return PluginUiRespondToSessionPermissionResultV1Schema.parse(response);
+            }
+            case 'openManagedMachineConfiguration': {
+                if (!handlers.openManagedMachineConfiguration) {
+                    throw fixtureError('unsupported_method', 'openManagedMachineConfiguration is not installed.');
+                }
+                const payload = PluginUiOpenManagedMachineConfigurationRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) {
+                    throw fixtureError('invalid_payload', 'openManagedMachineConfiguration payload is invalid.');
+                }
+                await handlers.openManagedMachineConfiguration({ request: payload.data, signal });
+                return undefined;
+            }
+            case 'openDeployment': {
+                if (!handlers.openDeployment) throw fixtureError('unsupported_method', 'openDeployment is not installed.');
+                const payload = PluginUiOpenDeploymentRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'openDeployment payload is invalid.');
+                await handlers.openDeployment({ request: payload.data, signal });
+                return undefined;
             }
             case 'openConnectedAccounts': {
                 if (!handlers.openConnectedAccounts) {
@@ -1668,6 +1733,13 @@ async function createPluginUiTestkitInternal<TSurface>(
                 await handlers.writeClipboard({ value: payload.data.value, signal });
                 return undefined;
             }
+            case 'setUnsavedChanges': {
+                if (!handlers.setUnsavedChanges) throw fixtureError('unsupported_method', 'setUnsavedChanges is not installed.');
+                const payload = PluginUiSetUnsavedChangesRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'setUnsavedChanges payload is invalid.');
+                await handlers.setUnsavedChanges({ isDirty: payload.data.isDirty, signal });
+                return undefined;
+            }
             case 'replacePageLocation': {
                 if (!handlers.replacePageLocation) throw fixtureError('unsupported_method', 'replacePageLocation is not installed.');
                 const payload = PluginUiReplacePageLocationRequestV1Schema.safeParse(message.payload);
@@ -1677,10 +1749,26 @@ async function createPluginUiTestkitInternal<TSurface>(
                     ...(payload.data.backLocation === undefined
                         ? {}
                         : { backLocation: payload.data.backLocation }),
+                    ...(payload.data.preserveUnsavedChanges === undefined ? {} : { preserveUnsavedChanges: payload.data.preserveUnsavedChanges }),
+                    ...(payload.data.view === undefined ? {} : { view: payload.data.view }),
                     signal,
                 });
                 if (typeof settled !== 'string') throw fixtureError('invalid_payload', 'replacePageLocation must resolve the settled location.');
                 return { subPath: settled };
+            }
+            case 'setPageNavigation': {
+                if (!handlers.setPageNavigation) throw fixtureError('unsupported_method', 'setPageNavigation is not installed.');
+                const payload = PluginUiSetPageNavigationRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'setPageNavigation payload is invalid.');
+                await handlers.setPageNavigation({ navigation: payload.data.navigation, signal });
+                return undefined;
+            }
+            case 'openResource': {
+                if (!handlers.openResource) throw fixtureError('unsupported_method', 'openResource is not installed.');
+                const payload = PluginUiResourceIntentV1Schema.safeParse(message.payload);
+                if (!payload.success) throw fixtureError('invalid_payload', 'openResource payload is invalid.');
+                await handlers.openResource({ resource: payload.data, signal });
+                return undefined;
             }
             case 'openExternalLink': {
                 if (!handlers.openExternalLink) throw fixtureError('unsupported_method', 'openExternalLink is not installed.');
@@ -1775,13 +1863,14 @@ async function createPluginUiTestkitInternal<TSurface>(
                         throw fixtureError('unsupported_method', 'watchResource is not installed.');
                     }
                     const payload = requireRecord(message.payload, 'watchResource payload');
-                    const resource = readResourceReference(payload.resource, 'resource');
+                    const resource = PluginUiResourceSubscriptionTargetV1Schema.parse(payload.resource);
                     const watch = await handlers.watchResource({ resource, signal: controller.signal });
                     if (controller.signal.aborted) return;
                     resourceSubscriptions.set(message.subscriptionId, { resource, controller });
                     establishment = {
                         subscriptionId: message.subscriptionId,
-                        digest: PluginUiArtifactDigestV1Schema.parse(watch.digest),
+                        ...(typeof resource !== 'string' && 'readAuthority' in resource ? {}
+                            : { digest: PluginUiArtifactDigestV1Schema.parse(watch.digest) }),
                     };
                     break;
                 }
@@ -2062,6 +2151,17 @@ async function createPluginUiTestkitInternal<TSurface>(
             await semanticMount.update(renderContext(renderedSurface, hostApi));
             assertActive();
             fixtureRevision += 1;
+        },
+        retireReadAuthority(resource: PluginUiReadAuthorityReference) {
+            assertActive();
+            const canonicalResource = PluginUiReadAuthorityReferenceV1Schema.parse(resource);
+            for (const [subscriptionId, subscription] of resourceSubscriptions) {
+                if (!sameReference(subscription.resource, canonicalResource, options.authorPlugin.id)) continue;
+                resourceSubscriptions.delete(subscriptionId);
+                subscription.controller.abort('read_authority_retired');
+                emit({ wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'subscription', identity, subscriptionId,
+                    event: { version: 1, subscriptionId, kind: 'error', code: 'expired_resource', diagnostics: [] } });
+            }
         },
         invalidateResource(resource: PluginUiResourceReference, digest: string) {
             assertActive();

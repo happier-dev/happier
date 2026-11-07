@@ -27,7 +27,6 @@ import type {
   RealtimeVoiceProviderProtocol,
   RealtimeVoiceProviderSettingsOperations,
   VoiceHostedConversationService,
-  VoiceRealtimeConnection,
   VoiceRuntimePlatform,
   VoiceRealtimeAttemptPolicy,
   VoiceClientToolDefinition,
@@ -353,21 +352,6 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value);
 }
 
-function isVoiceRealtimeConnection(value: unknown): value is VoiceRealtimeConnection {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const connection = value as Readonly<Record<string, unknown>>;
-  return (connection.kind === 'websocket_pcm' || connection.kind === 'webrtc' || connection.kind === 'sdk_handle')
-    && typeof connection.connect === 'function'
-    && typeof connection.sendControl === 'function'
-    && typeof connection.controlEvents === 'function'
-    && typeof connection.transportEvents === 'function'
-    && typeof connection.close === 'function'
-    && typeof connection.state === 'function'
-    && typeof connection.currentProviderSessionId === 'function'
-    && typeof connection.playbackCursorMs === 'function'
-    && typeof connection.beginOutputInterruptionCandidate === 'function'
-    && typeof connection.resolveOutputInterruptionCandidate === 'function';
-}
 
 function activationError(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -381,9 +365,12 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
       wireVersion: 1,
       methods: Object.freeze([]),
     }),
-    actionControl: async () => unavailable(),
     context: async () => unavailable(),
+    setPageNavigation: async () => unavailable(),
+    openResource: async () => unavailable(),
     widgetArea: async () => unavailable(),
+    actionControl: async () => unavailable(),
+    downloadFile: async () => unavailable(),
     readEntityDragItem: async () => unavailable(),
     updateEntityDragDrop: async () => unavailable(),
     watchEntityDragDrop: async () => unavailable(),
@@ -411,6 +398,8 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     selectActionInput: async () => unavailable(),
     openNewSession: async () => unavailable(),
     openAutomationEvent: async () => unavailable(),
+    openManagedMachineConfiguration: async () => unavailable(),
+    openDeployment: async () => unavailable(),
     revealSessionInput: async () => unavailable(),
     openConnectedAccounts: async () => unavailable(),
     settleEphemeralInput: async () => unavailable(),
@@ -420,6 +409,7 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     watchResource: async () => unavailable(),
     openSurface: async () => unavailable(),
     replacePageLocation: async () => unavailable(),
+    setUnsavedChanges: async () => unavailable(),
     notify: async () => unavailable(),
     confirm: async () => unavailable(),
     diagnostic: () => {},
@@ -907,15 +897,13 @@ export function createExternalVoiceProviderRuntimeContribution(input: Readonly<{
               attemptId: connectionInput.attemptId,
             }),
           }));
-          if (!isVoiceRealtimeConnection(connection)) {
-            throw activationError('invalid_external_voice_provider_connection');
-          }
           return connection;
         },
       });
     },
     encodeToolResults: (results) => runtime.encodeToolResults(results),
     encodeToolContinuation: (responseId) => runtime.encodeToolContinuation(responseId),
+    ...(runtime.playHostText ? { playHostText: runtime.playHostText } : {}),
     ...(runtime.beforeToolContinuation
       ? { beforeToolContinuation: (responseId: string, signal: AbortSignal) => runtime.beforeToolContinuation!(responseId, signal) }
       : {}),

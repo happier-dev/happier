@@ -7,10 +7,12 @@ import {
 } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { PluginUiArtifactDigestV1Schema } from '@happier-dev/protocol/plugins/ui';
 import {
-    MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1,
-    PluginDeclarativeProjectedModelV1Schema,
+    MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1} from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentContentTypeV1';
+import {
+    PluginDeclarativeProjectedModelV1Schema} from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
+import {
     type PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
@@ -258,6 +260,7 @@ function createDocumentHost(input: Readonly<{
         admitAction: async () => unexpectedHostApiCall('admitAction'),
         actionControl: async () => unexpectedHostApiCall('actionControl'),
         widgetArea: async () => unexpectedHostApiCall('widgetArea'),
+        downloadFile: async () => unexpectedHostApiCall('downloadFile'),
         readEntityDragItem: async () => unexpectedHostApiCall('readEntityDragItem'),
         updateEntityDragDrop: async () => unexpectedHostApiCall('updateEntityDragDrop'),
         watchEntityDragDrop: async () => unexpectedHostApiCall('watchEntityDragDrop'),
@@ -284,6 +287,8 @@ function createDocumentHost(input: Readonly<{
         executeAction: async () => unexpectedHostApiCall('executeAction'),
         selectActionInput: async () => unexpectedHostApiCall('selectActionInput'),
         openNewSession: async () => unexpectedHostApiCall('openNewSession'),
+        openManagedMachineConfiguration: async () => unexpectedHostApiCall('openManagedMachineConfiguration'),
+        openDeployment: async () => unexpectedHostApiCall('openDeployment'),
         openAutomationEvent: async () => unexpectedHostApiCall('openAutomationEvent'),
         revealSessionInput: async () => unexpectedHostApiCall('revealSessionInput'),
         openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
@@ -292,6 +297,7 @@ function createDocumentHost(input: Readonly<{
         readOpenableContent: async () => unexpectedHostApiCall('readOpenableContent'),
         openSurface: async () => unexpectedHostApiCall('openSurface'),
         replacePageLocation: async () => unexpectedHostApiCall('replacePageLocation'),
+        setUnsavedChanges: async () => unexpectedHostApiCall('setUnsavedChanges'),
         notify: async () => unexpectedHostApiCall('notify'),
         confirm: async () => unexpectedHostApiCall('confirm'),
         // Both real transports refuse an unadvertised host method locally with

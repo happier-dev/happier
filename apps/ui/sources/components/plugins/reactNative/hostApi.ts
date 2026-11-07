@@ -30,6 +30,7 @@ import {
     PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiOpenConnectedAccountsResultV1Schema,
     PluginUiOpenManagedMachineConfigurationRequestV1Schema,
+    PluginUiOpenDeploymentRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
@@ -1457,6 +1458,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const payload = PluginUiOpenManagedMachineConfigurationRequestV1Schema.safeParse(request);
             if (!payload.success) throwHostApiError('invalid_payload');
             await transport.request('openManagedMachineConfiguration', payload.data, options);
+        },
+        openDeployment: async (request, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openDeployment');
+            const payload = PluginUiOpenDeploymentRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('openDeployment', payload.data, options);
         },
         openConnectedAccounts: async (request = {}, options) => {
             assertActive(options?.signal);
