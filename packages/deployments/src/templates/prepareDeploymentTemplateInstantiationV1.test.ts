@@ -84,6 +84,16 @@ describe('stored template preparation', () => {
         expect(app.compose.document).not.toMatch(/\bports:/u);
     });
 
+    it('offers plain PostgreSQL, MySQL and Redis as valid data templates, each on its own service', async () => {
+        const raw: unknown = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8'));
+        if (!raw || typeof raw !== 'object' || !('apps' in raw) || !Array.isArray(raw.apps)) throw new Error('Expected packaged app catalog');
+        const data = raw.apps.map((entry: { app: unknown }) => DeploymentTemplateV1Schema.parse(entry.app).data);
+        expect(data.map(entry => entry?.engine)).toEqual(expect.arrayContaining(['postgres', 'mysql', 'redis']));
+        // Add places a template beside an existing stored Compose, so no two templates claim one service name.
+        const services = data.map(entry => entry?.service);
+        expect(new Set(services).size).toBe(services.length);
+    });
+
     it('reviews declared capacity shortfalls without refusing the attempt or inventing unavailable disk observations', () => {
         const declared = DeploymentTemplateV1Schema.parse({ ...template, minimumResources: { memoryBytes: 2048, freeDiskBytes: 4096 } });
         const input = { template: declared, templateRef, source, bindings: [binding] };
