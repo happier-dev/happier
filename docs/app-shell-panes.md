@@ -90,7 +90,10 @@ using the existing closed `PluginUiResourceIntentV1` SCM intent. It is exclusive
 with `href`, `file`, and tab placement controls. Agents call the same
 `openResource.ts` resolver as card/glance Open: the focused pane driver's
 current navigation binding selects its Session handler, then the registered app
-destination, according to the person's SCM resource preference. With no focused
+destination, according to the person's SCM resource preference. A Session
+binding's catalog holds only that Session's handlers (it is empty or unloaded on
+Sessions with none), so the app handler is looked up in the app catalog and
+opened through the Session binding's enclosing app navigation. With no focused
 pane binding, the app binding is used. Resource placement and any dirty-departure
 decision remain with the selected destination owner; a resource opening beside
 an editor does not ask to discard that editor. External preference or an

@@ -125,10 +125,16 @@ describe('open resource intent', () => {
     } finally { detach(); }
   });
 
-  it.each(['happier', 'github'] as const)('routes a Session-origin Triage resource using the %s preference', async preference => {
+  // A Session scope's catalog holds that Session's handlers only (live READY147: empty or not yet loaded); the
+  // app handler lives in the app catalog, which the Session binding reaches through its enclosing app navigation.
+  it.each([
+    ['happier', 'empty'], ['happier', 'unloaded'], ['github', 'empty'],
+  ] as const)('routes a Session-origin Triage resource using the %s preference (Session catalog %s)', async (preference, sessionCatalog) => {
     const projection = triageResourceProjection();
     const appProjection = { ...projection, surfacePlacementsById: Object.fromEntries(Object.entries(projection.surfacePlacementsById)
       .filter(([, entry]) => entry.binding.targetKind === 'app')) };
+    const sessionProjection = sessionCatalog === 'empty' ? { ...projection, surfacePlacementsById: {} } : null;
+    const detach = publishCommittedAppShellPluginUiProjection(() => appProjection);
     const resource = { kind: 'pullRequest' as const, url: 'https://github.com/happier-dev/triage-qa-sandbox/pull/63' };
     const opened: unknown[] = [];
     const external: string[] = [];
@@ -144,18 +150,20 @@ describe('open resource intent', () => {
       return { ok: true };
     } });
     const navigation = createPluginSurfaceDestinationNavigationBinding({
-      placements: [], projection: appProjection, targetKind: 'session',
+      placements: [], projection: sessionProjection, targetKind: 'session',
       enclosingOpenSurface: appNavigation.openSurface,
       scopedLaunchFacts: { serverId: 'home', machineId: 'machine', interactionEnabled: true },
       accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
         onRetire: () => ({ dispose() {} }) },
     });
-    expect(await requestOpenResource(resource, { navigation,
-      openExternal: async url => { external.push(url); return true; } })).toBe(true);
-    expect(opened).toEqual(preference === 'github' ? [] : [{
-      destination: { pluginId: PLUGIN_MANIFEST.id, localId: 'triage' }, input: { resource },
-    }]);
-    expect(external).toEqual(preference === 'github' ? [resource.url] : []);
+    try {
+      expect(await requestOpenResource(resource, { navigation,
+        openExternal: async url => { external.push(url); return true; } })).toBe(true);
+      expect(opened).toEqual(preference === 'github' ? [] : [{
+        destination: { pluginId: PLUGIN_MANIFEST.id, localId: 'triage' }, input: { resource },
+      }]);
+      expect(external).toEqual(preference === 'github' ? [resource.url] : []);
+    } finally { detach(); }
   });
 
   it('keeps an unavailable scoped catalog unavailable instead of borrowing the app catalog', async () => {

@@ -32,20 +32,21 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
   };
   if (storage.getState().settings.scmResourceOpenLocation === 'github' || !context?.navigation) return external();
   const scopedProjection = context.projection === undefined ? context.navigation.projection : context.projection;
-  const projection = scopedProjection === undefined ? readCurrentAppShellPluginUiProjection() : scopedProjection;
-  if (!projection) return external();
-  const resourcePlacements = selectRenderablePluginResourceLinkPlacements(projection);
-  const matchesFor = (targetKind: 'session' | 'app') => resourcePlacements
+  const scoped = scopedProjection === undefined ? readCurrentAppShellPluginUiProjection() : scopedProjection;
+  const matchesIn = (catalog: PluginUiProjectionModel, targetKind: 'session' | 'app') => selectRenderablePluginResourceLinkPlacements(catalog)
     .filter(placement => placement.binding.targetKind === targetKind)
     .flatMap(placement => (placement.resourceLinks ?? []).flatMap(link => {
       if (kind !== undefined && link.kind !== kind) return [];
       const match = new RegExp(link.urlPattern).exec(url);
       return match?.[0] === url ? [{ pluginId: placement.pluginId, ...link }] : [];
     }));
-  // A Session handler wins; otherwise the enclosing navigation owner can
-  // open the app destination offered by this same resource catalog.
-  const sessionMatches = context.navigation.targetKind === 'session' ? matchesFor('session') : [];
-  const matches = sessionMatches.length > 0 ? sessionMatches : matchesFor('app');
+  // A Session handler wins. A Session scope's catalog holds only that Session's handlers, so an app handler
+  // comes from the app catalog; the Session binding opens it through its enclosing app navigation.
+  const sessionScope = context.navigation.targetKind === 'session';
+  const sessionMatches = sessionScope && scoped ? matchesIn(scoped, 'session') : [];
+  const projection = sessionMatches.length > 0 ? scoped : sessionScope ? readCurrentAppShellPluginUiProjection() : scoped;
+  if (!projection) return external();
+  const matches = sessionMatches.length > 0 ? sessionMatches : matchesIn(projection, 'app');
   // Contributions offer a handler; declaration order never appoints a winner.
   if (matches.length !== 1) return external();
   const match = matches[0]!;
